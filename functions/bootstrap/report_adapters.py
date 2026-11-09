@@ -246,21 +246,16 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
     # pool. Surfaced in the report meta (`report_hub.get_report`) so the card
     # builder and the exported share image both honour it.
     pool = appearance.analysed_photo_ids(db, uid, data=data)
+    # ``read_card_hidden`` is version-scoped (see ``appearance_reads``): it
+    # only returns a list curated against THIS report version, so a stale
+    # list from an older run can no longer suppress the current run's
+    # photos here. Within the current version the user's curation is
+    # honoured exactly — including an explicit removal of the first pool
+    # photo; un-hiding it anyway (the 2026-11-02 pool[0] workaround, removed
+    # with this fix) resurrected a removed old photo as the card hero on
+    # every re-run while the rest of the stale list kept hiding the new
+    # photos, which is the 2026-11-08 stale-card bug.
     hidden = [pid for pid in appearance.read_card_hidden(db, uid) if pid in pool]
-    # Never hide the card's REPRESENTATIVE — pool[0], the primary selected FACE
-    # photo, which the card builder (`AppearanceCardData`) draws as the hero.
-    # The hero must reflect the user's CURRENT selection and re-map on every
-    # re-run, so a stale card_hidden entry (curated against an OLDER selection)
-    # can neither pin an old/placeholder hero nor empty the card. Founder bug
-    # 2026-11-02: a re-run refreshed the report sections but the share card
-    # stayed on a stale photo because card_hidden had accumulated across
-    # selections until it covered the WHOLE current pool (visible = pool −
-    # hidden = none, so the card had no photo). The hide-from-card control still
-    # curates the SECONDARY photos within the current analysed set; it just can
-    # never remove the hero that keeps the card honest and current.
-    if pool:
-        representative = pool[0]
-        hidden = [pid for pid in hidden if pid != representative]
     report["card_hidden_photos"] = hidden
     created = data.get("created_at")
     return report, created, created

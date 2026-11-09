@@ -37,6 +37,17 @@ _LEGACY_COLLECTIONS_SUNSET = "2026-12-01"
 # every photo. See :func:`report_adapters.appearance_blocks`.
 HIDDEN_PHOTOS_FIELD = "report_card_hidden_photos"
 
+# The profile field holding the report version (the shaped report's
+# ``created_at``) the hidden list above was curated against. The hidden
+# list is a curation OF ONE REPORT VERSION: a new run persists a new
+# ``created_at``, so a list stamped by an older run — or a legacy list
+# written before versioning existed, with no stamp at all — is stale and
+# must never hide photos from the current card (founder bug 2026-11-08:
+# the card kept showing an old, previously-removed photo as its hero and
+# suppressed most of the new run's photos, while the full report below
+# the card, which ignores the hidden list, showed the new run correctly).
+HIDDEN_PHOTOS_REPORT_FIELD = "report_card_hidden_report_created_at"
+
 _MAX_HIDDEN_PHOTOS = 32
 _MAX_PHOTO_ID_LEN = 512
 
@@ -237,10 +248,31 @@ def analysed_photo_ids(
     return _pool_from_data(data) if data else []
 
 
+def _current_report_created_at(db, uid: str) -> str:
+    """The current report version: the shaped report's ``created_at``
+    string, or ``""`` when there is no readable report."""
+    import appearance
+
+    get_report_fn = getattr(appearance, "get_report", get_report)
+    try:
+        data = get_report_fn(db, uid, "current")
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("created_at") or "")
+
+
 def read_card_hidden(db, uid: str) -> list[str]:
-    """The raw ``report_card_hidden_photos`` list stored on the caller's
-    profile, or ``[]`` (never raises). Not intersected with the live pool —
-    callers that need the effective set do that themselves."""
+    """The ``report_card_hidden_photos`` list stored on the caller's
+    profile, or ``[]`` (never raises) — but ONLY when that list was curated
+    against the CURRENT report version (see
+    :data:`HIDDEN_PHOTOS_REPORT_FIELD`). A list from an older run (a stamp
+    that no longer matches the current report's ``created_at``), or a
+    legacy unstamped list, is stale: it reads back as ``[]`` so a re-run's
+    card always starts from that run's full analysed pool. Not intersected
+    with the live pool — callers that need the effective set do that
+    themselves."""
     import appearance
 
     schema_mod = getattr(appearance, "schema", schema)
@@ -252,7 +284,13 @@ def read_card_hidden(db, uid: str) -> list[str]:
     raw = (doc or {}).get(HIDDEN_PHOTOS_FIELD)
     if not isinstance(raw, list):
         return []
-    return [str(p).strip() for p in raw if str(p or "").strip()]
+    ids = [str(p).strip() for p in raw if str(p or "").strip()]
+    if not ids:
+        return []
+    stamp = str((doc or {}).get(HIDDEN_PHOTOS_REPORT_FIELD) or "")
+    if not stamp or stamp != _current_report_created_at(db, uid):
+        return []
+    return ids
 
 
 def set_card_hidden(db, uid: str, ids) -> list[str]:
@@ -281,5 +319,12 @@ def set_card_hidden(db, uid: str, ids) -> list[str]:
             cleaned.append(s)
         if len(cleaned) > _MAX_HIDDEN_PHOTOS:
             raise ValueError("too many hidden photos")
-    schema_mod.profile_doc(db, uid).set({HIDDEN_PHOTOS_FIELD: cleaned}, merge=True)
+    # Stamp the list with the report version it was curated against, so
+    # the next re-run (a new report ``created_at``) invalidates it on read
+    # instead of letting it hide photos from a future card.
+    stamp = _current_report_created_at(db, uid)
+    schema_mod.profile_doc(db, uid).set(
+        {HIDDEN_PHOTOS_FIELD: cleaned, HIDDEN_PHOTOS_REPORT_FIELD: stamp},
+        merge=True,
+    )
     return cleaned

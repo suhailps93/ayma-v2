@@ -94,6 +94,7 @@ from appearance_storage import (
 )
 from appearance_reads import (
     HIDDEN_PHOTOS_FIELD,
+    HIDDEN_PHOTOS_REPORT_FIELD,
     _LEGACY_COLLECTIONS,
     _LEGACY_COLLECTIONS_SUNSET,
     _MAX_HIDDEN_PHOTOS,
@@ -148,6 +149,7 @@ __all__ = [
     "_MAX_PHOTOS",
     "_MAX_FINDING_HISTORY",
     "HIDDEN_PHOTOS_FIELD",
+    "HIDDEN_PHOTOS_REPORT_FIELD",
     "_MAX_HIDDEN_PHOTOS",
     "_MAX_PHOTO_ID_LEN",
     "_CORRECTION_SYS",
