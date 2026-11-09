@@ -107,6 +107,7 @@ from .app_control_navigation import (
     _bind_show_profile_photo,
     detect_app_command,
     detect_launch_command,
+    detect_practice_voice_intent,
     detect_photo_command,
     detect_photo_management_command,
     detect_profile_command,

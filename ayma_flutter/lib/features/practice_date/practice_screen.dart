@@ -23,7 +23,14 @@ import 'practice_voice_screen.dart';
 /// message/bubble styling. Voice practice reuses the existing LiveKit pipeline
 /// (seeded with the same persona prompt) — see docs/PRACTICE_DATE.md.
 class PracticeScreen extends StatefulWidget {
-  const PracticeScreen({super.key, required this.uid, this.name = '', this.api});
+  const PracticeScreen({
+    super.key,
+    required this.uid,
+    this.name = '',
+    this.api,
+    this.autoStartVoice = false,
+    this.voice,
+  });
 
   static const path = '/practice/:uid';
 
@@ -35,6 +42,16 @@ class PracticeScreen extends StatefulWidget {
   final String name;
 
   final ApiClient? api;
+
+  /// Voice mode was asked for up front (the `?voice=1` route flag Ayma's
+  /// `open_practice_date(voice: true)` navigates with, bug
+  /// DC2eUbckGA6J0ufDZpRG): once the session is set up, the voice call
+  /// starts on its own instead of waiting for a tap on the voice button.
+  final bool autoStartVoice;
+
+  /// Injectable practice voice controller, forwarded to the voice screen
+  /// (tests only; otherwise the voice screen builds its own).
+  final VoiceSessionController? voice;
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -57,6 +74,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   final List<_PracticeMessage> _messages = [];
   String _coachHint = '';
   bool _sending = false;
+  bool _voiceAutoStarted = false;
 
   @override
   void initState() {
@@ -100,6 +118,14 @@ class _PracticeScreenState extends State<PracticeScreen> {
         _start = start;
         _loading = false;
       });
+      // Voice mode was requested up front: open the voice simulator as
+      // soon as the session exists — no manual voice-button tap.
+      if (widget.autoStartVoice && !_voiceAutoStarted) {
+        _voiceAutoStarted = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _startVoice();
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -187,6 +213,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
           uid: widget.uid,
           name: _personaName,
           api: widget.api,
+          voice: widget.voice,
         ),
       ),
     );

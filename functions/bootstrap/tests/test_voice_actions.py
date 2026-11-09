@@ -137,6 +137,26 @@ def test_verdict_to_command_maps_launches_and_keeps_empty_partner():
     ) == ("open_date_sim", {"name": ""})
 
 
+def test_verdict_to_command_practice_voice_modality_carries_the_flag():
+    # Bug DC2eUbckGA6J0ufDZpRG: modality voice -> the launch carries
+    # voice=True so the practice voice call auto-starts; modality text
+    # (or none) keeps the plain text launch.
+    assert voice_actions.verdict_to_command(
+        Verdict(action="launch_practice", partner="Dillu", modality="voice")
+    ) == ("open_practice_date", {"name": "Dillu", "voice": True})
+    assert voice_actions.verdict_to_command(
+        Verdict(action="launch_practice", partner="Dillu", modality="text")
+    ) == ("open_practice_date", {"name": "Dillu"})
+    parsed = voice_actions.parse_verdict(
+        {"action": "launch_practice", "partner": "Sofia",
+         "modality": "voice"}
+    )
+    assert parsed.modality == "voice"
+    assert voice_actions.verdict_to_command(parsed) == (
+        "open_practice_date", {"name": "Sofia", "voice": True}
+    )
+
+
 @pytest.mark.parametrize("tool,value,kwarg,want", [
     ("set_brain", "meta", "brain", "meta"),
     ("set_brain", "switch to Muse Spark", "brain", "meta"),

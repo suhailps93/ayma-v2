@@ -28,6 +28,25 @@ def _seeded_db() -> FakeDb:
     return db
 
 
+# --- evaluation prompts: honest critique, no generalized praise ---------- #
+# Bug fZO89mEdQhjuiELzrC6p: when the user said something inappropriate or
+# explicit in practice, the debrief/coach must call it out directly
+# instead of wrapping the evaluation in generalized praise.
+
+def test_debrief_prompt_demands_direct_critique_of_inappropriate_messages():
+    prompt = practice_core.compose_debrief_prompt().lower()
+    assert "inappropriate or explicit" in prompt
+    assert "inventing praise" in prompt
+    assert "empty list" in prompt  # what_worked may be empty, never invented
+    assert "first" in prompt and "avoid" in prompt
+
+
+def test_coach_prompt_demands_direct_nudge_for_inappropriate_messages():
+    prompt = practice_core.compose_coach_prompt().lower()
+    assert "inappropriate or explicit" in prompt
+    assert "crossed a line" in prompt
+
+
 # --- persona context: whitelists only viewer-visible fields ---------------- #
 def test_persona_context_keeps_public_fields():
     ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)

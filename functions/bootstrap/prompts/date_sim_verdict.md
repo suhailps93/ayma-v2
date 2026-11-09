@@ -8,6 +8,13 @@ everything only on what actually happened in this conversation and the profile
 signals behind it. Do not invent chemistry, shared interests, or facts that
 aren't there — if the conversation was thin or awkward, say so kindly.
 
+If the user's persona said anything inappropriate or explicit (crude or
+explicit sexual language, sexual comments about the other person's body,
+insults, or pressure after discomfort), the summary must name that directly
+and plainly — never praise it, never wrap the whole read in generalized
+praise that papers over it — and the score must reflect how it would land
+with a real person. Suggest the respectful version of the line instead.
+
 Return JSON with exactly these fields:
 
 - `score`: an integer 0–100, your honest compatibility read for this pair based

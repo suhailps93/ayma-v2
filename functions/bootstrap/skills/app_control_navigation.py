@@ -614,6 +614,33 @@ _WITH_FOR = re.compile(r"\bwith\b|\bfor\b", re.IGNORECASE)
 _LAUNCH_RESULT_WORD = re.compile(
     r"\bresults?\b|\breports?\b|\bdebrief\b", re.IGNORECASE
 )
+# A practice ask that names VOICE ("in voice mode", "by voice", "using
+# voice", "voice practice") wants the voice simulator, not the text one
+# (bug DC2eUbckGA6J0ufDZpRG): the intent rides the launch through
+# ``open_practice_date(voice=True)`` so the client auto-starts the voice
+# call instead of landing on the text screen to wait for a manual tap on
+# its voice button. An explicit TEXT ask ("by text", "text mode",
+# "texting") wins over a stray voice mention, so it is checked first by
+# callers that default from context.
+_PRACTICE_VOICE_INTENT = re.compile(
+    r"\bvoice\s+mode\b|\bby\s+voice\b|\busing\s+voice\b|"
+    r"\bvia\s+voice\b|\bvoice\s+practice\b|\bpractice\s+by\s+voice\b",
+    re.IGNORECASE,
+)
+_PRACTICE_TEXT_INTENT = re.compile(
+    r"\btext\s+mode\b|\bby\s+text\b|\busing\s+text\b|\bvia\s+text\b|"
+    r"\btext\s+practice\b|\bpractice\s+by\s+text\b|\btexting\b",
+    re.IGNORECASE,
+)
+
+
+def detect_practice_voice_intent(message: str) -> bool:
+    """True when a practice ask explicitly wants VOICE mode and does not
+    explicitly ask for text instead."""
+    m = message or ""
+    if _PRACTICE_TEXT_INTENT.search(m):
+        return False
+    return _PRACTICE_VOICE_INTENT.search(m) is not None
 # A verb-less "practice date with Sofia" still launches — but only with a
 # named partner and no past-talk / existential marker, so "my practice date
 # with Sofia went well" stays a story for the model.
@@ -768,12 +795,22 @@ def _bind_open_date_sim(db, uid: str) -> Callable[..., str]:
 
 
 def _bind_open_practice_date(db, uid: str) -> Callable[..., str]:
-    async def open_practice_date(name: str = "") -> str:
+    async def open_practice_date(name: str = "", voice: bool = False) -> str:
         other, full = await asyncio.to_thread(_resolve_person, db, uid, name)
         if not other:
             return (
                 f"I couldn't find someone called {name.strip() or 'that'} "
                 "in the app."
+            )
+        if voice:
+            # Voice was asked for (bug DC2eUbckGA6J0ufDZpRG): the query
+            # flag tells the practice screen to start the voice call
+            # itself, so the user never has to tap its voice button.
+            return await _navigate(
+                db, uid, "practice_date", f"/practice/{other}?voice=1",
+                f"the practice date with {full} in voice mode (a "
+                "clearly-labelled simulator built from their public "
+                "profile; the voice call starts on its own)",
             )
         return await _navigate(
             db, uid, "practice_date", f"/practice/{other}",
@@ -1389,12 +1426,24 @@ _OPEN_PRACTICE = {
         "rehearse talking to them (by text or voice). Use this whenever the "
         "user wants to 'chat with someone's agent/avatar', 'talk to their "
         "AI', 'practice a date', or 'rehearse messaging' a specific person — "
-        "it is NOT a policy refusal, it is this feature. The return says "
+        "it is NOT a policy refusal, it is this feature. Set voice to true "
+        "when the user asks for the practice in voice mode ('in voice "
+        "mode', 'by voice'): the voice call then starts on its own, with "
+        "no extra tap from the user. The return says "
         "whether the app actually navigated — relay it honestly."
     ),
     "parameters": {
         "type": "object",
-        "properties": {"name": {"type": "string"}},
+        "properties": {
+            "name": {"type": "string"},
+            "voice": {
+                "type": "boolean",
+                "description": (
+                    "True only when the user asked for voice mode; "
+                    "omit or false for a normal text practice."
+                ),
+            },
+        },
         "required": ["name"],
     },
 }
