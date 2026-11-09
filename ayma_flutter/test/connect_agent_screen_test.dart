@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:ayma_flutter/screens/connect_agent_screen.dart';
 import 'package:ayma_flutter/services/mcp_connect_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -97,5 +99,116 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining("aren't switched on yet"), findsOneWidget);
+  });
+
+  testWidgets(
+      'approved agent appears in place once it finishes connecting, and '
+      'disconnect also refreshes in place', (tester) async {
+    // A tall surface, same as pump() above, so the whole screen builds.
+    tester.view.physicalSize = const Size(1080, 6000);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // The server truth this screen reads: approving a code does not
+    // create the connection the list shows — the agent creates it when
+    // it next polls the server to collect its token. `redeemed` stands
+    // in for that poll.
+    var redeemed = false;
+    var revoked = false;
+    final svc = McpConnectService(
+      auth: auth,
+      client: MockClient((req) async {
+        http.Response json(Object body) => http.Response(
+              jsonEncode(body),
+              200,
+              headers: const {'content-type': 'application/json'},
+            );
+        final path = req.url.path;
+        if (path.endsWith('/mcp/connect/pending')) {
+          return json({
+            'client_id': 'claude-code',
+            'scope': ['profile:read', 'dm:send'],
+          });
+        }
+        if (path.endsWith('/mcp/connect/approve')) {
+          return json({'ok': true, 'approved': true});
+        }
+        if (path.endsWith('/mcp/connect/tokens/revoke')) {
+          revoked = true;
+          return json({'ok': true});
+        }
+        if (path.endsWith('/mcp/connect/tokens')) {
+          return json({
+            'connections': [
+              if (redeemed && !revoked)
+                {
+                  'token_id': 'tok-1',
+                  'client_id': 'claude-code',
+                  'scope': ['profile:read', 'dm:send'],
+                  'created_at': '2026-11-09T07:33:00Z',
+                  'last_used_at': null,
+                },
+            ],
+          });
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    // The connected-agents section sits below the fold of this tall
+    // screen, and the ListView only builds what is near the viewport —
+    // drag the list until a target is built, then interact with it.
+    Future<void> reveal(Finder target) async {
+      for (var i = 0; i < 25 && target.evaluate().isEmpty; i++) {
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pumpAndSettle();
+      }
+      // Built is not the same as on screen: the list also builds a
+      // cache band below the fold, and a tap there misses. Bring the
+      // target fully into the viewport before interacting with it.
+      await tester.ensureVisible(target);
+      await tester.pumpAndSettle();
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: ConnectAgentScreen(service: svc)),
+    );
+    await tester.pumpAndSettle();
+    // The connected-agents section sits below the fold of this tall
+    // screen; scroll it into the built range before asserting on it.
+    await reveal(find.text('No agents are connected.'));
+    expect(find.text('No agents are connected.'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'ABCD-2345');
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    await reveal(find.text('Approve'));
+    expect(find.text('Approve'), findsOneWidget);
+
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    // Approval succeeded, but the agent has not collected its token yet,
+    // so the list is still empty — this is the moment that used to stick
+    // until the user left the screen and came back.
+    await reveal(find.text('No agents are connected.'));
+    expect(find.text('No agents are connected.'), findsOneWidget);
+    expect(find.text('claude-code'), findsNothing);
+
+    // The agent finishes connecting; the screen must notice on its own,
+    // without being re-entered.
+    redeemed = true;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    await reveal(find.text('claude-code'));
+    expect(find.text('claude-code'), findsOneWidget);
+    expect(find.text('No agents are connected.'), findsNothing);
+
+    // Disconnect refreshes the list in place too.
+    await reveal(find.text('Disconnect'));
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    await reveal(find.text('No agents are connected.'));
+    expect(find.text('claude-code'), findsNothing);
+    expect(find.text('No agents are connected.'), findsOneWidget);
   });
 }
