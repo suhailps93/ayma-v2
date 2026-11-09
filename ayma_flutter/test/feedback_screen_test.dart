@@ -53,14 +53,17 @@ void main() {
     expect(sent, isNull);
 
     await tester.enterText(
-        find.byType(TextField), 'the orb flickers on messages');
+        find.byKey(const ValueKey('feedback-title-field')), 'Orb flickers');
+    await tester.enterText(
+        find.byKey(const ValueKey('feedback-body-field')),
+        'the orb flickers on messages');
     await tester.tap(find.text('Send'));
     await tester.pumpAndSettle();
 
     expect(sent, isNotNull);
     expect(sent!['kind'], 'bug');
     expect(sent!['body'], 'the orb flickers on messages');
-    expect(sent!['title'], 'the orb flickers on messages');
+    expect(sent!['title'], 'Orb flickers');
     expect(sent!['source'], 'settings_form');
     expect(sent!['screenshot_paths'], isEmpty);
   });
@@ -88,7 +91,9 @@ void main() {
 
     await tester.tap(find.text('Feature'));
     await tester.pump();
-    await tester.enterText(find.byType(TextField), 'add a dark orb option');
+    await tester.enterText(
+        find.byKey(const ValueKey('feedback-body-field')),
+        'add a dark orb option');
     await tester.tap(find.text('Send'));
     await tester.pumpAndSettle();
 

@@ -184,8 +184,11 @@ def record_submission(
 ) -> str | None:
     """Append one product-feedback row (bug / feature request) to ``feedback``.
 
-    Used by the in-chat feedback catcher (``source="chat_card"``) and the
-    Settings "Send feedback" form (``source="settings_form"``). Ayma never
+    Used by the in-chat feedback catcher (``source="chat_card"``), the
+    Settings "Send feedback" form (``source="settings_form"``), and — via
+    ``bug_reports_ops`` — the ``report_bug`` tool, capability-gap guard
+    and self-check auto-filer (``source="chat_card"``), so every bug /
+    feature report shares this one shape and collection. Ayma never
     reads these rows. ``screenshot_paths`` are Storage paths already validated
     by the caller to live under ``uploads/{uid}/`` — the admin view resolves
     them to short-lived signed URLs rather than storing a public URL.

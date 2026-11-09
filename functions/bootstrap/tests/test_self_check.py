@@ -1102,7 +1102,7 @@ class _BugDb:
         self._docs = docs
 
     def collection(self, name):
-        assert name == "bug_reports"
+        assert name == "feedback"
         return _BugCollection(self._docs)
 
 
@@ -1110,7 +1110,7 @@ def _filed_doc(error, *, hours_ago=1, doc_id="bug-old", check="nav:explore"):
     return _BugDoc(
         {
             "uid": "u1",
-            "description": (
+            "body": (
                 f"[self-check] check={check} category=navigation "
                 f"session=s-old run=oldrun env=test-env error={error}"
             ),

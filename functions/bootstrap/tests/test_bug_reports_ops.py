@@ -37,44 +37,52 @@ def _row(db, col):
     return next(iter(db.store[col].values()))
 
 
-def test_record_writes_a_bug_report_row():
+def test_record_writes_a_unified_feedback_row():
     db = _Db()
     rid = bug_reports_ops.record(db, "u1", "the app crashed on launch")
     assert rid
-    row = _row(db, "bug_reports")
+    row = _row(db, "feedback")
     assert row["uid"] == "u1"
-    assert row["description"] == "the app crashed on launch"
-    assert row["image_path"] is None
+    assert row["kind"] == "bug"
+    assert row["source"] == "chat_card"
+    assert row["body"] == "the app crashed on launch"
+    # No title was supplied: the unified fallback derives it from the body,
+    # exactly as for a chat card with a cleared title.
+    assert row["title"] == "the app crashed on launch"
+    assert row["screenshot_paths"] == []
+    assert row["screenshot_url"] is None
     assert row["status"] == "new"
     assert "created_at" in row
 
 
-def test_record_includes_image_path_when_present():
+def test_record_includes_image_path_as_screenshot_when_present():
     db = _Db()
     bug_reports_ops.record(
         db, "u1", "this button does nothing",
         image_path="uploads/u1/shot.png",
     )
-    row = _row(db, "bug_reports")
-    assert row["image_path"] == "uploads/u1/shot.png"
+    row = _row(db, "feedback")
+    assert row["screenshot_paths"] == ["uploads/u1/shot.png"]
+    assert row["screenshot_url"] == "uploads/u1/shot.png"
 
 
-def test_record_omits_image_path_when_absent():
+def test_record_has_no_screenshot_when_absent():
     db = _Db()
     bug_reports_ops.record(db, "u1", "lost my chat history")
-    row = _row(db, "bug_reports")
-    assert row["image_path"] is None
+    row = _row(db, "feedback")
+    assert row["screenshot_paths"] == []
+    assert row["screenshot_url"] is None
 
 
 def test_record_is_noop_without_uid_or_description():
     db = _Db()
     assert bug_reports_ops.record(db, "", "the app crashed") is None
     assert bug_reports_ops.record(db, "u1", "   ") is None
-    assert "bug_reports" not in db.store
+    assert "feedback" not in db.store
 
 
-def test_record_never_writes_to_the_other_feedback_buckets():
+def test_record_never_writes_to_the_retired_bug_reports_bucket():
     db = _Db()
     bug_reports_ops.record(db, "u1", "the app crashed")
-    assert "feedback" not in db.store
+    assert "bug_reports" not in db.store
     assert "product_feedback" not in db.store
