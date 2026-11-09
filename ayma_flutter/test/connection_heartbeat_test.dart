@@ -12,17 +12,46 @@ void main() {
       expect(ConnectionClassifier().state, ConnectionQuality.ok);
     });
 
-    test('one failure -> weak, second consecutive failure -> offline', () {
+    test('failures ladder: lone failure holds ok, second -> weak, '
+        'third -> offline', () {
       final c = ConnectionClassifier();
+      c.record(ProbeOutcome.failure);
+      expect(c.state, ConnectionQuality.ok);
       c.record(ProbeOutcome.failure);
       expect(c.state, ConnectionQuality.weak);
       c.record(ProbeOutcome.failure);
       expect(c.state, ConnectionQuality.offline);
     });
 
+    test('the cold-start pattern (a lone failure between good probes) '
+        'never leaves ok', () {
+      // Regression (founder report, Nov 8 2026): staging cold starts
+      // ate single probes whole (server logs: /health requests held
+      // 10.6s and 21.3s by instance boots, still returning 200) while
+      // the same session's real data requests ran a 40ms median — and
+      // every such miss used to raise the weak banner at once.
+      final c = ConnectionClassifier();
+      for (var i = 0; i < 4; i++) {
+        c.record(ProbeOutcome.failure);
+        expect(c.state, ConnectionQuality.ok);
+        c.record(ProbeOutcome.good);
+        expect(c.state, ConnectionQuality.ok);
+      }
+    });
+
+    test('one good probe clears weak at once', () {
+      final c = ConnectionClassifier()
+        ..record(ProbeOutcome.slow)
+        ..record(ProbeOutcome.slow);
+      expect(c.state, ConnectionQuality.weak);
+      c.record(ProbeOutcome.good);
+      expect(c.state, ConnectionQuality.ok);
+    });
+
     test('recovery needs 2 consecutive good probes (offline -> weak -> ok)',
         () {
       final c = ConnectionClassifier()
+        ..record(ProbeOutcome.failure)
         ..record(ProbeOutcome.failure)
         ..record(ProbeOutcome.failure);
       expect(c.state, ConnectionQuality.offline);
@@ -48,28 +77,32 @@ void main() {
       expect(c.state, ConnectionQuality.ok);
     });
 
-    test('a slow probe between goods resets the recovery streak', () {
+    test('from offline: first good steps up to weak, a slow in '
+        'between holds weak, the next good clears to ok', () {
       final c = ConnectionClassifier()
         ..record(ProbeOutcome.failure)
+        ..record(ProbeOutcome.failure)
         ..record(ProbeOutcome.failure);
+      expect(c.state, ConnectionQuality.offline);
       c.record(ProbeOutcome.good);
       expect(c.state, ConnectionQuality.weak);
       c.record(ProbeOutcome.slow);
       expect(c.state, ConnectionQuality.weak);
-      // Still needs two consecutive goods from here.
-      c.record(ProbeOutcome.good);
-      expect(c.state, ConnectionQuality.weak);
+      // Weak needs only one good probe to clear (the two-good rule is
+      // only for climbing out of offline itself).
       c.record(ProbeOutcome.good);
       expect(c.state, ConnectionQuality.ok);
     });
 
-    test('intermittent failures hold weak and never reach offline', () {
+    test('failure pairs interrupted by a good probe never reach '
+        'offline, and the good probe clears weak between them', () {
       final c = ConnectionClassifier();
-      for (var i = 0; i < 6; i++) {
+      for (var i = 0; i < 3; i++) {
+        c.record(ProbeOutcome.failure);
         c.record(ProbeOutcome.failure);
         expect(c.state, ConnectionQuality.weak);
         c.record(ProbeOutcome.good);
-        expect(c.state, ConnectionQuality.weak);
+        expect(c.state, ConnectionQuality.ok);
       }
     });
 
@@ -77,7 +110,9 @@ void main() {
         () {
       final c = ConnectionClassifier()
         ..record(ProbeOutcome.failure)
+        ..record(ProbeOutcome.failure)
         ..record(ProbeOutcome.failure);
+      expect(c.state, ConnectionQuality.offline);
       c.record(ProbeOutcome.slow);
       expect(c.state, ConnectionQuality.weak);
     });
@@ -152,14 +187,20 @@ void main() {
 
   group('ConnectionHeartbeat probe path', () {
     test('probeNow feeds outcomes through the classifier', () async {
-      final script = [ProbeOutcome.failure, ProbeOutcome.failure];
+      final script = [
+        ProbeOutcome.failure,
+        ProbeOutcome.failure,
+        ProbeOutcome.failure,
+      ];
       final hb = ConnectionHeartbeat(probe: () async => script.removeAt(0));
+      expect(hb.state, ConnectionQuality.ok);
+      await hb.probeNow();
       expect(hb.state, ConnectionQuality.ok);
       await hb.probeNow();
       expect(hb.state, ConnectionQuality.weak);
       await hb.probeNow();
       expect(hb.state, ConnectionQuality.offline);
-      expect(hb.probeCount, 2);
+      expect(hb.probeCount, 3);
     });
 
     test('a second probeNow while one is in flight is skipped', () async {
@@ -185,6 +226,9 @@ void main() {
         }),
       );
       await hb.probeNow();
+      expect(hb.state, ConnectionQuality.ok);
+      await hb.probeNow();
+      expect(hb.state, ConnectionQuality.weak);
       await hb.probeNow();
       expect(hb.state, ConnectionQuality.offline);
       expect(httpCalls, 0);
@@ -196,9 +240,9 @@ void main() {
         httpClient: MockClient((_) async => http.Response('no', 500)),
       );
       await hb.probeNow();
-      expect(hb.state, ConnectionQuality.weak);
+      expect(hb.state, ConnectionQuality.ok);
       await hb.probeNow();
-      expect(hb.state, ConnectionQuality.offline);
+      expect(hb.state, ConnectionQuality.weak);
     });
 
     test('a slow real probe (over the 4s budget) classifies as slow, and two '

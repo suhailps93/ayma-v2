@@ -128,7 +128,14 @@ class _Harness {
   }
 
   Future<void> goOffline() async {
-    script.addAll([ProbeOutcome.failure, ProbeOutcome.failure]);
+    // Three consecutive failures: the classifier ladder is
+    // lone failure -> hold, second -> weak, third -> offline.
+    script.addAll([
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+    ]);
+    await heartbeat.probeNow();
     await heartbeat.probeNow();
     await heartbeat.probeNow();
     expect(heartbeat.state, ConnectionQuality.offline);
@@ -337,8 +344,13 @@ void main() {
       return queue;
     }
 
-    final script = <ProbeOutcome>[ProbeOutcome.failure, ProbeOutcome.failure];
+    final script = <ProbeOutcome>[
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+    ];
     final offline = ConnectionHeartbeat(probe: () async => script.removeAt(0));
+    await offline.probeNow();
     await offline.probeNow();
     await offline.probeNow();
     final first = await queueFor(_FakeUploader(), _FakeApi(), offline);
