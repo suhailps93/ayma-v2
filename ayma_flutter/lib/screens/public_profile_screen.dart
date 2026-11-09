@@ -394,12 +394,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             // editable `story_public` report. Anyone else gets the read-only
             // `public_profile` report. Same [ProfileBody] either way; the
             // action rail, tab bar and Ask-Ayma popup below sit on top of it.
+            final hasRail = !p.isSelf && !p.blocked;
             content = ProfileBody(
               reportType: p.isSelf ? 'story_public' : 'public_profile',
               reportId: p.uid,
               api: _api,
               profile: p,
               bottomPadding: 120,
+              extraRightPadding: hasRail ? _RailButton._width : 0,
             );
           }
           // Screen-level `Stack` — a sibling of the scrollable content below,
@@ -1017,6 +1019,7 @@ class ProfileBody extends StatelessWidget {
     this.profile,
     this.headerLoading = false,
     this.bottomPadding = 0,
+    this.extraRightPadding = 0,
     this.editing,
     this.leading,
   });
@@ -1027,6 +1030,11 @@ class ProfileBody extends StatelessWidget {
   final PublicProfile? profile;
   final bool headerLoading;
   final double bottomPadding;
+
+  /// Extra padding added to the right edge of the living report text column
+  /// when the floating action rail is present, reserving a gutter so no
+  /// text flows underneath the rail.
+  final double extraRightPadding;
 
   /// An optional card rendered as the first scrolling item, above the photo
   /// header (e.g. the match-request screen's "Ayma's case" card). Null
@@ -1089,27 +1097,17 @@ class ProfileBody extends StatelessWidget {
               : "They haven't shared much publicly yet.",
           shrinkWrap: true,
           showTitle: false,
+          extraRightPadding: extraRightPadding,
         ),
       ],
     );
   }
 }
 
-/// One profile-action rail button — a floating icon-only glyph whose OWN
-/// rendering is the state signal (founder spec, 2026-09-26 icon-family
-/// redesign): not-yet-done is the glyph as a clean stroked outline; liked /
-/// already messaged / web search already run / match already scored is the
-/// SAME exact geometry filled solid with the accent (plus a subtle internal
-/// highlight and a small tight bloom — see `ayma_rail_icons.dart`, the one
-/// place the family's rendering lives). Never a different icon, no
-/// checkmark/badge, no circular background, no label, no oversized fuzzy
-/// shadow. `ac.accent` (the user's own accent pick, not a hardcoded brand
-/// colour) so both states hold under any accent and either theme.
-///
-/// No label or credit-cost caption underneath (founder ask, 2026-09-22) —
-/// the outline-vs-filled state is the ONLY signal a viewer gets for each
-/// button's status, including the match score: once a report exists the
-/// Match glyph simply fills, there's no percentage printed on the rail.
+/// One profile-action rail button — a floating icon-only glyph rendered as
+/// a quiet outline in `context.ac.fg` (Instagram model; founder orders Nov 2026).
+/// No circular background, no label, no bloom. Only the like heart fills
+/// (in `context.ac.likeRed`); the other five buttons remain outlines in all states.
 ///
 /// A fixed [_width] box so every button centers on the identical vertical
 /// line, and the screen-level `Positioned` this rail is mounted under
@@ -1120,37 +1118,26 @@ class _RailButton extends StatelessWidget {
   const _RailButton({
     super.key,
     required this.icon,
-    required this.active,
     required this.onPressed,
   });
 
   final Widget icon;
-  final bool active;
   final VoidCallback? onPressed;
 
   /// Orb tap box width (48px circle + 8px padding each side) — see class doc.
   static const _width = 64.0;
 
-  /// The family's consistent optical size (founder spec, 2026-09-26: "~30-32
-  /// logical px artwork") — down from the earlier 42px sticker-era glyphs,
+  /// The family's consistent optical size (founder spec: 32 logical px artwork)
   /// with the big touch target preserved by [_iconPadding] + [_width].
   static const _iconSize = 32.0;
 
-  /// Padding around the glyph — grown alongside the 42→32 artwork change so
-  /// the tap target stays big (32 + 12*2 = 56px box inside the 64px-wide
-  /// rail button) while the artwork itself sits at the spec's optical size.
+  /// Padding around the glyph so the tap target stays big (32 + 12*2 = 56px
+  /// box inside the 64px-wide rail button).
   static const _iconPadding = 12.0;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    // Fixed-width tap target so every button's glyph centers on the same
-    // line as the Ayma orb (see class doc). The wrapping `Column` (rather
-    // than handing the icon straight to `InkWell`/`Padding`) matters even
-    // with a single child: `SizedBox(width: _width)` forces a *tight* 64px
-    // width constraint down through `InkWell`/`Padding`, and only `Column`'s
-    // default `crossAxisAlignment.center` loosens that back to the glyph's
-    // own natural (smaller) size instead of stretching it to fill the box.
     return SizedBox(
       width: _width,
       child: InkWell(
@@ -1161,16 +1148,10 @@ class _RailButton extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // No circular disc/button behind either state (founder ask,
-              // reference moodboard) — just the glyph itself. "Done" is the
-              // solid filled glyph (its own restrained bloom is painted by
-              // the glyph's painter — see `ayma_rail_icons.dart`); "not
-              // done" is the outline glyph. Same padding both ways so the
-              // icon centers on the same line regardless of state.
               Padding(
                 padding: const EdgeInsets.all(_iconPadding),
                 child: IconTheme(
-                  data: IconThemeData(color: ac.accent, size: _iconSize),
+                  data: IconThemeData(color: ac.fg, size: _iconSize),
                   child: icon,
                 ),
               ),
@@ -1211,42 +1192,31 @@ class _Actions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The live selected accent colour — every glyph reads it fresh on each
-    // build, so a pick made on the Accent Color settings screen recolours
-    // this rail immediately (§ `AccentColorController` / `context.ac`), with
-    // no restart and no colour literal of our own anywhere in this file.
-    final accent = context.ac.accent;
+    final ac = context.ac;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         TourAnchorScope(
           id: TourAnchors.publicProfileLike,
           child: _RailButton(
-            active: liked,
             onPressed: liking ? null : () => liked ? onUnlike(p) : onLike(p),
-            icon: AymaHeartGlyph(accent: accent, filled: liked),
+            icon: AymaHeartGlyph(accent: liked ? ac.likeRed : ac.fg, filled: liked),
           ),
         ),
         const SizedBox(height: 16),
         TourAnchorScope(
           id: TourAnchors.publicProfileMessage,
           child: _RailButton(
-            // `p.threadId` is a bare deterministic pair id present for any
-            // non-self profile — it exists whether or not they've ever
-            // actually spoken. Only `hasChatted` (a real message sent either
-            // way) should light this up.
-            active: p.hasChatted,
             onPressed: p.threadId == null
                 ? null
                 : () => context.push('/dm/${p.threadId}'),
-            icon: AymaChatGlyph(accent: accent, filled: p.hasChatted),
+            icon: AymaChatGlyph(accent: ac.fg, filled: false),
           ),
         ),
         const SizedBox(height: 16),
         TourAnchorScope(
           id: TourAnchors.publicProfileWebResearch,
           child: _RailButton(
-            active: p.deepDiveId.isNotEmpty,
             // Tapping opens the report screen, which shows the existing report or
             // the never-run empty state with its own "Run web search" button —
             // tapping the icon itself starts no search.
@@ -1254,8 +1224,7 @@ class _Actions extends StatelessWidget {
               final id = p.deepDiveId.isNotEmpty ? p.deepDiveId : 'uid_${p.uid}';
               context.push('/deep-dive/${Uri.encodeComponent(id)}');
             },
-            icon: AymaSearchGlyph(
-                accent: accent, filled: p.deepDiveId.isNotEmpty),
+            icon: AymaSearchGlyph(accent: ac.fg, filled: false),
           ),
         ),
         const SizedBox(height: 16),
@@ -1267,15 +1236,13 @@ class _Actions extends StatelessWidget {
             valueListenable: MatchActivity.instance.recalculating,
             builder: (context, active, _) {
               final recalculating = active.contains(p.threadId);
-              final hasScore = score != null;
               final busy = scoring || recalculating;
               return _RailButton(
-                active: hasScore,
                 onPressed: busy ? null : () => onRunMatch(p),
                 icon: busy
                     // Compatibility scoring (or its recalc poll) in flight.
                     ? const AymaWingLoader(size: 18, showLabel: false)
-                    : AymaMatchGlyph(accent: accent, filled: hasScore),
+                    : AymaMatchGlyph(accent: ac.fg, filled: false),
               );
             },
           ),
@@ -1288,12 +1255,11 @@ class _Actions extends StatelessWidget {
           id: TourAnchors.publicProfilePractice,
           child: _RailButton(
             key: const Key('profilePracticeButton'),
-            active: false,
             onPressed: () => context.push(
               '/practice/${p.uid}',
               extra: p.name,
             ),
-            icon: Icon(Icons.model_training_outlined, color: accent),
+            icon: Icon(Icons.school_outlined, color: ac.fg),
           ),
         ),
         const SizedBox(height: 16),
@@ -1304,11 +1270,10 @@ class _Actions extends StatelessWidget {
           id: TourAnchors.publicProfileDateSim,
           child: _RailButton(
             key: const Key('profileDateSimButton'),
-            active: false,
             // Reopens the last completed sim with this person when one exists,
             // otherwise opens the setup form (see [onDateSim]).
             onPressed: () => onDateSim(p),
-            icon: Icon(Icons.auto_awesome_outlined, color: accent),
+            icon: Icon(Icons.people_outlined, color: ac.fg),
           ),
         ),
       ],
