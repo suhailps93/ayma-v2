@@ -360,6 +360,69 @@ def test_oauth_protected_resource_metadata(fake_db):
     assert "header" in body["bearer_methods_supported"]
 
 
+def _advertised_urls(client, headers=None):
+    """Every URL the discovery docs and the device flow hand to a client."""
+    asm = client.get(
+        "/.well-known/oauth-authorization-server", headers=headers
+    ).json()
+    prm = client.get(
+        "/.well-known/oauth-protected-resource", headers=headers
+    ).json()
+    device = client.post(
+        "/oauth/device_authorization",
+        json={"client_id": "claude-code"},
+        headers=headers,
+    ).json()
+    return [
+        asm["issuer"],
+        asm["device_authorization_endpoint"],
+        asm["token_endpoint"],
+        asm["revocation_endpoint"],
+        prm["resource"],
+        *prm["authorization_servers"],
+        device["verification_uri"],
+        device["verification_uri_complete"],
+    ]
+
+
+def test_advertised_urls_use_https_behind_tls_front_end(monkeypatch, fake_db):
+    """Cloud Run ends TLS and sends X-Forwarded-Proto: https; every advertised
+    URL must be https or clients are told to downgrade (prod bug, 2026-11-09)."""
+    _enable(monkeypatch)
+    client = TestClient(mcp_server.asgi_app)
+    urls = _advertised_urls(client, {"x-forwarded-proto": "https"})
+    assert all(u.startswith("https://testserver") for u in urls), urls
+
+
+def test_advertised_urls_use_first_forwarded_proto_value(monkeypatch, fake_db):
+    _enable(monkeypatch)
+    client = TestClient(mcp_server.asgi_app)
+    urls = _advertised_urls(client, {"x-forwarded-proto": "https, http"})
+    assert all(u.startswith("https://testserver") for u in urls), urls
+
+
+def test_advertised_urls_stay_http_without_forwarded_proto(monkeypatch, fake_db):
+    """Local dev has no TLS front end, so plain http must keep working."""
+    _enable(monkeypatch)
+    client = TestClient(mcp_server.asgi_app)
+    urls = _advertised_urls(client)
+    assert all(u.startswith("http://testserver") for u in urls), urls
+
+
+def test_forwarded_proto_http_never_produces_https(monkeypatch, fake_db):
+    _enable(monkeypatch)
+    client = TestClient(mcp_server.asgi_app)
+    urls = _advertised_urls(client, {"x-forwarded-proto": "http"})
+    assert all(u.startswith("http://testserver") for u in urls), urls
+
+
+def test_forwarded_proto_never_downgrades_https(monkeypatch, fake_db):
+    _enable(monkeypatch)
+    client = TestClient(mcp_server.asgi_app, base_url="https://testserver")
+    urls = _advertised_urls(client, {"x-forwarded-proto": "http"})
+    assert all(u.startswith("https://testserver") for u in urls), urls
+
+
 def test_metadata_endpoints_include_all_scopes(fake_db):
     """Both metadata endpoints should list all supported scopes."""
     client = TestClient(mcp_server.asgi_app)

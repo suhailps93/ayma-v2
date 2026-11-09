@@ -146,6 +146,11 @@ Endpoints (all under `/mcp`):
 | `/mcp/.well-known/oauth-authorization-server` | GET | none | AS metadata (RFC 8414). |
 | `/mcp/.well-known/oauth-protected-resource` | GET | none | Protected-resource metadata (RFC 9728). |
 
+The metadata documents and the device flow's `verification_uri` build their URLs
+with `_public_base_url`: Cloud Run ends TLS in front of uvicorn, so the request
+looks like http, and `X-Forwarded-Proto: https` upgrades the advertised scheme.
+It never downgrades, so plain http keeps working in local dev.
+
 Tokens are **per-user, revocable, and expiring** (`mcp_token_ttl_days`, default
 30). Firestore: `mcp_device_codes/{device_code}` (pending → approved/denied →
 redeemed, 10-min TTL) and `mcp_tokens/{sha256}` (uid, client_id, scopes,
