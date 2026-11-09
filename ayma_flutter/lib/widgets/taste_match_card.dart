@@ -81,7 +81,7 @@ class TasteMatchCard extends StatelessWidget {
           child: Container(
             key: const Key('tasteMatchCard'),
             width: double.infinity,
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: ac.bgCard,
               borderRadius: BorderRadius.circular(18),
@@ -123,7 +123,7 @@ class TasteMatchCard extends StatelessWidget {
           Flexible(
             child: Container(
               key: const Key('tasteMatchSampleChip'),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(color: ac.line, width: 0.5),
@@ -152,7 +152,7 @@ class TasteMatchCard extends StatelessWidget {
                 size: 28, weight: FontWeight.w800, color: ac.accent),
           ),
           Text('/100', style: AymaType.sans(size: 13, color: ac.fgDim)),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           if (m.scoreLabel.isNotEmpty)
             Expanded(
               child: Text(
@@ -177,7 +177,7 @@ class TasteMatchCard extends StatelessWidget {
         ),
       ],
       if (m.summary.isNotEmpty) ...[
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text(
           m.summary,
           style: AymaType.sans(size: 14, color: ac.fg, height: 1.45),
@@ -188,36 +188,36 @@ class TasteMatchCard extends StatelessWidget {
         Text(
           'Why you match',
           style: AymaType.sans(
-              size: 11.5, weight: FontWeight.w600, color: ac.fgMute),
+              size: 12, weight: FontWeight.w600, color: ac.fgDim),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Wrap(
           key: const Key('tasteMatchSharedTags'),
-          spacing: 6,
-          runSpacing: 6,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             for (final t in m.sharedTags)
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
+                  color: ac.accentFaint,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: ac.accent, width: 0.5),
                 ),
                 child: Text(
                   t,
-                  style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                  style: AymaType.sans(size: 12, color: ac.fgDim),
                 ),
               ),
           ],
         ),
       ],
       if (m.demographics != null) ...[
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text(
           m.demographics!.note,
           key: const Key('tasteMatchDemographics'),
-          style: AymaType.sans(size: 12, color: ac.fgMute, height: 1.4),
+          style: AymaType.sans(size: 12, color: ac.fgDim, height: 1.4),
         ),
       ],
       if (m.shared.isNotEmpty) ...[
@@ -225,25 +225,25 @@ class TasteMatchCard extends StatelessWidget {
         Text(
           'You both listed',
           style: AymaType.sans(
-              size: 11.5, weight: FontWeight.w600, color: ac.fgMute),
+              size: 12, weight: FontWeight.w600, color: ac.fgDim),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Wrap(
           key: const Key('tasteMatchShared'),
-          spacing: 6,
-          runSpacing: 6,
+          spacing: 8,
+          runSpacing: 8,
           children: [
             for (final s in m.shared)
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: ac.accentFaint,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   s,
-                  style: AymaType.sans(size: 12.5, color: ac.fg),
+                  style: AymaType.sans(size: 12, color: ac.fg),
                 ),
               ),
           ],
@@ -254,10 +254,10 @@ class TasteMatchCard extends StatelessWidget {
         Text(
           "Date ideas you'd both enjoy",
           style: AymaType.sans(
-              size: 13.5, weight: FontWeight.w600, color: ac.fgDim),
+              size: 14, weight: FontWeight.w600, color: ac.fgDim),
         ),
         for (final idea in m.dateIdeas) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _IdeaRow(idea: idea),
         ],
       ],
@@ -322,7 +322,7 @@ class _DomainBar extends StatelessWidget {
             label,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: AymaType.sans(size: 12.5, color: ac.fgDim),
+            style: AymaType.sans(size: 12, color: ac.fgDim),
           ),
         ),
         const SizedBox(width: 10),
@@ -331,7 +331,7 @@ class _DomainBar extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: Stack(
               children: [
-                Container(height: 8, color: ac.line),
+                Container(height: 8, color: ac.lineSoft),
                 FractionallySizedBox(
                   widthFactor: clamped / 100,
                   child: Container(height: 8, color: ac.accent),
@@ -348,7 +348,7 @@ class _DomainBar extends StatelessWidget {
             textAlign: TextAlign.right,
             maxLines: 1,
             style: AymaType.sans(
-              size: 12.5,
+              size: 12,
               weight: FontWeight.w600,
               color: ac.fg,
             ).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
@@ -380,7 +380,7 @@ class _IdeaRow extends StatelessWidget {
               if (idea.kind.isNotEmpty)
                 TextSpan(
                   text: '  ${idea.kind}',
-                  style: AymaType.sans(size: 12, color: ac.fgMute),
+                  style: AymaType.sans(size: 12, color: ac.fgDim),
                 ),
             ],
           ),
@@ -393,7 +393,7 @@ class _IdeaRow extends StatelessWidget {
         if (idea.address != null && idea.address!.isNotEmpty)
           Text(
             idea.address!,
-            style: AymaType.sans(size: 12, color: ac.fgMute),
+            style: AymaType.sans(size: 12, color: ac.fgDim),
           ),
       ],
     );

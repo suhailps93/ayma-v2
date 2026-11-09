@@ -27,6 +27,7 @@ import logging
 import uuid
 from typing import Callable
 
+import failure_log
 import gemini
 import photo_moderation
 import photo_notes
@@ -190,6 +191,9 @@ def _bind_edit(
         except token_ledger.TokenCapExceeded:
             return token_ledger.out_of_credits_message(token_ledger.CONTEXT_PHOTO_EDIT)
         except Exception as exc:  # noqa: BLE001 - model refusal/transient error
+            failure_log.record_failure(
+                db, uid, "edit_photo", exc, surface="text"
+            )
             logger.warning(
                 "edit_photo: image model call failed for %s", uid, exc_info=True
             )
@@ -211,6 +215,9 @@ def _bind_edit(
         try:
             path, url_out = _store_generated_photo(uid, new_bytes, new_mime)
         except Exception as exc:  # noqa: BLE001
+            failure_log.record_failure(
+                db, uid, "edit_photo", exc, surface="text"
+            )
             logger.warning(
                 "edit_photo: storage upload failed for %s", uid, exc_info=True
             )

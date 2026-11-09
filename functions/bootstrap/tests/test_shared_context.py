@@ -290,3 +290,90 @@ def test_chat_stream_turn_with_deep_dive_reference_binds_the_pull_tool(
     assert "SHARED REPORT" in seen["prompt"]
     assert "open_shared_report" in seen["names"]
     assert "ZZZDIVESUMMARY" in seen["fns"]["open_shared_report"]()
+
+
+def test_chat_turn_persists_the_posted_card_for_history(monkeypatch):
+    """End to end (founder bug 2026-11-09): the card posted with a send is
+    persisted on the user turn and returned by /chat/history, so the chat
+    can render the same tappable card after a restart. A profile share is
+    used on purpose: it never sets the shared_* tool reference, so this
+    proves the card round-trips on its own channel for every kind."""
+    db = _seeded(monkeypatch, {})
+
+    async def _capture(message, system_prompt=None, tool_declarations=None,
+                       tool_fns=None, **_kw):
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        json={
+            "message": "what do y think",
+            "client_msg_id": "card-send-1",
+            "viewing_profile_uid": OTHER,
+            "shared_card_kind": "profile",
+            "shared_card_uid": OTHER,
+            "shared_card_name": "Dana",
+            "shared_card_photo": "https://example.com/dana.jpg",
+            "shared_card_ref_id": "",
+        },
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200, resp.text
+
+    docs = [
+        d.to_dict()
+        for d in db.collection("users")
+        .document(UID)
+        .collection("chat_messages")
+        .stream()
+    ]
+    user_docs = [d for d in docs if d.get("role") == "user"]
+    assert len(user_docs) == 1, docs
+    card = user_docs[0]
+    assert card["shared_card_kind"] == "profile"
+    assert card["shared_card_uid"] == OTHER
+    assert card["shared_card_name"] == "Dana"
+    assert card["shared_card_photo"] == "https://example.com/dana.jpg"
+    assert card["shared_card_ref_id"] == ""
+    # The reply row never carries a card.
+    ayma_docs = [d for d in docs if d.get("role") == "ayma"]
+    assert ayma_docs and "shared_card_kind" not in ayma_docs[0]
+
+    hist = client.get(
+        "/chat/history?limit=10", headers=_auth(monkeypatch)
+    )
+    assert hist.status_code == 200, hist.text
+    rows = [m for m in hist.json()["messages"] if m["role"] == "user"]
+    assert len(rows) == 1, hist.json()
+    assert rows[0]["shared_card_kind"] == "profile"
+    assert rows[0]["shared_card_uid"] == OTHER
+    assert rows[0]["shared_card_name"] == "Dana"
+    assert rows[0]["shared_card_photo"] == "https://example.com/dana.jpg"
+    assert rows[0]["shared_card_ref_id"] == ""
+
+
+def test_chat_turn_without_a_card_persists_none(monkeypatch):
+    db = _seeded(monkeypatch, {})
+
+    async def _capture(message, system_prompt=None, tool_declarations=None,
+                       tool_fns=None, **_kw):
+        return gemini.Reply(text="ok")
+
+    monkeypatch.setattr(gemini, "generate_reply", _capture)
+    resp = client.post(
+        "/chat",
+        json={"message": "hi", "client_msg_id": "plain-send-1"},
+        headers=_auth(monkeypatch),
+    )
+    assert resp.status_code == 200, resp.text
+    docs = [
+        d.to_dict()
+        for d in db.collection("users")
+        .document(UID)
+        .collection("chat_messages")
+        .stream()
+    ]
+    assert docs, "the turn should still persist"
+    for d in docs:
+        assert "shared_card_kind" not in d

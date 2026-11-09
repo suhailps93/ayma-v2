@@ -1220,7 +1220,7 @@ class _StatRow extends StatelessWidget {
         ScoreBar(
           value: n,
           max: max,
-          height: 6,
+          height: 8,
           colorFor: banded ? _bandColor : null,
         ),
         if (basisRest.isNotEmpty || source != null) ...[

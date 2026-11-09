@@ -61,6 +61,38 @@ import '../widgets/overflow_guards.dart';
 import 'preboarding_flow_screen.dart';
 import 'voice_call_screen.dart';
 
+/// Split a stored history text's leading `[Replying to …: "…"]` wire prefix
+/// (see `replyWirePrefix` in transcript_store.dart) back into the bare text
+/// plus the quote's subject / snippet / kind / photo reference, so both
+/// history loaders rebuild the quoted reply card exactly as it was sent —
+/// including a photo reply's `[photo ref:…]` marker, which becomes
+/// [TranscriptTurn.replyImageUrl] (and never renders as raw text).
+({String text, String subject, String snippet, String kind, String imageUrl})
+    _splitReplyPrefix(String raw) {
+  final match = RegExp(r'^\[Replying to ([^:]+): "(.*?)"\]\n(.*)$',
+          dotAll: true)
+      .firstMatch(raw);
+  if (match == null) {
+    return (text: raw, subject: '', snippet: '', kind: '', imageUrl: '');
+  }
+  final subject = match.group(1)!;
+  var snippet = match.group(2)!;
+  var imageUrl = '';
+  final ref = RegExp(r'\[photo ref:([^\]]+)\]').firstMatch(snippet);
+  if (ref != null) {
+    imageUrl = ref.group(1)!;
+    snippet = snippet.replaceAll(ref.group(0)!, '').trim();
+  }
+  final lower = subject.toLowerCase();
+  return (
+    text: match.group(3)!,
+    subject: subject,
+    snippet: snippet,
+    kind: (lower == 'ayma' || lower == 'you') ? 'message' : 'page',
+    imageUrl: imageUrl,
+  );
+}
+
 /// Ayma chat screen. One [TranscriptStore] backs the view; typed turns and
 /// relayed voice-transcript segments flow into it through the same path, so a
 /// voice turn renders exactly like a typed one (§1.6, Steps 8–16).
@@ -536,6 +568,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String _sharedSubjectName = '';
   String _sharedRefVersion = '';
 
+  /// The Send-to-Ayma card the NEXT send posts (set by the staged-draft
+  /// branch of [_send] itself and by [_runTalkAbout], both of which add
+  /// the card turn and immediately re-enter [_send]). Carried on that one
+  /// send so the server persists the card on the user turn and it renders
+  /// again from history after a restart; consumed (cleared) by the send
+  /// that carries it, so a later plain message never re-stamps the card.
+  String _pendingCardKind = '';
+  String _pendingCardUid = '';
+  String _pendingCardName = '';
+  String _pendingCardPhoto = '';
+  String _pendingCardRefId = '';
+
   String _currentUid() {
     try {
       return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -927,6 +971,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   "stands out, and is this worth pursuing?",
             _ => "Let's talk about $who. What's your read on them for me?",
           };
+    _pendingCardKind = k.shareKind.isEmpty ? 'profile' : k.shareKind;
+    _pendingCardUid = k.targetUid;
+    _pendingCardName = who;
+    _pendingCardPhoto = k.photoUrl;
+    _pendingCardRefId = k.refId;
     _store.addSharedTurn(
       kind: k.shareKind.isEmpty ? 'profile' : k.shareKind,
       uid: k.targetUid,
@@ -1513,31 +1562,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         imagePath: m.audioPath,
         resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
       );
-      String text = m.text;
-      String replySubject = '';
-      String replySnippet = '';
-      String replyKind = '';
-      final replyMatch = RegExp(r'^\[Replying to ([^:]+): "(.*?)"\]\n(.*)$', dotAll: true).firstMatch(text);
-      if (replyMatch != null) {
-        replySubject = replyMatch.group(1)!;
-        replySnippet = replyMatch.group(2)!;
-        final lowerSubject = replySubject.toLowerCase();
-        replyKind = (lowerSubject == 'ayma' || lowerSubject == 'you') ? 'message' : 'page';
-        text = replyMatch.group(3)!;
+      final reply = _splitReplyPrefix(m.text);
+      var replyText = reply.text;
+      if (m.sharedCardKind.isNotEmpty &&
+          (replyText == '[shared ${m.sharedCardKind.replaceAll('_', ' ')}]' ||
+              replyText == '(shared)')) {
+        // A card-alone send persists only the wire fallback label as its
+        // text; the card itself is the message — don't render the label
+        // as a bubble under the rebuilt card.
+        replyText = '';
       }
       turns.add(
         TranscriptTurn(
           role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-          text: text,
+          text: replyText,
           source: audio == null ? TurnSource.text : TurnSource.voice,
           imageUrl: url,
           audioUrl: audio,
           tools: m.tools,
           subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
           createdAt: m.createdAt,
-          replySubject: replySubject,
-          replySnippet: replySnippet,
-          replyKind: replyKind,
+          replySubject: reply.subject,
+          replySnippet: reply.snippet,
+          replyKind: reply.kind,
+          replyImageUrl: reply.imageUrl,
+          sharedKind: m.sharedCardKind,
+          sharedUid: m.sharedCardUid,
+          sharedName: m.sharedCardName,
+          sharedPhoto: m.sharedCardPhoto,
+          sharedRefId: m.sharedCardRefId,
         ),
       );
     }
@@ -1639,16 +1692,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           imagePath: m.audioPath,
           resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
         );
+        final reply = _splitReplyPrefix(m.text);
+        var olderText = reply.text;
+        if (m.sharedCardKind.isNotEmpty &&
+            (olderText ==
+                    '[shared ${m.sharedCardKind.replaceAll('_', ' ')}]' ||
+                olderText == '(shared)')) {
+          // Same card-alone fallback label as in _historyTurns: the card
+          // is the message; don't render the label as a bubble under it.
+          olderText = '';
+        }
         olderTurns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-            text: m.text,
+            text: olderText,
             source: audio == null ? TurnSource.text : TurnSource.voice,
             imageUrl: url,
             audioUrl: audio,
             tools: m.tools,
             subjectImage: m.subjectImage.isEmpty ? null : m.subjectImage,
             createdAt: m.createdAt,
+            replySubject: reply.subject,
+            replySnippet: reply.snippet,
+            replyKind: reply.kind,
+            replyImageUrl: reply.imageUrl,
+            sharedKind: m.sharedCardKind,
+            sharedUid: m.sharedCardUid,
+            sharedName: m.sharedCardName,
+            sharedPhoto: m.sharedCardPhoto,
+            sharedRefId: m.sharedCardRefId,
           ),
         );
       }
@@ -2205,6 +2277,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _sharedSubjectName = '';
         _sharedRefVersion = '';
       }
+      _pendingCardKind = ps.kind;
+      _pendingCardUid = ps.uid;
+      _pendingCardName = ps.name;
+      _pendingCardPhoto = ps.photo;
+      _pendingCardRefId = ps.refId;
       _store.addSharedTurn(
         kind: ps.kind,
         uid: ps.uid,
@@ -2248,6 +2325,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _store.dropPending();
     }
 
+    // The card this send posts (see [_pendingCardKind]): read it into
+    // locals — the reconcile re-ask below reuses this same closure, so it
+    // carries the card too — and clear the state so no later send can
+    // accidentally stamp the same card onto a plain message.
+    final cardKind = _pendingCardKind;
+    final cardUid = _pendingCardUid;
+    final cardName = _pendingCardName;
+    final cardPhoto = _pendingCardPhoto;
+    final cardRefId = _pendingCardRefId;
+    _pendingCardKind = '';
+    _pendingCardUid = '';
+    _pendingCardName = '';
+    _pendingCardPhoto = '';
+    _pendingCardRefId = '';
+
     final ownVoice = widget.askAymaContext != null ? _pttVoice : _voice;
     final screenCtx = (ownVoice?.isActive ?? false) ? null : _activePageContext;
     final replying = _replyingToTurn;
@@ -2255,11 +2347,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String replySubject = '';
     String replySnippet = '';
     String replyKind = '';
+    String replyImageUrl = '';
+    String replyImagePath = '';
 
     if (replying != null) {
       replySubject = replying.role == TurnRole.user ? 'You' : 'Ayma';
       replySnippet = replying.text;
       replyKind = 'message';
+      // A reference to the replied-to photo (its stored URL) — never the
+      // photo itself. Empty while that photo's upload is still in flight;
+      // the quote then names the photo without a resolvable reference.
+      replyImageUrl = replying.imageUrl ?? '';
+      // The storage-path REFERENCE for the same photo, sent as its own
+      // request field so the server can pull the exact photo itself —
+      // the quote marker only names it in the message text.
+      replyImagePath = storagePathFromImageUrl(replyImageUrl);
     } else if (screenCtx != null) {
       replySubject = screenCtx.label;
       replySnippet = screenCtx.note.isNotEmpty
@@ -2309,6 +2411,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         replySubject: replySubject,
         replySnippet: replySnippet,
         replyKind: replyKind,
+        replyImageUrl: replyImageUrl,
       );
     } else if (window.isNotEmpty &&
         window.last['role'] == 'user' &&
@@ -2361,10 +2464,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final wireMessage = (replyKind == 'message' &&
-            replySubject.isNotEmpty &&
-            replySnippet.isNotEmpty)
-        ? '[Replying to $replySubject: "$replySnippet"]\n$message'
+    final replyPrefix = replyKind == 'message'
+        ? replyWirePrefix(
+            subject: replySubject,
+            snippet: replySnippet,
+            imageUrl: replyImageUrl,
+          )
+        : '';
+    final wireMessage = replyPrefix.isNotEmpty
+        ? '$replyPrefix\n$message'
         : (message.isEmpty
             ? (image != null ? '(shared a photo)' : _sharedWireFallback())
             : message);
@@ -2525,6 +2633,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectUid: _sharedSubjectUid,
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
+          replyImagePath: replyImagePath,
+          sharedCardKind: cardKind,
+          sharedCardUid: cardUid,
+          sharedCardName: cardName,
+          sharedCardPhoto: cardPhoto,
+          sharedCardRefId: cardRefId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -2533,8 +2647,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectName: screenCtx?.subjectName ?? '',
           screenNote: screenCtx?.note ?? '',
           screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
           screenPreviousRoute: screenCtx != null
               ? (NavigationHistory.instance.previous?.path ?? '')
               : '',
@@ -2566,6 +2678,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectUid: _sharedSubjectUid,
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
+          replyImagePath: replyImagePath,
+          sharedCardKind: cardKind,
+          sharedCardUid: cardUid,
+          sharedCardName: cardName,
+          sharedCardPhoto: cardPhoto,
+          sharedCardRefId: cardRefId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -2574,8 +2692,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectName: screenCtx?.subjectName ?? '',
           screenNote: screenCtx?.note ?? '',
           screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
           screenPreviousRoute: screenCtx != null
               ? (NavigationHistory.instance.previous?.path ?? '')
               : '',
@@ -3334,7 +3450,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 onFeedbackOutcome: (outcome) =>
                                     _store.markFeedbackOutcome(t, outcome),
                                 onSwipeReply: (t.isFinal &&
-                                        t.text.isNotEmpty)
+                                        (t.text.isNotEmpty ||
+                                            t.imageUrl != null ||
+                                            t.imageFile != null))
                                     ? () => _onSwipeReply(t)
                                     : null,
                                 onThumbsDown:
@@ -3474,6 +3592,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             replyingToText: (!_voice.isActive &&
                                     _replyingToTurn != null)
                                 ? _replyingToTurn!.text
+                                : null,
+                            replyingToImageUrl: (!_voice.isActive &&
+                                    _replyingToTurn != null)
+                                ? _replyingToTurn!.imageUrl
+                                : null,
+                            replyingToImageFile: (!_voice.isActive &&
+                                    _replyingToTurn != null)
+                                ? _replyingToTurn!.imageFile
                                 : null,
                             onClearReply: _clearReply,
                             pageContextLabel:
@@ -3996,6 +4122,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                               subject: turn.replySubject,
                               snippet: turn.replySnippet,
                               kind: turn.replyKind,
+                              imageUrl: turn.replyImageUrl,
                             ),
                           if (userClip != null)
                             Padding(
@@ -4673,11 +4800,17 @@ class _QuotedReplyCard extends StatelessWidget {
     required this.subject,
     required this.snippet,
     required this.kind,
+    this.imageUrl = '',
   });
 
   final String subject;
   final String snippet;
   final String kind;
+
+  /// The replied-to message's photo URL when the quote is of a photo —
+  /// rendered as a thumbnail so the card shows WHAT was replied to, not
+  /// just who sent it. Empty for text and page quotes.
+  final String imageUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -4698,45 +4831,79 @@ class _QuotedReplyCard extends StatelessWidget {
           ),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 13,
-                color: ac.onAccent.withValues(alpha: 0.9),
-              ),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  subject,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AymaType.sans(
-                    size: 12,
-                    color: ac.onAccent,
-                    weight: FontWeight.w600,
-                  ),
+          if (imageUrl.isNotEmpty) ...[
+            ClipRRect(
+              key: const ValueKey('quotedReplyThumb'),
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                width: 36,
+                height: 36,
+                child: AymaPhoto(
+                  url: imageUrl,
+                  fit: BoxFit.cover,
+                  displayWidth: 40,
                 ),
               ),
-            ],
-          ),
-          if (snippet.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(
-              snippet,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: AymaType.sans(
-                size: 11,
-                color: ac.onAccent.withValues(alpha: 0.8),
-              ),
             ),
+            const SizedBox(width: 8),
           ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 13,
+                      color: ac.onAccent.withValues(alpha: 0.9),
+                    ),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        subject,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AymaType.sans(
+                          size: 12,
+                          color: ac.onAccent,
+                          weight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (snippet.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    snippet,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.sans(
+                      size: 11,
+                      color: ac.onAccent.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ] else if (imageUrl.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Photo',
+                    maxLines: 1,
+                    style: AymaType.sans(
+                      size: 11,
+                      color: ac.onAccent.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -4946,6 +5113,8 @@ class _Composer extends StatelessWidget {
     required this.onClearShared,
     this.replyingToSender,
     this.replyingToText,
+    this.replyingToImageUrl,
+    this.replyingToImageFile,
     this.onClearReply,
     this.pageContextLabel,
     required this.onClearPageContext,
@@ -4988,6 +5157,14 @@ class _Composer extends StatelessWidget {
 
   /// The earlier Ayma or user message text being replied to via swipe; null when none.
   final String? replyingToText;
+
+  /// The replied-to message's photo, when it carried one: [replyingToImageUrl]
+  /// once the photo is uploaded, [replyingToImageFile] while its upload is
+  /// still in flight. The reply preview shows it as a thumbnail so a photo
+  /// reply never previews as a blank line. Null when the replied-to message
+  /// has no photo.
+  final String? replyingToImageUrl;
+  final File? replyingToImageFile;
   final VoidCallback? onClearReply;
 
   /// The "you were looking at…" chip label (see [ChatScreen.pageContext] /
@@ -5123,6 +5300,28 @@ class _Composer extends StatelessWidget {
                           color: ac.accent,
                         ),
                         const SizedBox(width: 6),
+                        if (replyingToImageUrl != null ||
+                            replyingToImageFile != null) ...[
+                          ClipRRect(
+                            key: const ValueKey('composerReplyThumb'),
+                            borderRadius: BorderRadius.circular(6),
+                            child: SizedBox(
+                              width: 34,
+                              height: 34,
+                              child: replyingToImageUrl != null
+                                  ? AymaPhoto(
+                                      url: replyingToImageUrl!,
+                                      fit: BoxFit.cover,
+                                      displayWidth: 40,
+                                    )
+                                  : Image.file(
+                                      replyingToImageFile!,
+                                      fit: BoxFit.cover,
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Flexible(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -5137,7 +5336,9 @@ class _Composer extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                replyingToText!,
+                                replyingToText!.isNotEmpty
+                                    ? replyingToText!
+                                    : 'Photo',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: AymaType.sans(

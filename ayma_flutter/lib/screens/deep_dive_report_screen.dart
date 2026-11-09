@@ -280,7 +280,7 @@ class _NoResearchYet extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return CenteredScroll(
-      padding: const EdgeInsets.all(28),
+      padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -299,10 +299,13 @@ class _NoResearchYet extends StatelessWidget {
             style: AymaType.sans(size: 14, color: ac.fgMute),
           ),
           const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: busy ? null : onRun,
-            icon: const Icon(Icons.search, size: 18),
-            label: const Text('Run web search'),
+          SizedBox(
+            height: 48,
+            child: FilledButton.icon(
+              onPressed: busy ? null : onRun,
+              icon: const Icon(Icons.search, size: 18),
+              label: const Text('Run web search'),
+            ),
           ),
         ],
       ),

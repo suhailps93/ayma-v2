@@ -346,6 +346,7 @@ def test_session_tools_come_from_the_shared_registry():
         + len(skills._STORY_MANAGE_REGISTRY)
         + len(app_control.VOICE_SKILLS)
         + len(skills.guided_tour.VOICE_SKILLS)
+        + len(skills._ANALYSIS_REGISTRY)
     )
     assert all(llm.is_function_tool(t) for t in tools)
     # Ayma can edit/soft-remove the user's own story on a call, not only in text.
@@ -1319,6 +1320,125 @@ def test_tour_tapped_handler_handles_synchronous_speech_handle():
     handler(_Packet(agent.TOPIC_TOUR_TAPPED))
     assert len(calls) == 1
     assert "advance_guided_tour" in calls[0]
+
+
+# --- TourKickGate: the tap bridge must never cut into speech (2026-11-09) --
+#
+# Founder report: during the tour, a tap made Ayma stop talking and start
+# again from somewhere else. The bridge fired generate_reply the moment a
+# packet landed — mid-line, unconditionally — and one response reported
+# twice (the tap, and the state the tap produced) fired two kicks.
+
+
+def _tour_packet(index=1, attempt=None):
+    import json as _json
+
+    payload = {"index": index}
+    if attempt is not None:
+        payload["attempt"] = attempt
+
+    class _Packet:
+        topic = agent.TOPIC_TOUR_TAPPED
+        data = _json.dumps(payload).encode()
+
+    return _Packet()
+
+
+class _GatedFakeSession:
+    """A session whose agent_state the test flips; records generate_reply."""
+
+    def __init__(self, state="listening"):
+        self.agent_state = state
+        self.calls = []
+
+    def generate_reply(self, *, instructions):
+        self.calls.append(instructions)
+
+        async def _noop():
+            return None
+
+        return _noop()
+
+
+def test_tour_kick_waits_for_speech_to_settle_then_fires_once():
+    """A kick landing while Ayma is speaking must NOT fire a new turn over
+    her line; it defers and fires exactly once when she settles."""
+    import asyncio
+
+    async def _run():
+        gate = agent.TourKickGate()
+        session = _GatedFakeSession(state="speaking")
+        handler = agent.tour_tapped_handler(session, gate)
+        handler(_tour_packet(1, attempt=1))
+        # The same response reported a second time while deferred: dropped.
+        handler(_tour_packet(1, attempt=1))
+        await asyncio.sleep(0.05)
+        assert session.calls == []  # nothing fired into her speech
+        session.agent_state = "listening"
+        await asyncio.sleep(0.6)  # settle poll fires the deferred kick
+        assert len(session.calls) == 1
+        assert "advance_guided_tour" in session.calls[0]
+
+    asyncio.run(_run())
+
+
+def test_tour_kick_dedupes_the_same_response():
+    """Tap + state-completion for one action = exactly one narration turn;
+    a genuinely new attempt still fires."""
+    import asyncio
+
+    async def _run():
+        gate = agent.TourKickGate()
+        session = _GatedFakeSession()
+        handler = agent.tour_tapped_handler(session, gate)
+        handler(_tour_packet(2, attempt=2))
+        handler(_tour_packet(2, attempt=2))  # same response, second report
+        await asyncio.sleep(0.05)
+        assert len(session.calls) == 1
+        handler(_tour_packet(2, attempt=3))  # a retry is a new response
+        await asyncio.sleep(0.05)
+        assert len(session.calls) == 2
+
+    asyncio.run(_run())
+
+
+def test_tour_kick_dropped_while_advance_is_waiting():
+    """While a blocking advance_guided_tour is mid-wait it consumes the
+    persisted tour_event itself — the bridge must not also fire."""
+    import asyncio
+
+    async def _run():
+        gate = agent.TourKickGate()
+        session = _GatedFakeSession()
+        handler = agent.tour_tapped_handler(session, gate)
+        gate.advance_started()
+        handler(_tour_packet(3, attempt=1))
+        await asyncio.sleep(0.05)
+        assert session.calls == []
+        gate.advance_finished()
+        handler(_tour_packet(3, attempt=2))
+        await asyncio.sleep(0.05)
+        assert len(session.calls) == 1
+
+    asyncio.run(_run())
+
+
+def test_tour_kick_deferred_stands_down_when_advance_starts():
+    """A kick deferred by speech stands down if a blocking advance starts
+    waiting meanwhile (it consumes the event; no double narration)."""
+    import asyncio
+
+    async def _run():
+        gate = agent.TourKickGate()
+        session = _GatedFakeSession(state="speaking")
+        handler = agent.tour_tapped_handler(session, gate)
+        handler(_tour_packet(4, attempt=1))
+        gate.advance_started()
+        session.agent_state = "listening"
+        await asyncio.sleep(0.6)
+        assert session.calls == []
+
+    asyncio.run(_run())
 
 
 # --- §F3 mid-call credit cap (founder cost bug, 2026-09-21) ----------------

@@ -281,6 +281,12 @@ abstract final class ChatContextCaps {
   static const sharedSubjectUid = 128;
   static const sharedSubjectName = 200;
   static const sharedRefVersion = 64;
+  static const replyImagePath = 256;
+  static const sharedCardKind = 32;
+  static const sharedCardUid = 128;
+  static const sharedCardName = 200;
+  static const sharedCardPhoto = 2000;
+  static const sharedCardRefId = 128;
   static const photoUrl = 2000;
   static const photoSource = 16;
   static const screen = 32;
@@ -290,8 +296,6 @@ abstract final class ChatContextCaps {
   static const screenRoute = 200;
   static const screenPreviousRoute = 200;
   static const screenPreviousLabel = 200;
-  static const screenDetail = 1500;
-  static const screenVisible = 3200;
 }
 
 /// Clamp one context string to [cap] characters (no-op when already within).
@@ -392,6 +396,12 @@ Map<String, dynamic> buildChatRequestBody({
   String sharedSubjectUid = '',
   String sharedSubjectName = '',
   String sharedRefVersion = '',
+  String replyImagePath = '',
+  String sharedCardKind = '',
+  String sharedCardUid = '',
+  String sharedCardName = '',
+  String sharedCardPhoto = '',
+  String sharedCardRefId = '',
   bool profileEdit = false,
   String photoUrl = '',
   String photoSource = '',
@@ -400,8 +410,6 @@ Map<String, dynamic> buildChatRequestBody({
   String screenSubjectName = '',
   String screenNote = '',
   String screenRoute = '',
-  String screenDetail = '',
-  String screenVisible = '',
   String screenPreviousRoute = '',
   String screenPreviousLabel = '',
   bool tourContinuation = false,
@@ -445,6 +453,26 @@ Map<String, dynamic> buildChatRequestBody({
           sharedSubjectName, ChatContextCaps.sharedSubjectName),
       'shared_ref_version':
           clampChatContext(sharedRefVersion, ChatContextCaps.sharedRefVersion),
+      // A swipe-reply to a photo message: the REFERENCE to that photo
+      // (its storage path) — never the photo itself. The server pulls
+      // the exact photo from the reference (founder 2026-11-09).
+      'reply_image_path':
+          clampChatContext(replyImagePath, ChatContextCaps.replyImagePath),
+      // The Send-to-Ayma CARD posted with this send (any kind): its
+      // identity only, so the server can persist it on the user turn and
+      // the card renders again from history after a restart. Distinct
+      // from the shared_* reference above, which binds the report-pull
+      // tool and is set for report kinds only.
+      'shared_card_kind':
+          clampChatContext(sharedCardKind, ChatContextCaps.sharedCardKind),
+      'shared_card_uid':
+          clampChatContext(sharedCardUid, ChatContextCaps.sharedCardUid),
+      'shared_card_name':
+          clampChatContext(sharedCardName, ChatContextCaps.sharedCardName),
+      'shared_card_photo':
+          clampChatContext(sharedCardPhoto, ChatContextCaps.sharedCardPhoto),
+      'shared_card_ref_id':
+          clampChatContext(sharedCardRefId, ChatContextCaps.sharedCardRefId),
       'profile_edit': profileEdit,
       'photo_url': clampChatContext(photoUrl, ChatContextCaps.photoUrl),
       'photo_source':
@@ -457,10 +485,13 @@ Map<String, dynamic> buildChatRequestBody({
       'screen_note': clampChatContext(screenNote, ChatContextCaps.screenNote),
       'screen_route':
           clampChatContext(screenRoute, ChatContextCaps.screenRoute),
-      'screen_detail':
-          clampChatContext(screenDetail, ChatContextCaps.screenDetail),
-      'screen_visible':
-          clampChatContext(screenVisible, ChatContextCaps.screenVisible),
+      // Only the REFERENCE to the page rides inline — its slug, route,
+      // subject and the (small) note/query. The whole-page snapshot
+      // (`detail`/`visible`, the Nov-8 live capture) is NOT sent: Ayma
+      // describes the page server-side from this reference via the app
+      // registry (founder 2026-11-09: reference, not content). Voice is
+      // unchanged — it keeps the full live capture through the mirror
+      // (`POST /voice/context`), not the chat request.
       'screen_previous_route': clampChatContext(
           screenPreviousRoute, ChatContextCaps.screenPreviousRoute),
       'screen_previous_label': clampChatContext(
@@ -2754,6 +2785,12 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String replyImagePath = '',
+    String sharedCardKind = '',
+    String sharedCardUid = '',
+    String sharedCardName = '',
+    String sharedCardPhoto = '',
+    String sharedCardRefId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2762,8 +2799,6 @@ class ApiClient {
     String screenSubjectName = '',
     String screenNote = '',
     String screenRoute = '',
-    String screenDetail = '',
-    String screenVisible = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
@@ -2796,6 +2831,12 @@ class ApiClient {
           sharedSubjectUid: sharedSubjectUid,
           sharedSubjectName: sharedSubjectName,
           sharedRefVersion: sharedRefVersion,
+          replyImagePath: replyImagePath,
+          sharedCardKind: sharedCardKind,
+          sharedCardUid: sharedCardUid,
+          sharedCardName: sharedCardName,
+          sharedCardPhoto: sharedCardPhoto,
+          sharedCardRefId: sharedCardRefId,
           profileEdit: profileEdit,
           photoUrl: photoUrl,
           photoSource: photoSource,
@@ -2804,8 +2845,6 @@ class ApiClient {
           screenSubjectName: screenSubjectName,
           screenNote: screenNote,
           screenRoute: screenRoute,
-          screenDetail: screenDetail,
-          screenVisible: screenVisible,
           screenPreviousRoute: screenPreviousRoute,
           screenPreviousLabel: screenPreviousLabel,
         )),
@@ -2848,6 +2887,12 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String replyImagePath = '',
+    String sharedCardKind = '',
+    String sharedCardUid = '',
+    String sharedCardName = '',
+    String sharedCardPhoto = '',
+    String sharedCardRefId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2856,8 +2901,6 @@ class ApiClient {
     String screenSubjectName = '',
     String screenNote = '',
     String screenRoute = '',
-    String screenDetail = '',
-    String screenVisible = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
@@ -2885,6 +2928,12 @@ class ApiClient {
         sharedSubjectUid: sharedSubjectUid,
         sharedSubjectName: sharedSubjectName,
         sharedRefVersion: sharedRefVersion,
+        replyImagePath: replyImagePath,
+        sharedCardKind: sharedCardKind,
+        sharedCardUid: sharedCardUid,
+        sharedCardName: sharedCardName,
+        sharedCardPhoto: sharedCardPhoto,
+        sharedCardRefId: sharedCardRefId,
         profileEdit: profileEdit,
         photoUrl: photoUrl,
         photoSource: photoSource,
@@ -2893,8 +2942,6 @@ class ApiClient {
         screenSubjectName: screenSubjectName,
         screenNote: screenNote,
         screenRoute: screenRoute,
-        screenDetail: screenDetail,
-        screenVisible: screenVisible,
         screenPreviousRoute: screenPreviousRoute,
         screenPreviousLabel: screenPreviousLabel,
         includeTourContinuation: false,
@@ -3890,6 +3937,11 @@ class ChatMessage {
     this.subjectImage = '',
     this.createdAt,
     this.clientMsgId = '',
+    this.sharedCardKind = '',
+    this.sharedCardUid = '',
+    this.sharedCardName = '',
+    this.sharedCardPhoto = '',
+    this.sharedCardRefId = '',
   });
 
   final String role; // 'user' | 'ayma'
@@ -3925,6 +3977,17 @@ class ChatMessage {
   /// mid-send find the finished turn by exact id. Empty for older rows.
   final String clientMsgId;
 
+  /// The Send-to-Ayma card posted with this user turn (empty unless the
+  /// row carried one): kind + subject uid/name + card photo + tap target
+  /// (a report / match / DM-thread id). The chat rebuilds the tappable
+  /// card from these on a history load — identity only, never the shared
+  /// page's contents.
+  final String sharedCardKind;
+  final String sharedCardUid;
+  final String sharedCardName;
+  final String sharedCardPhoto;
+  final String sharedCardRefId;
+
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
     role: m['role'] as String? ?? 'ayma',
     text: m['text'] as String? ?? '',
@@ -3939,6 +4002,11 @@ class ChatMessage {
     subjectImage: m['subject_image'] as String? ?? '',
     createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
     clientMsgId: m['client_msg_id'] as String? ?? '',
+    sharedCardKind: m['shared_card_kind'] as String? ?? '',
+    sharedCardUid: m['shared_card_uid'] as String? ?? '',
+    sharedCardName: m['shared_card_name'] as String? ?? '',
+    sharedCardPhoto: m['shared_card_photo'] as String? ?? '',
+    sharedCardRefId: m['shared_card_ref_id'] as String? ?? '',
   );
 
   /// Wire-form map (the exact inverse of [fromMap]) for the chat's
@@ -3954,6 +4022,11 @@ class ChatMessage {
     'subject_image': subjectImage,
     'created_at': createdAt?.toIso8601String(),
     'client_msg_id': clientMsgId,
+    'shared_card_kind': sharedCardKind,
+    'shared_card_uid': sharedCardUid,
+    'shared_card_name': sharedCardName,
+    'shared_card_photo': sharedCardPhoto,
+    'shared_card_ref_id': sharedCardRefId,
   };
 }
 

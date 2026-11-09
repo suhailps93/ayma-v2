@@ -13,8 +13,10 @@ import 'tour_content.dart';
 ///  * [onShown]   — the spotlight is up (ack `ok:true`);
 ///  * [onAbsent]  — the anchor isn't on this build (ack `ok:false` → backend
 ///                  skips the step honestly);
-///  * [onTapped]  — the user tapped the highlight: Ayma performs the step's
-///                  command, or a step with nothing to perform completes;
+///  * [onTapped]  — the user tapped the highlight: for a step with a
+///                  command nothing (Ayma performs it herself when the step
+///                  is shown; a tap only retries a failed attempt), and a
+///                  step with nothing to perform completes;
 ///  * [onSkip]    — the user pressed Next on the card (the go after a
 ///                  performed step, or a move on without performing it;
 ///                  optional — steps built outside the service may omit it);

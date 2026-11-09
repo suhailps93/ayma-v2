@@ -58,6 +58,7 @@ from . import (
     physical_attributes,
     questionnaire,
     read_dm_thread,
+    read_failures,
     recall,
     record_feedback,
     remember,
@@ -73,7 +74,8 @@ from . import (
     voice_actions,
     world_state,
 )
-from tool_labels import outcome_label
+import failure_log
+from tool_labels import NAV_CHIP_TOOLS, outcome_label
 
 from ._base import Skill
 
@@ -207,6 +209,16 @@ _APPEARANCE_EDIT_REGISTRY: list[Skill] = list(appearance_edit.SKILLS)
 # The reference is bound server-side from the request, never model-chosen.
 _SHARED_REGISTRY: list[Skill] = [open_shared.SKILL]
 
+# Only exposed when the turn's session is in analysis mode (text lane:
+# ``session_tool_declarations(analysis=True)`` +
+# ``make_session_tool_fns(analysis_session_id=...)``) — the failure-log
+# reader (``failure_log.py``, founder 2026-11-09). Voice builds its tool
+# list once per call, before the mode can be entered mid-call, so there
+# the skill is bound with the call's session id and its callable
+# re-checks the gate on every call; outside the mode it returns a
+# refusal and never any record (see ``skills/read_failures.py``).
+_ANALYSIS_REGISTRY: list[Skill] = [read_failures.SKILL]
+
 
 def all_skills() -> list[Skill]:
     return list(_REGISTRY)
@@ -220,6 +232,7 @@ def session_tool_declarations(
     deep_dive: bool = False,
     appearance: bool = False,
     shared: bool = False,
+    analysis: bool = False,
 ) -> list[dict]:
     """Gemini function declarations for every registered skill (text always
     also gets the text-only tools — ``generate_image``). ``story=True``
@@ -228,7 +241,8 @@ def session_tool_declarations(
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
     ``appearance=True`` adds the Appearance-report correct/clear tools;
     ``shared=True`` adds ``open_shared_report``, the pull tool for a report
-    the user shared into this chat by reference."""
+    the user shared into this chat by reference; ``analysis=True`` adds
+    ``read_recent_failures``, the analysis-mode-only failure-log reader."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _web_search_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
@@ -245,6 +259,8 @@ def session_tool_declarations(
         reg += _APPEARANCE_EDIT_REGISTRY
     if shared:
         reg += _SHARED_REGISTRY
+    if analysis:
+        reg += _ANALYSIS_REGISTRY
     return [s.declaration for s in reg]
 
 
@@ -262,6 +278,7 @@ def make_session_tool_fns(
     image_result: dict | None = None,
     feedback_result: dict | None = None,
     shared_ctx: dict | None = None,
+    analysis_session_id: str | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
@@ -296,8 +313,11 @@ def make_session_tool_fns(
     ``subject_name`` / ``version`` — the reference a staged Send-to-Ayma
     share card left on the chat request) binds ``open_shared_report``
     closed over that exact reference, so the model can only ever open the
-    one report the user actually shared. Every other skill binds on
-    ``(db, uid)`` alone.
+    one report the user actually shared; ``analysis_session_id``, when
+    given (the caller passes it only for a session already in analysis
+    mode), binds ``read_recent_failures`` closed over that session id —
+    its callable re-checks the gate on every call. Every other skill
+    binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills() + _web_search_skills()):
@@ -374,7 +394,17 @@ def make_session_tool_fns(
     if shared_ctx is not None:
         for s in _SHARED_REGISTRY:
             out[s.name] = s.bind(db, uid, **shared_ctx)
-    return out
+    if analysis_session_id is not None:
+        for s in _ANALYSIS_REGISTRY:
+            out[s.name] = s.bind(db, uid, session_id=analysis_session_id)
+    # Every callable passes through the failure-capture wrapper
+    # (``failure_log.py``): a tool that raises, returns the dispatch
+    # layer's ``error:`` form, or fails an app command leaves a compact
+    # record the user can later have quoted back in analysis mode.
+    return {
+        name: _failure_captured(fn, name, db, uid, "text")
+        for name, fn in out.items()
+    }
 
 
 def _instrumented(
@@ -435,6 +465,87 @@ def _instrumented(
             return result
         finally:
             on_call("end", name, outcome_label(name, result))
+
+    return _sync_wrapper
+
+
+def _failure_captured(
+    fn: Callable[..., object],
+    name: str,
+    db,
+    uid: str,
+    surface: str,
+) -> Callable[..., object]:
+    """Wrap a bound skill callable so a FAILURE leaves a compact record in
+    the user's failure log (``failure_log.py`` — founder 2026-11-09): the
+    record analysis mode later quotes when the user asks why something
+    failed. Three failure shapes are recorded:
+
+    * the callable raises — recorded with the exception, then re-raised
+      untouched (both dispatch layers already convert a raise into their
+      honest error result);
+    * it returns a string in the dispatch layer's own ``error:`` form
+      (the shape ``gemini.py`` produces for a raised tool and the voice
+      timeout bound returns) — recorded without the prefix;
+    * an app-control navigation tool returns anything but its
+      ``navigated:`` success form — the codebase's own definition of a
+      failed app command (see ``tool_labels.outcome_label``).
+
+    Anything else a tool returns — including its ordinary refusals and
+    "not found" answers — is a legitimate outcome, not a failure, and
+    records nothing. The recorder never raises, so wrapping can never
+    break a tool. Coroutine functions get an async wrapper, matching
+    :func:`_instrumented`'s rule."""
+
+    def _check(result: object) -> object:
+        if isinstance(result, str):
+            if result.startswith("error:"):
+                failure_log.record_failure(
+                    db, uid, name, result[len("error:"):].strip(),
+                    surface=surface,
+                )
+            elif name in NAV_CHIP_TOOLS and not result.startswith("navigated:"):
+                failure_log.record_failure(
+                    db, uid, name, result, surface=surface
+                )
+        return result
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def _async_wrapper(*args, **kwargs):
+            try:
+                result = await fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
+                failure_log.record_failure(
+                    db, uid, name, exc, surface=surface
+                )
+                raise
+            return _check(result)
+
+        return _async_wrapper
+
+    @functools.wraps(fn)
+    def _sync_wrapper(*args, **kwargs):
+        try:
+            result = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
+            failure_log.record_failure(db, uid, name, exc, surface=surface)
+            raise
+        if inspect.isawaitable(result):
+
+            async def _awaited():
+                try:
+                    value = await result
+                except Exception as exc:  # noqa: BLE001
+                    failure_log.record_failure(
+                        db, uid, name, exc, surface=surface
+                    )
+                    raise
+                return _check(value)
+
+            return _awaited()
+        return _check(result)
 
     return _sync_wrapper
 
@@ -644,6 +755,7 @@ def make_livekit_tools(
     for s in (
         _REGISTRY + _recall_skills() + _web_search_skills() + _STORY_MANAGE_REGISTRY
         + app_control.VOICE_SKILLS + guided_tour.VOICE_SKILLS
+        + _ANALYSIS_REGISTRY
     ):
         description = s.declaration["description"]
         if s is set_voice_preference.SKILL and on_voice_change is not None:
@@ -664,6 +776,12 @@ def make_livekit_tools(
             # Voice surface — the composer is the call bar, so voice-only steps
             # (e.g. "type in the message box") are skipped (§11.2b).
             fn = s.bind(db, uid, voice=True)
+        elif s.name == "read_recent_failures":
+            # Analysis-mode-only reader: bound with the call's session
+            # id so the callable re-checks the gate on every call (the
+            # voice tool list is built once, before the mode can be
+            # entered mid-call — see skills/read_failures.py).
+            fn = s.bind(db, uid, session_id=session_id)
         else:
             fn = s.bind(db, uid)
         # Innermost: bound the tool's wall-clock so a stuck sub-call (e.g. an
@@ -672,6 +790,10 @@ def make_livekit_tools(
         # by _instrumented below so its "end" event still fires and clears the
         # client's "…ing" indicator.
         fn = _bounded(fn, s.name)
+        # Outside _bounded so its error-string result (a timeout) is
+        # seen and recorded; inside _instrumented so the "end" event
+        # still fires for every call (failure_log.py, founder 2026-11-09).
+        fn = _failure_captured(fn, s.name, db, uid, "voice")
         if on_call is not None:
             fn = _instrumented(fn, s.name, on_call)
         if dedupe is not None:

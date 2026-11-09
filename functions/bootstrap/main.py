@@ -1352,6 +1352,12 @@ class ChatRequest(_TruncatingModel):
         "shared_subject_uid": 128,
         "shared_subject_name": 200,
         "shared_ref_version": 64,
+        "reply_image_path": 256,
+        "shared_card_kind": 32,
+        "shared_card_uid": 128,
+        "shared_card_name": 200,
+        "shared_card_photo": 2000,
+        "shared_card_ref_id": 128,
         "photo_url": 2000,
         "photo_source": 16,
         "screen": 32,
@@ -1361,8 +1367,6 @@ class ChatRequest(_TruncatingModel):
         "screen_route": 200,
         "screen_previous_route": 200,
         "screen_previous_label": 200,
-        "screen_detail": 1500,
-        "screen_visible": 3200,
     }
     message: str = Field(min_length=1, max_length=4000)
     session_id: str = _SESSION_ID
@@ -1426,6 +1430,29 @@ class ChatRequest(_TruncatingModel):
     shared_subject_uid: str = Field(default="", max_length=128)
     shared_subject_name: str = Field(default="", max_length=200)
     shared_ref_version: str = Field(default="", max_length=64)
+    # Set when the message is a swipe-reply to an earlier chat message that
+    # carried a photo: the REFERENCE to that photo — its storage path
+    # (`uploads/{uid}/...` for a photo the user sent, `ayma_generated/{uid}/...`
+    # for an image generated for this user) — never the photo bytes or a
+    # description of it (founder 2026-11-09: reference, not content — the
+    # same rule the shared-report reference above follows). `_prepare_chat`
+    # validates the path against the caller trees and pulls the exact
+    # photo server-side, so Ayma answers the reply looking at the photo
+    # the reply points at.
+    reply_image_path: str = Field(default="", max_length=256)
+    # The Send-to-Ayma CARD posted with this send (any kind — profile /
+    # story / deep_dive / match / appearance / conversation), as opposed to
+    # the ``shared_*`` reference above, which only binds the
+    # ``open_shared_report`` tool for report kinds. The card's identity
+    # (kind + subject + photo + tap target) is persisted on the user turn
+    # so the card renders again from history after a restart — before this
+    # it lived only in the client's in-memory turn and vanished on reload
+    # (founder bug 2026-11-09). Identity only, never the page's contents.
+    shared_card_kind: str = Field(default="", max_length=32)
+    shared_card_uid: str = Field(default="", max_length=128)
+    shared_card_name: str = Field(default="", max_length=200)
+    shared_card_photo: str = Field(default="", max_length=2000)
+    shared_card_ref_id: str = Field(default="", max_length=128)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -1433,18 +1460,23 @@ class ChatRequest(_TruncatingModel):
     # Story: unlocks the photo-note tool, scoped to that photo.
     photo_url: str = Field(default="", max_length=2000)
     photo_source: str = Field(default="", max_length=16)
-    # The screen the user was looking at when this chat was opened (the
-    # floating Ayma launcher's page-context threading, §F4) — the same shape
-    # as the Flutter client's `ScreenContext`/`AppContext`. Folded into the
-    # system prompt as a short one-line description
-    # (`skills.app_control._describe`) unless `screen == "profile"`, which
-    # already gets the much richer `viewing_profile_uid` briefing above.
+    # A REFERENCE to the screen the user was looking at when this chat was
+    # opened (the floating Ayma launcher's page-context threading, §F4) —
+    # the slug, route, subject and the small note/query, NOT the page's
+    # contents. Folded into the system prompt as a short one-line
+    # description built server-side from the registry
+    # (`skills.app_control._describe`) unless `screen == "profile"`,
+    # which already gets the much richer `viewing_profile_uid` briefing
+    # above. The whole-page live capture (`detail`/`visible`, the Nov-8
+    # inline snapshot) is deliberately NOT accepted here (founder
+    # 2026-11-09: reference, not content). Voice keeps the full live
+    # capture through its own mirror (`POST /voice/context`), never the
+    # chat request.
     screen: str = Field(default="", max_length=32)
     screen_subject_uid: str = Field(default="", max_length=128)
     screen_subject_name: str = Field(default="", max_length=200)
     screen_note: str = Field(default="", max_length=500)
-    # The generic capture of that screen (route pattern, a screen-owned
-    # summary, and the live text + operable controls); see
+    # The route pattern of that screen (e.g. `/explore`); see
     # `app_registry.json` `screen_context`.
     screen_route: str = Field(default="", max_length=200)
     # The page before the current one in the session navigation history
@@ -1452,8 +1484,6 @@ class ChatRequest(_TruncatingModel):
     # can name it and knows go_back returns there.
     screen_previous_route: str = Field(default="", max_length=200)
     screen_previous_label: str = Field(default="", max_length=200)
-    screen_detail: str = Field(default="", max_length=1500)
-    screen_visible: str = Field(default="", max_length=3200)
     # A guided-tour continuation ping (§11.2b): the client fires a minimal /chat
     # turn when the user taps the spotlighted control, so the model calls
     # advance_guided_tour (which consumes the already-written tour_event and
@@ -1619,6 +1649,19 @@ class _ChatCtx:
     # ``version``), or empty when the turn carries no share. Binds the
     # ``open_shared_report`` tool in the generation paths below.
     shared_ctx: dict = field(default_factory=dict)
+    # The exact photo a swipe-reply points at, pulled server-side from
+    # the turn `reply_image_path` reference (the client ships the
+    # reference only, never bytes). Attached to generation when the turn
+    # has no fresher image of its own, so Ayma answers the reply looking
+    # at the replied-to photo. Kept separate from `image` / `photo_image`:
+    # it must never trigger the "just shared a photo" or photo-context
+    # handling — the photo is not new, Ayma is just now able to see it.
+    reply_image: tuple[bytes, str] | None = None
+    # True when this turn's session is in the password-gated analysis
+    # mode (its block rode into ``system_prompt`` above): the generation
+    # paths then also declare/bind the analysis-only failure-log reader
+    # (skills/read_failures.py).
+    analysis_active: bool = False
 
 
 
@@ -1846,6 +1889,35 @@ async def _prepare_chat(
             _resolve_photo_context_image, photo_url
         )
 
+    # Swipe-reply to a photo message (founder 2026-11-09): the turn
+    # carries only the reference — the replied-to photo storage path.
+    # Pull the exact photo server-side, the same treatment the photo
+    # context above gets, but only from the trees of the caller (their
+    # uploads, or images generated for them). A reference outside those
+    # trees, or one that no longer resolves, is dropped quietly: it must
+    # never fail the message of the user, and the quote in the message
+    # text still names the photo.
+    reply_image: tuple[bytes, str] | None = None
+    reply_image_path = req.reply_image_path.strip()
+    if reply_image_path and (
+        reply_image_path.startswith(f"uploads/{uid}/")
+        or reply_image_path.startswith(f"ayma_generated/{uid}/")
+    ):
+        try:
+            reply_image = await asyncio.to_thread(
+                media_embed.download_bytes, reply_image_path
+            )
+        except Exception:  # noqa: BLE001 - a dead reference never fails the turn
+            logger.warning(
+                "reply photo reference did not resolve: %s", reply_image_path
+            )
+            reply_image = None
+    elif reply_image_path:
+        logger.warning(
+            "reply photo reference outside the trees of the caller: %s",
+            reply_image_path,
+        )
+
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
@@ -1879,17 +1951,21 @@ async def _prepare_chat(
         ""
         if not (screen or screen_route)
         or (screen == "profile" and viewing_profile_uid)
+        # Reference only (founder 2026-11-09): the description is built
+        # server-side from the registry via the screen slug / route /
+        # subject / note — the whole-page `detail`/`visible` snapshot no
+        # longer rides inline, so those keys are absent here (`_describe`
+        # tolerates their absence and simply omits the "on screen now"
+        # live-capture line). Voice still passes them from its own mirror.
         else app_control_mod._describe(
             {
                 "screen": screen,
                 "subject_uid": req.screen_subject_uid.strip(),
                 "subject_name": req.screen_subject_name.strip(),
                 "note": req.screen_note.strip(),
-                "detail": req.screen_detail.strip(),
                 "route": screen_route,
                 "previous_route": req.screen_previous_route.strip(),
                 "previous_label": req.screen_previous_label.strip(),
-                "visible": req.screen_visible.strip(),
             }
         )
     )
@@ -1987,6 +2063,12 @@ async def _prepare_chat(
         system_prompt += "\n\n" + _shared_report_context(
             shared_ctx["kind"], shared_ctx["subject_name"]
         )
+    # Swipe-reply photo reference (founder 2026-11-09): the user is
+    # replying to one specific photo from earlier in this chat, and the
+    # exact photo was pulled server-side from the reference — name that
+    # plainly so she answers about THIS photo.
+    if reply_image is not None:
+        system_prompt += "\n\n" + _reply_photo_context()
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
         steps = skills.guided_tour._tour_steps(tour_state)
@@ -2033,6 +2115,8 @@ async def _prepare_chat(
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
             shared_ctx=shared_ctx,
+            reply_image=reply_image,
+            analysis_active=bool(analysis_block),
         ),
     )
 
@@ -2104,6 +2188,23 @@ def _deep_dive_edit_context(report_id: str, target: str) -> str:
         )
     lines.append("Confirm what you did in one line and keep chatting.")
     return "\n".join(lines)
+
+
+def _reply_photo_context() -> str:
+    """The prompt block for a turn that swipe-replies to a photo message:
+    the user is replying to one specific photo from earlier in this chat,
+    and that exact photo — pulled server-side from the turn
+    `reply_image_path` reference — is attached to this turn for Ayma to
+    look at. The quote in the message of the user (`[Replying to ...]`)
+    points at it."""
+    return (
+        "REPLIED-TO PHOTO: the message of the user is a reply to a "
+        "photo earlier in this conversation (the quoted message in "
+        "their text). That exact photo is attached to this turn — "
+        "look at it and base your answer on what is actually in it. "
+        "It is the photo their reply points at, which may not be the "
+        "most recent photo in the conversation."
+    )
 
 
 def _shared_report_context(kind: str, subject_name: str) -> str:
@@ -2302,6 +2403,22 @@ async def _persisted_turn_reply(uid: str, req: ChatRequest) -> dict | None:
     }
 
 
+def _shared_card(req: ChatRequest) -> dict:
+    """The Send-to-Ayma card posted with this send, as the dict
+    :func:`chat_history.append` persists on the user turn — empty unless
+    this send actually posted a card."""
+    kind = req.shared_card_kind.strip()
+    if not kind:
+        return {}
+    return {
+        "kind": kind,
+        "uid": req.shared_card_uid.strip(),
+        "name": req.shared_card_name.strip(),
+        "photo": req.shared_card_photo.strip(),
+        "ref_id": req.shared_card_ref_id.strip(),
+    }
+
+
 def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
     """Persist the user's message at turn START, so a turn that is slow, errors,
     or never produces a reply still keeps the user's message in history instead
@@ -2324,6 +2441,7 @@ def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
             get_db(), ctx.uid, "user", req.message,
             image_path=ctx.image_path or None,
             client_msg_id=client_msg_id,
+            shared_card=_shared_card(req) or None,
         )
     except Exception:  # noqa: BLE001 - best-effort; never fail the turn
         logger.exception("user-turn persist failed for %s", ctx.uid)
@@ -2370,6 +2488,7 @@ def _finalize_chat(
                 get_db(), ctx.uid, "user", req.message,
                 image_path=ctx.image_path or None,
                 client_msg_id=client_msg_id or None,
+                shared_card=_shared_card(req) or None,
             )
         reply_client_id = (
             None
@@ -2550,7 +2669,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
     user's unified **Brain** (§13.10): the chosen brain for a text/tools turn,
     but Gemini whenever the turn carries an image (vision → Gemini, since Muse
     can't read images — it would otherwise hallucinate the photo)."""
-    needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+    needs = "vision" if (ctx.image or ctx.photo_image or ctx.reply_image) else "tools"
     return await get_user_brain_provider(ctx.uid, "chat", needs=needs).generate_reply(
         req.message,
         system_prompt=ctx.system_prompt,
@@ -2561,6 +2680,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
             appearance=bool(ctx.appearance_finding_id),
             shared=bool(ctx.shared_ctx),
+            analysis=ctx.analysis_active,
         ),
         tool_fns=make_session_tool_fns(
             get_db(),
@@ -2600,13 +2720,14 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
                 if ctx.appearance_finding_id else None
             ),
             shared_ctx=ctx.shared_ctx or None,
+            analysis_session_id=req.session_id if ctx.analysis_active else None,
             # generate_image delivers through the same sink edit_photo
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
             image_result=ctx.photo_edit_result,
             feedback_result=ctx.feedback_draft,
         ),
-        image=ctx.image or ctx.photo_image,
+        image=ctx.image or ctx.reply_image or ctx.photo_image,
         uid=ctx.uid,
         feature=token_ledger.FEATURE_CHAT,
         session_id=req.session_id,
@@ -2717,7 +2838,7 @@ async def chat_stream(
                 async with asyncio.timeout(_CHAT_TURN_TIMEOUT_SECONDS):
                     # Unified Brain (§13.10): the user's brain for a text/tools
                     # turn; Gemini when an image is attached (vision → Gemini).
-                    _needs = "vision" if (ctx.image or ctx.photo_image) else "tools"
+                    _needs = "vision" if (ctx.image or ctx.photo_image or ctx.reply_image) else "tools"
                     async for ev in get_user_brain_provider(
                         ctx.uid, "chat", needs=_needs
                     ).generate_reply_events(
@@ -2730,6 +2851,7 @@ async def chat_stream(
                             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
                             appearance=bool(ctx.appearance_finding_id),
                             shared=bool(ctx.shared_ctx),
+                            analysis=ctx.analysis_active,
                         ),
                         tool_fns=make_session_tool_fns(
                             get_db(),
@@ -2769,10 +2891,13 @@ async def chat_stream(
                                 if ctx.appearance_finding_id else None
                             ),
                             shared_ctx=ctx.shared_ctx or None,
+                            analysis_session_id=(
+                                req.session_id if ctx.analysis_active else None
+                            ),
                             image_result=ctx.photo_edit_result,
                             feedback_result=ctx.feedback_draft,
                         ),
-                            image=ctx.image or ctx.photo_image,
+                            image=ctx.image or ctx.reply_image or ctx.photo_image,
                             uid=ctx.uid,
                             feature=token_ledger.FEATURE_CHAT,
                             session_id=req.session_id,
