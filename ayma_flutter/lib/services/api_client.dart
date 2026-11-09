@@ -296,8 +296,6 @@ abstract final class ChatContextCaps {
   static const screenRoute = 200;
   static const screenPreviousRoute = 200;
   static const screenPreviousLabel = 200;
-  static const screenDetail = 1500;
-  static const screenVisible = 3200;
 }
 
 /// Clamp one context string to [cap] characters (no-op when already within).
@@ -412,8 +410,6 @@ Map<String, dynamic> buildChatRequestBody({
   String screenSubjectName = '',
   String screenNote = '',
   String screenRoute = '',
-  String screenDetail = '',
-  String screenVisible = '',
   String screenPreviousRoute = '',
   String screenPreviousLabel = '',
   bool tourContinuation = false,
@@ -489,10 +485,13 @@ Map<String, dynamic> buildChatRequestBody({
       'screen_note': clampChatContext(screenNote, ChatContextCaps.screenNote),
       'screen_route':
           clampChatContext(screenRoute, ChatContextCaps.screenRoute),
-      'screen_detail':
-          clampChatContext(screenDetail, ChatContextCaps.screenDetail),
-      'screen_visible':
-          clampChatContext(screenVisible, ChatContextCaps.screenVisible),
+      // Only the REFERENCE to the page rides inline — its slug, route,
+      // subject and the (small) note/query. The whole-page snapshot
+      // (`detail`/`visible`, the Nov-8 live capture) is NOT sent: Ayma
+      // describes the page server-side from this reference via the app
+      // registry (founder 2026-11-09: reference, not content). Voice is
+      // unchanged — it keeps the full live capture through the mirror
+      // (`POST /voice/context`), not the chat request.
       'screen_previous_route': clampChatContext(
           screenPreviousRoute, ChatContextCaps.screenPreviousRoute),
       'screen_previous_label': clampChatContext(
@@ -2800,8 +2799,6 @@ class ApiClient {
     String screenSubjectName = '',
     String screenNote = '',
     String screenRoute = '',
-    String screenDetail = '',
-    String screenVisible = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
@@ -2848,8 +2845,6 @@ class ApiClient {
           screenSubjectName: screenSubjectName,
           screenNote: screenNote,
           screenRoute: screenRoute,
-          screenDetail: screenDetail,
-          screenVisible: screenVisible,
           screenPreviousRoute: screenPreviousRoute,
           screenPreviousLabel: screenPreviousLabel,
         )),
@@ -2906,8 +2901,6 @@ class ApiClient {
     String screenSubjectName = '',
     String screenNote = '',
     String screenRoute = '',
-    String screenDetail = '',
-    String screenVisible = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
     String clientMsgId = '',
@@ -2949,8 +2942,6 @@ class ApiClient {
         screenSubjectName: screenSubjectName,
         screenNote: screenNote,
         screenRoute: screenRoute,
-        screenDetail: screenDetail,
-        screenVisible: screenVisible,
         screenPreviousRoute: screenPreviousRoute,
         screenPreviousLabel: screenPreviousLabel,
         includeTourContinuation: false,

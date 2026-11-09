@@ -31,19 +31,19 @@ void main() {
       recentTurns: [
         {'role': 'ayma', 'text': 'x' * 4642},
       ],
-      screenVisible: 'v' * 3201,
-      screenDetail: 'd' * 2000,
       screenNote: 'n' * 900,
       storyPassage: 'p' * 9000,
       deepDiveTarget: 't' * 3000,
     );
     expect(body['message'], longMessage);
     expect((body['recent_turns'] as List).single['text'].length, 4000);
-    expect((body['screen_visible'] as String).length, 3200);
-    expect((body['screen_detail'] as String).length, 1500);
     expect((body['screen_note'] as String).length, 500);
     expect((body['story_passage'] as String).length, 8000);
     expect((body['deep_dive_target'] as String).length, 2200);
+    // The whole-page `screen_detail`/`screen_visible` snapshot is no longer
+    // part of the wire body — only the page REFERENCE rides inline.
+    expect(body.containsKey('screen_detail'), isFalse);
+    expect(body.containsKey('screen_visible'), isFalse);
   });
 
   test('chat() sends clamped context on the wire', () async {
@@ -61,11 +61,11 @@ void main() {
       recentTurns: [
         {'role': 'ayma', 'text': 'x' * 4642},
       ],
-      screenVisible: 'v' * 4000,
+      storyPassage: 'p' * 9000,
     );
     final sent = jsonDecode(captured.body) as Map<String, dynamic>;
     expect((sent['recent_turns'] as List).single['text'].length, 4000);
-    expect((sent['screen_visible'] as String).length, 3200);
+    expect((sent['story_passage'] as String).length, 8000);
     expect(sent['message'], 'hello');
   });
 
@@ -85,12 +85,12 @@ void main() {
           recentTurns: [
             {'role': 'ayma', 'text': 'y' * 5000},
           ],
-          screenVisible: 'v' * 4000,
+          storyPassage: 'p' * 9000,
         )
         .toList();
     final sent =
         jsonDecode((captured as http.Request).body) as Map<String, dynamic>;
     expect((sent['recent_turns'] as List).single['text'].length, 4000);
-    expect((sent['screen_visible'] as String).length, 3200);
+    expect((sent['story_passage'] as String).length, 8000);
   });
 }

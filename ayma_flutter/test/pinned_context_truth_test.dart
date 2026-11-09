@@ -131,10 +131,15 @@ void main() {
       expect(capture.requests, hasLength(1));
       final sent = capture.requests.first;
       expect(sent['message'], 'what can I do here?');
+      // The page REFERENCE rides inline — slug, route and the small note.
       expect(sent['screen'], 'explore');
       expect(sent['screen_note'], 'hiking in boulder');
       expect(sent['screen_route'], '/explore');
-      expect(sent['screen_detail'], '3 people nearby');
+      // …but the whole-page snapshot (`detail`/`visible`) does NOT: Ayma
+      // describes the page server-side from the reference (founder
+      // 2026-11-09: reference, not content).
+      expect(sent.containsKey('screen_detail'), isFalse);
+      expect(sent.containsKey('screen_visible'), isFalse);
     },
   );
 
