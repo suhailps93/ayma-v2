@@ -67,6 +67,14 @@ void main() {
     }
   });
 
+  testWidgets('default bar height is 8 (unified with the taste domain bar)',
+      (tester) async {
+    final containers = await _pump(tester, const ScoreBar(value: 5, max: 10));
+    // `Container(height: 8)` tightens the box to a fixed 8pt track/fill.
+    expect(containers[0].constraints?.maxHeight, 8);
+    expect(containers[1].constraints?.maxHeight, 8);
+  });
+
   testWidgets('clamps the fill fraction for out-of-range values',
       (tester) async {
     await _pump(tester, const ScoreBar(value: 15, max: 10));
