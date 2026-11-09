@@ -16,8 +16,12 @@ import '../widgets/ayma_wing_loader.dart';
 /// Product feedback — bugs and feature requests (§15). Lands in the unified
 /// `feedback` collection as `source: 'settings_form'` (the in-chat feedback
 /// catcher lands there as `'chat_card'`), triaged together in the Developer →
-/// Feedback admin view. Ayma never reads product rows. Screenshots are optional
-/// and upload to the user's own `uploads/` tree before submit.
+/// Feedback admin view. Ayma never reads product rows. The form carries
+/// exactly the same fields as the in-chat feedback draft card — kind,
+/// title, body, screenshots — and files through the same
+/// `POST /feedback/submit`, so a report has the same properties
+/// whichever surface it came from. Screenshots are optional and
+/// upload to the user's own `uploads/` tree before submit.
 class FeedbackScreen extends StatefulWidget {
   const FeedbackScreen({super.key, this.api, this.chatService, this.picker});
 
@@ -36,6 +40,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   late final ChatService _chat = widget.chatService ?? ChatService();
   late final ImagePicker _picker = widget.picker ?? ImagePicker();
   final _text = TextEditingController();
+  final _title = TextEditingController();
 
   String _kind = 'bug';
   final List<File> _shots = [];
@@ -44,6 +49,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   @override
   void dispose() {
     _text.dispose();
+    _title.dispose();
     super.dispose();
   }
 
@@ -76,11 +82,10 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
         final up = await _chat.uploadImage(f, prefix: 'feedback');
         paths.add(up.storagePath);
       }
-      // No title field in this form — derive a short one from the first line.
-      final firstLine = text.split('\n').first.trim();
-      final title = firstLine.length > 80
-          ? '${firstLine.substring(0, 77)}…'
-          : firstLine;
+      // Same shape as the in-chat draft card: the title is its own
+      // field. Left empty, the server falls back to the body prefix —
+      // the same fallback a chat card with a cleared title gets.
+      final title = _title.text.trim();
       var version = '';
       try {
         version = (await PackageInfo.fromPlatform()).version;
@@ -138,9 +143,22 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
             onSelectionChanged: (s) => setState(() => _kind = s.first),
           ),
           const SizedBox(height: 20),
+          const Eyebrow('Title'),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('feedback-title-field'),
+            controller: _title,
+            maxLength: 120,
+            decoration: const InputDecoration(
+              hintText: 'A short headline',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 20),
           const Eyebrow('What happened'),
           const SizedBox(height: 8),
           TextField(
+            key: const ValueKey('feedback-body-field'),
             controller: _text,
             minLines: 4,
             maxLines: 10,

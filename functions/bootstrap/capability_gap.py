@@ -10,8 +10,8 @@ system prompt by :mod:`prompt`); this module is the guard that makes the
 filing safe when the model follows it:
 
 * the report rides the EXISTING path — Ayma's always-on ``report_bug``
-  tool (:mod:`skills.report_bug`) into ``bug_reports`` via
-  :mod:`bug_reports_ops`. No new collection, no new tool. A gap report
+  tool (:mod:`skills.report_bug`) into the unified ``feedback``
+  collection (kind ``bug``) via :mod:`bug_reports_ops`. No new collection, no new tool. A gap report
   is simply a ``report_bug`` call whose description starts with
   ``Capability gap:``.
 * a gap report naming one of the six user-only exclusions (the

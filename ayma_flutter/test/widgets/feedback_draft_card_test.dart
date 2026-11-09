@@ -151,6 +151,42 @@ void main() {
     expect(find.byKey(const ValueKey('feedback-add-shot')), findsOneWidget);
   });
 
+  testWidgets('a card restored as sent shows the sent view, not a draft',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackDraftCard(
+      kind: 'bug',
+      title: 'Orb flickers',
+      body: 'it flickers',
+      resolvedOutcome: 'sent',
+      api: _api([]),
+      chatService: _FakeChatService(),
+      picker: _FakePicker(),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+
+    expect(find.byKey(const ValueKey('feedback-sent')), findsOneWidget);
+    expect(find.byKey(const ValueKey('feedback-send')), findsNothing);
+  });
+
+  testWidgets('a card restored as dismissed renders nothing',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackDraftCard(
+      kind: 'bug',
+      title: 'Orb flickers',
+      body: 'it flickers',
+      resolvedOutcome: 'dismissed',
+      api: _api([]),
+      chatService: _FakeChatService(),
+      picker: _FakePicker(),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+
+    expect(find.byKey(const ValueKey('feedback-send')), findsNothing);
+    expect(find.byKey(const ValueKey('feedback-sent')), findsNothing);
+  });
+
   testWidgets('Send POSTs the edited values plus the screenshot path',
       (tester) async {
     final captured = <Map<String, dynamic>>[];

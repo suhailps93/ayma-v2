@@ -35,6 +35,7 @@ class FeedbackDraftCard extends StatefulWidget {
     this.platformOverride,
     this.onDismiss,
     this.onSent,
+    this.resolvedOutcome = '',
   });
 
   /// `'feature'` or `'bug'`.
@@ -59,6 +60,13 @@ class FeedbackDraftCard extends StatefulWidget {
   /// Called once the feedback has been filed successfully.
   final VoidCallback? onSent;
 
+  /// How a previous instance of this card was resolved: `'sent'` or
+  /// `'dismissed'`, restored from the transcript turn. A recreated card
+  /// (ListView recycling, turn replacement) seeds its state from this,
+  /// so already-filed feedback never reappears as a fresh draft the
+  /// user can send a second time.
+  final String resolvedOutcome;
+
   @override
   State<FeedbackDraftCard> createState() => _FeedbackDraftCardState();
 }
@@ -76,8 +84,8 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
 
   bool _editing = false;
   bool _sending = false;
-  bool _sent = false;
-  bool _dismissed = false;
+  late bool _sent = widget.resolvedOutcome == 'sent';
+  late bool _dismissed = widget.resolvedOutcome == 'dismissed';
   File? _shot;
 
   @override

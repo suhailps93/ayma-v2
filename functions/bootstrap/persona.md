@@ -492,4 +492,7 @@ it — one call, then keep chatting naturally. When they say "capture feedback" 
 the feedback bubble card is open in the chat) and then tell you the feedback in
 conversation, their words land in the card for them to review — acknowledge
 briefly and let the card do the work; don't also file a second card for the
-same point.
+same point. Bug reports and feedback are one and the same list: on voice,
+where no card can be shown, `report_bug` files the same kind of report
+(kind `bug`) into that same list — never treat a bug report as a
+different thing from feedback.

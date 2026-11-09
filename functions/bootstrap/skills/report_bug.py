@@ -23,8 +23,8 @@ This tool is ALSO the filing path for capability gaps (founder rule,
 with a description starting ``Capability gap:`` and the deterministic
 guard in :mod:`capability_gap` takes over — exclusion refusal + one
 report per distinct gap per session — writing through this same
-``bug_reports_ops`` path into the same ``bug_reports`` collection. No
-new tool, no new collection.
+``bug_reports_ops`` path into the unified ``feedback`` collection
+(kind ``bug``). No new tool, no new collection.
 """
 
 from __future__ import annotations
@@ -41,7 +41,9 @@ DESCRIPTION = (
     "the user describes one. Feedback on your own conversation handling goes "
     "to `record_feedback`. Also file a capability gap with this tool — "
     "description starting `Capability gap:` — when a user asks for "
-    "something no tool you have can do."
+    "something no tool you have can do. A bug report IS feedback: it "
+    "lands in the same unified feedback list as a `submit_feedback` card, "
+    "as kind `bug`."
 )
 
 DECLARATION = {
@@ -70,7 +72,7 @@ def _bind(
         turn (``image_path``) is saved alongside it automatically. A
         description starting ``Capability gap:`` is a capability-gap
         report instead — routed through the deterministic guard in
-        :mod:`capability_gap` (same ``bug_reports`` collection)."""
+        :mod:`capability_gap` (same unified ``feedback`` collection)."""
         if capability_gap.is_gap_description(description):
             return capability_gap.handle_gap_report(
                 db, uid, session_id, description

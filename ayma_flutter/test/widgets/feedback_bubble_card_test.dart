@@ -118,6 +118,22 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets('a recreated card restored as sent shows the sent view',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackBubbleCard(
+      trigger: FeedbackBubbleTrigger.explicit,
+      initiallySent: true,
+      api: _api([]),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+
+    expect(find.byKey(const ValueKey('feedback-bubble-sent')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('feedback-bubble-submit')),
+        findsNothing);
+  });
+
   testWidgets('prefill from the trigger phrase lands in the field',
       (tester) async {
     final captured = <Map<String, dynamic>>[];

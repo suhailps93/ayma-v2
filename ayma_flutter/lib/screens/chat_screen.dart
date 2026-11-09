@@ -3210,6 +3210,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     screenshotFile: _bubbleShotFile,
                                     screenshotPath: _bubbleShotPath,
                                     screenshotFailed: _bubbleShotFailed,
+                                    initiallySent: _bubbleDone,
                                     onDismiss: () => setState(() {
                                       _bubble = null;
                                       _bubbleShotFile = null;
@@ -3248,6 +3249,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 nowPlaying: _nowPlaying,
                                 initiallyFlagged: ThumbsDownStore.instance
                                     .isFlagged(t.text),
+                                onFeedbackOutcome: (outcome) =>
+                                    _store.markFeedbackOutcome(t, outcome),
                                 onSwipeReply: (t.isFinal &&
                                         t.text.isNotEmpty)
                                     ? () => _onSwipeReply(t)
@@ -3719,6 +3722,7 @@ class _TranscriptLine extends StatefulWidget {
     this.api,
     this.initiallyFlagged = false,
     this.onThumbsDown,
+    this.onFeedbackOutcome,
     this.onSwipeReply,
     this.clipPlayer,
     this.nowPlaying,
@@ -3741,6 +3745,10 @@ class _TranscriptLine extends StatefulWidget {
 
   /// Non-null only for a finished Ayma line — fire-and-forget feedback.
   final Future<void> Function()? onThumbsDown;
+
+  /// Called with `'sent'` / `'dismissed'` when this turn's feedback
+  /// draft card is resolved, so the outcome is recorded on the turn.
+  final ValueChanged<String>? onFeedbackOutcome;
 
   /// Non-null for a finished line — triggers swipe to reply.
   final VoidCallback? onSwipeReply;
@@ -4101,6 +4109,11 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                   kind: turn.feedbackKind,
                   title: turn.feedbackTitle,
                   body: turn.feedbackBody,
+                  resolvedOutcome: turn.feedbackOutcome,
+                  onSent: () =>
+                      widget.onFeedbackOutcome?.call('sent'),
+                  onDismiss: () =>
+                      widget.onFeedbackOutcome?.call('dismissed'),
                   api: widget.api,
                 ),
               ),

@@ -32,6 +32,7 @@ class TranscriptTurn {
     this.feedbackKind = '',
     this.feedbackTitle = '',
     this.feedbackBody = '',
+    this.feedbackOutcome = '',
     this.createdAt,
     this.replySubject = '',
     this.replySnippet = '',
@@ -107,6 +108,15 @@ class TranscriptTurn {
   final String feedbackKind;
   final String feedbackTitle;
   final String feedbackBody;
+
+  /// How the user resolved this turn's feedback draft card: `'sent'` or
+  /// `'dismissed'` once they have, `''` while it is still a draft. Kept on
+  /// the turn itself (not only in the card's widget State) so a recreated
+  /// card — ListView recycling, a turn replacement — restores the resolved
+  /// state instead of presenting a fresh, sendable draft for feedback
+  /// that was already filed or dismissed. Set via
+  /// [TranscriptStore.markFeedbackOutcome].
+  final String feedbackOutcome;
 
   /// When this turn quotes a page or an Ayma/user message: the subject name
   /// (e.g. "Alex's profile", "Explore — \"hiking\"", "Ayma", "You").
@@ -245,6 +255,7 @@ class TranscriptStore extends ChangeNotifier {
       feedbackKind: turn.feedbackKind,
       feedbackTitle: turn.feedbackTitle,
       feedbackBody: turn.feedbackBody,
+      feedbackOutcome: turn.feedbackOutcome,
       createdAt: turn.createdAt,
       replySubject: turn.replySubject,
       replySnippet: turn.replySnippet,
@@ -292,6 +303,7 @@ class TranscriptStore extends ChangeNotifier {
       feedbackKind: turn.feedbackKind,
       feedbackTitle: turn.feedbackTitle,
       feedbackBody: turn.feedbackBody,
+      feedbackOutcome: turn.feedbackOutcome,
       createdAt: turn.createdAt,
       replySubject: turn.replySubject,
       replySnippet: turn.replySnippet,
@@ -300,6 +312,43 @@ class TranscriptStore extends ChangeNotifier {
     _turns[i] = updated;
     notifyListeners();
     return updated;
+  }
+
+  /// Record how the user resolved this turn's feedback draft card
+  /// (`'sent'` / `'dismissed'`) on the turn itself — see
+  /// [TranscriptTurn.feedbackOutcome]. No-op if [turn] is no longer in
+  /// the window or already carries [outcome].
+  void markFeedbackOutcome(TranscriptTurn turn, String outcome) {
+    final i = _turns.indexOf(turn);
+    if (i == -1 || turn.feedbackOutcome == outcome) return;
+    _turns[i] = TranscriptTurn(
+      role: turn.role,
+      text: turn.text,
+      source: turn.source,
+      isFinal: turn.isFinal,
+      imageUrl: turn.imageUrl,
+      audioUrl: turn.audioUrl,
+      audioFile: turn.audioFile,
+      tools: turn.tools,
+      subjectImage: turn.subjectImage,
+      capped: turn.capped,
+      reportKind: turn.reportKind,
+      reportId: turn.reportId,
+      sharedKind: turn.sharedKind,
+      sharedUid: turn.sharedUid,
+      sharedName: turn.sharedName,
+      sharedPhoto: turn.sharedPhoto,
+      sharedRefId: turn.sharedRefId,
+      feedbackKind: turn.feedbackKind,
+      feedbackTitle: turn.feedbackTitle,
+      feedbackBody: turn.feedbackBody,
+      feedbackOutcome: outcome,
+      createdAt: turn.createdAt,
+      replySubject: turn.replySubject,
+      replySnippet: turn.replySnippet,
+      replyKind: turn.replyKind,
+    );
+    notifyListeners();
   }
 
   /// Drop a turn that was shown optimistically (see [addTurn]) once its image

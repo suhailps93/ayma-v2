@@ -40,6 +40,7 @@ class FeedbackBubbleCard extends StatefulWidget {
     this.platformOverride,
     this.onDismiss,
     this.onSent,
+    this.initiallySent = false,
   });
 
   final FeedbackBubbleTrigger trigger;
@@ -73,6 +74,11 @@ class FeedbackBubbleCard extends StatefulWidget {
   final VoidCallback? onDismiss;
   final VoidCallback? onSent;
 
+  /// True when this bubble was already submitted in this session (the
+  /// chat keeps the offer around in its sent state): a recreated card
+  /// restores the sent view instead of a fresh, submittable form.
+  final bool initiallySent;
+
   @override
   State<FeedbackBubbleCard> createState() => _FeedbackBubbleCardState();
 }
@@ -92,7 +98,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
     _shotPath = widget.screenshotPath;
   }
   bool _sending = false;
-  bool _sent = false;
+  late bool _sent = widget.initiallySent;
   bool _dismissed = false;
 
   @override

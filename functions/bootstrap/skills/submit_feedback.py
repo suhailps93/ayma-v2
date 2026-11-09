@@ -18,10 +18,12 @@ Distinct from the two sibling capture tools:
 
 * ``record_feedback`` — about AYMA'S OWN conduct in the conversation; writes
   straight to the ``feedback`` bucket (``source="ayma"``), no card.
-* ``report_bug`` — logs an app bug straight to ``bug_reports`` with no review
-  step. ``submit_feedback`` supersedes it for the user-facing flow (confirm
-  first, one unified ``feedback`` destination, feature requests too); the
-  persona now steers bug/feature reports here.
+* ``report_bug`` — logs an app bug straight into the same unified
+  ``feedback`` collection (kind ``bug``, via ``bug_reports_ops``) with no
+  review step; it is the voice / self-check path, where no confirmation
+  card can be shown. In text chat ``submit_feedback`` is the user-facing
+  flow (confirm first, same destination, feature requests too); the
+  persona steers bug/feature reports here.
 """
 
 from __future__ import annotations

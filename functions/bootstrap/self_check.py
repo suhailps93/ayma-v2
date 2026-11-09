@@ -248,7 +248,8 @@ FINAL_NAV_KEYS = ("photos", "terms", "privacy")
 
 # Bug filing de-dupes against identical failures filed this recently.
 _BUG_DEDUPE_WINDOW = timedelta(hours=24)
-# How many of the user's bug_reports rows the de-dupe fetch pulls. Must
+# How many of the user's filed bug-report rows (the unified feedback
+# collection, kind bug) the de-dupe fetch pulls. Must
 # cover the whole recent set: the fetch has no ordering (no composite
 # index exists for (uid, created_at)), so a limit below the user's total
 # silently drops recent rows and the de-dupe misses them.
@@ -739,7 +740,10 @@ class SelfCheckRunner:
         await self._announce(self._line(result))
 
     def _recent_bug_docs(self) -> list:
-        """Best-effort recent bug_reports docs for this user, newest first.
+        """Best-effort recent filed bug-report docs for this user, newest
+        first — read from the unified ``feedback`` collection, where
+        ``bug_reports_ops`` now files them (the report text lives in
+        ``body``).
 
         Any handle or query failure returns an empty list — a filing
         query failure must never break a run or block a real filing.
@@ -749,7 +753,7 @@ class SelfCheckRunner:
         """
         docs: list = []
         try:
-            query = self.db.collection("bug_reports")
+            query = self.db.collection("feedback")
             try:
                 query = query.where("uid", "==", self.uid)
             except Exception:  # noqa: BLE001 - unfiltered fallback
@@ -797,7 +801,7 @@ class SelfCheckRunner:
                 data = doc.to_dict() or {}
             except Exception:  # noqa: BLE001 - skip unreadable docs
                 continue
-            description = str(data.get("description") or "")
+            description = str(data.get("body") or data.get("description") or "")
             if needle not in description:
                 continue
             if want_error and " error=" in description:
