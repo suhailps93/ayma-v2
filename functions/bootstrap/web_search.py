@@ -176,30 +176,26 @@ def _reserve(db, day: str, cap: int) -> bool:
         return False
     from google.cloud import firestore
 
-    ref = db.collection(USAGE_COLLECTION).document(day)
-
     @firestore.transactional
-    def _attempt(transaction) -> tuple[bool, int]:
+    def _attempt(transaction) -> bool:
+        ref = db.collection(USAGE_COLLECTION).document(day)
         snap = ref.get(transaction=transaction)
         data = snap.to_dict() if snap.exists else None
         count = int((data or {}).get("count", 0) or 0)
         if count >= cap:
-            return (False, count)
+            return False
         if snap.exists:
             transaction.update(ref, {"count": count + 1})
         else:
             transaction.set(ref, {"count": 1, "day": day, "cap": cap})
-        return (True, count + 1)
+        return True
 
     try:
-        allowed, new_count = _attempt(db.transaction())
+        return _attempt(db.transaction())
     except Exception as exc:  # noqa: BLE001 - any store failure fails closed
         raise SearchQuotaUnavailable(
             f"web-search quota store failed: {exc}"
         ) from exc
-    if allowed:
-        logger.info("web search reserved (%d/%d for %s)", new_count, cap, day)
-    return allowed
 
 
 def _google_cse_search(
