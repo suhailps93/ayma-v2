@@ -108,6 +108,7 @@ from .app_control_navigation import (
     detect_app_command,
     detect_launch_command,
     detect_photo_command,
+    detect_photo_management_command,
     detect_profile_command,
     launch_clarification,
     run_app_command,
