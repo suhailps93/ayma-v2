@@ -13,6 +13,7 @@ import asyncio
 
 import pytest
 
+import face_match
 import skills
 import token_ledger
 from skills import face_report as face_report_mod
@@ -200,26 +201,30 @@ def test_use_my_photo_refuses_when_the_photo_is_someone_else(monkeypatch):
 
 
 def test_classify_reference_uses_the_shared_face_match(monkeypatch):
-    """Same mechanism as main._classify_shared_photo: the user's own reference
-    embeddings + classify_face_match; no references → 'unknown' (permissive,
+    """Same mechanism as main._classify_shared_photo: the pairwise
+    ``face_match.classify_photo`` check against the user's own reference
+    photos; no references (or a failed check) → 'unknown' (permissive,
     matching face_report on the same photo)."""
-    import deep_dive_images
-    import media_embed
 
-    monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda db, uid: [[1.0]]
-    )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda b, m: [0.5]
-    )
-    monkeypatch.setattr(
-        deep_dive_images, "classify_face_match", lambda emb, refs: "not_self"
-    )
+    async def _not_self(*_a, **_k):
+        return {"verdict": "not_self", "confidence": "high",
+                "face_visible": True, "reason": "Different person."}
+
+    monkeypatch.setattr(face_match, "classify_photo", _not_self)
     assert generate_image._classify_reference(object(), "u9", b"X", "image/jpeg") == "not_self"
 
-    monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda db, uid: []
-    )
+    async def _unknown(*_a, **_k):
+        return {"verdict": "unknown", "confidence": "low",
+                "face_visible": True,
+                "reason": "No reference photos for this account"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _unknown)
+    assert generate_image._classify_reference(object(), "u9", b"X", "image/jpeg") == "unknown"
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("vision model call failed")
+
+    monkeypatch.setattr(face_match, "classify_photo", _boom)
     assert generate_image._classify_reference(object(), "u9", b"X", "image/jpeg") == "unknown"
 
 

@@ -56,9 +56,20 @@ def _stub_media(monkeypatch):
         photo_pipeline.media_embed, "download_bytes",
         lambda p: (b"IMGBYTES", "image/jpeg"),
     )
+    # Face identity now comes from the pairwise LiveKit check
+    # (face_match.classify_photo), not a stored embedding: by default there
+    # is no reference to match against, so the verdict is "unknown" and the
+    # pipeline proceeds without a name.
+    async def _no_face_match(*_a, **_k):
+        return {
+            "verdict": "unknown",
+            "confidence": "low",
+            "face_visible": True,
+            "reason": "No reference photos for this account",
+        }
+
     monkeypatch.setattr(
-        photo_pipeline.media_embed, "embed_image_bytes",
-        lambda b, m="image/jpeg": [0.1] * 8,
+        photo_pipeline.face_match, "classify_photo", _no_face_match
     )
 
     async def _attrs(b, m, **_kw):
@@ -82,11 +93,14 @@ def test_flagged_photo_stops_after_recording(monkeypatch):
         return {"allowed": False, "reason": "nudity", "categories": ["nudity"]}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
-    embed_called = []
-    monkeypatch.setattr(
-        photo_pipeline.media_embed, "embed_image_bytes",
-        lambda b, m="image/jpeg": embed_called.append(1),
-    )
+    face_calls = []
+
+    async def _classify(*_a, **_k):
+        face_calls.append(1)
+        return {"verdict": "unknown", "confidence": "low",
+                "face_visible": True, "reason": "not checked"}
+
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
 
     db = _Db()
     res = _run(photo_pipeline.process(db, "u1", "uploads/u1/x.jpg", "profile"))
@@ -94,7 +108,7 @@ def test_flagged_photo_stops_after_recording(monkeypatch):
     assert res["published"] is False
     assert res["moderation_status"] == "flagged"
     assert res["reason"] == "nudity"
-    assert embed_called == []
+    assert face_calls == []
     doc = _media_doc(db)
     assert doc["moderation_status"] == "flagged"
     assert "embedding" not in doc
@@ -105,6 +119,19 @@ def test_approved_photo_runs_every_stage(monkeypatch):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+    monkeypatch.setattr(
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
+    monkeypatch.setattr(
+        photo_pipeline.deep_dive, "profile_full_name",
+        lambda db, uid: "Suhail Rahman",
+    )
 
     wiki_calls = []
 
@@ -123,17 +150,25 @@ def test_approved_photo_runs_every_stage(monkeypatch):
     assert res["moderation_status"] == "approved"
     assert res["attributes"]["hair_color"] == "brown"
     assert res["caption"] == "a person hiking a ridgeline"
-    assert res["embedding"] == [0.1] * 8
+    # No stored embedding any more — identity is the pairwise face-match
+    # verdict, carried on the result and the media doc instead.
+    assert res["embedding"] is None
+    assert res["face_verdict"] == "self"
+    assert res["is_user"] == "yes"
+    assert res["embedding_missing"] is False
     doc = _media_doc(db)
-    assert doc["dim"] == 8 and doc["source"] == "profile"
+    assert doc["face_verdict"] == "self"
+    assert doc["is_user"] == "yes"
+    assert doc["source"] == "profile"
+    assert "embedding" not in doc and "dim" not in doc
     # profile photo mirrors attrs onto profile/main
     assert db.store[("users", "u1", "profile", "main")]["photo_attrs"][
         "glasses"] == "no"
     # wiki caption ingested for u1 at default visibility
-    assert wiki_calls == [("u1", None, "(shared a photo) a person hiking a ridgeline")]
+    assert wiki_calls == [("u1", None, "(shared a photo of themselves) a person hiking a ridgeline")]
 
 
-def test_no_embedding_without_biometric_consent(monkeypatch):
+def test_no_face_check_without_biometric_consent(monkeypatch):
     async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
@@ -141,25 +176,21 @@ def test_no_embedding_without_biometric_consent(monkeypatch):
     monkeypatch.setattr(
         photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: False
     )
-    embed_called = []
-    monkeypatch.setattr(
-        photo_pipeline.media_embed, "embed_image_bytes",
-        lambda b, m="image/jpeg": embed_called.append(1),
-    )
 
-    def _no_refs(*_a):
+    async def _classify(*_a, **_k):
         raise AssertionError("no face match without consent")
 
-    monkeypatch.setattr(
-        photo_pipeline.deep_dive_images, "reference_embeddings_for", _no_refs
-    )
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
     db = _Db()
     res = _run(photo_pipeline.process(db, "u1", "uploads/u1/p.jpg", "chat"))
 
     assert res["published"] is True
+    assert res["face_verdict"] == "unknown"
     assert res["embedding"] is None
-    assert embed_called == []
+    assert res["embedding_missing"] is False
     doc = _media_doc(db)
+    assert doc["face_verdict"] == "unknown"
+    assert doc["is_user"] == ""
     assert "embedding" not in doc and "dim" not in doc
 
 
@@ -183,12 +214,10 @@ def test_dm_source_forces_ai_only(monkeypatch):
     assert forced == ["ai_only", "ai_only"]
 
 
-def test_embedding_failure_is_non_fatal_and_records_missing(monkeypatch):
-    """When face embedding raises (e.g. DirectGoogleDisabledError under LiveKit
-    inference rule), the pipeline continues, publishes as approved, and flags
-    embedding_missing on the media doc so it can be backfilled."""
-    import llm_routing
-
+def test_face_check_failure_is_non_fatal_and_records_unknown(monkeypatch):
+    """When the pairwise face check raises, the pipeline continues,
+    publishes as approved, and records an "unknown" verdict so the photo is
+    never mislabelled as the user (or as someone else) on a failed check."""
     async def _mod(b, m, **_kw):
         return {"allowed": True, "reason": "", "categories": []}
 
@@ -197,11 +226,11 @@ def test_embedding_failure_is_non_fatal_and_records_missing(monkeypatch):
         photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
 
-    def _broken_embed(b, m="image/jpeg"):
-        raise llm_routing.DirectGoogleDisabledError("direct vertex disabled")
+    async def _broken_check(*_a, **_k):
+        raise RuntimeError("vision model call failed")
 
     monkeypatch.setattr(
-        photo_pipeline.media_embed, "embed_image_bytes", _broken_embed
+        photo_pipeline.face_match, "classify_photo", _broken_check
     )
 
     db = _Db()
@@ -210,10 +239,12 @@ def test_embedding_failure_is_non_fatal_and_records_missing(monkeypatch):
     assert res["published"] is True
     assert res["moderation_status"] == "approved"
     assert res["embedding"] is None
-    assert res["embedding_missing"] is True
+    assert res["face_verdict"] == "unknown"
+    assert res["is_user"] == ""
+    assert res["embedding_missing"] is False
     doc = _media_doc(db)
     assert doc["moderation_status"] == "approved"
-    assert doc.get("embedding_missing") is True
+    assert doc["face_verdict"] == "unknown"
     assert "embedding" not in doc and "dim" not in doc
     assert res["attributes"]["hair_color"] == "brown"
 
@@ -339,26 +370,18 @@ def test_process_computes_match_and_name_once_and_passes_them_to_the_composer(
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
-
-    embed_calls = []
-
-    def _embed(b, m="image/jpeg"):
-        embed_calls.append(1)
-        return [0.2] * 8
-
-    monkeypatch.setattr(photo_pipeline.media_embed, "embed_image_bytes", _embed)
-
-    ref_calls = []
-
-    def _refs(db, uid):
-        ref_calls.append(1)
-        return [[0.2] * 8]
-
-    monkeypatch.setattr(photo_pipeline.deep_dive_images, "reference_embeddings_for", _refs)
     monkeypatch.setattr(
-        photo_pipeline.deep_dive_images, "classify_face_match",
-        lambda emb, refs: "self",
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
+
+    face_calls = []
+
+    async def _classify(*_a, **_k):
+        face_calls.append(1)
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
     monkeypatch.setattr(
         photo_pipeline.deep_dive, "profile_full_name",
         lambda db, uid: "Suhail Rahman",
@@ -383,11 +406,9 @@ def test_process_computes_match_and_name_once_and_passes_them_to_the_composer(
         wiki_uids=["u1"], accompanying_text="feeling great",
     ))
 
-    # The embedding and the reference lookup each ran exactly once for this
-    # photo — the wiki-fold below reuses the same match/shot_type rather than
-    # re-deriving them.
-    assert embed_calls == [1]
-    assert ref_calls == [1]
+    # The face check ran exactly once for this photo — the wiki-fold below
+    # reuses the same match/shot_type rather than re-deriving them.
+    assert face_calls == [1]
     assert caption_calls == [{
         "name": "Suhail Rahman", "match": "self", "source": "chat",
         "accompanying_text": "feeling great", "uid": "u1",
@@ -400,9 +421,18 @@ def test_process_skips_the_name_lookup_when_there_is_no_reference(monkeypatch):
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
     monkeypatch.setattr(
-        photo_pipeline.deep_dive_images, "reference_embeddings_for",
-        lambda db, uid: [],
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
+
+    face_calls = []
+
+    async def _classify(*_a, **_k):
+        face_calls.append(1)
+        return {"verdict": "unknown", "confidence": "low",
+                "face_visible": True,
+                "reason": "No reference photos for this account"}
+
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
 
     name_calls = []
     monkeypatch.setattr(
@@ -428,6 +458,7 @@ def test_process_skips_the_name_lookup_when_there_is_no_reference(monkeypatch):
         _Db(), "u1", "uploads/u1/p.jpg", "chat", wiki_uids=["u1"],
     ))
 
+    assert face_calls == [1]  # the check ran — it just found no reference
     assert name_calls == []  # never looked up — no confirmed match to justify it
     assert caption_calls == [{
         "name": "", "match": "unknown", "source": "chat",
@@ -473,18 +504,23 @@ def test_approved_photo_folds_the_match_verdict_into_the_wiki_turn(monkeypatch):
         return {"allowed": True, "reason": "", "categories": []}
 
     monkeypatch.setattr(photo_pipeline.photo_moderation, "moderate", _mod)
+    monkeypatch.setattr(
+        photo_pipeline.biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
 
     async def _attrs(b, m, **_kw):
         return {"shot_type": "face", "usable_for_face": True}
 
     monkeypatch.setattr(photo_pipeline.photo_attrs, "extract_attributes", _attrs)
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(photo_pipeline.face_match, "classify_photo", _classify)
     monkeypatch.setattr(
-        photo_pipeline.deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[0.1] * 8],
-    )
-    monkeypatch.setattr(
-        photo_pipeline.deep_dive_images, "classify_face_match",
-        lambda _emb, _refs: "self",
+        photo_pipeline.deep_dive, "profile_full_name",
+        lambda db, uid: "Suhail Rahman",
     )
 
     wiki_calls = []
@@ -537,7 +573,7 @@ def test_approved_photo_updates_its_gallery_note(monkeypatch):
 
     assert calls == [(
         "u1", "https://cdn.example/uploads/u1/p.jpg",
-        {"context": "a person hiking a ridgeline"},
+        {"context": "a person hiking a ridgeline", "is_user": ""},
     )]
 
 

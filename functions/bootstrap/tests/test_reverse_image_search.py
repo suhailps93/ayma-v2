@@ -3,8 +3,10 @@
 import asyncio
 from types import SimpleNamespace
 
+import biometric_consent
 import deep_dive
 import deep_dive_images
+import face_match
 import media_embed
 import reverse_image_search as ris
 import skill_reports
@@ -96,12 +98,15 @@ def test_candidates_from_detection_empty_for_none():
 # --- scan ----------------------------------------------------------------
 
 
-def _stub_photo(monkeypatch, path="uploads/u1/a.jpg", *, refs=True, face_match=True):
+def _stub_photo(monkeypatch, path="uploads/u1/a.jpg", *, refs=True, gate_pass=True):
     """Stub the primary-photo lookup and photo download, plus (by default) a
-    usable reference embedding and a passing face-match gate — the "happy
+    usable reference photo and a passing face-match gate — the "happy
     path" every pre-existing scan test assumes. Pass ``refs=False`` to
-    simulate no usable reference photo yet, or ``face_match=False`` to
+    simulate no usable reference photo yet, or ``gate_pass=False`` to
     simulate a Web Detection hit that isn't confidently this user's face."""
+    monkeypatch.setattr(
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
     monkeypatch.setattr(
         skill_reports, "primary_profile_photo_path", lambda _db, _uid: path
     )
@@ -109,13 +114,13 @@ def _stub_photo(monkeypatch, path="uploads/u1/a.jpg", *, refs=True, face_match=T
         media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg")
     )
     monkeypatch.setattr(
-        deep_dive_images,
-        "reference_embeddings_for",
-        lambda _db, _uid: ([[1.0, 0.0]] if refs else []),
+        face_match,
+        "get_reference_photos",
+        lambda _db, _uid: (["uploads/u1/ref.jpg"] if refs else []),
     )
 
     async def _fn(*_a, **_k):
-        return face_match
+        return gate_pass
 
     monkeypatch.setattr(ris, "_face_matches_user", _fn)
 
@@ -177,7 +182,7 @@ def test_scan_never_raises_when_vision_errors(monkeypatch):
 def test_scan_uses_explicit_storage_paths_when_given(monkeypatch):
     db = _FakeDb()
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: [[1.0, 0.0]]
+        face_match, "get_reference_photos", lambda _db, _uid: ["uploads/u1/ref.jpg"]
     )
     seen = []
     monkeypatch.setattr(
@@ -196,7 +201,7 @@ def test_scan_discards_a_candidate_that_fails_face_match(monkeypatch):
     never reach the confirm/reject screen (founder report: a wrong-ethnicity
     match got staged with no face check at all)."""
     db = _FakeDb()
-    _stub_photo(monkeypatch, face_match=False)
+    _stub_photo(monkeypatch, gate_pass=False)
     detection = _detection(similar=[_img("https://cdn.example/stranger.jpg")])
     monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
 
@@ -211,7 +216,7 @@ def test_scan_stages_a_genuine_face_match(monkeypatch):
     own face still gets staged, exactly as before — the gate only removes
     false positives, it doesn't block real matches."""
     db = _FakeDb()
-    _stub_photo(monkeypatch, face_match=True)
+    _stub_photo(monkeypatch, gate_pass=True)
     detection = _detection(similar=[_img("https://cdn.example/really-me.jpg")])
     monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
 
@@ -225,10 +230,10 @@ def test_scan_stages_a_genuine_face_match(monkeypatch):
 
 
 def test_scan_skips_entirely_without_a_reference_photo(monkeypatch):
-    """Early in onboarding, before any photo has been uploaded/embedded (or
-    verified via the selfie flow), there's nothing safe to face-match
-    against — scan must no-op rather than stage unverified candidates. It
-    should bail before even calling Vision."""
+    """Early in onboarding, before any photo has been uploaded (or verified
+    via the selfie flow), there's nothing safe to face-match against —
+    scan must no-op rather than stage unverified candidates. It should bail
+    before even calling Vision."""
     db = _FakeDb()
     _stub_photo(monkeypatch, refs=False)
     calls = {"n": 0}
@@ -244,11 +249,13 @@ def test_scan_skips_entirely_without_a_reference_photo(monkeypatch):
     assert calls["n"] == 0  # never even ran Vision — nothing to verify against
 
 
-def _stub_facematch_pipeline(monkeypatch, *, candidate_emb, ref):
-    """Wire scan's real face-match gate end to end (``classify_face_match``
-    runs for real, so the configured threshold actually decides) against one
-    discovered candidate. ``candidate_emb`` is the stranger/self embedding the
-    web photo embeds to; ``ref`` is the user's reference embedding."""
+def _stub_facematch_pipeline(monkeypatch, *, verdict="self", face_visible=True):
+    """Wire scan's real face-match gate end to end (``face_match.
+    check_same_person`` runs for real through ``_face_matches_user``, so the
+    pairwise verdict actually decides) against one discovered candidate."""
+    monkeypatch.setattr(
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
     monkeypatch.setattr(
         skill_reports, "primary_profile_photo_path", lambda _db, _uid: "p.jpg"
     )
@@ -256,35 +263,31 @@ def _stub_facematch_pipeline(monkeypatch, *, candidate_emb, ref):
         media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg")
     )
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: [ref]
+        face_match, "get_reference_photos", lambda _db, _uid: ["uploads/u1/ref.jpg"]
     )
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda _b, _m: candidate_emb
-    )
 
-    async def _face(*_a, **_k):
-        return True
+    async def _check(*_a, **_k):
+        return {
+            "verdict": verdict,
+            "confidence": "high",
+            "face_visible": face_visible,
+            "reason": "stubbed pairwise check",
+        }
 
-    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+    monkeypatch.setattr(face_match, "check_same_person", _check)
     detection = _detection(similar=[_img("https://cdn.example/lookalike.jpg")])
     monkeypatch.setattr(ris, "_web_detect", lambda _b: detection)
 
 
-def test_scan_drops_a_borderline_match_below_the_configured_threshold(monkeypatch):
-    """The founder's bug: a stranger's look-alike thumbnail whose whole-image
-    cosine (~0.60) clears the loose shared 0.55 but is below the stricter,
-    precision-leaning web-research threshold must be dropped, not staged."""
+def test_scan_drops_a_candidate_whose_face_check_is_uncertain(monkeypatch):
+    """A look-alike thumbnail the pairwise check can't confirm as the user
+    (verdict "unknown") is dropped, not staged — the gate is the face-match
+    verdict now, not a similarity cutoff."""
     db = _FakeDb()
-    # cosine([0.6, 0.8], [1.0, 0.0]) == 0.6 — above 0.55, below 0.65.
-    _stub_facematch_pipeline(
-        monkeypatch, candidate_emb=[0.6, 0.8], ref=[1.0, 0.0]
-    )
-    monkeypatch.setattr(
-        ris, "CONFIG", SimpleNamespace(web_photo_facematch_threshold=0.65)
-    )
+    _stub_facematch_pipeline(monkeypatch, verdict="unknown")
 
     created = _run(ris.scan(db, "u1"))
     assert created == []
@@ -292,17 +295,12 @@ def test_scan_drops_a_borderline_match_below_the_configured_threshold(monkeypatc
     assert ("users", "u1", "web_photo_candidates", cid) not in db.data
 
 
-def test_scan_stages_the_same_match_when_the_threshold_is_lowered(monkeypatch):
-    """Mirror of the above — proving the threshold is what decides: the exact
-    same 0.60-similarity candidate is staged once the configured cutoff drops
-    to 0.55. Confirms the gate is driven by the config value, not hardcoded."""
+def test_scan_stages_a_candidate_whose_face_check_confirms_self(monkeypatch):
+    """Mirror of the above — proving the verdict is what decides: the exact
+    same candidate is staged once the pairwise check confirms it as the
+    user with a real face visible."""
     db = _FakeDb()
-    _stub_facematch_pipeline(
-        monkeypatch, candidate_emb=[0.6, 0.8], ref=[1.0, 0.0]
-    )
-    monkeypatch.setattr(
-        ris, "CONFIG", SimpleNamespace(web_photo_facematch_threshold=0.55)
-    )
+    _stub_facematch_pipeline(monkeypatch, verdict="self", face_visible=True)
 
     created = _run(ris.scan(db, "u1"))
     assert len(created) == 1
@@ -316,40 +314,38 @@ def test_face_matches_user_true_when_verified_and_a_real_face(monkeypatch):
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0]
-    )
-    monkeypatch.setattr(
-        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "self"
-    )
+    seen = []
 
-    async def _face(*_a, **_k):
-        return True
+    async def _check(ref, cand, **_k):
+        seen.append((ref, cand))
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
 
-    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+    monkeypatch.setattr(face_match, "check_same_person", _check)
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is True
+    assert seen == [("uploads/u1/ref.jpg", (b"img", "image/jpeg"))]
 
 
 def test_face_matches_user_false_when_not_the_same_person(monkeypatch):
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda _b, _m: [0.0, 1.0]
-    )
-    monkeypatch.setattr(
-        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "not_self"
-    )
+
+    async def _check(*_a, **_k):
+        return {"verdict": "not_self", "confidence": "high",
+                "face_visible": True, "reason": "Different person."}
+
+    monkeypatch.setattr(face_match, "check_same_person", _check)
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is False
@@ -359,16 +355,16 @@ def test_face_matches_user_false_when_uncertain(monkeypatch):
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda _b, _m: [0.7, 0.7]
-    )
-    monkeypatch.setattr(
-        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "unknown"
-    )
+
+    async def _check(*_a, **_k):
+        return {"verdict": "unknown", "confidence": "low",
+                "face_visible": True, "reason": "Could not tell."}
+
+    monkeypatch.setattr(face_match, "check_same_person", _check)
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is False
@@ -382,54 +378,49 @@ def test_face_matches_user_false_on_fetch_failure(monkeypatch):
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is False
 
 
-def test_face_matches_user_false_on_embed_failure(monkeypatch):
+def test_face_matches_user_false_on_face_check_failure(monkeypatch):
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
 
-    def _boom(_b, _m):
-        raise RuntimeError("embedding service down")
+    async def _boom(*_a, **_k):
+        raise RuntimeError("vision model call failed")
 
-    monkeypatch.setattr(media_embed, "embed_image_bytes", _boom)
+    monkeypatch.setattr(face_match, "check_same_person", _boom)
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is False
 
 
-def test_face_matches_user_false_when_similarity_high_but_no_real_face(
+def test_face_matches_user_false_when_self_verdict_but_no_real_face(
     monkeypatch,
 ):
-    # Same-person cosine similarity clears, but the detectable-face gate
-    # says the image doesn't actually show a real photographed face (e.g. a
-    # coincidentally-similar flat-color avatar) — must still be discarded.
+    # The pairwise check says "self" but no real photographed face is
+    # visible in the candidate (e.g. a coincidentally-matching flat-color
+    # avatar) — must still be discarded.
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda _u: (b"img", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0]
-    )
-    monkeypatch.setattr(
-        deep_dive_images, "classify_face_match", lambda _e, _r, **_k: "self"
-    )
 
-    async def _face(*_a, **_k):
-        return False
+    async def _check(*_a, **_k):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": False, "reason": "No face visible."}
 
-    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
+    monkeypatch.setattr(face_match, "check_same_person", _check)
 
     ok = _run(
         ris._face_matches_user(
-            "u1", "https://x/a.jpg", refs=[[1.0, 0.0]], threshold=0.65
+            "u1", "https://x/a.jpg", refs=["uploads/u1/ref.jpg"], threshold=0.65
         )
     )
     assert ok is False
@@ -470,6 +461,9 @@ def test_auto_scan_runs_once_and_sets_the_flag(monkeypatch):
 
 def test_auto_scan_leaves_the_flag_unset_without_a_photo(monkeypatch):
     db = _FakeDb()
+    monkeypatch.setattr(
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
+    )
     monkeypatch.setattr(
         skill_reports, "primary_profile_photo_path", lambda _db, _uid: ""
     )
