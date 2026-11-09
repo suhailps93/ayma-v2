@@ -499,7 +499,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
             // tiny, low-emphasis "Skip tour" so the instruction is purely
             // Ayma's spoken/typed line. Passive tour: the full callout card.
             if (_ready && widget.chromeless)
-              _buildChromelessSkip(ac)
+              _buildChromelessSkip()
             else if (_ready)
               Positioned.fill(
                 child: SafeArea(child: _buildCallout(ac, feature, isLast)),
@@ -513,7 +513,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   /// The only chrome in driven mode: a small, unobtrusive "Skip tour" pinned to
   /// the bottom. Nothing else is drawn over the app but the spotlight. Omitted
   /// when there's no stop handler.
-  Widget _buildChromelessSkip(AymaTokens ac) {
+  Widget _buildChromelessSkip() {
     if (widget.onStopPressed == null) return const SizedBox.shrink();
     return Positioned(
       left: 0,
@@ -531,9 +531,10 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
                 key: const ValueKey('coach-skip'),
                 onPressed: _finishing ? null : widget.onStopPressed,
                 style: TextButton.styleFrom(
-                  foregroundColor: ac.fgMute,
+                  foregroundColor: AymaTokens.dark.fg,
                   textStyle: AymaType.sans(size: 12, weight: FontWeight.w500),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  minimumSize: const Size(48, 48),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
                 child: const Text('Skip tour'),
               ),
@@ -598,7 +599,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
             maxHeight: constraints.maxHeight,
           ),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             child: card,
           ),
         ),
@@ -728,7 +729,7 @@ class _CalloutCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: BoxDecoration(
         color: ac.bgCard,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Column(
@@ -738,14 +739,14 @@ class _CalloutCard extends StatelessWidget {
           if (spotlight)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Text('NEW', style: AymaType.mono(size: 11, color: ac.accent)),
+              child: Text('NEW', style: AymaType.mono(size: 11, color: ac.fgDim)),
             )
           else
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
               child: Text(
                 '${index + 1} of $total',
-                style: AymaType.mono(size: 11, color: ac.fgMute),
+                style: AymaType.mono(size: 11, color: ac.fgDim),
               ),
             ),
           Row(
@@ -794,6 +795,12 @@ class _CalloutCard extends StatelessWidget {
                         child: TextButton(
                           key: const ValueKey('coach-skip'),
                           onPressed: finishing ? null : onSkip,
+                          style: TextButton.styleFrom(
+                            foregroundColor: ac.fgDim,
+                            minimumSize: const Size(48, 48),
+                            padding: EdgeInsets.zero,
+                            alignment: Alignment.centerLeft,
+                          ),
                           child: Text(
                             'Skip tour',
                             style: AymaType.sans(
@@ -821,8 +828,9 @@ class _CalloutCard extends StatelessWidget {
                             style: FilledButton.styleFrom(
                               backgroundColor: ac.accent,
                               foregroundColor: ac.onAccent,
+                              minimumSize: const Size(64, 48),
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 24, vertical: 12),
+                                  horizontal: 24, vertical: 16),
                               shape: const StadiumBorder(),
                               textStyle: AymaType.sans(
                                   size: 15, weight: FontWeight.w600),
