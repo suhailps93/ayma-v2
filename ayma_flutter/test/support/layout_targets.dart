@@ -48,6 +48,7 @@ import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/screens/recovery_screen.dart';
 import 'package:ayma_flutter/screens/release_notes_screen.dart';
 import 'package:ayma_flutter/screens/settings_screen.dart';
+import 'package:ayma_flutter/screens/shared_profile_link_screen.dart';
 import 'package:ayma_flutter/screens/shared_report_screen.dart';
 import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
@@ -272,6 +273,8 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ReleaseNotesScreen.path: () => shell(const ReleaseNotesScreen()),
     SharedReportScreen.path: () =>
         SharedReportScreen(token: 'tok', apiClient: api),
+    SharedProfileLinkScreen.path: () =>
+        SharedProfileLinkScreen(token: 'tok', api: api),
     RecoveryScreen.path: () => RecoveryScreen(apiClient: api),
     TermsScreen.path: () => const TermsScreen(),
     PrivacyScreen.path: () => const PrivacyScreen(),

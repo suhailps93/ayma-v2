@@ -22,6 +22,7 @@ Future<void> showAymaShareSheet(
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    isScrollControlled: true,
     builder: (sheetCtx) => AymaShareSheet(
       target: target,
       share: kit,
@@ -79,71 +80,73 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
     final ac = context.ac;
     final t = widget.target;
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (_busy) const LinearProgressIndicator(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(9),
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: t.thumbnailUrl.isNotEmpty
-                        ? AymaPhoto(
-                            url: t.thumbnailUrl,
-                            displayWidth: 40,
-                            error: Icon(Icons.person_outline,
-                                size: 18, color: ac.fgMute),
-                          )
-                        : DecoratedBox(
-                            decoration: BoxDecoration(color: ac.accentFaint),
-                            child: Icon(Icons.share_outlined,
-                                size: 18, color: ac.accent),
-                          ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_busy) const LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(9),
+                    child: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: t.thumbnailUrl.isNotEmpty
+                          ? AymaPhoto(
+                              url: t.thumbnailUrl,
+                              displayWidth: 40,
+                              error: Icon(Icons.person_outline,
+                                  size: 18, color: ac.fgMute),
+                            )
+                          : DecoratedBox(
+                              decoration: BoxDecoration(color: ac.accentFaint),
+                              child: Icon(Icons.share_outlined,
+                                  size: 18, color: ac.accent),
+                            ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        t.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
-                      ),
-                      Text(
-                        t.typeLabel,
-                        style: AymaType.sans(size: 12, color: ac.fgMute),
-                      ),
-                    ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          t.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
+                        ),
+                        Text(
+                          t.typeLabel,
+                          style: AymaType.sans(size: 12, color: ac.fgMute),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          ListTile(
-            key: const ValueKey('shareSendToAyma'),
-            leading: const Icon(Icons.auto_awesome_outlined),
-            title: const Text('Send to Ayma'),
-            subtitle: const Text('Talk about it with Ayma'),
-            onTap: _busy ? null : _sendToAyma,
-          ),
-          if (t.canShareExternally)
             ListTile(
-              key: const ValueKey('shareSendExternally'),
-              leading: const Icon(Icons.ios_share),
-              title: const Text('Send externally'),
-              subtitle: const Text('Share a link in any app'),
-              onTap: _busy ? null : _sendExternally,
+              key: const ValueKey('shareSendToAyma'),
+              leading: const Icon(Icons.auto_awesome_outlined),
+              title: const Text('Send to Ayma'),
+              subtitle: const Text('Talk about it with Ayma'),
+              onTap: _busy ? null : _sendToAyma,
             ),
-        ],
+            if (t.canShareExternally)
+              ListTile(
+                key: const ValueKey('shareSendExternally'),
+                leading: const Icon(Icons.ios_share),
+                title: const Text('Send externally'),
+                subtitle: const Text('Share a link in any app'),
+                onTap: _busy ? null : _sendExternally,
+              ),
+          ],
+        ),
       ),
     );
   }
