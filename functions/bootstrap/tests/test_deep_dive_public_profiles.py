@@ -3,8 +3,10 @@ import json
 
 import pytest
 
+import biometric_consent
 import deep_dive_images
 import deep_dive_public_profiles as pp
+import face_match
 import gemini
 import media_embed
 import web_search
@@ -209,16 +211,17 @@ def test_find_web_images_uses_flagged_source_and_skips_blocked_region(monkeypatc
         deep_dive_images, "_fetch_image", lambda u: (b"x", "image/png")
     )
     monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda i, m="image/jpeg": [1.0, 0.0]
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
-
-    async def _face(_i, _m, uid=None):
-        return True
-
-    monkeypatch.setattr(deep_dive_images, "_has_detectable_face", _face)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda db, uid: [[1.0, 0.0]]
+        face_match, "get_reference_photos", lambda _db, _uid: ["uploads/u1/ref.jpg"]
     )
+
+    async def _check(*_a, **_k):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(face_match, "check_same_person", _check)
     stats: dict = {}
     out = _run(
         deep_dive_images.find_web_images(object(), "u1", "Dana Reyes", stats=stats)

@@ -5119,8 +5119,9 @@ def _ai_view_photos(uid: str) -> list[dict[str, object]]:
     (``source: "profile"``), any image they've sent in the Ayma chat
     (``source: "chat"``), then face-verified photos Ayma has found of them on
     the open web during a "search me" deep dive (``source: "web"``). De-duped
-    by URL, then by image content (the same photo under two URLs collapses to
-    one — see ``photo_notes.classify_and_dedupe``), capped at 60.
+    by URL only — the same photo under two URLs shows twice (content dedupe
+    went away with stored face embeddings; see
+    ``photo_notes.classify_and_dedupe``), capped at 60.
 
     Each carries its stable ``id``, any note the user or Ayma has written
     (``context``), and ``is_user`` — Ayma's own face-match verdict, computed

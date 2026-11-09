@@ -276,14 +276,18 @@ def test_classify_and_dedupe_computes_and_caches_a_verdict_for_an_unclassified_c
     )
     db = _Db()
 
-    import media_embed
-    monkeypatch.setattr(media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg"))
-    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0])
-
-    import deep_dive_images
+    import biometric_consent
     monkeypatch.setattr(
-        deep_dive_images, "_reference_embeddings", lambda _db, _uid: [[1.0, 0.0]]
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
+
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     candidates = [{"id": "1", "url": url, "source": "chat", "is_user": "",
                    "context": "", "deleted": False, "_embedding": None}]
@@ -293,31 +297,39 @@ def test_classify_and_dedupe_computes_and_caches_a_verdict_for_an_unclassified_c
     assert out[0]["is_user"] == "yes"
     raw = db.notes[photo_notes.photo_id(url)]
     assert raw["is_user"] == "yes"
-    assert raw["embedding"] == [1.0, 0.0]
+    # No embedding is cached any more — the verdict is the cached fact.
+    assert "embedding" not in raw
 
 
-def test_classify_and_dedupe_drops_a_chat_photo_matching_a_kept_profile_photo(
+def test_classify_and_dedupe_drops_same_url_only(
     monkeypatch,
 ):
+    """Dedupe is URL-only since stored face embeddings went away: the same
+    photo under two different URLs is kept twice (content dedupe would need
+    a byte-hash pass over downloads), while the exact same URL twice drops
+    the second copy."""
     candidates = [
         {"id": "p", "url": "https://cdn/profile.jpg", "source": "profile",
-         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+         "is_user": "", "context": "", "deleted": False},
         {"id": "c", "url": "https://cdn/chat-same.jpg", "source": "chat",
-         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+         "is_user": "", "context": "", "deleted": False},
+        {"id": "dup", "url": "https://cdn/profile.jpg", "source": "profile",
+         "is_user": "", "context": "", "deleted": False},
     ]
     out = photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
 
-    assert [p["id"] for p in out] == ["p"]
+    assert [p["id"] for p in out] == ["p", "c"]
 
 
 def test_classify_and_dedupe_defaults_profile_and_web_is_user_without_network_work(
     monkeypatch,
 ):
-    import media_embed
-    def _boom(*_a, **_kw):
-        raise AssertionError("should not need to download/embed profile or web photos")
-    monkeypatch.setattr(media_embed, "download_bytes", _boom)
-    monkeypatch.setattr(media_embed, "embed_image_bytes", _boom)
+    import face_match
+
+    async def _boom(*_a, **_kw):
+        raise AssertionError("should not need to face-match profile or web photos")
+
+    monkeypatch.setattr(face_match, "classify_photo", _boom)
 
     candidates = [
         {"id": "p", "url": "https://cdn/profile.jpg", "source": "profile",
@@ -330,7 +342,7 @@ def test_classify_and_dedupe_defaults_profile_and_web_is_user_without_network_wo
     assert {p["id"]: p["is_user"] for p in out} == {"p": "yes", "w": "yes"}
 
 
-def test_classify_and_dedupe_respects_the_per_call_embed_budget(monkeypatch):
+def test_classify_and_dedupe_respects_the_per_call_face_match_budget(monkeypatch):
     import dataclasses
     import config
     monkeypatch.setattr(
@@ -344,15 +356,20 @@ def test_classify_and_dedupe_respects_the_per_call_embed_budget(monkeypatch):
             f"o/uploads%2Fu1%2Fchat{i}.jpg?alt=media&token=abc"
         )
 
-    calls = []
-    import media_embed
+    import biometric_consent
     monkeypatch.setattr(
-        media_embed, "download_bytes",
-        lambda p: (calls.append(p), (b"b", "image/jpeg"))[1],
+        biometric_consent, "has_consent_fresh", lambda _db, _uid: True
     )
-    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [0.1, 0.2])
-    import deep_dive_images
-    monkeypatch.setattr(deep_dive_images, "_reference_embeddings", lambda _db, _uid: [])
+
+    calls = []
+    import face_match
+
+    async def _classify(*_a, **_k):
+        calls.append(1)
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "Matches reference."}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     n = photo_notes._MAX_NEW_EMBEDS_PER_CALL + 5
     candidates = [
@@ -360,9 +377,16 @@ def test_classify_and_dedupe_respects_the_per_call_embed_budget(monkeypatch):
          "context": "", "deleted": False, "_embedding": None}
         for i in range(n)
     ]
-    photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
+    out = photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
 
     assert len(calls) == photo_notes._MAX_NEW_EMBEDS_PER_CALL
+    # The first twelve got a verdict; the rest wait for a later load.
+    assert [p["is_user"] for p in out[:photo_notes._MAX_NEW_EMBEDS_PER_CALL]] == (
+        ["yes"] * photo_notes._MAX_NEW_EMBEDS_PER_CALL
+    )
+    assert [p["is_user"] for p in out[photo_notes._MAX_NEW_EMBEDS_PER_CALL:]] == (
+        [""] * 5
+    )
 
 
 def test_classify_and_dedupe_does_not_overwrite_an_already_cached_verdict(
@@ -370,9 +394,9 @@ def test_classify_and_dedupe_does_not_overwrite_an_already_cached_verdict(
 ):
     """A chat photo whose `is_user` was already set (e.g. by
     `main._persist_shared_photo_verdict` at chat-send time) must not have
-    that verdict recomputed/overwritten here, even though this photo's
-    embedding still needs computing for de-dup — no regression on the
-    authoritative-write ordering the bugfix relies on."""
+    that verdict recomputed/overwritten here, even though this photo would
+    otherwise be classified — no regression on the authoritative-write
+    ordering the bugfix relies on."""
     import dataclasses
     import config
     monkeypatch.setattr(
@@ -385,21 +409,17 @@ def test_classify_and_dedupe_does_not_overwrite_an_already_cached_verdict(
     )
     db = _Db(notes={photo_notes.photo_id(url): {"is_user": "no"}})
 
-    import media_embed
-    monkeypatch.setattr(media_embed, "download_bytes", lambda _p: (b"bytes", "image/jpeg"))
-    monkeypatch.setattr(media_embed, "embed_image_bytes", lambda _b, _m: [1.0, 0.0])
+    import face_match
 
-    import deep_dive_images
-
-    def _should_not_run(*_a, **_kw):  # pragma: no cover
+    async def _should_not_run(*_a, **_kw):  # pragma: no cover
         raise AssertionError(
-            "is_user already cached — must not fetch refs to recompute it"
+            "is_user already cached — must not face-match to recompute it"
         )
 
-    monkeypatch.setattr(deep_dive_images, "reference_embeddings_for", _should_not_run)
+    monkeypatch.setattr(face_match, "classify_photo", _should_not_run)
 
-    # is_user already "no" — a real embedding of [1.0, 0.0] would otherwise
-    # match a same-vector reference and compute "yes"; it must stay "no".
+    # is_user already "no" — a face check would otherwise return "self" and
+    # overwrite it; it must stay "no".
     candidates = [{"id": "1", "url": url, "source": "chat", "is_user": "no",
                    "context": "", "deleted": False, "_embedding": None}]
     out = photo_notes.classify_and_dedupe(db, "u1", candidates)

@@ -669,11 +669,23 @@ def test_generate_image_and_edit_image_are_disabled():
         asyncio.run(gemini.edit_image(b"x", "image/png", "make it pop"))
 
 
-def test_embeddings_are_disabled():
+def test_embeddings_are_gone_and_face_match_is_the_seam():
+    """Stored face embeddings are gone (Nov 8 founder decision: replaced by
+    the pairwise LiveKit face check). media_embed is a plain storage
+    downloader now — no embedding function is exposed anywhere — and
+    identity checks go through face_match instead."""
+    import deep_dive_images
+    import face_match
     import media_embed
 
-    with pytest.raises(llm_routing.DirectGoogleDisabledError):
-        media_embed.embed_image_bytes(b"x", "image/jpeg")
+    assert not hasattr(media_embed, "embed_image_bytes")
+    assert not hasattr(media_embed, "find_similar_media")
+    assert not hasattr(media_embed, "process_media")
+    assert not hasattr(deep_dive_images, "reference_embeddings_for")
+    assert not hasattr(deep_dive_images, "classify_face_match")
+    assert callable(face_match.classify_photo)
+    assert callable(face_match.check_same_person)
+    assert callable(face_match.get_reference_photos)
 
 
 def test_batch_submit_and_poll_are_disabled():

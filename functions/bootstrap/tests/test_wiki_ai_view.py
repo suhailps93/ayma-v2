@@ -266,9 +266,10 @@ def test_ai_view_excludes_a_superseded_note_entirely(monkeypatch):
     assert r.json()["photos"] == []
 
 
-def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
-    """The exact same photo surfaced under two different URLs (e.g. sent in
-    chat *and* on the profile grid) only shows once."""
+def test_ai_view_keeps_same_photo_under_two_urls(monkeypatch):
+    """Dedupe is URL-only since stored face embeddings went away: the same
+    photo on the profile grid and in chat (two URLs) shows twice, profile
+    first. (Content dedupe would need a byte-hash pass over downloads.)"""
     monkeypatch.setattr(main, "read_wiki_context", lambda _db, _uid: "")
     monkeypatch.setattr(deep_dive, "read_dive", lambda _db, _uid, _rid: None)
     monkeypatch.setattr(
@@ -278,7 +279,7 @@ def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
     monkeypatch.setattr(
         photo_notes, "profile_photo_media",
         lambda _db, _uid, _prof: [
-            {"url": "https://cdn/profile-1.jpg", "embedding": [1.0, 0.0]}
+            {"url": "https://cdn/profile-1.jpg"}
         ],
     )
     monkeypatch.setattr(
@@ -288,8 +289,6 @@ def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
     import public_profile
     monkeypatch.setattr(public_profile, "_photo_url", lambda path: f"https://cdn/{path}")
 
-    # the chat photo's own note already carries the same embedding as the
-    # profile copy (e.g. cached from an earlier gallery load).
     chat_url = "https://cdn/uploads/me/chat_same.jpg"
     chat_id = photo_notes.photo_id(chat_url)
     monkeypatch.setattr(
@@ -297,7 +296,7 @@ def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
         lambda _db, _uid: {
             chat_id: {
                 "context": "", "is_user": "", "status": "",
-                "url": chat_url, "source": "chat", "embedding": [1.0, 0.0],
+                "url": chat_url, "source": "chat",
             }
         },
     )
@@ -305,5 +304,5 @@ def test_ai_view_collapses_two_candidates_with_matching_embeddings(monkeypatch):
     r = client.get("/wiki/ai-view", headers=_auth(monkeypatch))
     assert r.status_code == 200
     photos = r.json()["photos"]
-    assert len(photos) == 1
-    assert photos[0]["source"] == "profile"
+    assert len(photos) == 2
+    assert [p["source"] for p in photos] == ["profile", "chat"]
