@@ -542,7 +542,8 @@ def _say_directive(index: int, total: int, step: dict) -> str:
             NUMBER=str(index + 1), TOTAL=str(total), SAY=str(step["say"]),
         )
     return (
-        f"Guided tour — step {index + 1} of {total} is now spotlighted with its callout card. "
+        f"Guided tour — step {index + 1} of {total} is now spotlighted (no "
+        "on-screen card: YOUR line is the only guidance the user gets). "
         f"Say ONLY this to the user, warmly and in your own voice, about THIS "
         f"highlighted control (don't mention any other feature yet): "
         f"\"{step['say']}\" Then call advance_guided_tour — it waits for them "

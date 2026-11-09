@@ -112,7 +112,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     featureId: 'ayma_guided_tour',
     headline: 'Let Ayma show you around',
     subtitle: 'Say "walk me through the app" and Ayma gives you a live, guided '
-        'tour — she opens each page, highlights what to tap, and waits for you.',
+        'tour — she opens each page, highlights it, tells you about it, and '
+        'waits for you to say "next".',
     icon: Icons.tour_outlined,
     anchorId: TourAnchors.homeOrb,
   ),

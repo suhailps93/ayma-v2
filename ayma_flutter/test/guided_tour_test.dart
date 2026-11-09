@@ -4,6 +4,7 @@ import 'package:ayma_flutter/services/guided_tour_controller.dart';
 import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
+import 'package:ayma_flutter/services/tour_controller.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
@@ -590,6 +591,67 @@ void main() {
       await settle(tester);
       expect(GuidedTourController.instance.active, isFalse);
     });
+
+    testWidgets('a second tour_step for ANOTHER screen, while a prior step is '
+        'still spotlighted, acks not_on_screen (never silent) AND clears the '
+        'stale spotlight (fix b/c — no zombie scrim, no un-acked step)',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(controllerHost());
+
+      // Step 1 (the orb) shows on the current (empty-slug) screen and acks ok.
+      final step1 = <String, dynamic>{
+        'action': 'tour_step',
+        'id': 's1',
+        'index': 0,
+        'total': 19,
+        'anchor': TourAnchors.homeOrb,
+        'headline': 'This is me',
+        'say': 'This is me.',
+      };
+      await pending.set(step1);
+      svc.runTourStep(pending, step1, id: 's1');
+      await settle(tester);
+      expect(GuidedTourController.instance.isShowing('s1'), isTrue);
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+
+      // The user says "go"; the backend advances and sends step 2 — but it
+      // lives on ANOTHER screen (Explore) while the user is still on Messages,
+      // with step 1's spotlight still up.
+      AppContext.instance.current.value =
+          const ScreenContext(screen: 'messages', route: '/');
+      final step2 = <String, dynamic>{
+        'action': 'tour_step',
+        'id': 's2',
+        'index': 1,
+        'total': 19,
+        'anchor': TourAnchors.exploreTab,
+        'tab': 1,
+        'screen': 'ayma',
+        'headline': 'Explore',
+        'say': 'Tap Explore.',
+      };
+      await pending.set(step2);
+      svc.runTourStep(pending, step2, id: 's2');
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // The step is acked honestly (not_on_screen) rather than left un-acked —
+      // the backend gets its answer and navigates the user there.
+      final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
+      expect(ack, isNotNull);
+      expect(ack!['id'], 's2');
+      expect(ack['ok'], isFalse);
+      expect(ack['reason'], 'not_on_screen');
+      // The stale step-1 spotlight was cleared (no zombie scrim over the
+      // screen the backend is about to navigate to), but the SESSION lives on.
+      expect(GuidedTourController.instance.active, isFalse);
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
+    });
   });
 
   group('page explainer through the real TourHost (founder, 2026-11-08)', () {
@@ -958,12 +1020,16 @@ void main() {
       expect(ev!['event'], 'performed');
       expect(ev['index'], 1);
       expect(ev['attempt'], 1);
-      // Still on this step, highlight gone, Next offered; no timed advance.
+      // Still on this step, highlight gone; no timed advance. Driven mode is
+      // chromeless (Item B): NO callout card — Ayma invites the go in her own
+      // line, so there is no on-screen "N of M", "tap Next" or Skip tour.
       final guided = GuidedTourController.instance;
       expect(guided.active, isTrue);
       expect(guided.step!.performed, isTrue);
-      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
-      expect(find.textContaining('tap Next'), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsNothing);
+      expect(find.textContaining('tap Next'), findsNothing);
+      expect(find.text('2 of 9'), findsNothing);
       await tester.pump(const Duration(seconds: 30));
       expect(guided.active, isTrue);
       expect((await lastEvent())!['event'], 'performed');
@@ -971,20 +1037,24 @@ void main() {
       expect(tourPings, isEmpty);
     });
 
-    testWidgets('Next after a performed step is the go', (tester) async {
+    testWidgets('a performed driven step shows NO card — the go is Ayma\'s '
+        'line, not a button (Item B)', (tester) async {
       addTearDown(shellStub());
       final svc = service();
       await show(tester, svc, stepCmd('a2', command: tabCommand));
       await tester.tapAt(anchorTap);
       await settle(tester);
 
-      await tester.tap(find.byKey(const ValueKey('coach-next')));
-      await settle(tester);
-
-      expect((await lastEvent())!['event'], 'skip');
-      expect(GuidedTourController.instance.active, isFalse);
-      expect(GuidedTourController.instance.sessionActive, isTrue);
-      expect(tourPings, [1]);
+      // The action ran and the step rests, but there is no callout card at
+      // all: no Next, no Skip tour, no step counter. The user advances by
+      // telling Ayma "next" (she calls skip_guided_tour) — no phone 'skip'
+      // event is produced from a button any more.
+      expect((await lastEvent())!['event'], 'performed');
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsNothing);
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isTrue);
     });
 
     testWidgets('a tap on the spot after it is performed does not run it again',
@@ -1103,7 +1173,10 @@ void main() {
       final guided = GuidedTourController.instance;
       expect(guided.active, isTrue);
       expect(guided.step!.performed, isFalse);
-      expect(find.textContaining("didn't open"), findsOneWidget);
+      // Driven mode is chromeless: no card, so the "didn't open" line is
+      // Ayma's spoken/typed line, not an on-screen card. The highlight stays
+      // up (not performed) so the user can tap to retry.
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
       expect(TabRequest.instance.pending.value, isNull);
 
       addTearDown(shellStub());
@@ -1127,21 +1200,37 @@ void main() {
       expect(tourPings, [1]);
     });
 
-    testWidgets('on a call a tap on the orb step is neither the go nor a real '
-        'orb tap, and Next is hidden', (tester) async {
+    testWidgets('on a call the orb (no-command) step rests on the SPOKEN go: it '
+        'auto-reports performed on show and never needs an orb tap (fix a)',
+        (tester) async {
       voiceLive = true;
       final svc = service();
       await show(tester, svc, stepCmd('a7'));
 
+      // Fix (a): the orb IS the call bar on a live call, so the step cannot
+      // wait on a tap — the instant it is shown it reports 'performed', so
+      // advance_guided_tour returns at once (no ~110s tap-window hang) and the
+      // tour rests on the user's spoken "go" (skip_guided_tour). Chromeless:
+      // no card, no Skip tour.
+      final ev = await lastEvent();
+      expect(ev!['event'], 'performed');
+      expect(ev['index'], 1);
+      expect(ev['attempt'], 1);
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isTrue);
       expect(find.byKey(const ValueKey('coach-next')), findsNothing);
-      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-skip')), findsNothing);
+      // The agent is told so she can invite the spoken go.
+      expect(tourPings, [1]);
+
+      // A tap on the orb is neither the go nor a real orb tap — it is swallowed
+      // (the call never disconnects) and nothing new happens.
       await tester.tapAt(anchorTap);
       await settle(tester);
-
       expect(realTaps, 0);
-      expect(await lastEvent(), isNull);
-      expect(GuidedTourController.instance.active, isTrue);
-      expect(tourPings, isEmpty);
+      expect((await lastEvent())!['event'], 'performed');
+      expect(guided.active, isTrue);
     });
 
     testWidgets('on a call the highlight still performs the step and the agent '
@@ -1156,20 +1245,29 @@ void main() {
 
       expect((await lastEvent())!['event'], 'performed');
       expect(tourPings, [1]);
+      // Chromeless: the "say next" invitation is Ayma's spoken line, not a card.
       expect(find.byKey(const ValueKey('coach-next')), findsNothing);
-      expect(find.textContaining('say next'), findsOneWidget);
+      expect(find.textContaining('say next'), findsNothing);
     });
 
-    testWidgets('a call ending mid-step gives Next back', (tester) async {
+    testWidgets('driven mode shows no card whether a call is live or it drops '
+        '(Item B): advancing is always Ayma\'s line, never a card button',
+        (tester) async {
       voiceLive = true;
       final svc = service();
-      await show(tester, svc, stepCmd('a9'));
+      // A command step so the orb-step auto-perform (fix a) isn't in play here.
+      addTearDown(shellStub());
+      await show(tester, svc, stepCmd('a9', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
       expect(find.byKey(const ValueKey('coach-next')), findsNothing);
 
+      // The call drops mid-step — still no card (self-guided would show one;
+      // driven never does).
       GuidedTourController.instance.setVoiceOnly(false);
       await settle(tester);
-
-      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsNothing);
     });
 
     test('a navigate that never leaves the page reports false, not the '
@@ -1204,6 +1302,123 @@ void main() {
         await svc.runTourCommand({'action': 'switch_tab', 'tab': 9}),
         isFalse,
       );
+    });
+  });
+
+  group('driven vs self-guided card (Item B, founder 2026-11-08)', () {
+    Widget hostWith(Widget overlayOwnerChild) => MaterialApp(
+          theme: AymaTheme.dark,
+          builder: (context, child) => TourHost(child: child!),
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned(
+                  left: 24,
+                  bottom: 24,
+                  child: SizedBox(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    width: 64,
+                    height: 64,
+                  ),
+                ),
+                overlayOwnerChild,
+              ],
+            ),
+          ),
+        );
+
+    setUp(() {
+      GuidedTourController.instance.endSession();
+      TourController.instance.finish();
+    });
+    tearDown(() {
+      GuidedTourController.instance.endSession();
+      TourController.instance.finish();
+    });
+
+    testWidgets('a DRIVEN (non-explainer) step renders chromeless — no card, '
+        'no counter, no Skip tour', (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostWith(const SizedBox.shrink()));
+      GuidedTourController.instance.show(GuidedTourStep(
+        token: 'd1',
+        feature: const TourFeature(
+            featureId: 'g', headline: 'This is me', subtitle: 'This is me.',
+            anchorId: TourAnchors.homeOrb),
+        index: 0,
+        total: 19,
+        onShown: () {},
+        onAbsent: () {},
+        onTapped: () {},
+        onStop: () {},
+        // explainer: false (default) → a real driven-tour step.
+      ));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('This is me'), findsNothing); // no headline card
+      expect(find.text('1 of 19'), findsNothing); // no counter
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsNothing); // no Skip
+    });
+
+    testWidgets('a page-explainer step keeps its card (stays as built)',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostWith(const SizedBox.shrink()));
+      GuidedTourController.instance.show(GuidedTourStep(
+        token: 'e1',
+        feature: const TourFeature(
+            featureId: 'g', headline: 'The heart', subtitle: 'This is the like.',
+            anchorId: TourAnchors.homeOrb),
+        index: 0,
+        total: 6,
+        onShown: () {},
+        onAbsent: () {},
+        onTapped: () {},
+        onStop: () {},
+        explainer: true,
+      ));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('The heart'), findsOneWidget); // card headline
+      expect(find.text('This is the like.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
+    });
+
+    testWidgets('a SELF-GUIDED (passive) tour still shows its full card',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostWith(const SizedBox.shrink()));
+      TourController.instance.start(
+        const [
+          TourFeature(
+            featureId: 'passive_1',
+            headline: 'Your orb',
+            subtitle: 'Press and hold the orb to talk.',
+            anchorId: TourAnchors.homeOrb,
+          ),
+        ],
+        spotlight: false,
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      // Self-guided mode is UNCHANGED: the full callout card still renders.
+      expect(find.byKey(const ValueKey('coach-spotlight')), findsOneWidget);
+      expect(find.text('Your orb'), findsOneWidget);
+      expect(find.text('Press and hold the orb to talk.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
     });
   });
 }
