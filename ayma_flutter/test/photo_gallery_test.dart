@@ -45,4 +45,44 @@ void main() {
     expect(cached.memCacheWidth, isNotNull);
     expect(cached.memCacheWidth!, lessThanOrEqualTo(92 * 4));
   });
+
+  testWidgets('PhotoDetailSheet and PhotoViewer render the visible is-user note',
+      (tester) async {
+    const photo = AiNotePhoto(
+      id: 'p1',
+      url: 'https://example.invalid/photo.png',
+      source: 'profile',
+      isUser: 'yes',
+      context: 'Selfie at the park',
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: PhotoDetailSheet(
+          photo: photo,
+          onHide: () async {},
+          onPublish: () async {},
+          onChat: () {},
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    // The detail sheet displays the verdict note
+    expect(find.text('Ayma thinks this is you'), findsOneWidget);
+
+    // PhotoViewer dialog renders the visible note overlay
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: PhotoViewer(
+          url: 'https://example.invalid/photo.png',
+          isUser: 'yes',
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.text('Ayma thinks this is you'), findsOneWidget);
+  });
 }

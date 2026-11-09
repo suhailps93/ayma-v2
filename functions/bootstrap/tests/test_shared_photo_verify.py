@@ -48,13 +48,12 @@ def _post_with_image(monkeypatch):
 
 def test_matching_face_gets_the_self_note(monkeypatch):
     seen = _capture_prompt(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
-    monkeypatch.setattr(
-        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [1.0, 0.0]
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "self"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "Shared photo:" in seen["prompt"]
@@ -63,13 +62,12 @@ def test_matching_face_gets_the_self_note(monkeypatch):
 
 def test_far_face_gets_the_not_self_note(monkeypatch):
     seen = _capture_prompt(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
-    monkeypatch.setattr(
-        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [0.0, 1.0]
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "not_self"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "does NOT look like the account holder" in seen["prompt"]
@@ -78,16 +76,12 @@ def test_far_face_gets_the_not_self_note(monkeypatch):
 
 def test_borderline_similarity_gets_the_unknown_note(monkeypatch):
     seen = _capture_prompt(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
-    # cosine == 0.5 — under _VERIFY_THRESHOLD (0.55) but inside the not_self
-    # margin (0.55 - 0.08), so it's unverifiable rather than a rejection.
-    monkeypatch.setattr(
-        main.media_embed, "embed_image_bytes",
-        lambda *_a, **_k: [0.5, 0.8660254],
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "unknown"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "can't verify whether the photo" in seen["prompt"]
@@ -95,14 +89,12 @@ def test_borderline_similarity_gets_the_unknown_note(monkeypatch):
 
 def test_no_reference_photos_gets_the_unknown_note(monkeypatch):
     seen = _capture_prompt(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings", lambda _db, _uid: []
-    )
+    import face_match
 
-    def _should_not_run(*_a, **_k):  # pragma: no cover
-        raise AssertionError("no refs — should not bother embedding")
+    async def _classify(*_a, **_k):
+        return {"verdict": "unknown"}
 
-    monkeypatch.setattr(main.media_embed, "embed_image_bytes", _should_not_run)
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "can't verify whether the photo" in seen["prompt"]
@@ -110,15 +102,12 @@ def test_no_reference_photos_gets_the_unknown_note(monkeypatch):
 
 def test_embed_failure_is_best_effort_unknown(monkeypatch):
     seen = _capture_prompt(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
+    import face_match
 
-    def _boom(*_a, **_k):
-        raise RuntimeError("Vertex embed 503")
+    async def _classify(*_a, **_k):
+        raise RuntimeError("LiveKit 503")
 
-    monkeypatch.setattr(main.media_embed, "embed_image_bytes", _boom)
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "can't verify whether the photo" in seen["prompt"]
@@ -158,13 +147,12 @@ def test_a_confident_self_verdict_persists_and_overwrites_the_gallery_note(
 ):
     seen = _capture_prompt(monkeypatch)
     calls = _capture_set_context(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
-    monkeypatch.setattr(
-        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [1.0, 0.0]
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "self"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "looks like them" in seen["prompt"]
@@ -177,13 +165,12 @@ def test_a_confident_self_verdict_persists_and_overwrites_the_gallery_note(
 def test_a_confident_not_self_verdict_persists_as_no(monkeypatch):
     seen = _capture_prompt(monkeypatch)
     calls = _capture_set_context(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
-    monkeypatch.setattr(
-        main.media_embed, "embed_image_bytes", lambda *_a, **_k: [0.0, 1.0]
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "not_self"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "does NOT look like the account holder" in seen["prompt"]
@@ -196,9 +183,12 @@ def test_an_unknown_verdict_never_persists_anything(monkeypatch):
     not destroy an existing cached verdict with "I don't know"."""
     seen = _capture_prompt(monkeypatch)
     calls = _capture_set_context(monkeypatch)
-    monkeypatch.setattr(
-        main.deep_dive_images, "_reference_embeddings", lambda _db, _uid: []
-    )
+    import face_match
+
+    async def _classify(*_a, **_k):
+        return {"verdict": "unknown"}
+
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
     resp = _post_with_image(monkeypatch)
     assert resp.status_code == 200
     assert "can't verify whether the photo" in seen["prompt"]

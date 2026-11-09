@@ -22,18 +22,14 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from functools import lru_cache
-from pathlib import Path
 
 import biometric_consent
-import gemini
 import deep_dive_public_profiles
-import media_embed
+import face_match
 import public_url
 import schema
 from config import CONFIG
@@ -41,23 +37,6 @@ from token_ledger import FEATURE_DEEPDIVE
 
 logger = logging.getLogger("ayma.deepdive.images")
 
-_FACE_CHECK_PROMPT_PATH = (
-    Path(__file__).with_name("prompts") / "web_image_face_check.md"
-)
-_FACE_CHECK_SCHEMA = {
-    "type": "object",
-    "properties": {"has_face": {"type": "boolean"}},
-    "required": ["has_face"],
-}
-
-# Multimodal-embedding cosine over two real face crops of the same person sits
-# comfortably above this; different people land well below.
-_VERIFY_THRESHOLD = 0.55
-# The gap below `_VERIFY_THRESHOLD` that still counts as "can't tell" rather
-# than a confident "not them" — shared with every other same-person check in
-# the app (main._classify_shared_photo, auto_analysis's photo gating) so the
-# margin lives in exactly one place.
-_VERIFY_MARGIN = 0.08
 # Google's JSON API caps a single request at 10 results (`num`) but allows
 # paging further back via `start` (1, 11, 21, …) — pull up to 3 pages so a
 # common name isn't starved down to whatever fits in the first 10.
@@ -69,6 +48,7 @@ _KEEP_UNVERIFIED = 6
 # this person. Bounded so a dive with many links doesn't fan out forever.
 _MAX_LINK_IMAGES = 6
 _MAX_PAGE_BYTES = 3 * 1024 * 1024
+_VERIFY_THRESHOLD = 0.55
 
 _META_IMG_RE = re.compile(
     r"<meta\b[^>]*?(?:property|name)\s*=\s*[\"']"
@@ -244,143 +224,6 @@ def _link_derived_candidates(links: list[dict] | None) -> list[dict]:
     return out
 
 
-def _reference_embeddings(db, uid: str) -> list[list[float]]:
-    """The person's own profile-photo face embeddings (``user_media`` docs)."""
-    try:
-        snaps = list(
-            db.collection("users").document(uid).collection("user_media").stream()
-        )
-    except Exception:  # noqa: BLE001
-        return []
-    vecs: list[list[float]] = []
-    for s in snaps:
-        raw = (s.to_dict() or {}).get("embedding")
-        if raw is None:
-            continue
-        try:
-            vec = list(raw)  # firestore Vector is iterable
-        except TypeError:
-            vec = list(getattr(raw, "value", []) or [])
-        if vec:
-            vecs.append([float(x) for x in vec])
-    return vecs
-
-
-def _vec_from_raw(raw) -> list[float] | None:
-    """A plain ``list[float]`` from a Firestore ``Vector`` (or anything else
-    iterable) field — the same shape ``user_media.embedding`` and
-    ``users/{uid}.face_verification.embedding`` are stored in."""
-    if raw is None:
-        return None
-    try:
-        return [float(x) for x in raw]
-    except TypeError:
-        v = getattr(raw, "value", None)
-        return [float(x) for x in v] if v else None
-
-
-def reference_embeddings_for(db, uid: str) -> list[list[float]]:
-    """The most authoritative face-match reference available for ``uid``:
-
-    * a verified selfie embedding (``users/{uid}.face_verification``,
-      §"pre-boarding verification") when one exists — a single, deliberately
-      captured, front-camera reference photo;
-    * nothing (``[]``) when ``uid`` has no biometric consent
-      (:mod:`biometric_consent`) — every caller then skips its face match;
-    * otherwise the legacy behavior: every profile-photo embedding
-      (:func:`_reference_embeddings`), so unverified/legacy accounts keep
-      working exactly as before — no regression, no blocking.
-
-    Best-effort: any read failure falls back to the profile-photo path
-    (itself best-effort, returning ``[]`` on error)."""
-    if not biometric_consent.has_consent_fresh(db, uid):
-        return []
-    try:
-        snap = db.collection("users").document(uid).get()
-        data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
-        fv = data.get(schema.FIELD_FACE_VERIFICATION) or {}
-        vec = _vec_from_raw(fv.get(schema.FACE_VERIFICATION_EMBEDDING))
-        if vec:
-            return [vec]
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "reference_embeddings_for: face_verification read failed for %s",
-            uid, exc_info=True,
-        )
-    return _reference_embeddings(db, uid)
-
-
-def classify_face_match(
-    embedding: list[float],
-    refs: list[list[float]],
-    *,
-    threshold: float = _VERIFY_THRESHOLD,
-    margin: float = _VERIFY_MARGIN,
-) -> str:
-    """``"self"`` / ``"not_self"`` / ``"unknown"`` for one face embedding
-    against a set of reference embeddings for the same account.
-
-    ``"unknown"`` whenever there is nothing to compare against, or the
-    similarity falls in the band between "confidently them" and "confidently
-    not them". Never raises."""
-    if not refs or not embedding:
-        return "unknown"
-    try:
-        sim = max((_cosine(embedding, r) for r in refs), default=0.0)
-    except Exception:  # noqa: BLE001
-        return "unknown"
-    if sim >= threshold:
-        return "self"
-    if sim < threshold - margin:
-        return "not_self"
-    return "unknown"
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
-
-
-@lru_cache(maxsize=1)
-def _face_check_prompt() -> str:
-    return _FACE_CHECK_PROMPT_PATH.read_text(encoding="utf-8").strip()
-
-
-async def _has_detectable_face(
-    image_bytes: bytes, mime_type: str, *, uid: str | None = None
-) -> bool:
-    """Whether a web-found candidate image actually shows a real, photographed
-    human face — the gate a bare embedding-similarity score can't provide (see
-    module docstring). Fails **closed**: any model/parse failure counts as "no
-    face" rather than letting an unverifiable image through as a person-match.
-    ``enforce_cap=False`` — this is Ayma-initiated background verification
-    work, not something that should fail a legitimate match just because the
-    account is out of credits."""
-    try:
-        result = await gemini.generate_json(
-            "Does this image contain at least one real, photographed human "
-            "face?",
-            system_prompt=_face_check_prompt(),
-            response_schema=_FACE_CHECK_SCHEMA,
-            image=(image_bytes, mime_type),
-            uid=uid,
-            feature=FEATURE_DEEPDIVE,
-            enforce_cap=False,
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "web-image face check failed — treating as no face", exc_info=True
-        )
-        return False
-    return isinstance(result, dict) and bool(result.get("has_face"))
-
-
 async def find_web_images(
     db,
     target_uid: str,
@@ -466,10 +309,10 @@ async def find_web_images(
         return []
 
     # Candidate gathering can take a while: re-check the consent right before
-    # any web photo is embedded or matched, so a withdrawal stops it at once.
+    # any web photo is matched, so a withdrawal stops it at once.
     if not biometric_consent.has_consent_fresh(db, target_uid):
         return []
-    refs = reference_embeddings_for(db, target_uid) if (db and target_uid) else []
+    refs = face_match.get_reference_photos(db, target_uid) if (db and target_uid) else []
 
     scored: list[dict] = []
     for c in deduped:
@@ -479,27 +322,29 @@ async def find_web_images(
             continue
         if not img:
             continue
-        try:
-            emb = media_embed.embed_image_bytes(img, mime)
-        except Exception:  # noqa: BLE001
-            continue
-        sim = max((_cosine(emb, r) for r in refs), default=0.0) if refs else 0.0
-        would_verify = bool(refs) and sim >= threshold
-        # Only spend a face-check call on candidates that would otherwise be
-        # marked verified — a similarity miss is already excluded, so there's
-        # nothing this gate needs to add for it.
-        has_face = (
-            await _has_detectable_face(img, mime, uid=uid)
-            if would_verify
-            else True
-        )
+
+        verified = False
+        if refs:
+            for r in refs:
+                try:
+                    res = await face_match.check_same_person(
+                        r, (img, mime), uid=uid, feature=FEATURE_DEEPDIVE
+                    )
+                    if res.get("verdict") == "self" and res.get("face_visible", False):
+                        verified = True
+                        break
+                except Exception:
+                    logger.warning(
+                        "deep_dive_images: face check failed for candidate",
+                        exc_info=True,
+                    )
+
         scored.append(
             {
                 "url": c["url"],
                 "source_page": c.get("source_page", ""),
                 **({"platform": c["platform"]} if c.get("platform") else {}),
-                "similarity": round(sim, 4) if refs else None,
-                "verified": would_verify and has_face,
+                "verified": verified,
             }
         )
 
@@ -511,11 +356,10 @@ async def find_web_images(
         for s in verified:
             if s.get("platform"):
                 logger.info(
-                    "deep-dive verified image from platform=%s sim=%s",
-                    s["platform"], s["similarity"],
+                    "deep-dive verified image from platform=%s",
+                    s["platform"],
                 )
-        verified.sort(key=lambda s: s["similarity"] or 0.0, reverse=True)
         return verified
-    # No reference embedding to check against — hand back a few, clearly
+    # No reference photos to check against — hand back a few, clearly
     # unverified, so the UI can label them.
     return scored[:_KEEP_UNVERIFIED]

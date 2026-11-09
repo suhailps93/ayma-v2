@@ -306,13 +306,26 @@ def _owned_extra_images(
         if verdict == "":
             # No stored same-person verdict — live face match as the backstop.
             try:
-                import deep_dive_images
+                import asyncio
+                import face_match
 
                 if refs is None:
-                    refs = deep_dive_images.reference_embeddings_for(db, uid)
+                    refs = face_match.get_reference_photos(db, uid)
                 if refs:
-                    emb = media_embed.embed_image_bytes(data, mime)
-                    if deep_dive_images.classify_face_match(emb, refs) == "not_self":
+                    check_coro = face_match.classify_photo(
+                        db, uid, (data, mime), cand_path=path
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            check_res = pool.submit(asyncio.run, check_coro).result()
+                    else:
+                        check_res = asyncio.run(check_coro)
+                    if check_res.get("verdict") == "not_self":
                         logger.info(
                             "appearance: excluding not-self chat image %s for %s "
                             "(live match)", path, uid,

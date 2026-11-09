@@ -29,12 +29,13 @@ Code: `functions/bootstrap/deep_dive_public_profiles.py`, wired into
    page, image) goes through `public_url.py`: http(s) only, the host must resolve to
    public addresses only, and each redirect hop is re-checked (SSRF guard), so a
    model- or page-supplied URL can never reach an internal address.
-3. Candidates go through the unchanged gate (cosine >= 0.55 plus
-   `_has_detectable_face`). Image bytes live only in memory during verification;
-   only the verified URL + similarity (+ `platform`) are kept. The platform of
+3. Candidates go through the face-match gate (`face_match.check_same_person`
+   LiveKit vision pairwise check against the target's reference set, requiring
+   `face_visible: true` and `verdict: "self"`). Image bytes live only in memory
+   during verification; only the verified URL (+ `platform`) are kept. The platform of
    each verified image is logged. Results are cached in-process for 24h.
 
-Own consented photos / reference embeddings are untouched.
+Own consented photos / reference photos are checked intra-account only; no vectors or embeddings are stored.
 
 ## Links, social profiles and link validation
 
@@ -91,8 +92,8 @@ Every Ayma account now gives a mandatory, separate face-matching consent
 separate from the Terms/Privacy checkbox, recorded right after the first
 sign-in, or the one-time `/consent` screen for older accounts). The server
 refuses every authenticated feature endpoint without it (403
-`biometric_consent_required`), and every face-embedding / face-match path
-(`find_web_images`, `reference_embeddings_for`, `deep_dive_social`,
+`biometric_consent_required`), and every face-match path
+(`find_web_images`, `face_match.classify_photo`, `deep_dive_social`,
 `photo_pipeline`, `photo_notes`, reverse-image `auto_scan`, the verification
 selfie) checks it again for the person whose face is involved. A deep dive's
 target is therefore always an Ayma member who consented (themself, or an

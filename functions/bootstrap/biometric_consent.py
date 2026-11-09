@@ -198,11 +198,11 @@ def record(
 
 
 def delete_face_data(db, bucket, uid: str) -> dict:
-    """Delete every face embedding and face-match result held for ``uid``:
-    the verification selfie (embedding + image), the embedding on each
-    ``user_media`` photo and ``photo_notes`` entry, the face verdicts derived
-    from them, and the staged reverse-image matches. The photos themselves
-    are left to the account deletion that follows."""
+    """Delete every face verdict and face-match result held for ``uid``:
+    the verification selfie (record + image in storage), the face verdicts
+    on each ``user_media`` photo and ``photo_notes`` entry, and the staged
+    reverse-image matches. Legacy embedding fields are scrubbed if present.
+    The photos themselves are left to the account deletion that follows."""
     user = db.collection(schema.USERS).document(uid)
     snap = user.get()
     data = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
@@ -226,19 +226,24 @@ def delete_face_data(db, bucket, uid: str) -> dict:
 
     media = 0
     for doc in user.collection("user_media").stream():
-        if "embedding" in (doc.to_dict() or {}):
-            doc.reference.update(
-                {"embedding": firestore.DELETE_FIELD, "dim": firestore.DELETE_FIELD}
-            )
+        d = doc.to_dict() or {}
+        updates = {}
+        for f in ("face_verdict", "is_user", "embedding", "dim"):
+            if f in d:
+                updates[f] = firestore.DELETE_FIELD
+        if updates:
+            doc.reference.update(updates)
             media += 1
 
     notes = 0
     for doc in user.collection("photo_notes").stream():
         d = doc.to_dict() or {}
-        if "embedding" in d or "is_user" in d:
-            doc.reference.update(
-                {"embedding": firestore.DELETE_FIELD, "is_user": firestore.DELETE_FIELD}
-            )
+        updates = {}
+        for f in ("is_user", "embedding"):
+            if f in d:
+                updates[f] = firestore.DELETE_FIELD
+        if updates:
+            doc.reference.update(updates)
             notes += 1
 
     candidates = 0
@@ -248,7 +253,9 @@ def delete_face_data(db, bucket, uid: str) -> dict:
 
     return {
         "selfie_deleted": selfie_deleted,
+        "media_verdicts_deleted": media,
         "media_embeddings_deleted": media,
+        "photo_note_verdicts_deleted": notes,
         "photo_note_embeddings_deleted": notes,
         "web_photo_candidates_deleted": candidates,
     }

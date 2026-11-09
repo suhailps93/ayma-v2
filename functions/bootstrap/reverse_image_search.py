@@ -29,22 +29,13 @@ Human confirmation alone is a weak safeguard — a user can misclick, and
 surfacing a stranger's photo with "is this you?" is a bad experience even
 when correctly rejected. So a Web Detection hit is no longer staged on its
 own say-so: before it ever reaches ``web_photo_candidates``, :func:`scan`
-runs it through the same face-verification gate ``deep_dive_images.py``
-already applies to its own web-image candidates (:func:`_face_matches_user`)
-— the candidate image is fetched, embedded with the same multimodal
-face-embedding model used everywhere else in the app for identity checks
-(``media_embed.embed_image_bytes``), and compared against the user's own
-reference photo embedding(s)
-(``deep_dive_images.reference_embeddings_for``). Only a confident
-``classify_face_match(...) == "self"`` — scored against the deliberately
-*stricter* ``CONFIG.web_photo_facematch_threshold`` (default 0.65, higher
-than the shared 0.55 used elsewhere, because a whole-image match on a
-stranger's look-alike thumbnail is exactly this path's failure mode) — that
-also clears ``deep_dive_images._has_detectable_face`` (rules out a
-coincidentally high-similarity non-face image) gets staged; an uncertain or
-non-matching result is discarded outright, never shown to the user at all.
+runs it through the face-verification check (:func:`_face_matches_user`)
+via ``face_match.check_same_person`` against the user's reference photos
+(``face_match.get_reference_photos``). Only a confident verdict (``"self"``
+with ``face_visible: True``) gets staged; an uncertain or non-matching
+result is discarded outright, never shown to the user at all.
 When the user
-has no usable reference embedding yet (nothing uploaded/verified early in
+has no usable reference photos yet (nothing uploaded/verified early in
 onboarding), :func:`scan` skips staging entirely rather than guessing — see
 :func:`scan`'s docstring.
 
@@ -211,26 +202,15 @@ async def _face_matches_user(
     uid: str,
     image_url: str,
     *,
-    refs: list[list[float]],
-    threshold: float,
+    refs: list[str],
+    threshold: float = 0.65,
 ) -> bool:
     """Whether a web-found candidate image at ``image_url`` is confidently the
     same person as ``uid`` — the gate a Web Detection hit must clear before
-    :func:`scan` ever stages it (§ module docstring).
-
-    Reuses ``deep_dive_images``'s exact same-person pipeline (fetch → embed
-    with the shared multimodal face-embedding model → cosine-classify against
-    the user's own reference embedding(s) → Gemini-vision "is there really a
-    face here" gate) so "same person" means the same thing everywhere in the
-    app, instead of a second, drifted definition living here. ``threshold`` is
-    the cosine cutoff the classification uses — the caller passes the
-    precision-leaning ``CONFIG.web_photo_facematch_threshold`` so this path is
-    stricter than the shared default (§ the config field's docstring). Fails
-    closed: any fetch, embed, or model failure — or a "not_self"/"unknown"
-    classification — means "not verified", never "staged anyway".
+    :func:`scan` ever stages it. Uses ``face_match.check_same_person``.
     """
     import deep_dive_images
-    import media_embed
+    import face_match
 
     try:
         img, mime = deep_dive_images._fetch_image(image_url)
@@ -238,16 +218,17 @@ async def _face_matches_user(
         return False
     if not img:
         return False
-    try:
-        embedding = media_embed.embed_image_bytes(img, mime)
-    except Exception:  # noqa: BLE001
-        return False
-    if (
-        deep_dive_images.classify_face_match(embedding, refs, threshold=threshold)
-        != "self"
-    ):
-        return False
-    return await deep_dive_images._has_detectable_face(img, mime, uid=uid)
+
+    for r in refs:
+        try:
+            res = await face_match.check_same_person(
+                r, (img, mime), uid=uid, feature=token_ledger.FEATURE_DEEPDIVE
+            )
+            if res.get("verdict") == "self" and res.get("face_visible", False):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 async def scan(
@@ -292,13 +273,13 @@ async def scan(
     if not storage_paths:
         return []
 
+    import face_match
     import media_embed
-    import deep_dive_images
 
-    refs = deep_dive_images.reference_embeddings_for(db, uid)
+    refs = face_match.get_reference_photos(db, uid)
     if not refs:
         logger.info(
-            "web-photo-search: no reference face embedding yet for %s — "
+            "web-photo-search: no reference photos yet for %s — "
             "skipping reverse-image staging until one exists",
             uid,
         )

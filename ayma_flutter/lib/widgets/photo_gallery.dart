@@ -148,7 +148,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
             GestureDetector(
               onTap: () => showDialog<void>(
                 context: context,
-                builder: (_) => PhotoViewer(url: p.url),
+                builder: (_) => PhotoViewer(url: p.url, isUser: p.isUser),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
@@ -238,12 +238,22 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
 }
 
 class PhotoViewer extends StatelessWidget {
-  const PhotoViewer({super.key, required this.url});
+  const PhotoViewer({
+    super.key,
+    required this.url,
+    this.isUser = '',
+  });
 
   final String url;
+  final String isUser;
 
   @override
   Widget build(BuildContext context) {
+    final note = switch (isUser) {
+      'yes' => 'Ayma thinks this is you',
+      'no' => "Ayma doesn't think this is you",
+      _ => '',
+    };
     return Dialog(
       backgroundColor: Colors.black,
       insetPadding: const EdgeInsets.all(16),
@@ -271,6 +281,31 @@ class PhotoViewer extends StatelessWidget {
               onPressed: () => Navigator.of(context).pop(),
             ),
           ),
+          if (note.isNotEmpty)
+            Positioned(
+              bottom: 16,
+              left: 16,
+              right: 16,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.75),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24, width: 1),
+                  ),
+                  child: Text(
+                    note,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

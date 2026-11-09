@@ -28,7 +28,7 @@ from firebase_admin import firestore
 import appearance
 import body_report
 import deep_dive
-import deep_dive_images
+import face_match
 import face_report
 import media_embed
 import notifications_triggers
@@ -133,11 +133,17 @@ async def analyse_photo(
 
     run_face, run_body = True, True
     try:
-        refs = deep_dive_images.reference_embeddings_for(db, uid)
+        refs = face_match.get_reference_photos(db, uid)
     except Exception:  # noqa: BLE001
         refs = []
     if refs:
-        match = deep_dive_images.classify_face_match(embedding or [], refs)
+        try:
+            res = await face_match.classify_photo(
+                db, uid, storage_path, cand_path=storage_path
+            )
+            match = res.get("verdict", "unknown")
+        except Exception:  # noqa: BLE001
+            match = "unknown"
         if match != "self":
             # Not confirmed to be the account owner in this photo (a clear
             # non-match, or "can't tell") — never analyse anyone else.

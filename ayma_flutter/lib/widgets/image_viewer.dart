@@ -22,8 +22,13 @@ import 'ayma_wing_loader.dart';
 /// [file] still mid-upload. When both are present the local file wins — it's
 /// the same pixels without a network round trip.
 class AymaImageViewer extends StatefulWidget {
-  const AymaImageViewer({super.key, this.url, this.file, this.heroTag})
-    : assert(url != null || file != null, 'need a url or a file');
+  const AymaImageViewer({
+    super.key,
+    this.url,
+    this.file,
+    this.heroTag,
+    this.note,
+  }) : assert(url != null || file != null, 'need a url or a file');
 
   final String? url;
   final File? file;
@@ -44,6 +49,9 @@ class AymaImageViewer extends StatefulWidget {
   /// pair it with a Hero around the tapped thumbnail for a flight transition.
   final Object? heroTag;
 
+  /// Visible note displayed over the image (e.g. face match verdict).
+  final String? note;
+
   /// Pushes the viewer as a fade-in, fully OPAQUE fullscreen dialog on the
   /// root navigator — so it covers everything underneath, whether the chat
   /// lives in the main shell or inside `showAymaChatModal`'s popup sheet
@@ -54,6 +62,7 @@ class AymaImageViewer extends StatefulWidget {
     String? url,
     File? file,
     Object? heroTag,
+    String? note,
   }) {
     return Navigator.of(context, rootNavigator: true).push(
       PageRouteBuilder<void>(
@@ -64,7 +73,7 @@ class AymaImageViewer extends StatefulWidget {
         transitionDuration: const Duration(milliseconds: 220),
         reverseTransitionDuration: const Duration(milliseconds: 180),
         pageBuilder: (_, __, ___) =>
-            AymaImageViewer(url: url, file: file, heroTag: heroTag),
+            AymaImageViewer(url: url, file: file, heroTag: heroTag, note: note),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -357,6 +366,34 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
               ),
             ),
           ),
+          if (widget.note != null && widget.note!.isNotEmpty)
+            Positioned(
+              bottom: 24,
+              left: 16,
+              right: 16,
+              child: SafeArea(
+                top: false,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white24, width: 1),
+                    ),
+                    child: Text(
+                      widget.note!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -7,6 +7,7 @@ import auto_analysis
 import body_report
 import deep_dive
 import deep_dive_images
+import face_match
 import face_report
 import media_embed
 import skill_memory
@@ -375,13 +376,13 @@ def test_analyse_photo_skips_a_group_shot_entirely(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[1.0, 0.0], attributes={"shot_type": "group"},
+        attributes={"shot_type": "group"},
     ))
 
     assert db.docs == {}
@@ -391,13 +392,15 @@ def test_analyse_photo_skips_when_the_face_does_not_match(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
+    async def _classify(*_a, **_k):
+        return {"verdict": "not_self"}
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[0.0, 1.0],  # far from the reference -> not_self
         attributes={
             "shot_type": "full_body",
             "usable_for_face": True,
@@ -412,13 +415,15 @@ def test_analyse_photo_skips_on_a_borderline_unverifiable_match(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
+    async def _classify(*_a, **_k):
+        return {"verdict": "unknown"}
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[0.5, 0.8660254],  # borderline -> "unknown", not a match
         attributes={
             "shot_type": "face",
             "usable_for_face": True,
@@ -433,13 +438,15 @@ def test_analyse_photo_runs_only_the_usable_axis_on_a_confirmed_match(monkeypatc
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
+    async def _classify(*_a, **_k):
+        return {"verdict": "self"}
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[1.0, 0.0],  # matches the reference -> self
         attributes={
             "shot_type": "face",
             "usable_for_face": True,
@@ -455,13 +462,15 @@ def test_analyse_photo_runs_both_axes_on_a_confirmed_match(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
+    async def _classify(*_a, **_k):
+        return {"verdict": "self"}
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[1.0, 0.0],
         attributes={
             "shot_type": "full_body",
             "usable_for_face": True,
@@ -477,13 +486,15 @@ def test_analyse_photo_skips_entirely_when_neither_axis_is_usable(monkeypatch):
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda _db, _uid: ["users/u1/photo.jpg"],
     )
+    async def _classify(*_a, **_k):
+        return {"verdict": "self"}
+    monkeypatch.setattr(face_match, "classify_photo", _classify)
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=[1.0, 0.0],
         attributes={
             "shot_type": "other",
             "usable_for_face": False,
@@ -500,12 +511,11 @@ def test_analyse_photo_runs_unconditionally_with_no_reference_at_all(monkeypatch
     db = FakeDb()
     _stub_engines(monkeypatch)
     monkeypatch.setattr(
-        deep_dive_images, "reference_embeddings_for", lambda _db, _uid: []
+        face_match, "get_reference_photos", lambda _db, _uid: []
     )
 
     _run(auto_analysis.analyse_photo(
         db, "u1", "a.jpg",
-        embedding=None,
         attributes={
             "shot_type": "face",
             "usable_for_face": True,
