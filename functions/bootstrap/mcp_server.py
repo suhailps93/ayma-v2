@@ -280,6 +280,18 @@ def _disabled_response() -> Response:
     )
 
 
+def _public_base_url(request: Request) -> str:
+    """The URL prefix clients must use to reach this server. Cloud Run ends TLS
+    in front of uvicorn, so ``request.base_url`` says http; the front end's
+    ``X-Forwarded-Proto`` upgrades it to https. Never downgrades, so plain http
+    keeps working in local dev."""
+    base = str(request.base_url).rstrip("/")
+    proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if proto == "https" and base.startswith("http://"):
+        return "https://" + base[len("http://"):]
+    return base
+
+
 async def device_authorization(request: Request) -> Response:
     if not feature_flags.enabled(FLAG_NAME):
         return _disabled_response()
@@ -288,7 +300,7 @@ async def device_authorization(request: Request) -> Response:
         get_db(), str(params.get("client_id") or "mcp-client"),
         params.get("scope"),
     )
-    base = str(request.base_url).rstrip("/")
+    base = _public_base_url(request)
     verify = f"{base}{MOUNT_PATH}/connect"
     result["verification_uri"] = verify
     result["verification_uri_complete"] = f"{verify}?user_code={result['user_code']}"
@@ -395,7 +407,7 @@ async def revoke_connection_endpoint(request: Request) -> Response:
 
 
 async def as_metadata(request: Request) -> Response:
-    base = str(request.base_url).rstrip("/") + MOUNT_PATH
+    base = _public_base_url(request) + MOUNT_PATH
     return JSONResponse({
         "issuer": base,
         "device_authorization_endpoint": f"{base}/oauth/device_authorization",
@@ -408,7 +420,7 @@ async def as_metadata(request: Request) -> Response:
 
 
 async def prm_metadata(request: Request) -> Response:
-    base = str(request.base_url).rstrip("/") + MOUNT_PATH
+    base = _public_base_url(request) + MOUNT_PATH
     return JSONResponse({
         "resource": base,
         "authorization_servers": [base],
