@@ -87,7 +87,7 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
           children: [
             if (_busy) const LinearProgressIndicator(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
               child: Row(
                 children: [
                   ClipRRect(
@@ -119,8 +119,14 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
                           t.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AymaType.sans(size: 15, weight: FontWeight.w600, color: ac.fg),
+                          style: AymaType.sans(
+                            size: 15,
+                            weight: FontWeight.w600,
+                            color: ac.fg,
+                            height: 1.25,
+                          ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
                           t.typeLabel,
                           style: AymaType.sans(size: 12, color: ac.fgMute),
@@ -133,6 +139,7 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
             ),
             ListTile(
               key: const ValueKey('shareSendToAyma'),
+              contentPadding: const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const AymaWingsIcon(),
               title: const Text('Send to Ayma'),
               subtitle: const Text('Talk about it with Ayma'),
@@ -141,11 +148,13 @@ class _AymaShareSheetState extends State<AymaShareSheet> {
             if (t.canShareExternally)
               ListTile(
                 key: const ValueKey('shareSendExternally'),
+                contentPadding: const EdgeInsetsDirectional.only(start: 20, end: 24),
                 leading: const Icon(Icons.ios_share),
                 title: const Text('Send externally'),
                 subtitle: const Text('Share a link in any app'),
                 onTap: _busy ? null : _sendExternally,
               ),
+            const SizedBox(height: 24),
           ],
         ),
       ),

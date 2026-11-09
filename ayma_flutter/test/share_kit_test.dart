@@ -96,6 +96,85 @@ void main() {
     expect(find.byIcon(Icons.ios_share), findsOneWidget);
   });
 
+  testWidgets('profile sheet geometry matches Jobs-grade polish spec',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_sheetHost(_profileTarget(), AymaShare(api: api)));
+    await tester.tap(find.text('open sheet'));
+    await tester.pumpAndSettle();
+
+    // Defect 1: Header horizontal padding 16 -> 20 (left and right)
+    final headerPaddingFinder = find.ancestor(
+      of: find.text('Dillu'),
+      matching: find.byType(Padding),
+    ).first;
+    final headerPadding = tester.widget<Padding>(headerPaddingFinder);
+    expect(headerPadding.padding, const EdgeInsets.fromLTRB(20, 4, 20, 8));
+
+    // Defect 2: ListTile contentPadding start 20, end 24 on both options
+    final aymaTile = tester.widget<ListTile>(find.byKey(const ValueKey('shareSendToAyma')));
+    expect(
+      aymaTile.contentPadding,
+      const EdgeInsetsDirectional.only(start: 20, end: 24),
+    );
+    final externalTile = tester.widget<ListTile>(find.byKey(const ValueKey('shareSendExternally')));
+    expect(
+      externalTile.contentPadding,
+      const EdgeInsetsDirectional.only(start: 20, end: 24),
+    );
+
+    // Defect 3: 24 of space below the last row inside SafeArea
+    final column = tester.widget<Column>(find.ancestor(
+      of: find.byKey(const ValueKey('shareSendToAyma')),
+      matching: find.byType(Column),
+    ).first);
+    final lastChild = column.children.last;
+    expect(lastChild, isA<SizedBox>());
+    expect((lastChild as SizedBox).height, 24);
+
+    // Defect 4: Gap 2 between name and type label, name height 1.25
+    final nameText = tester.widget<Text>(find.text('Dillu'));
+    expect(nameText.style?.height, 1.25);
+    final textColumn = tester.widget<Column>(find.ancestor(
+      of: find.text('Dillu'),
+      matching: find.byType(Column),
+    ).first);
+    expect(textColumn.children[1], isA<SizedBox>());
+    expect((textColumn.children[1] as SizedBox).height, 2);
+  });
+
+  testWidgets('story sheet (one-row variant) has 20 edges and 24 bottom space',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_sheetHost(
+      ShareTargets.story(uid: 'u1', imageUrl: 'https://example.com/s.jpg'),
+      AymaShare(api: api),
+    ));
+    await tester.tap(find.text('open sheet'));
+    await tester.pumpAndSettle();
+
+    final headerPaddingFinder = find.ancestor(
+      of: find.text('Your Story'),
+      matching: find.byType(Padding),
+    ).first;
+    final headerPadding = tester.widget<Padding>(headerPaddingFinder);
+    expect(headerPadding.padding, const EdgeInsets.fromLTRB(20, 4, 20, 8));
+
+    final aymaTile = tester.widget<ListTile>(find.byKey(const ValueKey('shareSendToAyma')));
+    expect(
+      aymaTile.contentPadding,
+      const EdgeInsetsDirectional.only(start: 20, end: 24),
+    );
+
+    final column = tester.widget<Column>(find.ancestor(
+      of: find.byKey(const ValueKey('shareSendToAyma')),
+      matching: find.byType(Column),
+    ).first);
+    final lastChild = column.children.last;
+    expect(lastChild, isA<SizedBox>());
+    expect((lastChild as SizedBox).height, 24);
+  });
+
   testWidgets('Send externally composes the /p/ link for the profile',
       (tester) async {
     final api = _FakeApi();
