@@ -28,10 +28,38 @@ class AymaImageViewer extends StatefulWidget {
     this.file,
     this.heroTag,
     this.note,
-  }) : assert(url != null || file != null, 'need a url or a file');
+  }) : urls = null,
+       initialIndex = 0,
+       onIndexChanged = null,
+       assert(url != null || file != null, 'need a url or a file');
+
+  /// Gallery mode: a swipeable set of network photos, opened at
+  /// [initialIndex]. [onIndexChanged] fires as the user pages — the profile
+  /// header uses it to keep its own carousel on the photo last viewed, so
+  /// closing the viewer lands back on that photo.
+  AymaImageViewer.gallery({
+    super.key,
+    required List<String> this.urls,
+    this.initialIndex = 0,
+    this.onIndexChanged,
+  }) : url = null,
+       file = null,
+       heroTag = null,
+       note = null {
+    assert(urls!.isNotEmpty, 'gallery needs at least one photo');
+  }
 
   final String? url;
   final File? file;
+
+  /// Gallery photos (network urls); null in single-photo mode.
+  final List<String>? urls;
+
+  /// Where the gallery opens (clamped into range by the state).
+  final int initialIndex;
+
+  /// Gallery page changes, for callers that mirror the photo being viewed.
+  final ValueChanged<int>? onIndexChanged;
 
   /// Test seam: the cache manager backing the network-image path (both the
   /// on-screen [CachedNetworkImage] and the share/download byte fetch).
@@ -64,6 +92,30 @@ class AymaImageViewer extends StatefulWidget {
     Object? heroTag,
     String? note,
   }) {
+    return _push(
+      context,
+      AymaImageViewer(url: url, file: file, heroTag: heroTag, note: note),
+    );
+  }
+
+  /// Pushes the gallery viewer (see [AymaImageViewer.gallery]).
+  static Future<void> openGallery(
+    BuildContext context, {
+    required List<String> urls,
+    int initialIndex = 0,
+    ValueChanged<int>? onIndexChanged,
+  }) {
+    return _push(
+      context,
+      AymaImageViewer.gallery(
+        urls: urls,
+        initialIndex: initialIndex,
+        onIndexChanged: onIndexChanged,
+      ),
+    );
+  }
+
+  static Future<void> _push(BuildContext context, Widget viewer) {
     return Navigator.of(context, rootNavigator: true).push(
       PageRouteBuilder<void>(
         // Opaque: once the fade completes, nothing below this route paints —
@@ -72,8 +124,7 @@ class AymaImageViewer extends StatefulWidget {
         fullscreenDialog: true,
         transitionDuration: const Duration(milliseconds: 220),
         reverseTransitionDuration: const Duration(milliseconds: 180),
-        pageBuilder: (_, __, ___) =>
-            AymaImageViewer(url: url, file: file, heroTag: heroTag, note: note),
+        pageBuilder: (_, __, ___) => viewer,
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
@@ -91,16 +142,34 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
   bool _busy = false;
   Offset? _doubleTapAt;
 
+  // Gallery mode: a pager over widget.urls. Each page carries its own zoom
+  // state; _pageZoomed freezes paging while the current photo is zoomed, so
+  // a pan moves the photo, not the page.
+  PageController? _pages;
+  int _index = 0;
+  bool _pageZoomed = false;
+
+  bool get _gallery => widget.urls != null;
+
+  /// The photo share/save act on: the gallery page being viewed, else the
+  /// single photo this viewer was opened with.
+  String get _currentUrl => _gallery ? widget.urls![_index] : widget.url!;
+
   @override
   void initState() {
     super.initState();
     _transform.addListener(_onTransform);
+    if (_gallery) {
+      _index = widget.initialIndex.clamp(0, widget.urls!.length - 1);
+      _pages = PageController(initialPage: _index);
+    }
   }
 
   @override
   void dispose() {
     _transform.removeListener(_onTransform);
     _transform.dispose();
+    _pages?.dispose();
     super.dispose();
   }
 
@@ -141,7 +210,7 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
   /// image out of (or freshly into) the shared disk cache.
   Future<File> _localFile() async {
     if (widget.file != null) return widget.file!;
-    return AymaImageViewer._cache.getSingleFile(widget.url!);
+    return AymaImageViewer._cache.getSingleFile(_currentUrl);
   }
 
   static String _sniffMime(Uint8List bytes) {
@@ -243,37 +312,11 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
 
   // ---- build ---------------------------------------------------------------
 
-  Widget _image() {
-    // `fit: contain` inside a box that always fills the whole viewport (the
-    // SizedBox.expand in build): the image paints centered and letterboxed
-    // whatever its resolution — a low-res image scales UP to the viewport
-    // too, instead of laying out at its intrinsic pixel size.
-    Widget image = widget.file != null
-        ? Image.file(widget.file!, fit: BoxFit.contain)
-        : CachedNetworkImage(
-            imageUrl: widget.url!,
-            cacheManager: AymaImageViewer.debugCacheManager,
-            fit: BoxFit.contain,
-            // Static placeholder (like AymaPhoto's): the black ground simply
-            // holds until the cached/network image fades in.
-            placeholder: (_, __) => const SizedBox.expand(),
-            errorWidget: (_, __, ___) => Center(
-              child: Icon(
-                Icons.broken_image_outlined,
-                color: AymaTokens.dark.fgMute,
-                size: 40,
-              ),
-            ),
-          );
-    if (widget.heroTag != null) {
-      // The Hero wraps the contain-fit image and is expanded to the full
-      // viewport by build's SizedBox.expand — so the flight from the chat
-      // thumbnail lands on a correctly sized, centered, stable box (never on
-      // the image's not-yet-decoded intrinsic size).
-      image = Hero(tag: widget.heroTag!, child: image);
-    }
-    return image;
-  }
+  Widget _image() => _viewerPhoto(
+    url: widget.url,
+    file: widget.file,
+    heroTag: widget.heroTag,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -297,6 +340,26 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
       body: Stack(
         fit: StackFit.expand,
         children: [
+          if (_gallery)
+            PageView.builder(
+              controller: _pages,
+              physics: _pageZoomed
+                  ? const NeverScrollableScrollPhysics()
+                  : const PageScrollPhysics(),
+              onPageChanged: (i) {
+                setState(() => _index = i);
+                widget.onIndexChanged?.call(i);
+              },
+              itemCount: widget.urls!.length,
+              itemBuilder: (_, i) => _ZoomablePhoto(
+                key: ValueKey<int>(i),
+                url: widget.urls![i],
+                onZoomChanged: (z) {
+                  if (z != _pageZoomed) setState(() => _pageZoomed = z);
+                },
+              ),
+            )
+          else
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onVerticalDragUpdate: _zoomed
@@ -395,6 +458,118 @@ class _AymaImageViewerState extends State<AymaImageViewer> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The viewer's photo at contain fit: the image paints centered and
+/// letterboxed whatever its resolution — a low-res image scales UP to the
+/// viewport too, instead of laying out at its intrinsic pixel size. The
+/// caller expands it to the full viewport (the single viewer and each
+/// gallery page both wrap it in a SizedBox.expand).
+Widget _viewerPhoto({String? url, File? file, Object? heroTag}) {
+  Widget image = file != null
+      ? Image.file(file, fit: BoxFit.contain)
+      : CachedNetworkImage(
+          imageUrl: url!,
+          cacheManager: AymaImageViewer.debugCacheManager,
+          fit: BoxFit.contain,
+          // Static placeholder (like AymaPhoto's): the black ground simply
+          // holds until the cached/network image fades in.
+          placeholder: (_, __) => const SizedBox.expand(),
+          errorWidget: (_, __, ___) => Center(
+            child: Icon(
+              Icons.broken_image_outlined,
+              color: AymaTokens.dark.fgMute,
+              size: 40,
+            ),
+          ),
+        );
+  if (heroTag != null) {
+    // The Hero wraps the contain-fit image, expanded to the full viewport
+    // by the caller — so the flight from a chat thumbnail lands on a
+    // correctly sized, centered, stable box (never on the image's
+    // not-yet-decoded intrinsic size).
+    image = Hero(tag: heroTag, child: image);
+  }
+  return image;
+}
+
+/// One gallery page: a single photo at contain fit with pinch / double-tap
+/// zoom — the per-photo half of the single-photo viewer above, factored out
+/// so a [PageView] can host a set of them. Reports zoom state up so the
+/// pager stops paging while the user pans a zoomed photo.
+class _ZoomablePhoto extends StatefulWidget {
+  const _ZoomablePhoto({
+    super.key,
+    required this.url,
+    required this.onZoomChanged,
+  });
+
+  final String url;
+  final ValueChanged<bool> onZoomChanged;
+
+  @override
+  State<_ZoomablePhoto> createState() => _ZoomablePhotoState();
+}
+
+class _ZoomablePhotoState extends State<_ZoomablePhoto> {
+  final _transform = TransformationController();
+  bool _zoomed = false;
+  Offset? _doubleTapAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _transform.addListener(_onTransform);
+  }
+
+  @override
+  void dispose() {
+    _transform.removeListener(_onTransform);
+    _transform.dispose();
+    super.dispose();
+  }
+
+  void _onTransform() {
+    final zoomed = _transform.value.getMaxScaleOnAxis() > 1.01;
+    if (zoomed != _zoomed) {
+      setState(() => _zoomed = zoomed);
+      widget.onZoomChanged(zoomed);
+    }
+  }
+
+  void _toggleZoom() {
+    if (_transform.value.getMaxScaleOnAxis() > 1.01) {
+      _transform.value = Matrix4.identity();
+    } else {
+      final p =
+          _doubleTapAt ??
+          Offset(
+            MediaQuery.of(context).size.width / 2,
+            MediaQuery.of(context).size.height / 2,
+          );
+      const s = 2.5;
+      _transform.value = Matrix4.identity()
+        ..translateByDouble(-p.dx * (s - 1), -p.dy * (s - 1), 0, 1)
+        ..scaleByDouble(s, s, 1, 1);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onDoubleTapDown: (d) => _doubleTapAt = d.localPosition,
+      onDoubleTap: _toggleZoom,
+      child: InteractiveViewer(
+        transformationController: _transform,
+        // Single-finger pan only once zoomed in — otherwise the drag
+        // belongs to the pager.
+        panEnabled: _zoomed,
+        minScale: 1,
+        maxScale: 5,
+        child: SizedBox.expand(child: _viewerPhoto(url: widget.url)),
       ),
     );
   }

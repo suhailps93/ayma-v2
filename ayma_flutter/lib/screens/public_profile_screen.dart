@@ -18,6 +18,7 @@ import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_share_sheet.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_photo.dart';
+import '../widgets/image_viewer.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/inline_photo_carousel.dart';
 import '../widgets/ayma_tab_bar.dart';
@@ -653,6 +654,27 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
     );
   }
 
+  /// Tapping the photo itself opens it full screen (founder ask, Nov 8,
+  /// 2026): the shared image viewer in gallery mode — pinch to zoom, swipe
+  /// between this profile's photos. The viewer route is opaque, so this
+  /// carousel sits offstage (and unanimated) while it is open: the viewed
+  /// index is tracked in a local and the carousel jumps to it through
+  /// [_goToPage] once the viewer closes, landing back on the photo last
+  /// viewed. The action rail and the edit chips sit above the carousel in
+  /// the stack and keep their own taps; only the photo surface lands here.
+  Future<void> _openFullscreen() async {
+    final photos = _photos;
+    if (photos.isEmpty) return;
+    var viewed = _page.clamp(0, photos.length - 1);
+    await AymaImageViewer.openGallery(
+      context,
+      urls: photos,
+      initialIndex: viewed,
+      onIndexChanged: (i) => viewed = i,
+    );
+    if (mounted) _goToPage(viewed);
+  }
+
   bool get _editable => widget.editing != null;
 
   /// The photos the carousel shows: in edit mode the controller's live grid
@@ -700,14 +722,17 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
             children: [
               photos.isEmpty
                   ? fallback
-                  : PageView.builder(
-                      controller: _controller,
-                      onPageChanged: (i) => setState(() => _page = i),
-                      itemCount: photos.length,
-                      itemBuilder: (_, i) => AymaPhoto(
-                        url: photos[i],
-                        displayWidth: 900,
-                        error: fallback,
+                  : GestureDetector(
+                      onTap: _openFullscreen,
+                      child: PageView.builder(
+                        controller: _controller,
+                        onPageChanged: (i) => setState(() => _page = i),
+                        itemCount: photos.length,
+                        itemBuilder: (_, i) => AymaPhoto(
+                          url: photos[i],
+                          displayWidth: 900,
+                          error: fallback,
+                        ),
                       ),
                     ),
               // Dark gradient scrim fading up from the bottom of the photo
@@ -737,9 +762,12 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                 left: 20,
                 right: widget.actions != null ? 84 : 20,
                 bottom: 16,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                // Name/status are display-only — taps fall through to the
+                // photo below, which opens it full screen.
+                child: IgnorePointer(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -791,6 +819,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                       ),
                     ],
                   ],
+                  ),
                 ),
               ),
               // TikTok-style action rail, floating on the photo itself rather
