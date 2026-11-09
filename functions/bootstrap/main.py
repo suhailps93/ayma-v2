@@ -1347,6 +1347,11 @@ class ChatRequest(_TruncatingModel):
         "deep_dive_target": 2200,
         "appearance_finding_id": 64,
         "match_report_id": 128,
+        "shared_kind": 32,
+        "shared_ref_id": 128,
+        "shared_subject_uid": 128,
+        "shared_subject_name": 200,
+        "shared_ref_version": 64,
         "photo_url": 2000,
         "photo_source": 16,
         "screen": 32,
@@ -1403,6 +1408,24 @@ class ChatRequest(_TruncatingModel):
     # behind the score should be corrected via the profile/questionnaire
     # tools she already has, then followed by a Recalculate.
     match_report_id: str = Field(default="", max_length=128)
+    # Set when the user sends a message with a staged Send-to-Ayma share
+    # card for a REPORT kind (web research / Appearance): the REFERENCE to
+    # the shared report — kind + report id + subject — never its contents
+    # (founder 2026-11-09: reference, not content; the whole-content send
+    # this replaces silently dropped the report for these kinds, so Ayma
+    # answered from the prior conversation). Ayma pulls the exact report
+    # herself via the `open_shared_report` tool, bound server-side to this
+    # reference. `shared_ref_version` is the shared run's version stamp
+    # (the Appearance report's `created_at` when it was opened) so a
+    # re-run since the share is detected instead of silently swapped.
+    # Profile / match / story shares never set these — their context
+    # already resolves server-side from the viewing uid / match id /
+    # standing story context.
+    shared_kind: str = Field(default="", max_length=32)
+    shared_ref_id: str = Field(default="", max_length=128)
+    shared_subject_uid: str = Field(default="", max_length=128)
+    shared_subject_name: str = Field(default="", max_length=200)
+    shared_ref_version: str = Field(default="", max_length=64)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -1591,6 +1614,11 @@ class _ChatCtx:
     # render. NOTHING is persisted until the user taps Send (``POST
     # /feedback/submit``) — this sink is the whole no-write-until-confirm path.
     feedback_draft: dict = field(default_factory=dict)
+    # The shared-report reference a staged Send-to-Ayma card left on this
+    # turn (``kind`` / ``report_id`` / ``subject_uid`` / ``subject_name`` /
+    # ``version``), or empty when the turn carries no share. Binds the
+    # ``open_shared_report`` tool in the generation paths below.
+    shared_ctx: dict = field(default_factory=dict)
 
 
 
@@ -1826,6 +1854,22 @@ async def _prepare_chat(
     deep_dive_target = req.deep_dive_target.strip()
     appearance_finding_id = req.appearance_finding_id.strip()
     match_report_id = req.match_report_id.strip()
+    # A staged Send-to-Ayma share of a report kind carries only this
+    # reference (founder 2026-11-09); the report itself is pulled by the
+    # bound `open_shared_report` tool at generation time. The kind gate
+    # mirrors `skills.open_shared._KIND_TO_REPORT_TYPE` — profile shares
+    # never land here (they resolve through the viewing briefing).
+    shared_ctx: dict = {}
+    if req.shared_kind.strip() in ("deep_dive", "appearance", "match", "story") and (
+        req.shared_ref_id.strip() or req.shared_subject_uid.strip()
+    ):
+        shared_ctx = {
+            "kind": req.shared_kind.strip(),
+            "report_id": req.shared_ref_id.strip(),
+            "subject_uid": req.shared_subject_uid.strip(),
+            "subject_name": req.shared_subject_name.strip(),
+            "version": req.shared_ref_version.strip(),
+        }
     screen = req.screen.strip()
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
@@ -1934,6 +1978,15 @@ async def _prepare_chat(
     )
     if analysis_block:
         system_prompt += "\n\n" + analysis_block
+    # Shared-report reference (founder 2026-11-09): the user shared a
+    # report into this conversation by reference only — name it, and make
+    # opening it (via the bound tool) a precondition of answering about
+    # it, so a shared web-research/Appearance card can never again be
+    # answered from whatever the conversation was about before.
+    if shared_ctx:
+        system_prompt += "\n\n" + _shared_report_context(
+            shared_ctx["kind"], shared_ctx["subject_name"]
+        )
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
         steps = skills.guided_tour._tour_steps(tour_state)
@@ -1979,6 +2032,7 @@ async def _prepare_chat(
             match_report_id,
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
+            shared_ctx=shared_ctx,
         ),
     )
 
@@ -2050,6 +2104,39 @@ def _deep_dive_edit_context(report_id: str, target: str) -> str:
         )
     lines.append("Confirm what you did in one line and keep chatting.")
     return "\n".join(lines)
+
+
+def _shared_report_context(kind: str, subject_name: str) -> str:
+    """The prompt block for a turn carrying a shared-report reference
+    (``shared_ctx`` non-empty): the user shared a report into this
+    conversation as a card, by reference only — its contents are NOT in
+    this prompt. Ayma opens the exact report with the bound
+    ``open_shared_report`` tool before answering about it; if the tool
+    says it could not be opened, she says so plainly instead of answering
+    from other context (the founder bug this fixes, 2026-11-09: a shared
+    web-research card was answered from the previous conversation)."""
+    name = (subject_name or "").strip()
+    if kind == "deep_dive":
+        what = f"a web research report{f' on {name}' if name else ''}"
+    elif kind == "appearance":
+        what = "their Appearance report"
+    elif kind == "match":
+        what = f"a match report{f' with {name}' if name else ''}"
+    elif kind == "story":
+        what = "their Story"
+    else:
+        return ""
+    return (
+        f"SHARED REPORT: the user shared {what} with you in this "
+        "conversation — it is the card attached to their message. Its "
+        "contents are not in this prompt: before you answer anything "
+        "about it, call `open_shared_report` (no arguments) to open the "
+        "actual report and base your answer on what it says. If the tool "
+        "says the report could not be opened, tell the user plainly that "
+        "you couldn't open what they shared — never answer about it from "
+        "another profile, another report, or the earlier conversation "
+        "instead."
+    )
 
 
 def _appearance_edit_context(finding_id: str) -> str:
@@ -2473,6 +2560,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             photo=bool(ctx.photo_url or ctx.image),
             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
             appearance=bool(ctx.appearance_finding_id),
+            shared=bool(ctx.shared_ctx),
         ),
         tool_fns=make_session_tool_fns(
             get_db(),
@@ -2511,6 +2599,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
                 {"finding_id": ctx.appearance_finding_id}
                 if ctx.appearance_finding_id else None
             ),
+            shared_ctx=ctx.shared_ctx or None,
             # generate_image delivers through the same sink edit_photo
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
@@ -2640,6 +2729,7 @@ async def chat_stream(
                             photo=bool(ctx.photo_url or ctx.image),
                             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
                             appearance=bool(ctx.appearance_finding_id),
+                            shared=bool(ctx.shared_ctx),
                         ),
                         tool_fns=make_session_tool_fns(
                             get_db(),
@@ -2678,6 +2768,7 @@ async def chat_stream(
                                 {"finding_id": ctx.appearance_finding_id}
                                 if ctx.appearance_finding_id else None
                             ),
+                            shared_ctx=ctx.shared_ctx or None,
                             image_result=ctx.photo_edit_result,
                             feedback_result=ctx.feedback_draft,
                         ),

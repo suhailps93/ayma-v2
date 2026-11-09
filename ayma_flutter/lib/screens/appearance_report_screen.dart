@@ -75,6 +75,14 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     with ScreenContextReasserter<AppearanceReportScreen> {
   AppearanceCardData? _card;
 
+  /// The version stamp (the report's `created_at`) of the exact run
+  /// currently on screen, captured with the card in [_onReport]. A
+  /// Send-to-Ayma share carries it in the reference so Ayma pulls THIS
+  /// run — a re-run replaces the record wholesale, and the stamp is how
+  /// the backend tells the shared run from a silent swap (founder,
+  /// 2026-11-09).
+  String _reportCreatedAt = '';
+
   /// Every analysed photo in the card's pool, decoded and keyed by url (the
   /// whole pool, not just the four shown, so removing a photo slides the next
   /// one in with no re-decode). A url absent here failed to decode.
@@ -186,6 +194,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       final old = _decoded;
       setState(() {
         _card = null;
+        _reportCreatedAt = '';
         _decoded = const {};
       });
       _release(old);
@@ -212,6 +221,8 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       // Photos are always on the card; with none loadable it isn't offered.
       _decoded = map;
       _card = map.isEmpty ? null : card;
+      _reportCreatedAt =
+          map.isEmpty ? '' : (report.meta.createdAt ?? '');
     });
     _release(old);
     reassertScreenContext();
@@ -443,6 +454,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
         uid: uid,
         title: 'Your appearance report',
         photoUrl: card.photoUrls.isEmpty ? '' : card.photoUrls.first,
+        reportVersion: _reportCreatedAt,
         externalOverride: (_) => _openShare(card, accent),
       ),
     );

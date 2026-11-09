@@ -276,6 +276,11 @@ abstract final class ChatContextCaps {
   static const deepDiveTarget = 2200;
   static const appearanceFindingId = 64;
   static const matchReportId = 128;
+  static const sharedKind = 32;
+  static const sharedRefId = 128;
+  static const sharedSubjectUid = 128;
+  static const sharedSubjectName = 200;
+  static const sharedRefVersion = 64;
   static const photoUrl = 2000;
   static const photoSource = 16;
   static const screen = 32;
@@ -382,6 +387,11 @@ Map<String, dynamic> buildChatRequestBody({
   String deepDiveTarget = '',
   String appearanceFindingId = '',
   String matchReportId = '',
+  String sharedKind = '',
+  String sharedRefId = '',
+  String sharedSubjectUid = '',
+  String sharedSubjectName = '',
+  String sharedRefVersion = '',
   bool profileEdit = false,
   String photoUrl = '',
   String photoSource = '',
@@ -422,6 +432,19 @@ Map<String, dynamic> buildChatRequestBody({
           appearanceFindingId, ChatContextCaps.appearanceFindingId),
       'match_report_id':
           clampChatContext(matchReportId, ChatContextCaps.matchReportId),
+      // A staged Send-to-Ayma share of a report kind: the REFERENCE only
+      // (kind + report id + subject + the opened run's version stamp) —
+      // never the report's contents. Ayma pulls the exact report herself
+      // server-side (founder 2026-11-09: reference, not content).
+      'shared_kind': clampChatContext(sharedKind, ChatContextCaps.sharedKind),
+      'shared_ref_id':
+          clampChatContext(sharedRefId, ChatContextCaps.sharedRefId),
+      'shared_subject_uid':
+          clampChatContext(sharedSubjectUid, ChatContextCaps.sharedSubjectUid),
+      'shared_subject_name': clampChatContext(
+          sharedSubjectName, ChatContextCaps.sharedSubjectName),
+      'shared_ref_version':
+          clampChatContext(sharedRefVersion, ChatContextCaps.sharedRefVersion),
       'profile_edit': profileEdit,
       'photo_url': clampChatContext(photoUrl, ChatContextCaps.photoUrl),
       'photo_source':
@@ -2726,6 +2749,11 @@ class ApiClient {
     String deepDiveTarget = '',
     String appearanceFindingId = '',
     String matchReportId = '',
+    String sharedKind = '',
+    String sharedRefId = '',
+    String sharedSubjectUid = '',
+    String sharedSubjectName = '',
+    String sharedRefVersion = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2763,6 +2791,11 @@ class ApiClient {
           deepDiveTarget: deepDiveTarget,
           appearanceFindingId: appearanceFindingId,
           matchReportId: matchReportId,
+          sharedKind: sharedKind,
+          sharedRefId: sharedRefId,
+          sharedSubjectUid: sharedSubjectUid,
+          sharedSubjectName: sharedSubjectName,
+          sharedRefVersion: sharedRefVersion,
           profileEdit: profileEdit,
           photoUrl: photoUrl,
           photoSource: photoSource,
@@ -2810,6 +2843,11 @@ class ApiClient {
     String deepDiveTarget = '',
     String appearanceFindingId = '',
     String matchReportId = '',
+    String sharedKind = '',
+    String sharedRefId = '',
+    String sharedSubjectUid = '',
+    String sharedSubjectName = '',
+    String sharedRefVersion = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2842,6 +2880,11 @@ class ApiClient {
         deepDiveTarget: deepDiveTarget,
         appearanceFindingId: appearanceFindingId,
         matchReportId: matchReportId,
+        sharedKind: sharedKind,
+        sharedRefId: sharedRefId,
+        sharedSubjectUid: sharedSubjectUid,
+        sharedSubjectName: sharedSubjectName,
+        sharedRefVersion: sharedRefVersion,
         profileEdit: profileEdit,
         photoUrl: photoUrl,
         photoSource: photoSource,
