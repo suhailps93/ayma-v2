@@ -226,7 +226,7 @@ def test_client_survives_errors_and_keeps_retrying(caplog):
             retry_step_seconds=0.001, retry_max_seconds=0.001,
         )
         keepalive.start()
-        await _wait_for(lambda: len(attempts) >= agent_keepalive.WARN_AFTER_FAILURES)
+        await _wait_for(lambda: len(attempts) >= agent_keepalive.WARN_AFTER_FAILURES, timeout=10.0)
         await keepalive.release()
 
     asyncio.run(run())

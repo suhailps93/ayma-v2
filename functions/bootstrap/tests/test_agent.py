@@ -520,14 +520,18 @@ def test_session_tools_wire_every_tool_call_to_a_tool_used_event(monkeypatch):
     }
 
 
-class _FakeRoom:
+# Seed fakes with distinct names: the module-level _FakeRoom below is
+# rebound for the dispatch-guard tests with a (name, metadata="") signature,
+# which used to shadow this one and leave room.metadata empty, so every
+# _read_room_seed test fell back to the base persona.
+class _SeedFakeRoom:
     def __init__(self, metadata):
         self.metadata = metadata
 
 
-class _FakeCtx:
+class _SeedFakeCtx:
     def __init__(self, metadata):
-        self.room = _FakeRoom(metadata)
+        self.room = _SeedFakeRoom(metadata)
 
 
 def test_read_room_seed_builds_chat_ctx_and_ids():
@@ -542,7 +546,7 @@ def test_read_room_seed_builds_chat_ctx_and_ids():
             ],
         }
     )
-    seed = agent._read_room_seed(_FakeCtx(raw))
+    seed = agent._read_room_seed(_SeedFakeCtx(raw))
 
     assert seed.system_prompt == "PERSONA + history"
     assert seed.uid == "u1"
@@ -574,7 +578,7 @@ def test_read_room_seed_trims_the_chat_ctx_at_level_2(monkeypatch):
     seed_turns — the raw_turns persistence base — still carries the full
     window (shrinking it would overwrite the session doc with less history)."""
     monkeypatch.setenv("CONTEXT_OPT_LEVEL", "2")
-    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    seed = agent._read_room_seed(_SeedFakeCtx(_forty_turn_seed_json()))
     assert len(seed.chat_ctx.items) == 10
     assert seed.chat_ctx.items[-1].text_content == "voice turn 39"
     assert seed.chat_ctx.items[0].text_content == "voice turn 30"
@@ -583,17 +587,17 @@ def test_read_room_seed_trims_the_chat_ctx_at_level_2(monkeypatch):
 
 def test_read_room_seed_keeps_the_full_chat_ctx_at_level_0(monkeypatch):
     monkeypatch.delenv("CONTEXT_OPT_LEVEL", raising=False)
-    seed = agent._read_room_seed(_FakeCtx(_forty_turn_seed_json()))
+    seed = agent._read_room_seed(_SeedFakeCtx(_forty_turn_seed_json()))
     assert len(seed.chat_ctx.items) == 40
     assert len(seed.seed_turns) == 40
 
 
 def test_read_room_seed_falls_back_without_metadata():
-    seed = agent._read_room_seed(_FakeCtx(None))
+    seed = agent._read_room_seed(_SeedFakeCtx(None))
     assert seed.chat_ctx is None
     assert seed.system_prompt and not seed.uid
 
-    seed2 = agent._read_room_seed(_FakeCtx("not json"))
+    seed2 = agent._read_room_seed(_SeedFakeCtx("not json"))
     assert seed2.chat_ctx is None
     assert seed2.system_prompt
 
@@ -2743,14 +2747,14 @@ def test_read_room_seed_parses_practice_flag_and_persona():
             "target_uid": "demo_practice_maya",
         }
     )
-    seed = agent._read_room_seed(_FakeCtx(raw))
+    seed = agent._read_room_seed(_SeedFakeCtx(raw))
     assert seed.practice is True
     assert seed.persona_name == "Maya"
     assert seed.persona_gender == "woman"
     assert seed.target_uid == "demo_practice_maya"
 
     normal = agent._read_room_seed(
-        _FakeCtx(json.dumps({"system_prompt": "AYMA", "uid": "u1", "recent_turns": []}))
+        _SeedFakeCtx(json.dumps({"system_prompt": "AYMA", "uid": "u1", "recent_turns": []}))
     )
     assert normal.practice is False
     assert normal.persona_name == "" and normal.target_uid == ""
@@ -4329,8 +4333,8 @@ def test_detect_voice_command_passes_text_lane_values_through():
     # Back near-misses: narrative "back" is never a navigation.
     "call me back when you can",
     "back in the day we talked",
-    # Tour near-misses: stop / next / questions never start anything.
-    "stop the tour",
+    # Tour near-misses: next / questions never start anything
+    # ("stop the tour" IS a stop command since the Nov 7 tour rewire).
     "what's next on the tour",
     "tell me about the guided tour",
     "is there a tour of the app",
@@ -4460,13 +4464,13 @@ def test_voice_tour_start_command_spotlights_deterministically(monkeypatch):
         await _drain_until(lambda: len(db.store.queued) == 1)
         cmd = db.store[("users", "u1", "app_commands", "pending")]
         assert cmd["action"] == "tour_step"
-        # Voice-bound, as the session binds it: the composer-only step 0 is
-        # skipped and the first spotlight is step 1.
-        assert cmd["index"] == 1
+        # Voice-bound, as the session binds it: the Nov 7 tour rewire starts
+        # at step 0 ("This is me", the orb), so the first spotlight is 0.
+        assert cmd["index"] == 0
         state = db.store[("users", "u1", "app_commands", "tour_state")]
-        assert state["active"] is True and state["index"] == 1
+        assert state["active"] is True and state["index"] == 0
         deterministic = dedupe.lookup("start_guided_tour").future.result()
-        assert "step 2 of" in deterministic
+        assert "step 1 of" in deterministic
         dup = await by_name["start_guided_tour"]()
         assert dup == deterministic
         assert len(db.store.queued) == 1
@@ -4478,7 +4482,6 @@ def test_voice_tour_start_command_spotlights_deterministically(monkeypatch):
 @pytest.mark.parametrize("phrase", [
     "my brain is fried today",
     "open up about yourself",
-    "stop the tour",
     "what's next on the tour",
     "tell me about the guided tour",
     "the models page is my favorite screen",
@@ -5746,12 +5749,21 @@ def test_detect_voice_command_disconnect_ends_call(phrase):
         "I got disconnected yesterday",
         "please disconnect me from this service",
         "end call with Daniel",
-        "open my messages, disconnect",
         "what does disconnect mean",
     ],
 )
 def test_detect_voice_command_disconnect_strictness(phrase):
     assert agent.detect_voice_command(phrase) is None
+
+
+def test_disconnect_tail_on_real_request_navigates():
+    # Founder directive 96738505: a disconnect tail on a real request never
+    # ends the call, and the real request itself still runs. "open my
+    # messages, disconnect" opens Messages; it is not a disconnect.
+    assert agent.detect_voice_command("open my messages, disconnect") == (
+        "open_screen",
+        {"screen": "messages"},
+    )
 
 
 def test_detect_disconnect_command_is_whole_utterance_only():
