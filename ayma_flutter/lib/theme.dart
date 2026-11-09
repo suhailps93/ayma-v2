@@ -124,6 +124,10 @@ class AymaColors {
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);
 
+  /// Like-button filled red (Instagram red) — used when a profile is liked.
+  /// Theme-independent (same in light and dark).
+  static const likeRed = Color(0xFFFF3040);
+
   static Color accentSoft(Color base) => base.withValues(alpha: 0.18);
   static Color accentFaint(Color base) => base.withValues(alpha: 0.08);
 
@@ -194,6 +198,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     required this.success,
     required this.error,
     required this.warning,
+    required this.likeRed,
   });
 
   final Color bg;
@@ -216,6 +221,10 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
   final Color error;
   final Color warning;
 
+  /// Like-button filled red (Instagram red) — used when a profile is liked.
+  /// Theme-independent (same in light and dark).
+  final Color likeRed;
+
   static const dark = AymaTokens(
     bg: AymaColors.darkBg,
     bgElev: AymaColors.darkBgElev,
@@ -233,6 +242,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     success: AymaColors.success,
     error: AymaColors.error,
     warning: AymaColors.warning,
+    likeRed: AymaColors.likeRed,
   );
 
   static const light = AymaTokens(
@@ -252,6 +262,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     success: AymaColors.success,
     error: AymaColors.error,
     warning: AymaColors.warning,
+    likeRed: AymaColors.likeRed,
   );
 
   @override
@@ -272,6 +283,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
     Color? success,
     Color? error,
     Color? warning,
+    Color? likeRed,
   }) {
     return AymaTokens(
       bg: bg ?? this.bg,
@@ -290,6 +302,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       success: success ?? this.success,
       error: error ?? this.error,
       warning: warning ?? this.warning,
+      likeRed: likeRed ?? this.likeRed,
     );
   }
 
@@ -324,6 +337,7 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       success: Color.lerp(success, other.success, t)!,
       error: Color.lerp(error, other.error, t)!,
       warning: Color.lerp(warning, other.warning, t)!,
+      likeRed: Color.lerp(likeRed, other.likeRed, t)!,
     );
   }
 }

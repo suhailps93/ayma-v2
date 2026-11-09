@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/deep_dive_activity.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
@@ -59,6 +60,7 @@ class _FakeCacheManager implements BaseCacheManager {
 
 Map<String, dynamic> _profile({
   bool self = false,
+  bool blocked = false,
   bool liked = false,
   double? score,
   bool hasChatted = false,
@@ -74,7 +76,7 @@ Map<String, dynamic> _profile({
     {
       'uid': 'her',
       'self': self,
-      'blocked': false,
+      'blocked': blocked,
       'name': 'Dana',
       'age': 30,
       'location': 'Berlin',
@@ -184,7 +186,7 @@ ApiClient _api(
   );
 }
 
-Widget _app(ApiClient api, {List<String>? pushed}) {
+Widget _app(ApiClient api, {List<String>? pushed, ThemeData? theme}) {
   final router = GoRouter(
     initialLocation: '/profile/user/her',
     routes: [
@@ -221,7 +223,7 @@ Widget _app(ApiClient api, {List<String>? pushed}) {
       ),
     ],
   );
-  return MaterialApp.router(routerConfig: router);
+  return MaterialApp.router(routerConfig: router, theme: theme);
 }
 
 /// Whether the glyph of type [glyphType] sits on ANY circular filled
@@ -317,6 +319,26 @@ void main() {
         isFalse);
     expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
         isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaTokens.dark.fg);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).accent,
+        AymaTokens.dark.fg);
+    expect(tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).accent,
+        AymaTokens.dark.fg);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).accent,
+        AymaTokens.dark.fg);
+    final practiceIcon = tester.widget<Icon>(find.descendant(
+      of: find.byKey(const Key('profilePracticeButton')),
+      matching: find.byType(Icon),
+    ));
+    expect(practiceIcon.icon, Icons.school_outlined);
+    expect(practiceIcon.color, AymaTokens.dark.fg);
+    final dateSimIcon = tester.widget<Icon>(find.descendant(
+      of: find.byKey(const Key('profileDateSimButton')),
+      matching: find.byType(Icon),
+    ));
+    expect(dateSimIcon.icon, Icons.people_outlined);
+    expect(dateSimIcon.color, AymaTokens.dark.fg);
   });
 
   // One shared body for every profile view: a non-self profile renders the
@@ -381,28 +403,29 @@ void main() {
   });
 
   testWidgets(
-      'Chat IS highlighted once a real message has actually been sent',
-      (tester) async {
+      'Chat stays outline even once a real message has actually been sent '
+      '(only Like fills)', (tester) async {
     await tester.pumpWidget(_app(_api(_profile(hasChatted: true))));
     await tester.pumpAndSettle();
 
-    // Chat already reads as "done" (server-confirmed has_chatted) before any
-    // tap — same filled treatment Like gets once it flips to its own "done"
-    // state.
+    // Chat stays outline always — state fills do not exist on the rail for
+    // message, web research, or match.
     expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
-        isTrue);
+        isFalse);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).accent,
+        AymaTokens.dark.fg);
 
     await tester.tap(find.byType(AymaHeartGlyph)); // flips Like to its "done" fill
     await tester.pumpAndSettle();
 
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaColors.likeRed);
   });
 
-  // State-mapping for the Web-search glyph (2026-09-26 icon-family redesign:
-  // the icon's own outline-vs-filled rendering is the only status signal):
-  // completed = the profile's real deep-dive report state (`deep_dive_id`
-  // non-empty), never anything invented client-side.
+  // State-mapping for the Web-search glyph (Nov 2026 restyle:
+  // quiet neutral outline always; does not fill).
   testWidgets(
       'Web search stays outline while no deep-dive report exists',
       (tester) async {
@@ -412,10 +435,13 @@ void main() {
     expect(
         tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
         isFalse);
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).accent,
+        AymaTokens.dark.fg);
   });
 
   testWidgets(
-      'Web search reads filled once a deep-dive report exists, and tapping '
+      'Web search stays outline even once a deep-dive report exists, and tapping '
       'it opens that report', (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(
@@ -424,7 +450,10 @@ void main() {
 
     expect(
         tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
-        isTrue);
+        isFalse);
+    expect(
+        tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).accent,
+        AymaTokens.dark.fg);
 
     await tester.tap(find.byType(AymaSearchGlyph));
     await tester.pumpAndSettle();
@@ -457,12 +486,19 @@ void main() {
     await tester.pumpWidget(_app(_api(_profile(), onPost: posts.add)));
     await tester.pumpAndSettle();
 
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaTokens.dark.fg);
+
     await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
 
     expect(posts, contains('/explore/like'));
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaColors.likeRed);
   });
 
   testWidgets('a refused like offers Retry, which sends the same like',
@@ -479,6 +515,8 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaTokens.dark.fg);
 
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
@@ -486,6 +524,8 @@ void main() {
     expect(posts, ['/explore/like', '/explore/like']);
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaColors.likeRed);
   });
 
   testWidgets(
@@ -498,6 +538,8 @@ void main() {
 
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isTrue);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaColors.likeRed);
 
     await tester.tap(find.byType(AymaHeartGlyph));
     await tester.pumpAndSettle();
@@ -505,6 +547,8 @@ void main() {
     expect(posts, contains('/explore/unlike'));
     expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
         isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaTokens.dark.fg);
   });
 
   testWidgets('unliking a mutual like confirms first', (tester) async {
@@ -647,18 +691,18 @@ void main() {
   });
 
   testWidgets(
-      'a scored pair shows the match glyph in its filled "done" state, with '
+      'a scored pair shows the match glyph in its outline state, with '
       'no percentage text or credit-cost caption anywhere, and tapping it '
       'still opens the report', (tester) async {
     final pushed = <String>[];
     await tester.pumpWidget(_app(_api(_profile(score: 0.67)), pushed: pushed));
     await tester.pumpAndSettle();
 
-    // The glyph's own filled state is the ONLY signal a score exists now —
-    // no "67%" text, no generic "Match" label, no credit-cost caption (a
-    // recalc, which the tap still triggers, is free from here on).
+    // Match glyph stays outline even when scored — only Like fills on the rail.
     expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
-        isTrue);
+        isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).accent,
+        AymaTokens.dark.fg);
     expect(find.text('67%'), findsNothing);
     expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
@@ -676,6 +720,8 @@ void main() {
 
     expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
         isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).accent,
+        AymaTokens.dark.fg);
     expect(find.text('Match'), findsNothing);
     expect(find.text('12 cr'), findsNothing);
     expect(find.textContaining('%'), findsNothing);
@@ -862,5 +908,120 @@ void main() {
         .map((w) => w.url)
         .toList();
     expect(urls, containsAll(['https://x/1.jpg', 'https://x/2.jpg']));
+  });
+
+  testWidgets(
+      'Light theme: all six rail icons are quiet neutral outlines and Like flips red',
+      (tester) async {
+    final lightTheme = ThemeData.light().copyWith(
+      extensions: [AymaTokens.light],
+    );
+    await tester.pumpWidget(_app(_api(_profile()), theme: lightTheme));
+    await tester.pumpAndSettle();
+
+    final lightFg = AymaTokens.light.fg;
+
+    // Check all four vector glyphs are outlines in the neutral foreground
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        lightFg);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).accent,
+        lightFg);
+    expect(tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).accent,
+        lightFg);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).accent,
+        lightFg);
+
+    // Practice shows graduation cap in lightFg
+    final practiceIcon = tester.widget<Icon>(find.descendant(
+      of: find.byKey(const Key('profilePracticeButton')),
+      matching: find.byType(Icon),
+    ));
+    expect(practiceIcon.icon, Icons.school_outlined);
+    expect(practiceIcon.color, lightFg);
+
+    // Sim shows people icon in lightFg
+    final dateSimIcon = tester.widget<Icon>(find.descendant(
+      of: find.byKey(const Key('profileDateSimButton')),
+      matching: find.byType(Icon),
+    ));
+    expect(dateSimIcon.icon, Icons.people_outlined);
+    expect(dateSimIcon.color, lightFg);
+
+    // Tap like: heart fills with AymaColors.likeRed
+    await tester.tap(find.byType(AymaHeartGlyph));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isTrue);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        AymaColors.likeRed);
+
+    // All other icons remain untouched
+    expect(tester.widget<AymaChatGlyph>(find.byType(AymaChatGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaSearchGlyph>(find.byType(AymaSearchGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaMatchGlyph>(find.byType(AymaMatchGlyph)).filled,
+        isFalse);
+
+    // Tap again: unlikes, flips back to lightFg outline
+    await tester.tap(find.byType(AymaHeartGlyph));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).filled,
+        isFalse);
+    expect(tester.widget<AymaHeartGlyph>(find.byType(AymaHeartGlyph)).accent,
+        lightFg);
+  });
+
+  testWidgets(
+      'Text gutter: non-self unblocked profile reserves 64px rail gutter (84px right padding), '
+      'while self or blocked profile reserves 0px', (tester) async {
+    // 1. Non-self unblocked profile (rail mounted)
+    await tester.pumpWidget(_app(_api(_profile())));
+    await tester.pumpAndSettle();
+
+    var view = tester.widget<LivingReportView>(find.byType(LivingReportView));
+    expect(view.extraRightPadding, 64.0);
+
+    var list = tester.widget<ListView>(find.descendant(
+      of: find.byType(LivingReportView),
+      matching: find.byType(ListView),
+    ));
+    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 84, 40));
+
+    // 2. Self view (no rail mounted)
+    await tester.pumpWidget(_app(_api(_profile(self: true))));
+    await tester.pumpAndSettle();
+
+    view = tester.widget<LivingReportView>(find.byType(LivingReportView));
+    expect(view.extraRightPadding, 0.0);
+
+    list = tester.widget<ListView>(find.descendant(
+      of: find.byType(LivingReportView),
+      matching: find.byType(ListView),
+    ));
+    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 40));
+
+    // 3. Blocked view (no rail mounted)
+    await tester.pumpWidget(_app(_api(_profile(blocked: true))));
+    await tester.pumpAndSettle();
+
+    view = tester.widget<LivingReportView>(find.byType(LivingReportView));
+    expect(view.extraRightPadding, 0.0);
+
+    list = tester.widget<ListView>(find.descendant(
+      of: find.byType(LivingReportView),
+      matching: find.byType(ListView),
+    ));
+    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 40));
   });
 }
