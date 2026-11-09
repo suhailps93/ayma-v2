@@ -80,9 +80,6 @@ def _stub_media(monkeypatch):
     monkeypatch.setattr(
         media_embed, "download_bytes", lambda p: (b"IMGBYTES", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda b, m="image/jpeg": [0.2] * 8
-    )
 
     async def _attrs(b, m, **_kw):
         return {"shot_type": "face", "usable_for_face": True,
@@ -168,15 +165,15 @@ def test_verification_selfie_success_stores_the_reference_and_seeds_analysis(
 
     stored = db.store[("users", "u1")]
     fv = stored[schema.FIELD_FACE_VERIFICATION]
-    assert list(fv[schema.FACE_VERIFICATION_EMBEDDING]) == [0.2] * 8
+    assert schema.FACE_VERIFICATION_EMBEDDING not in fv
     assert fv[schema.FACE_VERIFICATION_STORAGE_PATH] == "verification/u1/selfie.jpg"
+    assert fv["verified"] is True
     assert schema.FACE_VERIFICATION_VERIFIED_AT in fv
 
     # TestClient drains the background task after the response.
     assert len(seen) == 1
     uid, storage_path, kw = seen[0]
     assert (uid, storage_path) == ("u1", "verification/u1/selfie.jpg")
-    assert kw["embedding"] == [0.2] * 8
     assert kw["attributes"]["shot_type"] == "face"
 
 
@@ -192,7 +189,8 @@ def test_verification_status_true_once_verified(monkeypatch):
     db = FakeDb()
     db.store[("users", "u1")] = {
         schema.FIELD_FACE_VERIFICATION: {
-            schema.FACE_VERIFICATION_EMBEDDING: [0.1, 0.2],
+            schema.FACE_VERIFICATION_STORAGE_PATH: "verification/u1/selfie.jpg",
+            "verified": True,
         }
     }
     monkeypatch.setattr(main, "get_db", lambda: db)

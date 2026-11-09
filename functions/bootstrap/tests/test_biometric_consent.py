@@ -10,6 +10,7 @@ from firebase_admin import auth as firebase_auth
 
 import biometric_consent
 import deep_dive_images
+import face_match
 import main
 import media_embed
 import reverse_image_search
@@ -318,18 +319,18 @@ def test_selfie_refused_without_consent(monkeypatch):
 
 def test_no_reference_embeddings_without_consent(monkeypatch):
     monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: False)
-    db = FakeDb({("users", "u-1"): {"face_verification": {"embedding": [1.0]}}})
-    assert deep_dive_images.reference_embeddings_for(db, "u-1") == []
+    db = FakeDb({("users", "u-1"): {"face_verification": {"verified": True, "storage_path": "users/u-1/selfie.jpg"}}})
+    assert face_match.get_reference_photos(db, "u-1") == []
 
 
 def test_web_images_skip_a_target_without_consent(monkeypatch):
     monkeypatch.setattr(biometric_consent, "has_consent_fresh", lambda _db, _uid: False)
 
     def _never(*_a, **_k):
-        raise AssertionError("must not search or embed")
+        raise AssertionError("must not search or check face")
 
     monkeypatch.setattr(deep_dive_images, "_search_image_urls", _never)
-    monkeypatch.setattr(media_embed, "embed_image_bytes", _never)
+    monkeypatch.setattr(face_match, "check_same_person", _never)
     out = asyncio.run(
         deep_dive_images.find_web_images(FakeDb(), "u-2", "Dana Reyes")
     )
@@ -398,10 +399,10 @@ def test_web_images_stop_when_consent_is_withdrawn_mid_job(monkeypatch):
     )
 
     def _never(*_a, **_k):
-        raise AssertionError("must not fetch or embed after withdrawal")
+        raise AssertionError("must not fetch or check face after withdrawal")
 
     monkeypatch.setattr(deep_dive_images, "_fetch_image", _never)
-    monkeypatch.setattr(media_embed, "embed_image_bytes", _never)
+    monkeypatch.setattr(face_match, "check_same_person", _never)
     out = asyncio.run(
         deep_dive_images.find_web_images(FakeDb(), "u-2", "Dana Reyes")
     )

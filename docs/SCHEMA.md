@@ -74,7 +74,7 @@ Top-level, `matchId` = `sorted_pair_key(uidA, uidB)` (`pair_key.py`). One doc, s
 
 ## `users/{uid}.trust_flags`  *(Step 39 schema; populated = Step 43; §5.5)*
 `[{ type: "self_contradiction" | "face_mismatch", detail, flagged_at }]` — written by
-the Lint job (§2.3) and the face-embedding check (§2.5); down-weights matching, never excludes.
+the Lint job (§2.3) and the face check (§2.5); down-weights matching, never excludes.
 
 ## `dm_threads/{threadId}`  *(Step 46 schema; §6.6, §6.10)*
 `threadId` = `sorted_pair_key(uidA, uidB)` (`dm_schema.thread_id`).
@@ -123,8 +123,10 @@ Constants: `functions/bootstrap/notifications_schema.py`.
   imported photos in place.
 - `users/{uid}/user_media/{id}`: `storage_path`, `source`
   (`profile` | `chat` | `dm` | `instagram_import`), `moderation_status`,
-  `embedding`/`dim` (face vector, §2.5), `created_at`; Instagram imports also
-  carry `instagram_id`, `permalink`, `caption`.
+  `face_verdict` (`self` | `not_self` | `unknown`), `is_user` (`yes` | `no` | `""`),
+  `created_at`; Instagram imports also carry `instagram_id`, `permalink`, `caption`.
+  (No face embeddings stored; legacy `embedding_missing` supported for backwards-compatibility).
+- `users/{uid}.face_verification`: `{ storage_path, verified, verdict, verified_at }` — verification selfie record (no vector fields).
 - Instagram bio/username + captions land in `users/{uid}/raw_turns/*` as one
   entry (feeds normal wiki ingest, §8.2). Module: `functions/bootstrap/instagram.py`.
 

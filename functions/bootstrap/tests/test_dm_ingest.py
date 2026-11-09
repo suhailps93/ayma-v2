@@ -131,14 +131,10 @@ def test_photo_message_phrases_the_context_note_by_match_verdict(monkeypatch):
             "published": True,
             "caption": "a golden retriever on a beach",
             "attributes": {"shot_type": "face"},
-            "embedding": [1.0, 0.0],
+            "face_verdict": "self",
         }
 
     monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
-    monkeypatch.setattr(
-        dm_ingest.deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [[1.0, 0.0]],
-    )
 
     texts = []
 
@@ -161,17 +157,9 @@ def test_group_photo_message_gets_the_group_phrasing(monkeypatch):
             "published": True,
             "caption": "three friends at a bar",
             "attributes": {"shot_type": "group"},
-            "embedding": [1.0, 0.0],
         }
 
     monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
-
-    def _should_not_run(*_a, **_k):  # pragma: no cover
-        raise AssertionError("a group shot never needs a face-match check")
-
-    monkeypatch.setattr(
-        dm_ingest.deep_dive_images, "reference_embeddings_for", _should_not_run
-    )
 
     texts = []
 
@@ -197,14 +185,10 @@ def test_dm_pipeline_result_is_reused_for_auto_analysis(monkeypatch):
             "published": True,
             "caption": "a sunset",
             "attributes": {"shot_type": "face", "usable_for_face": True},
-            "embedding": [1.0, 0.0],
+            "face_verdict": "self",
         }
 
     monkeypatch.setattr(dm_ingest.photo_pipeline, "process", _pipeline)
-    monkeypatch.setattr(
-        dm_ingest.deep_dive_images, "reference_embeddings_for",
-        lambda _db, _uid: [],
-    )
     monkeypatch.setattr(dm_ingest, "wiki_ingest",
                         _async(lambda *a, **k: 1))
     monkeypatch.setattr(dm_ingest, "persist_raw_turns", lambda *a: None)
@@ -226,7 +210,7 @@ def test_dm_pipeline_result_is_reused_for_auto_analysis(monkeypatch):
     assert len(seen) == 1
     uid, storage_path, kw = seen[0]
     assert (uid, storage_path) == ("a", "uploads/a/sunset.jpg")
-    assert kw["embedding"] == [1.0, 0.0]
+    assert kw.get("embedding") is None
     assert kw["attributes"] == {"shot_type": "face", "usable_for_face": True}
 
 

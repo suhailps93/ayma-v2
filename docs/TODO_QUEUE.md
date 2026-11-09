@@ -4,6 +4,16 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## FACE-CHECK-REPLACE-EMBEDDINGS — Replace face embeddings with LiveKit pairwise face check (fleet/face-check off staging tip 22710ec6, 2026-11-08) — DONE, awaiting sweep
+- **Founder decision (2026-11-08, ~16:45 PT):** Replaced all stored face embeddings with an on-demand pairwise vision check (`functions/bootstrap/face_match.py` via `gemini.generate_json` holding both photos).
+  - **LiveKit-only inference:** Uses existing LiveKit photo moderation / brain route (`FEATURE_PHOTO_MODERATION`). Zero direct Vertex calls, no new providers, zero extra spend.
+  - **Intra-account only:** Match candidates are compared strictly against the user's own reference set (verified selfie storage path + user media); never cross-account.
+  - **Duplicate face guard:** In `start_grant.py`, removed the face embedding half (duplicate-face vector search); verified contact check remains.
+  - **Per-image verdict & visible note:** Verdict stored on `user_media` (`face_verdict`, `is_user`) and `photo_notes`. Visible note badge ("Ayma thinks this is you" / "Ayma doesn't think this is you") rendered in Flutter photo viewer (`PhotoViewer`) and detail sheet (`PhotoDetailSheet`).
+  - **Dead code eliminated:** Deleted `media_embed` embedding path (`embed_image_bytes`, `find_similar_media`, `process_media`), `classify_face_match`, `reference_embeddings_for`, `_has_detectable_face`, `is_duplicate_face`, `_cosine`, and `prompts/web_image_face_check.md`.
+  - **Cleanup script:** `functions/bootstrap/scripts/cleanup_stored_face_embeddings.py` scrubs legacy embedding fields from `user_media`, `photo_notes`, and `users/{uid}.face_verification.embedding`.
+- **Tests:** 173 passed (100% green) across the required subset (`test_face_match.py`, `test_cleanup_stored_face_embeddings.py`, `test_deep_dive_images.py`, `test_deep_dive_social.py`, `test_biometric_consent.py`, `test_appearance.py`, `test_auto_analysis.py`, `test_dm_ingest.py`, `test_verification.py`, `test_start_grant.py`, `test_shared_photo_verify.py`, `test_media_embed.py`); Flutter tests passing (`photo_gallery_test.dart`, `image_viewer_test.dart`); layout matrix green (28 passed in 01:01, 0 overflows/exceptions).
+
 ## TOUR-PAGE-EXPLAINER — Page-scoped voice explainer (fleet/tour-page-explainer on top of fleet/tour-action-driven, 2026-11-08) — DONE, merges after tour-action-driven, awaiting device test
 - On a call, "what does each item on this page do" highlights that page's items one by one and explains them, performing nothing. See ARCHITECTURE §11.2c.
 - Covered pages: another member's profile, Explore, the You tab, Settings. Other pages answer honestly that nothing is set up.

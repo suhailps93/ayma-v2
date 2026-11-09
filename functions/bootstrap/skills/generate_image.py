@@ -15,8 +15,8 @@ short text fed back to the model.
 photo (the same latest-chat-image lookup ``face_report`` uses), so "a
 caricature of MYSELF" looks like them and not a generic face. That reference
 photo is identity-checked with the same face-match the shared-photo verdict
-uses (``deep_dive_images.classify_face_match`` against the user's own profile
-embeddings): a photo that is confidently someone else is refused — we never
+uses (``face_match.classify_photo`` against the user's own profile
+photos): a photo that is confidently someone else is refused — we never
 generate another real person's likeness. The same rule for prompt-only
 requests ("draw the girl I matched with") lives in the tool description,
 where the model can apply it to names/context the backend can't resolve.
@@ -121,19 +121,26 @@ def _self_reference_image(db, uid: str) -> tuple[tuple[bytes, str] | None, str]:
 
 
 def _classify_reference(db, uid: str, image_bytes: bytes, mime: str) -> str:
-    """``"self"`` / ``"not_self"`` / ``"unknown"`` for the reference photo —
-    the same embed + face-match ``main._classify_shared_photo`` runs on a
-    freshly shared chat photo. Never raises; anything missing/failing is
-    ``"unknown"``."""
-    import deep_dive_images
-    import media_embed
+    """``"self"`` / ``"not_self"`` / ``"unknown"`` for the reference photo.
+    Never raises; anything missing/failing is ``"unknown"``."""
+    import asyncio
+    import face_match
 
     try:
-        refs = deep_dive_images.reference_embeddings_for(db, uid)
-        if not refs:
-            return "unknown"
-        emb = media_embed.embed_image_bytes(image_bytes, mime)
-        return deep_dive_images.classify_face_match(emb, refs)
+        check_coro = face_match.classify_photo(
+            db, uid, (image_bytes, mime)
+        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                res = pool.submit(asyncio.run, check_coro).result()
+        else:
+            res = asyncio.run(check_coro)
+        return res.get("verdict", "unknown")
     except Exception:  # noqa: BLE001
         logger.warning(
             "generate_image: reference identity check failed for %s", uid,

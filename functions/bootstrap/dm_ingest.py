@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 
 import backfill_ops
-import deep_dive_images
 import gemini
 import media_embed
 import photo_pipeline
@@ -65,15 +64,10 @@ def _photo_match_verdict(db, sender_uid: str, result: dict) -> tuple[str, str]:
     shot_type = str(attrs.get("shot_type", "") or "")
     if shot_type == "group":
         return shot_type, ""
-    embedding = result.get("embedding")
-    if not embedding:
-        return shot_type, ""
-    try:
-        refs = deep_dive_images.reference_embeddings_for(db, sender_uid)
-        match = deep_dive_images.classify_face_match(embedding, refs)
-    except Exception:  # noqa: BLE001
-        return shot_type, ""
-    return shot_type, match
+    match = result.get("face_verdict") or ""
+    if match in ("self", "not_self"):
+        return shot_type, match
+    return shot_type, ""
 
 
 async def _message_text(

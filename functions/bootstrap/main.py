@@ -1445,12 +1445,7 @@ _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_C
 # A photo the user shares in chat is usually a selfie — but not always (they
 # might be showing you someone whose profile they're browsing). Before Ayma
 # reacts to it as "you", check the face against the user's most authoritative
-# reference (`deep_dive_images.reference_embeddings_for`). `sim >=
-# _VERIFY_THRESHOLD` → it's them; a clear gap below → someone else; the band
-# in between (and any failure / no reference at all) → can't tell. The margin
-# is `deep_dive_images._VERIFY_MARGIN` — shared, not re-declared here.
-_SHARED_PHOTO_NOT_SELF_MARGIN = deep_dive_images._VERIFY_MARGIN
-
+# reference (`face_match.classify_photo`). Returns "self", "not_self", or "unknown".
 _SHARED_PHOTO_NOTES = {
     "self": (
         "The photo the user just shared looks like them (a selfie / photo of "
@@ -1471,32 +1466,26 @@ _SHARED_PHOTO_NOTES = {
 
 def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
     """Best-effort face match of a chat-shared photo against the user's own
-    profile photos. Returns ``"self"`` / ``"not_self"`` / ``"unknown"`` —
-    ``"unknown"`` whenever there's nothing to compare against or anything
-    fails (embedding, compare). Never raises; runs one extra embed call, so
-    call it from a worker thread with the image already downloaded.
+    reference photos. Returns ``"self"`` / ``"not_self"`` / ``"unknown"``.
+    Never raises."""
+    import face_match
 
-    This is the freshest, most contextually-grounded same-person signal in
-    the app — computed at the exact moment the user shares the photo. A
-    confident result (``"self"``/``"not_self"``) is persisted onto the
-    photo's gallery note by :func:`_persist_shared_photo_verdict` right after
-    this returns, so Your Story's photo gallery (``photo_notes.
-    classify_and_dedupe``'s lazy fallback verdict, §``_face_verdict``) agrees
-    with what the user was just told in chat instead of disagreeing forever."""
     try:
-        refs = deep_dive_images.reference_embeddings_for(db, uid)
+        check_coro = face_match.classify_photo(db, uid, image)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                res = pool.submit(asyncio.run, check_coro).result()
+        else:
+            res = asyncio.run(check_coro)
+        return res.get("verdict", "unknown")
     except Exception:  # noqa: BLE001
+        logger.warning("shared-photo verify: check failed for %s", uid, exc_info=True)
         return "unknown"
-    if not refs:
-        return "unknown"
-    try:
-        img_bytes, mime = image
-        emb = media_embed.embed_image_bytes(img_bytes, mime)
-    except Exception:  # noqa: BLE001
-        logger.warning("shared-photo verify: embed failed for %s", uid,
-                       exc_info=True)
-        return "unknown"
-    return deep_dive_images.classify_face_match(emb, refs)
 
 
 def _persist_shared_photo_verdict(
@@ -2812,15 +2801,8 @@ async def _run_chat_followups(
                     )
                     attrs = record.get("attributes") or {}
                     shot_type = str(attrs.get("shot_type", "") or "")
-                    embedding = photo_notes._vec(record.get("embedding"))
-                    if shot_type != "group" and embedding:
-                        refs = await asyncio.to_thread(
-                            deep_dive_images.reference_embeddings_for,
-                            get_db(), uid,
-                        )
-                        match = deep_dive_images.classify_face_match(
-                            embedding, refs
-                        )
+                    if shot_type != "group":
+                        match = record.get("face_verdict") or ""
                 except Exception:  # noqa: BLE001
                     shot_type, match = "", ""
                 note = photo_pipeline.caption_turn_text(
@@ -3065,9 +3047,12 @@ async def verification_status(uid: str = Depends(require_uid)) -> dict[str, obje
     except Exception:  # noqa: BLE001
         logger.exception("verification status read failed for %s", uid)
         data = {}
-    verified = bool((data.get(schema.FIELD_FACE_VERIFICATION) or {}).get(
-        schema.FACE_VERIFICATION_EMBEDDING
-    ))
+    fv = data.get(schema.FIELD_FACE_VERIFICATION) or {}
+    verified = bool(
+        fv.get("verified")
+        or fv.get(schema.FACE_VERIFICATION_STORAGE_PATH)
+        or fv.get(schema.FACE_VERIFICATION_EMBEDDING)
+    )
     return {"verified": verified}
 
 
@@ -3086,11 +3071,10 @@ async def verification_selfie(
     / gallery / Explore photo, and deliberately not a ``user_media`` doc.
 
     Moderated exactly like any other upload (a rejection here is no
-    exception), then embedded and stored on ``users/{uid}.face_verification``
-    — the account's most authoritative face-match reference from here on
-    (:func:`deep_dive_images.reference_embeddings_for`). Also seeds the
-    user's initial Appearance read the same way any other qualifying photo
-    would, via :func:`auto_analysis.analyse_photo`'s normal gating.
+    exception), then stored on ``users/{uid}.face_verification`` =
+    {storage_path, verified, verdict, verified_at} — no embedding field.
+    Runs selfie-vs-profile check against any existing profile photos.
+    Also seeds the user's initial Appearance read via auto_analysis.analyse_photo.
     """
     prefix = f"verification/{uid}/"
     if not req.storage_path.startswith(prefix):
@@ -3109,6 +3093,7 @@ async def verification_selfie(
             status_code=502, detail=f"Could not read the selfie: {exc}"
         ) from exc
 
+    import face_match
     import photo_moderation
 
     verdict = await photo_moderation.moderate(image, mime, uid=uid)
@@ -3120,17 +3105,31 @@ async def verification_selfie(
             "reason": verdict["reason"],
         }
 
-    embedding = await asyncio.to_thread(
-        media_embed.embed_image_bytes, image, mime
-    )
     attributes = await photo_attrs.extract_attributes(image, mime, uid=uid)
 
-    from google.cloud.firestore_v1.vector import Vector
+    profile_refs = await asyncio.to_thread(
+        face_match.get_reference_photos, get_db(), uid
+    )
+    existing_photos = [p for p in profile_refs if p != req.storage_path]
+    if existing_photos:
+        check_res = await face_match.check_same_person(
+            existing_photos[0],
+            (image, mime),
+            uid=uid,
+            cand_path=req.storage_path,
+            ref_path=existing_photos[0],
+        )
+        selfie_verdict = check_res.get("verdict", "unknown")
+        is_verified = (selfie_verdict != "not_self")
+    else:
+        selfie_verdict = "self"
+        is_verified = True
 
     payload = {
         schema.FIELD_FACE_VERIFICATION: {
-            schema.FACE_VERIFICATION_EMBEDDING: Vector(embedding),
             schema.FACE_VERIFICATION_STORAGE_PATH: req.storage_path,
+            "verified": is_verified,
+            "verdict": selfie_verdict,
             schema.FACE_VERIFICATION_VERIFIED_AT: _server_ts(),
         },
     }
@@ -3140,16 +3139,16 @@ async def verification_selfie(
         )
     )
 
-    # Seed the initial Appearance read the normal way — gated exactly like
-    # any other photo (group shot / face-match / usable-for-face-or-body).
+    # Seed the initial Appearance read the normal way
     background.add_task(
         auto_analysis.analyse_photo, get_db(), uid, req.storage_path,
-        embedding=embedding, attributes=attributes,
+        attributes=attributes,
     )
 
     return {
         "ok": True,
-        "verified": True,
+        "verified": is_verified,
+        "verdict": selfie_verdict,
         "moderation_status": schema.MEDIA_STATUS_APPROVED,
         "reason": "",
     }

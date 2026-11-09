@@ -270,11 +270,11 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
     Expects each candidate to carry a ``_embedding`` hint (already-known
     embedding, or ``None``) — consumed and removed here.
     """
+    import asyncio
     import biometric_consent
-    import deep_dive_images
+    import face_match
 
-    refs: list[list[float]] | None = None  # lazy — only fetched if needed
-    # No new face embeddings without the owner's biometric consent.
+    # No face match without the owner's biometric consent.
     budget = (
         _MAX_NEW_EMBEDS_PER_CALL
         if biometric_consent.has_consent_fresh(db, uid)
@@ -282,83 +282,51 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
     )
 
     kept: list[dict] = []
-    kept_embeddings: list[list[float]] = []
+    seen_urls: set[str] = set()
     for p in candidates:
-        emb = p.pop("_embedding", None)
+        p.pop("_embedding", None)
+        url = str(p.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
 
-        if p.get("source") == "chat" and emb is None and budget > 0:
-            path = resolve_storage_path(p["url"])
+        if p.get("source") == "chat" and not p.get("is_user") and budget > 0:
+            path = resolve_storage_path(url)
             if path:
                 try:
-                    import media_embed
-
-                    img, mime = media_embed.download_bytes(path)
-                    emb = media_embed.embed_image_bytes(img, mime)
-                except Exception:  # noqa: BLE001
+                    check_coro = face_match.classify_photo(
+                        db, uid, path, cand_path=path
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            check_res = pool.submit(asyncio.run, check_coro).result()
+                    else:
+                        check_res = asyncio.run(check_coro)
+                    raw_v = check_res.get("verdict", "")
+                    verdict = "yes" if raw_v == "self" else ("no" if raw_v == "not_self" else "")
+                except Exception:
                     logger.warning(
-                        "photo_notes: auto face-match failed for %s", p["url"],
+                        "photo_notes: auto face-match failed for %s", url,
                         exc_info=True,
                     )
-                    emb = None
+                    verdict = ""
                 budget -= 1
-                patch: dict[str, object] = {}
-                if emb is not None:
-                    patch["embedding"] = emb
-                    # Only fill this in when nothing is cached yet. A chat
-                    # photo's `is_user` may already be set by
-                    # `main._persist_shared_photo_verdict` (the real-time,
-                    # same-turn check run when the photo was shared) — that
-                    # signal is authoritative and must not be recomputed or
-                    # overwritten by this lazy fallback, which only exists to
-                    # cover photos that never went through that check (e.g.
-                    # shared before this fix existed).
-                    if not p.get("is_user"):
-                        if refs is None:
-                            refs = deep_dive_images.reference_embeddings_for(db, uid)
-                        verdict = _face_verdict(emb, refs)
-                        if verdict:
-                            patch["is_user"] = verdict
-                            p["is_user"] = verdict
-                if patch:
-                    _col(db, uid).document(photo_id(p["url"])).set(
-                        patch, merge=True
+                if verdict:
+                    p["is_user"] = verdict
+                    _col(db, uid).document(photo_id(url)).set(
+                        {"is_user": verdict}, merge=True
                     )
 
         if p.get("source") in ("profile", "web") and not p.get("is_user"):
             p["is_user"] = "yes"
 
-        if emb is not None and any(
-            deep_dive_images._cosine(emb, k) >= _DUPLICATE_THRESHOLD
-            for k in kept_embeddings
-        ):
-            continue  # the same picture as one already kept — drop silently
-
         kept.append(p)
-        kept_embeddings.append(emb if emb is not None else [])
     return kept
-
-
-def _face_verdict(embedding: list[float], refs: list[list[float]]) -> str:
-    """``'yes'`` / ``'no'`` / ``''`` (can't tell) — same thresholds (and the
-    same shared ``_VERIFY_MARGIN`` constant, not a re-typed copy) as
-    ``main._classify_shared_photo`` / ``deep_dive_images.classify_face_match``.
-
-    This is the gallery's *lazy fallback* verdict, only ever computed for a
-    chat photo that has no cached ``is_user`` yet (see
-    ``classify_and_dedupe``). ``main._classify_shared_photo`` runs the same
-    check synchronously at chat-send time and persists a confident result via
-    ``main._persist_shared_photo_verdict`` — that write already lands before
-    this ever runs for the same photo, and is treated as authoritative."""
-    import deep_dive_images
-
-    if not refs:
-        return ""
-    sim = max(deep_dive_images._cosine(embedding, r) for r in refs)
-    if sim >= deep_dive_images._VERIFY_THRESHOLD:
-        return "yes"
-    if sim < deep_dive_images._VERIFY_THRESHOLD - deep_dive_images._VERIFY_MARGIN:
-        return "no"
-    return ""
 
 
 def _download_external(url: str) -> tuple[bytes, str]:

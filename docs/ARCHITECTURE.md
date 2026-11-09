@@ -157,7 +157,7 @@ reroute to work around an empty response.
   (de)registration (`/notifications/token`, `/notifications/token/remove` — a fresh sign-up registers its device
   token at startup, before the consent screen is done, and must get match/message pushes immediately; a token carries
   no biometric data and is scoped to the caller's own uid). `/bootstrap`
-  returns `biometric_consent_required: true` before minting a voice token. Every face-embedding / face-match path
+  returns `biometric_consent_required: true` before minting a voice token. Every face-match path
   re-checks consent for the person whose face is involved with an uncached read (`has_consent_fresh`; the endpoint gate's positive cache is 30 s), so a withdrawal on any instance stops face work at once. Withdrawal deletes face data, then soft-deletes the
   account. Current text version `CONSENT_VERSION` (bumping it re-asks everyone and doubles as Terms re-acceptance).
 - *18+* (`age_gate.py`): `require_adult_uid` on matching, Explore, DMs, sharing; `require_not_underage_uid` on chat
@@ -247,16 +247,12 @@ reroute to work around an empty response.
   pose or background). Nothing is ever auto-written to the "about me" report; each hit is staged as a **pending
   candidate** under `users/{uid}/web_photo_candidates/{id}` that the user explicitly confirms/rejects
   (`confirm_candidate`/`reject_candidate`, surfaced via `GET /web-search/photos/candidates`). **Face-match gate
-  (`scan` → `_face_matches_user`):** before a candidate is *ever* staged it must clear the same embedding pipeline
-  used everywhere else — fetch → `media_embed.embed_image_bytes` → cosine `classify_face_match` against the user's
-  reference embedding(s) (`reference_embeddings_for`: the verified selfie embedding, else the profile-photo embeddings;
-  consent-gated via `biometric_consent`) → `_has_detectable_face`. (New embeddings are DISABLED with the
-  2026-11-04 direct-Google kill, so this gate currently yields no match and candidates are discarded.)
-  The cutoff is **`CONFIG.web_photo_facematch_threshold`** (`WEB_PHOTO_FACEMATCH_THRESHOLD`, default **0.65**),
-  deliberately stricter than the shared 0.55 used by the name-based dive — this whole-image path's failure mode is
-  a stranger's look-alike thumbnail scoring just over a loose bar, so it errs toward precision (miss a real photo
-  rather than surface a stranger). A non-match, no-face, or below-threshold hit is discarded, never shown. When
-  the user has **no usable reference embedding yet** (no verified selfie / no embedded profile face, or no
+  (`scan` → `_face_matches_user`):** before a candidate is *ever* staged it must clear the pairwise face check
+  (`face_match.check_same_person`) against the user's reference photos (`face_match.get_reference_photos`:
+  the verified selfie storage path, else profile-photo storage paths; consent-gated via `biometric_consent`),
+  requiring `face_visible: true` and `verdict: "self"`. All checks run via LiveKit vision (no direct Vertex, no vector database).
+  A non-match, no-face, or unknown hit is discarded, never shown. When
+  the user has **no usable reference photo yet** (no verified selfie / no profile photos, or no
   biometric consent), `scan` no-ops and stages nothing at all — identity can't be verified, so nothing is surfaced.
 - *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
   scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
@@ -842,19 +838,19 @@ The agent has an `add_followup_question` tool, available in both voice (LiveKit 
 
 ### 2.5 Face memory
 
-Gemini Embedding 2 (multimodal) embeds each reference photo — profile photos and chat-shared images — once, at upload/share time. The vector is stored on the corresponding `user_media` Firestore doc. New images are checked against a user's known-face embeddings via Firestore's native `findNearest` (COSINE distance) — no separate vector database. An LLM vision pairwise comparison is the fallback only for borderline similarity scores, not the default path.
+All same-person face checking runs at the moment it is needed via a LiveKit-brain vision pairwise check (`face_match.check_same_person` holding the candidate and reference image in one `gemini.generate_json` vision call) — zero stored face embeddings, zero vector databases, and zero cross-account face comparisons. Face matching is strictly intra-account: a user's uploaded or web-discovered candidate photo is checked against their own authoritative reference set (verified selfie storage path, plus previously uploaded photos on that account). Pairwise verdicts are cached in-memory by storage paths.
 
-**Web-research face-match gate.** The reverse-image "Photos to confirm" flow (`reverse_image_search.py`, feature bullet above) reuses this same embedding + reference set, but behind a stricter, precision-leaning cutoff — a Cloud Vision Web Detection hit (a *visually similar* image, often a stranger) is embedded and compared to the user's reference face, and only a confident same-person match that also shows a real face is ever staged as a pending candidate. No reference embedding (or no consent) ⇒ nothing is staged.
+**Web-research face-match gate.** The reverse-image "Photos to confirm" flow (`reverse_image_search.py`, feature bullet above) reuses this same pairwise check + reference set — a Cloud Vision Web Detection hit (a *visually similar* image, often a stranger) is checked against the user's reference face, and only a confident same-person match that also shows a real face (`face_visible: true` and `verdict: "self"`) is ever staged as a pending candidate. No reference photo (or no consent) ⇒ nothing is staged.
 
 ```mermaid
 flowchart LR
   OwnPhoto["User's own photo"] --> WD["Cloud Vision<br/>Web Detection"]
   WD --> Cand["Candidate image<br/>(may be a stranger)"]
-  Cand --> Gate{{"Face-match gate<br/>embed → classify_face_match ≥ CONFIG.web_photo_facematch_threshold (0.65)<br/>AND _has_detectable_face"}}
-  Ref["Reference face embedding<br/>(verified selfie, else profile photos; consent-gated)"] --> Gate
+  Cand --> Gate{{"Face-match gate<br/>face_match.check_same_person<br/>(LiveKit vision pairwise check,<br/>face_visible == true && verdict == 'self')"}}
+  Ref["Reference photos<br/>(verified selfie storage path, else profile photos; consent-gated)"] --> Gate
   Gate -->|match| Confirm["web_photo_candidates (pending)<br/>→ user confirms/rejects"]
   Gate -->|no match / no face / below threshold| Drop["Discarded<br/>(never stored or shown)"]
-  NoRef["No reference embedding / no consent"] -.->|scan no-ops| Drop
+  NoRef["No reference photo / no consent"] -.->|scan no-ops| Drop
 ```
 
 ### 2.6 Matching (wiki-to-wiki)
@@ -868,7 +864,7 @@ No separate matching-scoped memory copy. A dedicated agent skill reads two users
 | Wiki pages | Firestore `users/{uid}/wiki_pages/{pageId}` |
 | Raw sources | Firestore `users/{uid}/raw_turns/{turnId}` |
 | Photo/image binaries | Firebase Storage `uploads/{uid}/{filename}` |
-| Face embeddings | Firestore vector field on `users/{uid}/user_media/{mediaId}`, queried via native `findNearest` |
+| Face check verdicts | Stored on `users/{uid}/user_media/{mediaId}` (`face_verdict`, `is_user`) and `photo_notes` (no vector fields) |
 | Pending questions | Firestore `users/{uid}/pending_questions/{questionId}` |
 | Wiki schema (page types, naming, update rules) | A static JSON config file in the backend repo, read directly by the ingest/query code rather than hardcoded inline |
 
@@ -880,7 +876,7 @@ No separate matching-scoped memory copy. A dedicated agent skill reads two users
 4. **Backend: query** — `/bootstrap` and `/chat` compile relevant `wiki_pages.ai_body` into the system prompt.
 5. **Backend: `add_followup_question` tool** — available to the LiveKit agent (`agent.py`) and the `/chat` handler; writes a `pending_questions` doc.
 6. **Backend: lint job** — scheduled Cloud Scheduler job scanning `wiki_pages` for contradictions/stale claims/orphans/missing links; writes flags onto the page doc.
-7. **Backend: face embeddings** — on `/media` upload and chat image attachments, embed via Gemini Embedding 2 and store the vector on the `user_media` doc; add a `findNearest` COSINE lookup for same-person checks.
+7. **Backend: face matching** — on `/media` upload and photo checks, perform pairwise same-person verification via LiveKit vision (`face_match.py`) against the user's reference set, caching verdicts and storing per-image verdicts (`face_verdict`, `is_user`) on the media record; no face embeddings or vector fields stored.
 8. **Backend: matching skill** — new agent skill reading two users' `wiki_pages` (`public`+`private`) to produce a compatibility judgment.
 9. **Client: private wiki view** — renders `public`+`private` pages as `user_edits ?? ai_body`, minus `user_hidden`, styled as a personal narrative.
 10. **Client: public profile view** — renders `public` pages only, same override rule.
@@ -1017,7 +1013,7 @@ Interview mode collects only the **structural minimum** the app mechanically nee
 | 3 | `gender` | single-choice | identity |
 | 4 | `interested_in` | single/multi-choice | who they want matched with |
 | 5 | `location` | geolocation or text | §4.3 |
-| 6 | `profile_photo` | photo upload | at least 1; feeds Piece 2 §2.5 face embedding; asked last, after rapport is built |
+| 6 | `profile_photo` | photo upload | at least 1; feeds Piece 2 §2.5 face matching; asked last, after rapport is built |
 
 Fixed sequence, no conditional branching between questions.
 
@@ -1027,7 +1023,7 @@ If the user grants device location permission, `location` is auto-filled (revers
 
 ### 4.4 Photo upload
 
-Standard camera/gallery picker. Uploads to Firebase Storage `uploads/{uid}/{filename}` (same path convention as Piece 2 §2.7) and immediately triggers the Gemini Embedding 2 face-embedding step from Piece 2 §2.5 — profile photos and later chat-shared images share the same embedding pipeline.
+Standard camera/gallery picker. Uploads to Firebase Storage `uploads/{uid}/{filename}` (same path convention as Piece 2 §2.7) and immediately triggers the face-matching verification step from Piece 2 §2.5 — profile photos and later chat-shared images share the same verification pipeline.
 
 ### 4.5 Post-onboarding editing
 
@@ -1040,7 +1036,7 @@ Fields are editable later via a profile/settings screen — direct structured wr
 3. **Backend: profile completeness check** — `/bootstrap`'s `session_mode` derivation (§3.10 step 2) reads `onboarding_schema.json`'s required-field list against `users/{uid}/profile` to decide `interview` vs. `active`.
 4. **Client: preboarding screen sequence** — renders the six screens from §4.2 in fixed order, each voice-driven per §3.3, writing to `users/{uid}/profile` on confirm.
 5. **Client: location screen** — requests device location permission; on grant, reverse-geocodes and autofills for confirmation; on deny, falls back to the standard voice-driven screen.
-6. **Client: photo upload screen** — camera/gallery picker; uploads to `uploads/{uid}/{filename}`; calls the face-embedding step from Piece 2 §2.8 step 7 on upload.
+6. **Client: photo upload screen** — camera/gallery picker; uploads to `uploads/{uid}/{filename}`; calls the face-check step from Piece 2 §2.8 step 7 on upload.
 7. **Client: profile settings screen** — lets the user edit any `users/{uid}/profile` field post-onboarding via direct structured writes, no wiki ingest.
 
 ---
@@ -1091,7 +1087,7 @@ A match score is deterministic — the same two wikis always produce the same nu
 Sourced from two existing signals, no new contradiction-detection machinery:
 
 - The Lint job (§2.3) already catches a user contradicting themselves across different conversations (told one match one age, another match a different age) — its output feeds `trust_flags`.
-- Face-embedding mismatches (§2.5) — a newly uploaded photo not matching the user's established face embedding.
+- Face verification mismatches (§2.5) — a newly uploaded photo determined not to match the user's reference photos.
 
 Heavily flagged users are **down-weighted in scoring and flagged for admin review** — never hard-excluded from matching.
 
@@ -1152,7 +1148,7 @@ Explore's population is a live filtered query over all eligible users (Piece 6 �
 | Heuristic candidates | Firestore `users/{uid}/match_candidates/{candidateUid}` |
 | Scored matches | Firestore `matches/{matchId}` (keyed by sorted uid pair) |
 | Blocks | Firestore `blocks/{uid}_{blockedUid}` |
-| Trust flags | Field on `users/{uid}`, populated by the §2.3 lint job and §2.5 face-embedding checks |
+| Trust flags | Field on `users/{uid}`, populated by the §2.3 lint job and §2.5 face checks |
 
 ### 5.10 Implementation steps
 
@@ -1163,7 +1159,7 @@ Explore's population is a live filtered query over all eligible users (Piece 6 �
 5. **Backend: `POST /run-matching`** — on-demand endpoint running Pass 1 only over the full pool, writing `match_candidates`.
 6. **Backend: `POST /check-compatibility`** — on-demand endpoint running Pass 2 for one specific pair, writing/updating `matches/{matchId}`.
 7. **Backend: scheduled matching cron** — daily Cloud Scheduler job running the full two-pass pipeline on `CRON_CANDIDATE_POOL`/`CRON_SCORE_TOP_K`.
-8. **Backend: trust flag population** — extend the §2.3 lint job and §2.5 face-embedding check to write `trust_flags` on `users/{uid}`.
+8. **Backend: trust flag population** — extend the §2.3 lint job and §2.5 face check to write `trust_flags` on `users/{uid}`.
 9. **Backend: `viewing_profile_uid` context** — `/chat` and `/bootstrap` accept an optional `viewing_profile_uid`, pulling that pair's `ai_explanation` into Ayma's context.
 10. **Client: share-profile-into-chat** — lets the user attach a profile to an ongoing chat, same mechanism as sharing an image, setting/updating `viewing_profile_uid`.
 11. **Backend: blocking** — writes to `blocks/{uid}_{blockedUid}`, enforced at candidate sourcing.
@@ -1187,7 +1183,7 @@ Two paths into one fixed, explicit filterable-attribute schema (`functions/boots
 
 ### 6.3 Photo-derived attributes
 
-At profile-photo upload (Piece 4 §4.4), alongside the face-embedding step (§2.5), a vision pass extracts observable attributes and stores them as structured, filterable fields:
+At profile-photo upload (Piece 4 §4.4), alongside the face check step (§2.5), a vision pass extracts observable attributes and stores them as structured, filterable fields:
 
 - Hair color
 - Eye color
@@ -1234,7 +1230,7 @@ From Explore or a match card, a "share" action lets the user pick an existing or
 
 ### 6.8 DM content ingestion into the wiki
 
-Every DM message becomes a `raw_turns` entry for **both** participants (§2.2). Photos get the vision-captioning step, voice notes get transcribed (§2.3) — both become text the standard ingest pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only`: Ayma's understanding feeds her private analysis (matching, consistency-checking) but doesn't surface in the user's own private-wiki view, since the user already has the raw content in their DM thread. Face-embedding (§2.5) still runs on DM images regardless of visibility tier.
+Every DM message becomes a `raw_turns` entry for **both** participants (§2.2). Photos get the vision-captioning step, voice notes get transcribed (§2.3) — both become text the standard ingest pipeline can process. Wiki content derived from DM images/voice defaults to `visibility: ai_only`: Ayma's understanding feeds her private analysis (matching, consistency-checking) but doesn't surface in the user's own private-wiki view, since the user already has the raw content in their DM thread. Face check (§2.5) still runs on DM images regardless of visibility tier.
 
 ### 6.9 Ayma in your DMs (thread-aware assist)
 
@@ -1432,7 +1428,7 @@ Bio/username text and each photo's original caption are ingested as a new raw so
 
 **Inline carousel editing.** The owner manages photos directly in the carousel on their own "My public profile" (`MyPublicProfileScreen` → `ProfilePhotoHeader.editing`), not in a separate sheet. The **set-primary (star)** and **delete** controls are overlaid on the **opened/enlarged image** (the hero carousel) — the star (top-left; filled when the shown photo is the primary, tap to promote it) and the delete button (top-right, `Icons.delete_outline_rounded`) both act on whichever photo the carousel is currently showing. The thumbnail strip under the hero stays clean — just the photos, with the current primary marked by a small star **badge** (indicator only) — and long-press drag reorders; the last tile is **Add photo**. This replaced the old "Your photos" bottom-sheet editor (deleted) — every capability (add/delete/reorder/set-primary) now lives inline. Backend: `POST /media/photos/{id}/primary` (set primary), `/remove` (remove from public), `/delete` (delete everywhere), `PUT /media/photos/order` (reorder) — all validated as the caller's own photos; public reads use the `photos` grid only.
 
-**Two tiers of removal (public vs private).** The primary "remove" (`photo_ops.remove_photo`) takes a photo off the **public** profile but keeps it privately: the entry moves from `photos` to a `hidden_photos` array on the same profile doc (the single shared visibility mechanism / "hidden list"). It vanishes from every public reader (Explore, public profile, carousel, share page — they read `photos` only) but still feeds the **appearance / physical-attribute / photo-attribute analysis pool** (`schema.analysis_photo_entries` = `photos` + `hidden_photos`), and its `user_media` doc (Storage file, face embedding, moderation status) is untouched — so Ayma's face/body analysis and matching still have it. Reversible by re-adding (the client defers the backend write for a 5 s undo window; `AymaToast` offers Undo). A secondary **"Delete everywhere"** (`photo_ops.delete_photo_permanent`) drops the entry from both arrays and erases the media itself (the `user_media` doc and its Storage blob, hence the embedding/analysis) — not reversible, gated behind a second confirm. Removing the **last** public photo is blocked (a public profile needs at least one photo).
+**Two tiers of removal (public vs private).** The primary "remove" (`photo_ops.remove_photo`) takes a photo off the **public** profile but keeps it privately: the entry moves from `photos` to a `hidden_photos` array on the same profile doc (the single shared visibility mechanism / "hidden list"). It vanishes from every public reader (Explore, public profile, carousel, share page — they read `photos` only) but still feeds the **appearance / physical-attribute / photo-attribute analysis pool** (`schema.analysis_photo_entries` = `photos` + `hidden_photos`), and its `user_media` doc (Storage file, moderation status, face verdict) is untouched — so Ayma's face/body analysis and matching still have it. Reversible by re-adding (the client defers the backend write for a 5 s undo window; `AymaToast` offers Undo). A secondary **"Delete everywhere"** (`photo_ops.delete_photo_permanent`) drops the entry from both arrays and erases the media itself (the `user_media` doc and its Storage blob, hence the embedding/analysis) — not reversible, gated behind a second confirm. Removing the **last** public photo is blocked (a public profile needs at least one photo).
 
 ### 8.4 Photo moderation
 
@@ -1440,11 +1436,11 @@ A Gemini vision safety pass runs at upload/import time, before a photo is visibl
 
 ### 8.5 Pipeline reuse
 
-Every photo, regardless of source (manual upload, Instagram import, DM), goes through the same steps uniformly: moderation (§8.4) → face embedding (§2.5) → attribute extraction (§6.3) → vision captioning into the wiki (§2.3). Only the resulting `visibility` tag differs by source: DM images default `ai_only` (§6.8); profile and Instagram-imported photos follow normal `public`/`private` tagging.
+Every photo, regardless of source (manual upload, Instagram import, DM), goes through the same steps uniformly: moderation (§8.4) → face check (§2.5) → attribute extraction (§6.3) → vision captioning into the wiki (§2.3). Only the resulting `visibility` tag differs by source: DM images default `ai_only` (§6.8); profile and Instagram-imported photos follow normal `public`/`private` tagging.
 
-**Upload latency (`photo_pipeline.process`).** Moderation is always the first step and always blocks — a flagged photo stops there and is never embedded, captioned or published (the safety gate; `published` follows the moderation verdict). After it passes, the face embedding and the attribute extraction are computed **concurrently** (`_embed_and_attrs`, they are independent), and the approved `user_media` doc — embedding, attributes, `moderation_status: approved` — is persisted before the pipeline returns, so the grid add and the Appearance pipeline (§6.3) always see it. The caption-dependent enrichment (vision caption → gallery note → wiki fold, in `_enrich`) is the only AI-tagging step that can run after the response: `process(defer_enrichment=True, background=…)` schedules it as a FastAPI background task so the profile-photo add returns as soon as the image is stored and safe to show, instead of blocking on the captioning. Chat/DM uploads keep the caption **inline** (`defer_enrichment` off) so Ayma can reference the image in the same turn. The Flutter client downscales/compresses in the picker (longest edge ≤1600px, JPEG q88) and uploads a batch of picked photos concurrently (`PhotoService.uploadAndProcessAll`), direct to Storage (bytes never transit Cloud Run).
+**Upload latency (`photo_pipeline.process`).** Moderation is always the first step and always blocks — a flagged photo stops there and is never checked, captioned or published (the safety gate; `published` follows the moderation verdict). After it passes, the face check against the user's comparison set and attribute extraction run, and the approved `user_media` doc — attributes, `moderation_status: approved`, `face_verdict`, `is_user` — is persisted before the pipeline returns, so the grid add and the Appearance pipeline (§6.3) always see it. The caption-dependent enrichment (vision caption → gallery note → wiki fold, in `_enrich`) can run after the response: `process(defer_enrichment=True, background=…)` schedules it as a FastAPI background task so the profile-photo add returns as soon as the image is stored and safe to show, instead of blocking on captioning. Chat/DM uploads keep the caption **inline** (`defer_enrichment` off) so Ayma can reference the image in the same turn. The Flutter client downscales/compresses in the picker (longest edge ≤1600px, JPEG q88) and uploads a batch of picked photos concurrently (`PhotoService.uploadAndProcessAll`), direct to Storage (bytes never transit Cloud Run).
 
-**Graceful degradation for optional steps (`photo_pipeline.process`).** Face embedding and attribute extraction are non-fatal optional steps. If embedding is unavailable or fails (e.g. while direct Vertex embeddings are disabled under LiveKit-only inference rules), the pipeline logs a clear warning, proceeds with the pipeline, approves and publishes the photo without an embedding, and records `embedding_missing: true` on the `user_media` doc so it can be backfilled later. Optional step failures never cause `POST /media` to return 502.
+**Graceful degradation for optional steps (`photo_pipeline.process`).** Face check and attribute extraction are non-fatal optional steps. If face check encounters an error, the verdict gracefully defaults to `"unknown"`, and the photo is approved and published. Optional step failures never cause `POST /media` to return 502.
 
 **Auto-grid on approved profile register (founder bug, 2026-11-02 — "re-run isn't taking my latest images").** A `context="profile"` upload is gridded **server-side** the moment it is approved: `POST /media` (`routes/media.py` `register_media`) calls `photo_ops.add_photo` for the approved `media_id` itself, rather than relying on the client's *separate* follow-up `POST /media/photos[/batch]` call. That second round-trip was the single point of failure: a slow iPhone HEIC/HEIF whose `register` request timed out client-side (the server still finished and wrote the approved `user_media` doc), or whose fire-and-forget grid-add was dropped (`preboarding_flow_screen` `unawaited`/`catch(_){}`), left the photo **uploaded + approved but never in `PF_PHOTOS`** — so it was invisible to `schema.analysis_photo_entries`, never offered by `/appearance/eligibility`, and the Appearance re-run analysed the old set. Reproduced from the founder's staging specimen: `photo_1792823550768_0.heif` (approved `user_media`, not in the grid) vs its same-session `.jpg` sibling (gridded). The auto-grid is **idempotent** (`add_photo` no-ops when the id is already present, so a client that still calls `/media/photos[/batch]` just finds it there) and **best-effort** (an at-cap / not-approved add is swallowed, never failing the upload). Analysis stays **deferred** to the explicit grid-add call, so a normal add still analyses exactly **once** (no double-analyse, § appearance report v2) while a dropped call just means the next re-run picks the now-gridded photo up. Flagged photos are never gridded (the add is gated on `published`). This makes the newest profile photo reliably reach the analysis set for **every** format the pipeline can decode, independent of client follow-up.
 
@@ -1461,7 +1457,7 @@ Every photo, regardless of source (manual upload, Instagram import, DM), goes th
 1. **Backend: Firestore schema** — `photos` array (`{media_id, order}`) on `users/{uid}/profile`, `instagram_access_token` field, per §8.6 and `user_media` schema per §9.1.
 2. **Backend: Instagram OAuth flow** — connect endpoint, token storage, initial photo/bio/caption pull into `uploads/{uid}/{filename}` (creating `user_media` docs) and `raw_turns` (`source: instagram_import`).
 3. **Backend: photo moderation pass** — Gemini vision safety check at upload/import time, gating publication per §8.4.
-4. **Backend: unified photo pipeline** — shared function running moderation → face embedding (§2.5) → attribute extraction (§6.3) → vision captioning (§2.3) for every photo regardless of source, writing results onto the `user_media` doc.
+4. **Backend: unified photo pipeline** — shared function running moderation → face check (§2.5) → attribute extraction (§6.3) → vision captioning (§2.3) for every photo regardless of source, writing results onto the `user_media` doc.
 5. **Backend: photo soft-delete** — removes a `photos` array entry without deleting the underlying `user_media` doc, Storage file, embedding, or wiki content.
 6. **Client: profile photo management screen** — add/remove/reorder `photos`, Instagram connect/disconnect action.
 
@@ -1565,7 +1561,7 @@ Terms/Privacy Policy disclosure this step added (§ "Connecting Google
 | `users/{uid}/wiki_pages/{pageId}` | `ai_body`, `visibility`, `user_edits`, `user_hidden`, `frontmatter`, `links`, `image_refs` | §2.1 |
 | `users/{uid}/raw_turns/{turnId}` | Immutable raw sources: text, voice transcript, images, DM content, `instagram_import` | §2.2, §6.8, §8.2 |
 | `users/{uid}/pending_questions/{questionId}` | Queued follow-up questions | §2.4 |
-| `users/{uid}/user_media/{mediaId}` | Canonical per-image doc: `storage_ref`, `source` (`profile`/`chat`/`dm`/`instagram_import`), `face_embedding`, `moderation_status`, `created_at` | §2.5, §8.5, fixed in this piece |
+| `users/{uid}/user_media/{mediaId}` | Canonical per-image doc: `storage_ref`, `source` (`profile`/`chat`/`dm`/`instagram_import`), `face_verdict`, `is_user`, `moderation_status`, `created_at` | §2.5, §8.5, fixed in this piece |
 | `users/{uid}/oauth_tokens/google` | Google account import refresh token + non-secret metadata (`email`, `connected_at`, `last_synced_at`). No client-read rule — Admin SDK only. | §8.8, new |
 | `users/{uid}/match_candidates/{candidateUid}` | Pass-1 heuristic output, no score | §5.7 |
 | `users/{uid}/notifications/{notificationId}` | Notification center entries | §7.3 |
@@ -1607,7 +1603,7 @@ Query patterns that need one (exact Firestore index definitions are a `firestore
 ### 9.5 Implementation steps
 
 1. **Backend: consolidated schema module** — a single source-of-truth schema definitions file reflecting §9.1, used by every endpoint instead of ad hoc field literals scattered across handlers.
-2. **Backend: `user_media` collection** — introduce as the canonical per-image doc; update the face-embedding step (§2.8 step 7) and the unified photo pipeline (§8.7 step 4) to write to it instead of duplicating fields elsewhere.
+2. **Backend: `user_media` collection** — introduce as the canonical per-image doc; update the face-check step (§2.8 step 7) and the unified photo pipeline (§8.7 step 4) to write to it instead of duplicating fields elsewhere.
 3. **Backend: Firestore & Storage security rules** — implement the two-tier boundary from §9.2 in `firestore.rules`/`storage.rules`.
 4. **Backend: composite indexes** — `firestore.indexes.json` entries for the query patterns in §9.3.
 5. **Backend: sorted-pair-key helper** — shared utility computing `matchId`/`threadId` from two uids per §9.4, used by both the matching (Piece 5) and DM (Piece 6) endpoints.

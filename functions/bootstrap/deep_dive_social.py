@@ -231,7 +231,7 @@ def _iter_urls(*blobs: str):
 
 
 def _face_score(db, target_uid, profile_url: str, refs) -> tuple[float | None, str]:
-    """``(cosine or None, display_name)`` from a profile page's og:image /
+    """``(score or None, display_name)`` from a profile page's og:image /
     og:title. Never raises."""
     try:
         import deep_dive_images
@@ -244,14 +244,28 @@ def _face_score(db, target_uid, profile_url: str, refs) -> tuple[float | None, s
     if not (refs and img_url):
         return None, display
     try:
-        import media_embed
+        import asyncio
+        import face_match
 
         raw, mime = deep_dive_images._fetch_image(img_url)
-        emb = media_embed.embed_image_bytes(raw, mime)
-        sim = max(
-            (deep_dive_images._cosine(emb, r) for r in refs), default=0.0
-        )
-        return float(sim), display
+        for r in refs:
+            try:
+                check_coro = face_match.check_same_person(r, (raw, mime))
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop and loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        res = pool.submit(asyncio.run, check_coro).result()
+                else:
+                    res = asyncio.run(check_coro)
+                if res.get("verdict") == "self" and res.get("face_visible", False):
+                    return 1.0, display
+            except Exception:
+                continue
+        return None, display
     except Exception:  # noqa: BLE001
         return None, display
 
@@ -343,11 +357,11 @@ def find_social_handles(
     if db is not None and target_uid:
         try:
             import biometric_consent
-            import deep_dive_images
+            import face_match
 
             # No biometric consent -> no face match (name evidence only).
             if biometric_consent.has_consent_fresh(db, target_uid):
-                refs = deep_dive_images._reference_embeddings(db, target_uid)
+                refs = face_match.get_reference_photos(db, target_uid)
         except Exception:  # noqa: BLE001
             refs = []
 

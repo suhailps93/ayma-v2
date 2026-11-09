@@ -1,6 +1,5 @@
 import deep_dive_images
 import deep_dive_social
-import media_embed
 
 
 # --- handle extraction from URLs ----------------------------------------
@@ -86,9 +85,11 @@ def test_likely_link_with_strong_name_passes():
 
 
 def test_face_match_passes_even_with_a_weak_name(monkeypatch):
+    import face_match
+
     monkeypatch.setattr(
-        deep_dive_images, "_reference_embeddings",
-        lambda db, uid: [[1.0, 0.0, 0.0]],
+        face_match, "get_reference_photos",
+        lambda db, uid: ["users/u1/photo.jpg"],
     )
     monkeypatch.setattr(
         deep_dive_images, "_page_meta",
@@ -97,9 +98,10 @@ def test_face_match_passes_even_with_a_weak_name(monkeypatch):
     monkeypatch.setattr(
         deep_dive_images, "_fetch_image", lambda url: (b"i", "image/jpeg")
     )
-    monkeypatch.setattr(
-        media_embed, "embed_image_bytes", lambda *a, **k: [1.0, 0.0, 0.0]
-    )
+    async def _check(ref, cand, uid=None, feature=None):
+        return {"verdict": "self", "confidence": "high", "face_visible": True, "reason": "match"}
+
+    monkeypatch.setattr(face_match, "check_same_person", _check)
     links = [{"url": "https://instagram.com/xyz_99", "is_them": "maybe"}]
     out = deep_dive_social.find_social_handles(
         links, [], "Jane Doe", db=object(), target_uid="u1"
