@@ -6,6 +6,7 @@ import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/brain_selector_control.dart';
+import '../widgets/image_model_selector_control.dart';
 import '../widgets/voice_engine_control.dart';
 
 /// Ayma's models screen (§13.3, §13.9, §13.10). ONE Brain picker drives both
@@ -39,10 +40,12 @@ class VoicePreferenceScreen extends StatefulWidget {
 
 class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   final BrainSelectorController _brainCtl = BrainSelectorController();
+  final ImageModelController _imageCtl = ImageModelController();
   final VoiceEngineController _voiceCtl = VoiceEngineController();
   late final ApiClient _client = widget.api ?? ApiClient();
   bool _saving = false;
   String? _savedBrain;
+  String? _savedImage;
   VoiceSelection? _savedSelection;
 
   bool get _voiceConnected =>
@@ -53,6 +56,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   void initState() {
     super.initState();
     _brainCtl.addListener(_onCtlChanged);
+    _imageCtl.addListener(_onCtlChanged);
     _voiceCtl.addListener(_onCtlChanged);
     VoiceSessionController.activeNotifier.addListener(_onCtlChanged);
   }
@@ -60,9 +64,11 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
   @override
   void dispose() {
     _brainCtl.removeListener(_onCtlChanged);
+    _imageCtl.removeListener(_onCtlChanged);
     _voiceCtl.removeListener(_onCtlChanged);
     VoiceSessionController.activeNotifier.removeListener(_onCtlChanged);
     _brainCtl.dispose();
+    _imageCtl.dispose();
     _voiceCtl.dispose();
     super.dispose();
   }
@@ -72,6 +78,9 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
       if (_savedBrain == null && _brainCtl.selected != null) {
         _savedBrain = _brainCtl.selected;
       }
+      if (_savedImage == null && _imageCtl.selected != null) {
+        _savedImage = _imageCtl.selected;
+      }
       if (_savedSelection == null && _voiceCtl.selection != null) {
         _savedSelection = _voiceCtl.selection;
       }
@@ -79,7 +88,7 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     }
   }
 
-  bool get _ready => _brainCtl.ready && _voiceCtl.ready;
+  bool get _ready => _brainCtl.ready && _imageCtl.ready && _voiceCtl.ready;
 
   bool get _isDirty {
     final sb = _savedBrain;
@@ -88,7 +97,13 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     final b = _brainCtl.selected;
     final s = _voiceCtl.selection;
     if (b == null || s == null) return false;
-    return b != sb || s != ss;
+    // The image model is optional: it only contributes to dirtiness once both
+    // a baseline and a current value exist (a single-model catalog never
+    // changes, so it stays clean on its own).
+    final imgDirty = _savedImage != null &&
+        _imageCtl.selected != null &&
+        _imageCtl.selected != _savedImage;
+    return b != sb || s != ss || imgDirty;
   }
 
   bool get _canSave => !_saving && _ready && (_voiceConnected || _isDirty);
@@ -97,15 +112,18 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
     final brain = _brainCtl.selected;
     final sel = _voiceCtl.selection;
     if (_saving || brain == null || brain.isEmpty || sel == null) return;
+    final image = _imageCtl.selected ?? '';
     final connected = _voiceConnected;
     setState(() => _saving = true);
     try {
       await _client.saveModelsPreference(
         brain: brain,
         selection: sel,
+        imageModel: image,
         reconnect: connected,
       );
       _savedBrain = brain;
+      _savedImage = _imageCtl.selected;
       _savedSelection = sel;
       _voiceCtl.markSaved();
       if (!mounted) return;
@@ -163,6 +181,16 @@ class _VoicePreferenceScreenState extends State<VoicePreferenceScreen> {
           VoiceEngineControl(
             api: _client,
             controller: _voiceCtl,
+            showSaveButton: false,
+          ),
+          const SizedBox(height: 24),
+          // IMAGE MODEL — which model Ayma uses to create/edit images in chat
+          // (image-gen restore, 2026-11-08). Its own per-user setting,
+          // independent of the Brain and the voice stack; the ONE
+          // founder-authorized direct-provider path, Gemini-direct default.
+          ImageModelSelectorControl(
+            api: _client,
+            controller: _imageCtl,
             showSaveButton: false,
           ),
           const SizedBox(height: 24),
