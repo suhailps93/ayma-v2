@@ -6,7 +6,8 @@ import '../../services/voice_session_controller.dart';
 import '../../theme.dart';
 import '../../widgets/ayma_wing_loader.dart';
 import '../../widgets/chat_bubble.dart';
-import '../../widgets/chat_composer.dart' show kChatListBottomInset;
+import '../../widgets/chat_composer.dart'
+    show kChatListBottomInset, kComposerBarPadding;
 import '../../widgets/out_of_credits.dart';
 import '../../widgets/overflow_guards.dart';
 import 'practice_models.dart';
@@ -292,6 +293,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
             TextButton(
               key: const Key('practiceEndButton'),
               onPressed: _end,
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+              ),
               child: Text('End',
                   style: AymaType.sans(
                       size: 15, weight: FontWeight.w600, color: ac.accent)),
@@ -382,7 +386,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       controller: _scroll,
       // Same top inset + bottom clearance as the DM thread's list, so the
       // transcript sits identically under the header and clears the composer.
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, kChatListBottomInset),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, kChatListBottomInset),
       itemCount: _messages.length,
       itemBuilder: (context, i) => _Bubble(message: _messages[i]),
     );
@@ -390,7 +394,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   Widget _composer(AymaTokens ac) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: kComposerBarPadding,
       decoration: BoxDecoration(
         color: ac.bg,
         border: Border(top: BorderSide(color: ac.lineSoft)),
@@ -409,7 +413,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
               style: AymaType.message(color: ac.fg),
               decoration: InputDecoration(
                 hintText: 'Type a message…',
-                hintStyle: AymaType.message(color: ac.fgMute),
+                hintStyle: AymaType.message(color: ac.fgDim),
                 filled: true,
                 fillColor: ac.bgCard,
                 contentPadding:
@@ -477,7 +481,7 @@ class _CoachHint extends StatelessWidget {
     return Container(
       key: const Key('practiceCoachHint'),
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: ac.accentSoft,
