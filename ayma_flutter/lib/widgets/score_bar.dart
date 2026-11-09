@@ -21,7 +21,7 @@ class ScoreBar extends StatelessWidget {
     super.key,
     required this.value,
     this.max = 10,
-    this.height = 5,
+    this.height = 8,
     this.color,
     this.trackColor,
     this.colorFor,
@@ -56,7 +56,7 @@ class ScoreBar extends StatelessWidget {
         ? colorFor!(context, value, max)
         : (color ?? ac.accent);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
+      borderRadius: BorderRadius.circular(4),
       child: Stack(
         children: [
           Container(height: height, color: trackColor ?? ac.lineSoft),

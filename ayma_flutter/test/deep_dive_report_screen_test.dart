@@ -180,6 +180,21 @@ void main() {
   });
 
   testWidgets(
+      'the "Run web search" button has a >= 48 tall touch target (Jobs pass)',
+      (tester) async {
+    await tester.pumpWidget(_host(
+      _api(metaStatus: 404, reportStatus: 404),
+      reportId: 'uid_bob',
+    ));
+    await tester.pumpAndSettle();
+
+    final h = tester
+        .getSize(find.widgetWithText(FilledButton, 'Run web search'))
+        .height;
+    expect(h, greaterThanOrEqualTo(48.0));
+  });
+
+  testWidgets(
       '"Run web search" on the empty state starts a dive on the subject the '
       'uid_<x> report id names', (tester) async {
     final calls = <Map<String, dynamic>>[];

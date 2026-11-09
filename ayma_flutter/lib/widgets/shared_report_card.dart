@@ -19,14 +19,14 @@ class SharedReportCard extends StatelessWidget {
     final ac = context.ac;
     final placeholder = Container(
       width: width,
-      height: 126,
+      height: 128,
       color: ac.bgCard,
       alignment: Alignment.center,
       child: Icon(Icons.description_outlined, color: ac.fgMute, size: 32),
     );
     return Material(
       color: ac.bgCard,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -42,14 +42,14 @@ class SharedReportCard extends StatelessWidget {
                 Image.network(
                   share.cardUrl,
                   width: width,
-                  height: 126,
+                  height: 128,
                   fit: BoxFit.cover,
                   loadingBuilder: (ctx, child, progress) =>
                       progress == null ? child : placeholder,
                   errorBuilder: (ctx, _, __) => placeholder,
                 ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -69,7 +69,7 @@ class SharedReportCard extends StatelessWidget {
                         share.summary,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: AymaType.sans(size: 13, color: ac.fgMute),
+                        style: AymaType.sans(size: 13, color: ac.fgDim),
                       ),
                     ],
                   ],

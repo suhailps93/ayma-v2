@@ -323,7 +323,7 @@ class _Report extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
               decoration: BoxDecoration(
                 color: ac.accentFaint,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: ac.lineSoft),
               ),
               child: Row(
@@ -331,7 +331,7 @@ class _Report extends StatelessWidget {
                 children: [
                   _Avatar(url: r.myPhoto, label: 'You'),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: Icon(Icons.favorite_rounded,
                         size: 20, color: ac.accent),
                   ),
@@ -408,7 +408,7 @@ class _Avatar extends StatelessWidget {
                   error: Icon(Icons.person, color: ac.fgMute, size: 32),
                 ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         SizedBox(
           width: 84,
           child: Text(
@@ -441,7 +441,11 @@ class _Message extends StatelessWidget {
               style: AymaType.sans(size: 14, color: context.ac.fgMute)),
           if (onRetry != null) ...[
             const SizedBox(height: 12),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
+              child: const Text('Retry'),
+            ),
           ],
         ],
       ),

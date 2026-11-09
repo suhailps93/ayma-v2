@@ -566,6 +566,38 @@ void main() {
     expect(find.text('USAGE SCREEN'), findsOneWidget);
   });
 
+  testWidgets(
+      'the error-state Retry button has a >= 48 tall touch target (Jobs pass)',
+      (tester) async {
+    // GET /match always fails → after the silent retries exhaust, the
+    // "Couldn't load this report." / Retry error state shows.
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.method == 'GET' && req.url.path == '/match/a__me') {
+          return http.Response('down', 503);
+        }
+        if (req.url.path == '/chat/stream') {
+          return http.Response('stream unavailable', 500);
+        }
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    // Drive the real backoff timers to completion (as the recovery test does).
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pumpAndSettle();
+
+    expect(find.text('Retry'), findsOneWidget);
+    final h = tester.getSize(find.widgetWithText(TextButton, 'Retry')).height;
+    expect(h, greaterThanOrEqualTo(48.0));
+  });
+
   testWidgets('a never-scored pair shows the empty state', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(
