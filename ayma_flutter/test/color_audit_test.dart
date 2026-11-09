@@ -96,6 +96,23 @@ void main() {
         reason: 'lightFgDim on lightBgCard contrast ($lightFgDimCardContrast) must be >= 4.5');
   });
 
+  test('V8 (jobs story-media): fgMute-on-bgElev passes 4.5:1 (4.63 dark / 4.66 light)',
+      () {
+    // The reportBox eyebrow, part labels, and teaser detail in the story
+    // editor stay fgMute on bgElev — this is the explicit guard for that
+    // decision (fgMute-on-bgCard is guarded separately above).
+    final darkFgMuteElev =
+        _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBgElev);
+    final lightFgMuteElev =
+        _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBgElev);
+    expect(darkFgMuteElev, closeTo(4.63, 0.05));
+    expect(darkFgMuteElev, greaterThanOrEqualTo(4.5),
+        reason: 'darkFgMute on darkBgElev ($darkFgMuteElev) must be >= 4.5');
+    expect(lightFgMuteElev, closeTo(4.66, 0.05));
+    expect(lightFgMuteElev, greaterThanOrEqualTo(4.5),
+        reason: 'lightFgMute on lightBgElev ($lightFgMuteElev) must be >= 4.5');
+  });
+
   test('reports pass contrast audits: bgElev, bg, and accentFaint surfaces', () {
     // Defect 7: accent on bgElev fails 4.5:1 in both themes (4.32 dark / 3.57 light),
     // while fgMute on bgElev passes (4.63 dark / 4.66 light).

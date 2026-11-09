@@ -164,7 +164,7 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   Widget _sectionDivider() {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 26),
+      padding: const EdgeInsets.symmetric(vertical: 24),
       child: Divider(height: 0.5, color: ac.lineSoft),
     );
   }
@@ -183,14 +183,14 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
       context: context,
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 20, 22, 24),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Why Ayma believes this',
                   style: AymaType.serif(size: 19, color: ac.fg)),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               Text(
                 prov.conversationCount > 0
                     ? 'Learned across ${prov.conversationCount} '
@@ -204,7 +204,7 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
                     style: AymaType.sans(size: 13, color: ac.fgMute)),
               ],
               if (prov.sources.isNotEmpty) ...[
-                const SizedBox(height: 18),
+                const SizedBox(height: 16),
                 Text('SOURCES',
                     style: AymaType.mono(size: 10, color: ac.fgMute)
                         .copyWith(letterSpacing: 1.4)),
@@ -475,7 +475,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
               'timeline — nothing is scraped or shared.',
               style: AymaType.sans(size: 13, color: ac.fgMute),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             TextField(
               controller: controller,
               autofocus: true,
@@ -553,7 +553,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
               textAlign: TextAlign.center,
               style: AymaType.sans(size: 14, color: AymaColors.error)),
           const SizedBox(height: 12),
-          FilledButton(onPressed: _load, child: const Text('Retry')),
+          FilledButton(
+              onPressed: _load,
+              style: FilledButton.styleFrom(minimumSize: const Size(64, 48)),
+              child: const Text('Retry')),
         ]),
       );
     }
@@ -706,7 +709,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       children: [
         Text('${number.toString().padLeft(2, '0')}  CAREER & EDUCATION',
             style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         if (t.showTimeline && t.entries.isNotEmpty)
           CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
         else
@@ -846,7 +849,10 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
               textAlign: TextAlign.center,
               style: AymaType.sans(size: 14, color: AymaColors.error)),
           const SizedBox(height: 12),
-          FilledButton(onPressed: _load, child: const Text('Retry')),
+          FilledButton(
+              onPressed: _load,
+              style: FilledButton.styleFrom(minimumSize: const Size(64, 48)),
+              child: const Text('Retry')),
         ]),
       );
     }
@@ -890,7 +896,7 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
           'observed, including what she hasn’t confirmed with you yet.',
           style: AymaType.sans(size: 14, color: ac.fgMute).copyWith(height: 1.5),
         ),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         // The only surface that ever shows the "deleted by you" group — every
         // group, deleted included, so the dev can see (and if they want,
         // resurrect the context around) anything Ayma still remembers.
@@ -1022,7 +1028,7 @@ class _StoryCover extends StatelessWidget {
           Text(subtitle,
               style: AymaType.sans(size: 15, color: ac.fgMute).copyWith(height: 1.4)),
           if (heroPhotoUrl != null) ...[
-            const SizedBox(height: 22),
+            const SizedBox(height: 24),
             ClipRRect(
               borderRadius: BorderRadius.circular(18),
               child: AspectRatio(
@@ -1045,14 +1051,14 @@ class _StoryCover extends StatelessWidget {
           if (showLearningBanner) ...[
             const SizedBox(height: 20),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: ac.accentFaint,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: Row(children: [
                 Icon(Icons.auto_awesome, size: 15, color: ac.accent),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text('Ayma keeps learning about you as you talk.',
                       style: AymaType.sans(size: 12.5, color: ac.accent)),
@@ -1075,7 +1081,7 @@ class _Stat extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.only(right: 26),
+      padding: const EdgeInsets.only(right: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1122,7 +1128,7 @@ class _PhotosSection extends StatelessWidget {
       children: [
         Text('${number.toString().padLeft(2, '0')}  PHOTOS',
             style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text('A few glimpses into my world.',
             style: AymaType.serif(size: 22, color: ac.fg)),
         const SizedBox(height: 8),
@@ -1131,7 +1137,7 @@ class _PhotosSection extends StatelessWidget {
           'appearance, style and lifestyle.',
           style: AymaType.sans(size: 12.5, color: ac.fgMute),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 16),
         _PhotoGroupsList(photos: photos, groups: groups, onOpen: onOpen),
       ],
     );
@@ -1164,7 +1170,7 @@ class _PhotoGroupsList extends StatelessWidget {
               '$label (${photos.where((p) => displayGroup(p) == group).length})',
               style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             PhotoGallery(
               photos: photos.where((p) => displayGroup(p) == group).toList(),
               onOpen: onOpen,
@@ -1210,7 +1216,7 @@ class _WebFindingsInterlude extends StatelessWidget {
       children: [
         Text(header,
             style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Text('What Ayma found online.', style: AymaType.serif(size: 22, color: ac.fg)),
         const SizedBox(height: 12),
         Text(
@@ -1219,10 +1225,10 @@ class _WebFindingsInterlude extends StatelessWidget {
           style: AymaType.sans(size: 14, color: ac.fgDim).copyWith(height: 1.5),
         ),
         if (facts.isNotEmpty) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 10,
-            runSpacing: 6,
+            spacing: 12,
+            runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text('${facts.length} finding${facts.length == 1 ? '' : 's'}',
@@ -1235,7 +1241,7 @@ class _WebFindingsInterlude extends StatelessWidget {
             ],
           ),
         ],
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         if (onView != null)
           InkWell(
             onTap: onView,
@@ -1265,10 +1271,10 @@ class _StorySkeleton extends StatelessWidget {
     Widget bar(double w, double h) => Container(
           width: w,
           height: h,
-          margin: const EdgeInsets.only(bottom: 10),
+          margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
             color: ac.bgElev,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(4),
           ),
         );
     return ListView(
@@ -1277,15 +1283,15 @@ class _StorySkeleton extends StatelessWidget {
       children: [
         bar(180, 40),
         bar(260, 16),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         bar(220, 12),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         bar(double.infinity, 16),
         bar(double.infinity, 16),
         bar(240, 16),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         bar(220, 12),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         bar(double.infinity, 16),
         bar(double.infinity, 16),
         bar(200, 16),
@@ -1562,10 +1568,10 @@ class _AppearanceCardState extends State<_AppearanceCard> {
     final hasReport = merge.hasReport;
 
     final reportBox = Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: ac.lineSoft, width: 0.5),
       ),
       child: Column(
@@ -1625,7 +1631,11 @@ class _AppearanceCardState extends State<_AppearanceCard> {
                   child: AymaWingLoader(size: 16, showLabel: false),
                 )
               else
-                TextButton(onPressed: _runNow, child: const Text('Run it')),
+                TextButton(
+                    onPressed: _runNow,
+                    style: TextButton.styleFrom(
+                        minimumSize: const Size(64, 48)),
+                    child: const Text('Run it')),
             ]),
         ],
       ),
@@ -1643,9 +1653,9 @@ class _AppearanceCardState extends State<_AppearanceCard> {
         children: [
           Text('${widget.number!.toString().padLeft(2, '0')}  APPEARANCE ANALYSIS',
               style: AymaType.mono(size: 11, color: ac.accent).copyWith(letterSpacing: 2)),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           reportBox,
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           footnote,
         ],
       );
@@ -1662,9 +1672,9 @@ class _AppearanceCardState extends State<_AppearanceCard> {
             style: AymaType.mono(size: 9, color: ac.fgMute).copyWith(letterSpacing: 1.2),
           ),
         ]),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         reportBox,
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         footnote,
       ],
     );
