@@ -112,6 +112,8 @@ class _SharedProfileLinkScreenState extends State<SharedProfileLinkScreen> {
                       const SizedBox(height: 24),
                       FilledButton(
                         onPressed: () => context.go(SignInScreen.path),
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size(64, 48)),
                         child: const Text('Sign in to see this profile'),
                       ),
                     ],
