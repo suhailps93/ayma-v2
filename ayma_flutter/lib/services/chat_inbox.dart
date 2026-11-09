@@ -235,7 +235,16 @@ class ChatInbox {
   /// and pulls it in, so the card appears without reopening the chat.
   final ValueNotifier<int> resultsLanded = ValueNotifier(0);
 
-  void push(ChatKickoff k) => pending.value = k;
+  void push(ChatKickoff k) {
+    // A tab-switch page_context update must never overwrite an in-flight
+    // explicit kickoff (e.g. a share / draft_about or background skill).
+    if (k.kind == 'page_context' &&
+        pending.value != null &&
+        pending.value!.kind != 'page_context') {
+      return;
+    }
+    pending.value = k;
+  }
 
   void resultLanded() => resultsLanded.value++;
 

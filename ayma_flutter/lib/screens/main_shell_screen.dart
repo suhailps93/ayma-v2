@@ -273,6 +273,8 @@ class _MainShellScreenState extends State<MainShellScreen>
     // acts while `_index != 0`.
     if (!leavingToAyma) return;
     if (prior.screen.isNotEmpty && prior.screen != 'ayma') {
+      final inFlight = ChatInbox.instance.pending.value;
+      if (inFlight != null && inFlight.kind != 'page_context') return;
       ChatInbox.instance.push(ChatKickoff.pageContext(prior));
     }
   }

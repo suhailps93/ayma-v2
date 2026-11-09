@@ -10,10 +10,12 @@ import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart';
 import 'package:ayma_flutter/screens/shared_profile_link_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/share_kit.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/ayma_share_sheet.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,7 +81,7 @@ void main() {
   tearDown(() => ChatInbox.instance.take());
   tearDown(PendingPageShare.resetForTest);
 
-  testWidgets('profile sheet shows both options with the founder labels',
+  testWidgets('profile sheet shows both options with the founder labels and gray wings mark',
       (tester) async {
     final api = _FakeApi();
     await tester.pumpWidget(_sheetHost(_profileTarget(), AymaShare(api: api)));
@@ -89,6 +91,9 @@ void main() {
     expect(find.text('Send externally'), findsOneWidget);
     expect(find.text('Dillu'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);
+    expect(find.byType(AymaWingsIcon), findsOneWidget);
+    expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
+    expect(find.byIcon(Icons.ios_share), findsOneWidget);
   });
 
   testWidgets('Send externally composes the /p/ link for the profile',
@@ -177,6 +182,21 @@ void main() {
             path: '/profile/wiki',
             builder: (_, __) => const Scaffold(body: Text('STORY PAGE')),
           ),
+          GoRoute(
+            path: '/deep-dive/:id',
+            builder: (_, state) =>
+                Scaffold(body: Text('DEEP DIVE PAGE ${state.pathParameters['id']}')),
+          ),
+          GoRoute(
+            path: '/match/:id',
+            builder: (_, state) =>
+                Scaffold(body: Text('MATCH PAGE ${state.pathParameters['id']}')),
+          ),
+          GoRoute(
+            path: '/appearance/:id',
+            builder: (_, state) =>
+                Scaffold(body: Text('APPEARANCE PAGE ${state.pathParameters['id']}')),
+          ),
         ],
       );
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
@@ -194,7 +214,7 @@ void main() {
     }
 
     testWidgets(
-        'Send to Ayma stages the card above the composer — composer empty, nothing sent',
+        'Send to Ayma stages the card above the composer — composer empty, nothing sent, card tappable',
         (tester) async {
       final captured = <Map<String, dynamic>>[];
       await pumpChat(
@@ -203,15 +223,145 @@ void main() {
         sendStaged: false,
         capturedCalls: captured,
       );
-      // Staged chip is visible above composer.
+      // Staged card is visible above composer with reply-style layout.
       expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
-      expect(find.text('Profile · Dillu'), findsOneWidget);
+      expect(find.text('Dillu'), findsOneWidget);
+      expect(find.text('PROFILE · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      // No pin chip anywhere.
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
       // Composer is empty and nothing is in transcript.
       final field = tester.widget<TextField>(find.byType(TextField).last);
       expect(field.controller?.text ?? '', isEmpty);
-      expect(find.text('PROFILE · TAP TO OPEN'), findsNothing);
       expect(find.textContaining("Let's talk about"), findsNothing);
       expect(captured, isEmpty);
+
+      // Tapping the staged card opens the profile.
+      await tester.tap(find.text('PROFILE · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('PROFILE PAGE u2'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Send to Ayma for story stages the story card with image and no pin chip',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: ShareTargets.story(
+          uid: 'u1',
+          imageUrl: 'https://example.com/story.jpg',
+        ).aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Your Story'), findsOneWidget);
+      expect(find.text('STORY · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+      // Tapping opens story page.
+      await tester.tap(find.text('STORY · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('STORY PAGE'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Send to Ayma for web research stages the card, not old label chip or pin chip',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: ShareTargets.webResearch(
+          reportId: 'dd1',
+          subjectUid: 'u3',
+          subjectName: 'Jordan',
+          subjectImage: 'https://example.com/jordan.jpg',
+        ).aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Web research on Jordan'), findsOneWidget);
+      expect(find.text('WEB FINDING · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+      // Tapping opens web research page.
+      await tester.tap(find.text('WEB FINDING · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('DEEP DIVE PAGE dd1'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Send to Ayma for match report stages the match card',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: ShareTargets.matchReport(
+          matchId: 'm1',
+          otherUid: 'u4',
+          otherName: 'Taylor',
+          otherPhoto: 'https://example.com/taylor.jpg',
+        ).aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Taylor · match report'), findsOneWidget);
+      expect(find.text('MATCH REPORT · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+      // Tapping opens match report page.
+      await tester.tap(find.text('MATCH REPORT · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('MATCH PAGE m1'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Send to Ayma for appearance report stages the appearance card',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: ShareTargets.appearance(
+          uid: 'u5',
+          title: 'Your appearance report',
+          photoUrl: 'https://example.com/app.jpg',
+        ).aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Your appearance report'), findsOneWidget);
+      expect(find.text('APPEARANCE REPORT · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+      // Tapping opens appearance page.
+      await tester.tap(find.text('APPEARANCE REPORT · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('APPEARANCE PAGE u5'), findsOneWidget);
+    });
+
+    testWidgets(
+        'pending share kickoff survives tab-switch pageContext push',
+        (tester) async {
+      // Push a share kickoff.
+      ChatInbox.instance.push(_profileTarget().aymaKickoff());
+      // A tab-switch pageContext push arrives.
+      ChatInbox.instance.push(ChatKickoff.pageContext(
+        const ScreenContext(screen: 'explore'),
+      ));
+      // The pending kickoff is still the share kickoff.
+      expect(ChatInbox.instance.pending.value?.kind, 'draft_about');
+      expect(ChatInbox.instance.pending.value?.shareKind, 'profile');
+    });
+
+    testWidgets(
+        'plain tab switch with no share in flight pushes pageContext',
+        (tester) async {
+      ChatInbox.instance.push(ChatKickoff.pageContext(
+        const ScreenContext(screen: 'explore'),
+      ));
+      expect(ChatInbox.instance.pending.value?.kind, 'page_context');
+      expect(ChatInbox.instance.pending.value?.screenContext?.label, 'Explore');
     });
 
     testWidgets(

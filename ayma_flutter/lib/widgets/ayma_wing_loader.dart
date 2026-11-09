@@ -509,3 +509,30 @@ class AymaWingPainter extends CustomPainter {
   bool shouldRepaint(AymaWingPainter old) =>
       old.flap != flap || old.color != color;
 }
+
+/// A static icon widget displaying the Ayma wings mark at resting pose.
+/// Adapts to the ambient [IconTheme] for size and color (e.g. gray in a standard [ListTile]).
+class AymaWingsIcon extends StatelessWidget {
+  const AymaWingsIcon({
+    super.key,
+    this.size,
+    this.color,
+  });
+
+  final double? size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = IconTheme.of(context);
+    final s = size ?? theme.size ?? 24.0;
+    final c = color ?? theme.color ?? context.ac.fgMute;
+    return SizedBox(
+      width: s,
+      height: s,
+      child: CustomPaint(
+        painter: AymaWingPainter(flap: 0.5, color: c),
+      ),
+    );
+  }
+}
