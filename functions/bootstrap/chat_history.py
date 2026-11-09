@@ -65,6 +65,7 @@ def append(
     tools: list[str] | None = None,
     subject_image: str | None = None,
     client_msg_id: str | None = None,
+    shared_card: dict | None = None,
 ) -> None:
     """Append one message. No-op for an unknown role or an empty text with no
     image. Best-effort — callers wrap it so a write failure never fails /chat.
@@ -82,6 +83,13 @@ def append(
     kicker survives a reload. ``subject_image`` is a resolved photo URL for
     the person a skill was run on (Explore deep-dive) so the history row can
     show their face.
+    ``shared_card`` is the Send-to-Ayma card posted with a *user* send
+    (``{"kind", "uid", "name", "photo", "ref_id"}`` — the reply-style card
+    the chat renders above the message): persisted on the row so the card
+    itself survives a reload. Without it the reloaded transcript showed
+    only the message text (for a card-alone send, the bare ``[shared …]``
+    wire label) and the tappable card was gone (founder bug 2026-11-09).
+    It carries the card's identity only — never the shared page's contents.
     ``client_msg_id`` is the client-generated id of the *user send* this row
     belongs to — stamped on BOTH the user turn and its reply so a client that
     lost its connection mid-request can later find the finished turn in
@@ -112,6 +120,13 @@ def append(
         doc["tools"] = labels[:6]
     if subject_image:
         doc["subject_image"] = str(subject_image)
+    card = shared_card or {}
+    if role == "user" and str(card.get("kind", "")).strip():
+        doc["shared_card_kind"] = str(card.get("kind", "")).strip()
+        doc["shared_card_uid"] = str(card.get("uid", "") or "")
+        doc["shared_card_name"] = str(card.get("name", "") or "")
+        doc["shared_card_photo"] = str(card.get("photo", "") or "")
+        doc["shared_card_ref_id"] = str(card.get("ref_id", "") or "")
     if client_msg_id:
         doc["client_msg_id"] = str(client_msg_id)
     _user(db, uid).collection("chat_messages").add(doc)
@@ -261,6 +276,11 @@ def _collect(db, uid: str) -> list[dict]:
             "tools": [str(t) for t in (d.get("tools") or []) if str(t).strip()],
             "subject_image": str(d.get("subject_image", "")),
             "client_msg_id": str(d.get("client_msg_id", "")),
+            "shared_card_kind": str(d.get("shared_card_kind", "")),
+            "shared_card_uid": str(d.get("shared_card_uid", "")),
+            "shared_card_name": str(d.get("shared_card_name", "")),
+            "shared_card_photo": str(d.get("shared_card_photo", "")),
+            "shared_card_ref_id": str(d.get("shared_card_ref_id", "")),
         })
 
     # raw_turns — the interleaved voice+text window per session. One doc holds
@@ -392,6 +412,11 @@ def recent(
             "tools": m.get("tools") or [],
             "subject_image": m.get("subject_image") or "",
             "client_msg_id": m.get("client_msg_id") or "",
+            "shared_card_kind": m.get("shared_card_kind") or "",
+            "shared_card_uid": m.get("shared_card_uid") or "",
+            "shared_card_name": m.get("shared_card_name") or "",
+            "shared_card_photo": m.get("shared_card_photo") or "",
+            "shared_card_ref_id": m.get("shared_card_ref_id") or "",
         }
         for m in page
     ]

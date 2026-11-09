@@ -568,6 +568,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String _sharedSubjectName = '';
   String _sharedRefVersion = '';
 
+  /// The Send-to-Ayma card the NEXT send posts (set by the staged-draft
+  /// branch of [_send] itself and by [_runTalkAbout], both of which add
+  /// the card turn and immediately re-enter [_send]). Carried on that one
+  /// send so the server persists the card on the user turn and it renders
+  /// again from history after a restart; consumed (cleared) by the send
+  /// that carries it, so a later plain message never re-stamps the card.
+  String _pendingCardKind = '';
+  String _pendingCardUid = '';
+  String _pendingCardName = '';
+  String _pendingCardPhoto = '';
+  String _pendingCardRefId = '';
+
   String _currentUid() {
     try {
       return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -959,6 +971,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   "stands out, and is this worth pursuing?",
             _ => "Let's talk about $who. What's your read on them for me?",
           };
+    _pendingCardKind = k.shareKind.isEmpty ? 'profile' : k.shareKind;
+    _pendingCardUid = k.targetUid;
+    _pendingCardName = who;
+    _pendingCardPhoto = k.photoUrl;
+    _pendingCardRefId = k.refId;
     _store.addSharedTurn(
       kind: k.shareKind.isEmpty ? 'profile' : k.shareKind,
       uid: k.targetUid,
@@ -1546,10 +1563,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
       );
       final reply = _splitReplyPrefix(m.text);
+      var replyText = reply.text;
+      if (m.sharedCardKind.isNotEmpty &&
+          (replyText == '[shared ${m.sharedCardKind.replaceAll('_', ' ')}]' ||
+              replyText == '(shared)')) {
+        // A card-alone send persists only the wire fallback label as its
+        // text; the card itself is the message — don't render the label
+        // as a bubble under the rebuilt card.
+        replyText = '';
+      }
       turns.add(
         TranscriptTurn(
           role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-          text: reply.text,
+          text: replyText,
           source: audio == null ? TurnSource.text : TurnSource.voice,
           imageUrl: url,
           audioUrl: audio,
@@ -1560,6 +1586,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           replySnippet: reply.snippet,
           replyKind: reply.kind,
           replyImageUrl: reply.imageUrl,
+          sharedKind: m.sharedCardKind,
+          sharedUid: m.sharedCardUid,
+          sharedName: m.sharedCardName,
+          sharedPhoto: m.sharedCardPhoto,
+          sharedRefId: m.sharedCardRefId,
         ),
       );
     }
@@ -1662,10 +1693,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           resolvePath: (p) => FirebaseStorage.instance.ref(p).getDownloadURL(),
         );
         final reply = _splitReplyPrefix(m.text);
+        var olderText = reply.text;
+        if (m.sharedCardKind.isNotEmpty &&
+            (olderText ==
+                    '[shared ${m.sharedCardKind.replaceAll('_', ' ')}]' ||
+                olderText == '(shared)')) {
+          // Same card-alone fallback label as in _historyTurns: the card
+          // is the message; don't render the label as a bubble under it.
+          olderText = '';
+        }
         olderTurns.add(
           TranscriptTurn(
             role: m.role == 'ayma' ? TurnRole.ayma : TurnRole.user,
-            text: reply.text,
+            text: olderText,
             source: audio == null ? TurnSource.text : TurnSource.voice,
             imageUrl: url,
             audioUrl: audio,
@@ -1676,6 +1716,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             replySnippet: reply.snippet,
             replyKind: reply.kind,
             replyImageUrl: reply.imageUrl,
+            sharedKind: m.sharedCardKind,
+            sharedUid: m.sharedCardUid,
+            sharedName: m.sharedCardName,
+            sharedPhoto: m.sharedCardPhoto,
+            sharedRefId: m.sharedCardRefId,
           ),
         );
       }
@@ -2232,6 +2277,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _sharedSubjectName = '';
         _sharedRefVersion = '';
       }
+      _pendingCardKind = ps.kind;
+      _pendingCardUid = ps.uid;
+      _pendingCardName = ps.name;
+      _pendingCardPhoto = ps.photo;
+      _pendingCardRefId = ps.refId;
       _store.addSharedTurn(
         kind: ps.kind,
         uid: ps.uid,
@@ -2274,6 +2324,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _reconcile = null;
       _store.dropPending();
     }
+
+    // The card this send posts (see [_pendingCardKind]): read it into
+    // locals — the reconcile re-ask below reuses this same closure, so it
+    // carries the card too — and clear the state so no later send can
+    // accidentally stamp the same card onto a plain message.
+    final cardKind = _pendingCardKind;
+    final cardUid = _pendingCardUid;
+    final cardName = _pendingCardName;
+    final cardPhoto = _pendingCardPhoto;
+    final cardRefId = _pendingCardRefId;
+    _pendingCardKind = '';
+    _pendingCardUid = '';
+    _pendingCardName = '';
+    _pendingCardPhoto = '';
+    _pendingCardRefId = '';
 
     final ownVoice = widget.askAymaContext != null ? _pttVoice : _voice;
     final screenCtx = (ownVoice?.isActive ?? false) ? null : _activePageContext;
@@ -2569,6 +2634,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
           replyImagePath: replyImagePath,
+          sharedCardKind: cardKind,
+          sharedCardUid: cardUid,
+          sharedCardName: cardName,
+          sharedCardPhoto: cardPhoto,
+          sharedCardRefId: cardRefId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,
@@ -2611,6 +2681,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           sharedSubjectName: _sharedSubjectName,
           sharedRefVersion: _sharedRefVersion,
           replyImagePath: replyImagePath,
+          sharedCardKind: cardKind,
+          sharedCardUid: cardUid,
+          sharedCardName: cardName,
+          sharedCardPhoto: cardPhoto,
+          sharedCardRefId: cardRefId,
           profileEdit: _profileEdit,
           photoUrl: widget.photoUrl,
           photoSource: widget.photoSource,

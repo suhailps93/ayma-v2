@@ -1353,6 +1353,11 @@ class ChatRequest(_TruncatingModel):
         "shared_subject_name": 200,
         "shared_ref_version": 64,
         "reply_image_path": 256,
+        "shared_card_kind": 32,
+        "shared_card_uid": 128,
+        "shared_card_name": 200,
+        "shared_card_photo": 2000,
+        "shared_card_ref_id": 128,
         "photo_url": 2000,
         "photo_source": 16,
         "screen": 32,
@@ -1437,6 +1442,19 @@ class ChatRequest(_TruncatingModel):
     # photo server-side, so Ayma answers the reply looking at the photo
     # the reply points at.
     reply_image_path: str = Field(default="", max_length=256)
+    # The Send-to-Ayma CARD posted with this send (any kind — profile /
+    # story / deep_dive / match / appearance / conversation), as opposed to
+    # the ``shared_*`` reference above, which only binds the
+    # ``open_shared_report`` tool for report kinds. The card's identity
+    # (kind + subject + photo + tap target) is persisted on the user turn
+    # so the card renders again from history after a restart — before this
+    # it lived only in the client's in-memory turn and vanished on reload
+    # (founder bug 2026-11-09). Identity only, never the page's contents.
+    shared_card_kind: str = Field(default="", max_length=32)
+    shared_card_uid: str = Field(default="", max_length=128)
+    shared_card_name: str = Field(default="", max_length=200)
+    shared_card_photo: str = Field(default="", max_length=2000)
+    shared_card_ref_id: str = Field(default="", max_length=128)
     # Set when the chat is opened to edit the user's OWN public profile: unlocks
     # the profile section-edit tools (list / rewrite / show-hide a section).
     profile_edit: bool = False
@@ -2380,6 +2398,22 @@ async def _persisted_turn_reply(uid: str, req: ChatRequest) -> dict | None:
     }
 
 
+def _shared_card(req: ChatRequest) -> dict:
+    """The Send-to-Ayma card posted with this send, as the dict
+    :func:`chat_history.append` persists on the user turn — empty unless
+    this send actually posted a card."""
+    kind = req.shared_card_kind.strip()
+    if not kind:
+        return {}
+    return {
+        "kind": kind,
+        "uid": req.shared_card_uid.strip(),
+        "name": req.shared_card_name.strip(),
+        "photo": req.shared_card_photo.strip(),
+        "ref_id": req.shared_card_ref_id.strip(),
+    }
+
+
 def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
     """Persist the user's message at turn START, so a turn that is slow, errors,
     or never produces a reply still keeps the user's message in history instead
@@ -2402,6 +2436,7 @@ def _persist_user_turn(ctx: _ChatCtx, req: ChatRequest) -> None:
             get_db(), ctx.uid, "user", req.message,
             image_path=ctx.image_path or None,
             client_msg_id=client_msg_id,
+            shared_card=_shared_card(req) or None,
         )
     except Exception:  # noqa: BLE001 - best-effort; never fail the turn
         logger.exception("user-turn persist failed for %s", ctx.uid)
@@ -2448,6 +2483,7 @@ def _finalize_chat(
                 get_db(), ctx.uid, "user", req.message,
                 image_path=ctx.image_path or None,
                 client_msg_id=client_msg_id or None,
+                shared_card=_shared_card(req) or None,
             )
         reply_client_id = (
             None
