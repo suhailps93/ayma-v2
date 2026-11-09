@@ -156,7 +156,9 @@ class _Harness:
         # asked photo lands. Tests override photo_outcome(s) to model
         # the failure shapes.
         if self.photo_outcomes:
-            return self.photo_outcomes.pop(0)
+            if len(self.photo_outcomes) > 1:
+                return self.photo_outcomes.pop(0)
+            return self.photo_outcomes[0]
         return "showing: photo 2 of 3 — the carousel now shows photo 2."
 
     def runner(self) -> SelfCheckRunner:
@@ -178,6 +180,7 @@ class _Harness:
                     {"key": "delete_account", "label": "Delete account"},
                 ],
                 settings_keys=["theme", "notify_all"],
+                photo_retry_delay=0.0,
             ),
         )
 
@@ -497,42 +500,25 @@ def test_progress_bubbles_plain_names_marks_no_raw_ids():
     runner = h.runner()
     runner.deps.progress = lines.append
     asyncio.run(runner.run())
-    # A start bubble posts before any check result.
-    assert lines[0].startswith("Self-check started")
-    # Every result bubbles exactly once as it finishes, in plain names
-    # with marks: start + one per result, then the finish bubbles.
-    result_lines = lines[1:1 + len(runner.results)]
-    assert len(result_lines) == len(runner.results)
-    # Each live bubble is exactly the check's own line, in run order.
-    assert result_lines == [runner._line(r) for r in runner.results]
-    assert "\u2705 Nav to Explore" not in lines  # explore fails here
-    assert "\u2705 Nav to Chat" in lines
-    fail_lines = [ln for ln in lines if ln.startswith("\u274c Nav to Explore")]
-    assert len(fail_lines) == 1
-    # The FAIL bubble carries the short reason, not just the name.
-    assert "did NOT navigate" in fail_lines[0]
-    # Probes and excluded checks bubble too, with the skip mark.
-    assert "\u23ed Deep-dive web research (probe only)" in lines
-    assert "\u23ed Delete the account (excluded \u2014 never run)" in lines
-    # No bubble anywhere carries a raw check id.
+    # Settled design (founder, Nov 7 2026): per-check results and start bubbles
+    # are NEVER persisted to chat. Only end-of-run finish bubbles post:
+    # counts header + failure lines (when present).
+    assert len(lines) == 2
+    assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
+    assert lines[0].startswith("\U0001f9ea Self-check summary")
+    assert f"{len(runner.results)} checks" in lines[0]
+    assert lines[1].startswith("\u274c Failures")
+    assert "Nav to Explore" in lines[1]
+    # Passes and raw check ids stay out of the finish bubbles
+    assert "Nav to Chat" not in lines[1]
+    assert not any(ln.startswith("Self-check started") for ln in lines)
     for ln in lines:
         for raw in ("nav:", "tool:", "wr:", "read:", "setting:",
                     "excluded:", "open:"):
             assert raw not in ln, (raw, ln)
-    # The finish (founder, 2026-11-07 ~16:14) is failures-only: one
-    # header bubble with the counts, then the failure lines — no
-    # per-category bubbles, no pass lines, no suggestions bubble.
-    finish = lines[1 + len(runner.results):]
-    assert len(finish) == 2
-    assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
-    assert finish[0].startswith("\U0001f9ea Self-check summary")
-    assert f"{len(runner.results)} checks" in finish[0]
-    assert finish[1].startswith("\u274c Failures")
-    assert "Nav to Explore" in finish[1]
-    assert "Nav to Chat" not in finish[1]  # passes stay out of the finish
     for title in ("Navigation — ", "Tools — ", "Reading — ",
                   "Settings — ", "Write and revert — "):
-        assert not any(ln.startswith(title) for ln in finish)
+        assert not any(ln.startswith(title) for ln in lines)
     assert not any(ln.startswith("\U0001f4a1") for ln in lines)
 
 
@@ -716,18 +702,17 @@ def test_finish_posts_header_and_failures_only():
     runner.deps.progress = lines.append
     asyncio.run(runner.run())
     assert all(len(ln) <= self_check.MAX_BUBBLE_CHARS for ln in lines)
-    finish = lines[1 + len(runner.results):]
     # Exactly two bubbles: the counts header and the failures bubble.
-    assert len(finish) == 2
-    assert finish[0].startswith("\U0001f9ea Self-check summary")
-    assert "1 failed" in finish[0]
-    assert finish[1].startswith("\u274c Failures")
-    assert "Nav to Explore" in finish[1]
+    assert len(lines) == 2
+    assert lines[0].startswith("\U0001f9ea Self-check summary")
+    assert "1 failed" in lines[0]
+    assert lines[1].startswith("\u274c Failures")
+    assert "Nav to Explore" in lines[1]
     # No per-category bubbles, and no pass lines in the failures bubble.
-    headings = [ln.split("\n")[0] for ln in finish]
+    headings = [ln.split("\n")[0] for ln in lines]
     assert not any(x.startswith("Navigation — ") for x in headings)
     assert not any(x.startswith("Tools — ") for x in headings)
-    assert "Nav to Chat" not in finish[1]
+    assert "Nav to Chat" not in lines[1]
 
 
 def test_zero_failure_run_posts_only_the_header_at_finish():
@@ -737,13 +722,12 @@ def test_zero_failure_run_posts_only_the_header_at_finish():
     runner.deps.progress = lines.append
     asyncio.run(runner.run())
     assert not any(r.status == self_check.FAIL for r in runner.results)
-    finish = lines[1 + len(runner.results):]
     # One bubble only — and the counts lines make clear everything
     # passed: the failed count sits on its own line, reading zero.
-    assert len(finish) == 1
-    assert finish[0].startswith("\U0001f9ea Self-check summary")
-    assert "0 failed" in finish[0]
-    assert "\u274c 0 failed" in finish[0].split("\n")
+    assert len(lines) == 1
+    assert lines[0].startswith("\U0001f9ea Self-check summary")
+    assert "0 failed" in lines[0]
+    assert "\u274c 0 failed" in lines[0].split("\n")
 
 
 def test_summary_header_one_count_per_line_emoji_first():
@@ -1244,3 +1228,69 @@ def test_bug_filing_dedupe_sees_docs_beyond_first_fifty():
     asyncio.run(runner._file_bug(result))
     assert filed == []
     assert result.bug_id == "bug-match"
+
+
+# --- regression tests (fleet/selfcheck-summary-only) ---------------------------
+
+
+def test_full_run_persists_exactly_finish_messages_and_reply_summary_only():
+    """Regression test: a full run persists exactly the finish messages
+    (header + failures when present) and zero per-check messages, and the
+    reply text stays summary-only (never raw ids, never full report)."""
+    # 1. Run with failure
+    h_fail = _Harness(fail_nav={"explore"})
+    fail_lines = []
+    runner_fail = h_fail.runner()
+    runner_fail.deps.progress = fail_lines.append
+    reply_fail = asyncio.run(runner_fail.run())
+
+    # Exactly finish messages: header + failure bubble
+    assert len(fail_lines) == 2
+    assert fail_lines[0].startswith("\U0001f9ea Self-check summary")
+    assert fail_lines[1].startswith("\u274c Failures")
+    # Zero per-check messages persisted
+    assert not any("Nav to Chat" in ln for ln in fail_lines)
+    assert not any(ln.startswith("Self-check started") for ln in fail_lines)
+    # Reply text stays summary-only
+    assert reply_fail == runner_fail._reply_text()
+    assert "Self-check summary" in reply_fail
+    assert "Nav to Explore" in reply_fail
+    assert "PASSED:" not in reply_fail  # full report raw section not in reply
+    assert "PROBED" not in reply_fail
+
+    # 2. Zero-failure run
+    h_pass = _Harness()
+    pass_lines = []
+    runner_pass = h_pass.runner()
+    runner_pass.deps.progress = pass_lines.append
+    reply_pass = asyncio.run(runner_pass.run())
+
+    # Exactly finish messages: header only
+    assert len(pass_lines) == 1
+    assert pass_lines[0].startswith("\U0001f9ea Self-check summary")
+    assert "0 failed" in pass_lines[0]
+    # Reply is summary-only
+    assert reply_pass == runner_pass._reply_text()
+    assert "Self-check summary" in reply_pass
+    assert "0 failed" in reply_pass
+    assert "PASSED:" not in reply_pass
+
+
+def test_photo_check_retries_on_no_carousel_and_passes():
+    """Regression test for show_profile_photo checker artifact: when
+    show_profile_photo initially receives 'no_carousel:' because the client
+    is still loading the profile over the network, it retries within the
+    ack window and passes once carousel registration completes."""
+    h = _Harness()
+    h.photo_outcomes = [
+        "no_carousel: no profile photo carousel is open right now. "
+        "Tell the user to open a profile first (open_profile can do "
+        "that), then ask again.",
+        "showing: photo 2 of 3 — the carousel now shows photo 2.",
+    ]
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:show_profile_photo"].status == self_check.PASS
+    assert "photo 2 of 3" in by_name["tool:show_profile_photo"].detail
+
