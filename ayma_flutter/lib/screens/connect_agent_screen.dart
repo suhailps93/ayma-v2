@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -55,8 +57,8 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
     super.dispose();
   }
 
-  Future<void> _loadConnections() async {
-    setState(() => _loadingConnections = true);
+  Future<void> _loadConnections({bool silent = false}) async {
+    if (!silent) setState(() => _loadingConnections = true);
     try {
       final rows = await _svc.connections();
       if (!mounted) return;
@@ -65,13 +67,35 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
       if (!mounted) return;
       if (e.disabled) {
         setState(() => _disabled = true);
-      } else {
+      } else if (!silent) {
         AymaToast.show(context, e.message, kind: AymaToastKind.error);
       }
     } catch (_) {
       // A missing connection list must never block approving a new one.
     } finally {
       if (mounted) setState(() => _loadingConnections = false);
+    }
+  }
+
+  /// Generation counter for [_watchForConnection]: a newer user action
+  /// (another approval, a disconnect) supersedes an in-flight watch.
+  int _watchGen = 0;
+
+  /// After an approval, the connection this list shows does not exist
+  /// yet: approving only marks the code approved, and the token behind
+  /// the list is created when the agent next polls the server to collect
+  /// it, usually a few seconds later. Keep quietly re-checking until a
+  /// connection that was not in [beforeIds] appears — or give up after
+  /// about half a minute, by which point it shows on the next visit, as
+  /// it did before this watch existed.
+  Future<void> _watchForConnection(Set<String> beforeIds) async {
+    final gen = ++_watchGen;
+    for (var attempt = 0; attempt < 15; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!mounted || gen != _watchGen) return;
+      await _loadConnections(silent: true);
+      if (!mounted || gen != _watchGen) return;
+      if (_connections.any((c) => !beforeIds.contains(c.tokenId))) return;
     }
   }
 
@@ -102,6 +126,7 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
 
   Future<void> _approve() async {
     final code = _codeController.text.trim();
+    final beforeIds = _connections.map((c) => c.tokenId).toSet();
     setState(() => _busy = true);
     try {
       await _svc.approve(code);
@@ -110,6 +135,13 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
       _codeController.clear();
       setState(() => _pending = null);
       await _loadConnections();
+      if (!mounted) return;
+      // The just-approved agent usually has not collected its token yet,
+      // so the reload above can come back without it. Watch for it so it
+      // appears here on its own (see _watchForConnection).
+      if (!_connections.any((c) => !beforeIds.contains(c.tokenId))) {
+        unawaited(_watchForConnection(beforeIds));
+      }
     } on McpConnectException catch (e) {
       if (!mounted) return;
       if (e.disabled) setState(() => _disabled = true);
@@ -138,6 +170,11 @@ class _ConnectAgentScreenState extends State<ConnectAgentScreen> {
   }
 
   Future<void> _revoke(McpConnection c) async {
+    // A disconnect supersedes any in-flight post-approval watch. The
+    // reload below is enough on its own: unlike approval, revoking takes
+    // effect on the server before it answers, so the list is already
+    // correct when it comes back.
+    _watchGen++;
     setState(() => _busy = true);
     try {
       await _svc.revoke(c.tokenId);
