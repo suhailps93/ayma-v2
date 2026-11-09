@@ -152,7 +152,7 @@ _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_int
 _GUIDED_TOUR_VOICE_NAMES = {"start_guided_tour", "advance_guided_tour", "skip_guided_tour", "back_guided_tour"}
 
 
-from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image  # noqa: E402
+from . import edit_profile_section, photo_edit, story_edit, story_manage, deep_dive_edit, appearance_edit, generate_image, open_shared  # noqa: E402
 
 # Always in the TEXT tool set, never in voice: ``generate_image`` delivers its
 # image through the same mutable ``result`` sink ``edit_photo`` uses
@@ -199,6 +199,14 @@ _DEEP_DIVE_EDIT_REGISTRY: list[Skill] = list(deep_dive_edit.SKILLS)
 # report — an attribute, the face report, or the physique/body report.
 _APPEARANCE_EDIT_REGISTRY: list[Skill] = list(appearance_edit.SKILLS)
 
+# Only exposed when the turn carries a shared-report reference (a staged
+# Send-to-Ayma card for a report kind — ``shared_kind`` / ``shared_ref_id``
+# on the chat request): Ayma pulls the exact report the user shared via
+# ``open_shared_report`` instead of the client shipping its contents (or,
+# as web research and Appearance did, dropping them — founder 2026-11-09).
+# The reference is bound server-side from the request, never model-chosen.
+_SHARED_REGISTRY: list[Skill] = [open_shared.SKILL]
+
 
 def all_skills() -> list[Skill]:
     return list(_REGISTRY)
@@ -211,13 +219,16 @@ def session_tool_declarations(
     photo: bool = False,
     deep_dive: bool = False,
     appearance: bool = False,
+    shared: bool = False,
 ) -> list[dict]:
     """Gemini function declarations for every registered skill (text always
     also gets the text-only tools — ``generate_image``). ``story=True``
     adds the Your Story passage-edit tools; ``profile_edit=True`` adds the
     public-profile section-edit tools; ``photo=True`` adds the photo-note
     tool; ``deep_dive=True`` adds the web-search-report correct/remove tools;
-    ``appearance=True`` adds the Appearance-report correct/clear tools."""
+    ``appearance=True`` adds the Appearance-report correct/clear tools;
+    ``shared=True`` adds ``open_shared_report``, the pull tool for a report
+    the user shared into this chat by reference."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _web_search_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
@@ -232,6 +243,8 @@ def session_tool_declarations(
         reg += _DEEP_DIVE_EDIT_REGISTRY
     if appearance:
         reg += _APPEARANCE_EDIT_REGISTRY
+    if shared:
+        reg += _SHARED_REGISTRY
     return [s.declaration for s in reg]
 
 
@@ -248,6 +261,7 @@ def make_session_tool_fns(
     appearance_ctx: dict | None = None,
     image_result: dict | None = None,
     feedback_result: dict | None = None,
+    shared_ctx: dict | None = None,
 ) -> dict[str, Callable[..., str]]:
     """``{name: bound callable}`` for ``gemini.generate_reply`` (text).
 
@@ -277,8 +291,13 @@ def make_session_tool_fns(
     to attach to the reply, exactly like ``edit_photo``'s; ``feedback_result``
     (``main._ChatCtx.feedback_draft``) binds the text-only ``submit_feedback``
     tool's delivery — the drafted ``{kind, title, body}`` lands there for the
-    reply to carry to the client as ``feedback_card`` (nothing is persisted).
-    Every other skill binds on ``(db, uid)`` alone.
+    reply to carry to the client as ``feedback_card`` (nothing is persisted);
+    ``shared_ctx`` (``kind`` / ``report_id`` / ``subject_uid`` /
+    ``subject_name`` / ``version`` — the reference a staged Send-to-Ayma
+    share card left on the chat request) binds ``open_shared_report``
+    closed over that exact reference, so the model can only ever open the
+    one report the user actually shared. Every other skill binds on
+    ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills() + _web_search_skills()):
@@ -352,6 +371,9 @@ def make_session_tool_fns(
     if appearance_ctx is not None:
         for s in _APPEARANCE_EDIT_REGISTRY:
             out[s.name] = s.bind(db, uid, **appearance_ctx)
+    if shared_ctx is not None:
+        for s in _SHARED_REGISTRY:
+            out[s.name] = s.bind(db, uid, **shared_ctx)
     return out
 
 
