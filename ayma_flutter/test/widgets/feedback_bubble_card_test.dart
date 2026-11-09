@@ -116,6 +116,35 @@ void main() {
     expect(sent, isTrue);
     expect(find.byKey(const ValueKey('feedback-bubble-sent')),
         findsOneWidget);
+
+    // The confirmation is transient: it clears itself after a brief
+    // linger instead of sitting in the thread forever.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byKey(const ValueKey('feedback-bubble-sent')),
+        findsNothing);
+  });
+
+  testWidgets('the sent confirmation dismisses itself after a brief linger',
+      (tester) async {
+    final captured = <Map<String, dynamic>>[];
+    var dismissed = false;
+    await tester.pumpWidget(_wrap(_card(
+      captured,
+      initialText: 'orb flickers',
+      onDismiss: () => dismissed = true,
+    )));
+
+    await tester.tap(find.byKey(const ValueKey('feedback-bubble-submit')));
+    await tester.pumpAndSettle();
+    expect(captured, hasLength(1));
+    expect(find.byKey(const ValueKey('feedback-bubble-sent')),
+        findsOneWidget);
+    expect(dismissed, isFalse);
+
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byKey(const ValueKey('feedback-bubble-sent')),
+        findsNothing);
+    expect(dismissed, isTrue);
   });
 
   testWidgets('a recreated card restored as sent shows the sent view',
@@ -131,6 +160,11 @@ void main() {
     expect(find.byKey(const ValueKey('feedback-bubble-sent')),
         findsOneWidget);
     expect(find.byKey(const ValueKey('feedback-bubble-submit')),
+        findsNothing);
+
+    // A restored sent view still expires on its own.
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.byKey(const ValueKey('feedback-bubble-sent')),
         findsNothing);
   });
 

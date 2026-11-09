@@ -511,7 +511,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
   // --- setup: choose the message count, then run -------------------------- //
   Widget _setup(AymaTokens ac) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -610,7 +610,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
       body: ListView(
         key: const Key('dateSimTranscript'),
         controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
         children: [
           for (final m in _messages)
             ChatBubble(
@@ -675,7 +675,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
         // While the run is live: a STOP control to halt it mid-conversation.
         if (running)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
@@ -687,7 +687,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     textAlign: TextAlign.center,
                     style: AymaType.sans(size: 13, color: ac.error),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                 ],
                 OutlinedButton.icon(
                   key: const Key('dateSimStopButton'),
@@ -712,7 +712,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
           ),
         if (finished)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
@@ -724,7 +724,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     textAlign: TextAlign.center,
                     style: AymaType.sans(size: 13, color: ac.error),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                 ],
                 // "Keep the conversation going" — asks HOW MANY more messages,
                 // then continues the same sim by that amount (only when it
@@ -748,7 +748,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                           : 'Keep the conversation going',
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                 ],
                 FilledButton.icon(
                   key: const Key('dateSimDoneButton'),
@@ -761,12 +761,15 @@ class _DateSimScreenState extends State<DateSimScreen> {
                   icon: const Icon(Icons.check_rounded, size: 18),
                   label: const Text('Done'),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 // RESET — discard this pair's sim and start a fresh one.
                 TextButton.icon(
                   key: const Key('dateSimResetButton'),
                   onPressed: _resetting ? null : _reset,
-                  style: TextButton.styleFrom(foregroundColor: ac.fgDim),
+                  style: TextButton.styleFrom(
+                    foregroundColor: ac.fgDim,
+                    minimumSize: const Size(48, 48),
+                  ),
                   // dateSimReset in flight — button slot, wings only.
                   icon: _resetting
                       ? AymaWingLoader(
@@ -792,7 +795,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// profile, never back into the sim.
   Widget _missing(AymaTokens ac) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+      padding: const EdgeInsets.fromLTRB(20, 80, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1244,7 +1247,7 @@ Future<int?> showSimContinueChooser(
                     ],
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
               ],
             ],
           ),

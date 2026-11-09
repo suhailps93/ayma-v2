@@ -74,4 +74,25 @@ void main() {
     expect(lightElevContrast, greaterThanOrEqualTo(4.5),
         reason: 'lightFgMute on lightBgElev contrast ($lightElevContrast) must be >= 4.5');
   });
+
+  test('fgMute on bgCard measures below 4.5:1 floor (4.30:1), guarded so surfaces require fgDim', () {
+    // Defect 15: fgMute against bgCard falls short of the 4.5:1 floor in both themes (4.30:1),
+    // requiring call sites with bgCard fills (e.g. practice composer hint) to use fgDim (7.81:1).
+    final darkBgCardContrast = _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBgCard);
+    final lightBgCardContrast = _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBgCard);
+    expect(darkBgCardContrast, closeTo(4.30, 0.05));
+    expect(darkBgCardContrast, lessThan(4.5),
+        reason: 'darkFgMute on darkBgCard ($darkBgCardContrast) fails 4.5:1 floor');
+    expect(lightBgCardContrast, closeTo(4.30, 0.05));
+    expect(lightBgCardContrast, lessThan(4.5),
+        reason: 'lightFgMute on lightBgCard ($lightBgCardContrast) fails 4.5:1 floor');
+
+    // fgDim passes >= 4.5:1 on bgCard in both themes (measures 7.81:1).
+    final darkFgDimCardContrast = _contrastRatio(AymaColors.darkFgDim, AymaColors.darkBgCard);
+    final lightFgDimCardContrast = _contrastRatio(AymaColors.lightFgDim, AymaColors.lightBgCard);
+    expect(darkFgDimCardContrast, greaterThanOrEqualTo(4.5),
+        reason: 'darkFgDim on darkBgCard contrast ($darkFgDimCardContrast) must be >= 4.5');
+    expect(lightFgDimCardContrast, greaterThanOrEqualTo(4.5),
+        reason: 'lightFgDim on lightBgCard contrast ($lightFgDimCardContrast) must be >= 4.5');
+  });
 }

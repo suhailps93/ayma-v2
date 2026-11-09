@@ -333,6 +333,9 @@ class _SimulationHeader extends StatelessWidget {
           TextButton(
             key: const Key('practiceVoiceEndTextButton'),
             onPressed: onEnd,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+            ),
             child: Text('End',
                 style: AymaType.sans(
                     size: 15, weight: FontWeight.w600, color: ac.accent)),
@@ -355,7 +358,7 @@ class _CoachHint extends StatelessWidget {
     return Container(
       key: const Key('practiceVoiceCoachHint'),
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: ac.accentSoft,
