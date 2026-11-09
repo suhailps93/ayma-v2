@@ -281,6 +281,11 @@ abstract final class ChatContextCaps {
   static const sharedSubjectUid = 128;
   static const sharedSubjectName = 200;
   static const sharedRefVersion = 64;
+  static const sharedCardKind = 32;
+  static const sharedCardUid = 128;
+  static const sharedCardName = 200;
+  static const sharedCardPhoto = 2000;
+  static const sharedCardRefId = 128;
   static const photoUrl = 2000;
   static const photoSource = 16;
   static const screen = 32;
@@ -392,6 +397,11 @@ Map<String, dynamic> buildChatRequestBody({
   String sharedSubjectUid = '',
   String sharedSubjectName = '',
   String sharedRefVersion = '',
+  String sharedCardKind = '',
+  String sharedCardUid = '',
+  String sharedCardName = '',
+  String sharedCardPhoto = '',
+  String sharedCardRefId = '',
   bool profileEdit = false,
   String photoUrl = '',
   String photoSource = '',
@@ -445,6 +455,21 @@ Map<String, dynamic> buildChatRequestBody({
           sharedSubjectName, ChatContextCaps.sharedSubjectName),
       'shared_ref_version':
           clampChatContext(sharedRefVersion, ChatContextCaps.sharedRefVersion),
+      // The Send-to-Ayma CARD posted with this send (any kind): its
+      // identity only, so the server can persist it on the user turn and
+      // the card renders again from history after a restart. Distinct
+      // from the shared_* reference above, which binds the report-pull
+      // tool and is set for report kinds only.
+      'shared_card_kind':
+          clampChatContext(sharedCardKind, ChatContextCaps.sharedCardKind),
+      'shared_card_uid':
+          clampChatContext(sharedCardUid, ChatContextCaps.sharedCardUid),
+      'shared_card_name':
+          clampChatContext(sharedCardName, ChatContextCaps.sharedCardName),
+      'shared_card_photo':
+          clampChatContext(sharedCardPhoto, ChatContextCaps.sharedCardPhoto),
+      'shared_card_ref_id':
+          clampChatContext(sharedCardRefId, ChatContextCaps.sharedCardRefId),
       'profile_edit': profileEdit,
       'photo_url': clampChatContext(photoUrl, ChatContextCaps.photoUrl),
       'photo_source':
@@ -2754,6 +2779,11 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String sharedCardKind = '',
+    String sharedCardUid = '',
+    String sharedCardName = '',
+    String sharedCardPhoto = '',
+    String sharedCardRefId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2796,6 +2826,11 @@ class ApiClient {
           sharedSubjectUid: sharedSubjectUid,
           sharedSubjectName: sharedSubjectName,
           sharedRefVersion: sharedRefVersion,
+          sharedCardKind: sharedCardKind,
+          sharedCardUid: sharedCardUid,
+          sharedCardName: sharedCardName,
+          sharedCardPhoto: sharedCardPhoto,
+          sharedCardRefId: sharedCardRefId,
           profileEdit: profileEdit,
           photoUrl: photoUrl,
           photoSource: photoSource,
@@ -2848,6 +2883,11 @@ class ApiClient {
     String sharedSubjectUid = '',
     String sharedSubjectName = '',
     String sharedRefVersion = '',
+    String sharedCardKind = '',
+    String sharedCardUid = '',
+    String sharedCardName = '',
+    String sharedCardPhoto = '',
+    String sharedCardRefId = '',
     bool profileEdit = false,
     String photoUrl = '',
     String photoSource = '',
@@ -2885,6 +2925,11 @@ class ApiClient {
         sharedSubjectUid: sharedSubjectUid,
         sharedSubjectName: sharedSubjectName,
         sharedRefVersion: sharedRefVersion,
+        sharedCardKind: sharedCardKind,
+        sharedCardUid: sharedCardUid,
+        sharedCardName: sharedCardName,
+        sharedCardPhoto: sharedCardPhoto,
+        sharedCardRefId: sharedCardRefId,
         profileEdit: profileEdit,
         photoUrl: photoUrl,
         photoSource: photoSource,
@@ -3890,6 +3935,11 @@ class ChatMessage {
     this.subjectImage = '',
     this.createdAt,
     this.clientMsgId = '',
+    this.sharedCardKind = '',
+    this.sharedCardUid = '',
+    this.sharedCardName = '',
+    this.sharedCardPhoto = '',
+    this.sharedCardRefId = '',
   });
 
   final String role; // 'user' | 'ayma'
@@ -3925,6 +3975,17 @@ class ChatMessage {
   /// mid-send find the finished turn by exact id. Empty for older rows.
   final String clientMsgId;
 
+  /// The Send-to-Ayma card posted with this user turn (empty unless the
+  /// row carried one): kind + subject uid/name + card photo + tap target
+  /// (a report / match / DM-thread id). The chat rebuilds the tappable
+  /// card from these on a history load — identity only, never the shared
+  /// page's contents.
+  final String sharedCardKind;
+  final String sharedCardUid;
+  final String sharedCardName;
+  final String sharedCardPhoto;
+  final String sharedCardRefId;
+
   factory ChatMessage.fromMap(Map<String, dynamic> m) => ChatMessage(
     role: m['role'] as String? ?? 'ayma',
     text: m['text'] as String? ?? '',
@@ -3939,6 +4000,11 @@ class ChatMessage {
     subjectImage: m['subject_image'] as String? ?? '',
     createdAt: DateTime.tryParse(m['created_at'] as String? ?? ''),
     clientMsgId: m['client_msg_id'] as String? ?? '',
+    sharedCardKind: m['shared_card_kind'] as String? ?? '',
+    sharedCardUid: m['shared_card_uid'] as String? ?? '',
+    sharedCardName: m['shared_card_name'] as String? ?? '',
+    sharedCardPhoto: m['shared_card_photo'] as String? ?? '',
+    sharedCardRefId: m['shared_card_ref_id'] as String? ?? '',
   );
 
   /// Wire-form map (the exact inverse of [fromMap]) for the chat's
@@ -3954,6 +4020,11 @@ class ChatMessage {
     'subject_image': subjectImage,
     'created_at': createdAt?.toIso8601String(),
     'client_msg_id': clientMsgId,
+    'shared_card_kind': sharedCardKind,
+    'shared_card_uid': sharedCardUid,
+    'shared_card_name': sharedCardName,
+    'shared_card_photo': sharedCardPhoto,
+    'shared_card_ref_id': sharedCardRefId,
   };
 }
 

@@ -497,3 +497,66 @@ def test_recent_dedupes_overlong_turn_truncated_in_raw_turns():
     assert messages[1]["role"] == "user" and messages[1]["text"] == "Hi"
     assert messages[2]["role"] == "ayma" and messages[2]["text"] == "Hey Daniel! Good to see you."
 
+
+def test_append_and_recent_carry_a_shared_card():
+    """Founder bug 2026-11-09: a Send-to-Ayma card showed in the live chat
+    but was gone after a restart — the user turn persisted only its text,
+    so the reloaded transcript had nothing to rebuild the card from. The
+    card identity now persists on the row and `recent` returns it."""
+    db = _FakeDB()
+    chat_history.append(
+        db, "u1", "user", "what do y think",
+        shared_card={
+            "kind": "deep_dive",
+            "uid": "u2",
+            "name": "Dana",
+            "photo": "https://example.com/dana.jpg",
+            "ref_id": "dive-123",
+        },
+    )
+    row = db.cm.rows[0]
+    assert row["shared_card_kind"] == "deep_dive"
+    assert row["shared_card_uid"] == "u2"
+    assert row["shared_card_name"] == "Dana"
+    assert row["shared_card_photo"] == "https://example.com/dana.jpg"
+    assert row["shared_card_ref_id"] == "dive-123"
+
+    r = chat_history.recent(db, "u1", limit=40)
+    (m,) = r["messages"]
+    assert m["shared_card_kind"] == "deep_dive"
+    assert m["shared_card_uid"] == "u2"
+    assert m["shared_card_name"] == "Dana"
+    assert m["shared_card_photo"] == "https://example.com/dana.jpg"
+    assert m["shared_card_ref_id"] == "dive-123"
+
+
+def test_recent_returns_empty_card_fields_for_rows_without_a_card():
+    """Plain sends — and every history row written before the card was
+    persisted — come back with empty card fields, never a missing key."""
+    db = _FakeDB(
+        chat_rows=[
+            {"role": "user", "text": "hi", "image_path": "",
+             "created_at": _T0 + timedelta(minutes=1)},
+        ],
+    )
+    chat_history.append(db, "u1", "user", "a plain message")
+    r = chat_history.recent(db, "u1", limit=40)
+    assert len(r["messages"]) == 2
+    for m in r["messages"]:
+        assert m["shared_card_kind"] == ""
+        assert m["shared_card_uid"] == ""
+        assert m["shared_card_name"] == ""
+        assert m["shared_card_photo"] == ""
+        assert m["shared_card_ref_id"] == ""
+
+
+def test_append_never_stamps_a_card_on_an_ayma_turn():
+    """Cards belong to user sends only — an Ayma reply row must not grow
+    one even if a caller passes it by mistake."""
+    db = _FakeDB()
+    chat_history.append(
+        db, "u1", "ayma", "here is my take",
+        shared_card={"kind": "profile", "uid": "u2", "name": "Dana",
+                     "photo": "", "ref_id": ""},
+    )
+    assert "shared_card_kind" not in db.cm.rows[0]
