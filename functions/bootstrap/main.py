@@ -1638,6 +1638,11 @@ class _ChatCtx:
     # it must never trigger the "just shared a photo" or photo-context
     # handling — the photo is not new, Ayma is just now able to see it.
     reply_image: tuple[bytes, str] | None = None
+    # True when this turn's session is in the password-gated analysis
+    # mode (its block rode into ``system_prompt`` above): the generation
+    # paths then also declare/bind the analysis-only failure-log reader
+    # (skills/read_failures.py).
+    analysis_active: bool = False
 
 
 
@@ -2088,6 +2093,7 @@ async def _prepare_chat(
             photo_url, photo_source, photo_image,
             shared_ctx=shared_ctx,
             reply_image=reply_image,
+            analysis_active=bool(analysis_block),
         ),
     )
 
@@ -2633,6 +2639,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
             appearance=bool(ctx.appearance_finding_id),
             shared=bool(ctx.shared_ctx),
+            analysis=ctx.analysis_active,
         ),
         tool_fns=make_session_tool_fns(
             get_db(),
@@ -2672,6 +2679,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
                 if ctx.appearance_finding_id else None
             ),
             shared_ctx=ctx.shared_ctx or None,
+            analysis_session_id=req.session_id if ctx.analysis_active else None,
             # generate_image delivers through the same sink edit_photo
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
@@ -2802,6 +2810,7 @@ async def chat_stream(
                             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
                             appearance=bool(ctx.appearance_finding_id),
                             shared=bool(ctx.shared_ctx),
+                            analysis=ctx.analysis_active,
                         ),
                         tool_fns=make_session_tool_fns(
                             get_db(),
@@ -2841,6 +2850,9 @@ async def chat_stream(
                                 if ctx.appearance_finding_id else None
                             ),
                             shared_ctx=ctx.shared_ctx or None,
+                            analysis_session_id=(
+                                req.session_id if ctx.analysis_active else None
+                            ),
                             image_result=ctx.photo_edit_result,
                             feedback_result=ctx.feedback_draft,
                         ),

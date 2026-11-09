@@ -385,6 +385,28 @@ def _bug_report_lines(db, uid: str) -> str:
     return f"Bug reports: {len(rows)} open for this user — {listed}"
 
 
+def _failure_lines(db, uid: str) -> list[str]:
+    """The user's most recent recorded failures (``failure_log.py``),
+    each carrying the exact stored one-or-two-line error — the record
+    Ayma quotes when asked why something failed."""
+    try:
+        import failure_log
+
+        rows = failure_log.recent_failures(db, uid, limit=3)
+    except Exception:  # noqa: BLE001
+        logger.exception("analysis diagnostics: failure read failed for %s", uid)
+        return ["Recent failures: I cannot read the failure records right now."]
+    if not rows:
+        return ["Recent failures: none recorded."]
+    out = []
+    for row in rows:
+        error = " / ".join(row["error"].splitlines())
+        out.append(
+            f"Recent failure — {row['action']} ({row['at']}): {error[:360]}"
+        )
+    return out
+
+
 def diagnostic_lines(db, uid: str) -> list[str]:
     """Live diagnostic lines: the model stack actually in use (from the
     user's saved settings, the same source the prompt composes from),
@@ -400,6 +422,7 @@ def diagnostic_lines(db, uid: str) -> list[str]:
         logger.exception("analysis diagnostics: model stack read failed for %s", uid)
         lines.append("Model stack in use: I cannot read the saved model settings right now.")
     lines.append(_last_self_check_line(db, uid))
+    lines.extend(_failure_lines(db, uid))
     lines.append(_bug_report_lines(db, uid))
     return lines
 
@@ -460,6 +483,13 @@ def build_analysis_block(db, uid: str, extra_context: str = "") -> str:
         "a bug was logged, flagged in testing, reported, or fixed unless you "
         "can cite the record from the diagnostics below. Never discuss any other user: "
         "these records belong to the signed-in user only.",
+        "FAILURE ANSWERS: when asked why something failed, use ONLY the "
+        "recent-failure lines in the diagnostics below or the "
+        "read_recent_failures tool, and quote the recorded error line "
+        "EXACTLY as written — one or two lines, nothing longer, no "
+        "paraphrase and no added cause. If neither source has a record "
+        "for what they ask about, say plainly that no failure was "
+        "recorded for it.",
         "",
         "DIAGNOSTICS:",
         *diagnostic_lines(db, uid),

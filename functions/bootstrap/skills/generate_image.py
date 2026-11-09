@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+import failure_log
 import gemini
 import photo_moderation
 import token_ledger
@@ -177,6 +178,9 @@ def _bind(
                 token_ledger.CONTEXT_IMAGE_GEN
             )
         except Exception as exc:  # noqa: BLE001 - model refusal/transient error
+            failure_log.record_failure(
+                db, uid, "generate_image", exc, surface="text"
+            )
             logger.warning(
                 "generate_image: image model call failed for %s", uid,
                 exc_info=True,
@@ -196,6 +200,9 @@ def _bind(
         try:
             path, url_out = _store_generated_photo(uid, new_bytes, new_mime)
         except Exception as exc:  # noqa: BLE001
+            failure_log.record_failure(
+                db, uid, "generate_image", exc, surface="text"
+            )
             logger.warning(
                 "generate_image: storage upload failed for %s", uid,
                 exc_info=True,
