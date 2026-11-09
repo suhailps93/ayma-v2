@@ -74,10 +74,10 @@ class _AdminFeedbackScreenState extends State<AdminFeedbackScreen> {
           if (snap.hasError) {
             return Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(20),
                 child: Text(
                   "Couldn't load feedback (${snap.error}).",
-                  style: AymaType.sans(size: 13, color: ac.error),
+                  style: AymaType.sans(size: 13, color: ac.errorText),
                 ),
               ),
             );
@@ -93,7 +93,7 @@ class _AdminFeedbackScreenState extends State<AdminFeedbackScreen> {
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
             itemCount: rows.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, i) => _FeedbackCardTile(
@@ -136,7 +136,7 @@ class _FeedbackCardTile extends StatelessWidget {
         children: [
           Wrap(
             spacing: 8,
-            runSpacing: 6,
+            runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               _pill(
@@ -148,7 +148,7 @@ class _FeedbackCardTile extends StatelessWidget {
               _pill(ac, row.status, ac.secondary),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           if (row.title.isNotEmpty)
             Text(
               row.title,
@@ -161,7 +161,7 @@ class _FeedbackCardTile extends StatelessWidget {
             style: AymaType.sans(size: 14, color: ac.fgDim, height: 1.4),
           ),
           if (row.screenshotPaths.isNotEmpty) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -171,7 +171,7 @@ class _FeedbackCardTile extends StatelessWidget {
               ],
             ),
           ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Text(
             _meta(),
             style: AymaType.sans(size: 11, soft: true, color: ac.fgMute),
@@ -180,6 +180,7 @@ class _FeedbackCardTile extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: SegmentedButton<String>(
+              style: SegmentedButton.styleFrom(minimumSize: const Size(0, 44)),
               showSelectedIcon: false,
               segments: const [
                 ButtonSegment(value: 'new', label: Text('New')),
@@ -219,7 +220,7 @@ class _FeedbackCardTile extends StatelessWidget {
         ),
         child: Text(
           text,
-          style: AymaType.sans(size: 11, color: color)
+          style: AymaType.sans(size: 11, color: ac.fgDim)
               .copyWith(fontWeight: FontWeight.w600),
         ),
       );

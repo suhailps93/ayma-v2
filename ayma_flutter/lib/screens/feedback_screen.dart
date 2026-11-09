@@ -135,6 +135,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
           const Eyebrow('Type'),
           const SizedBox(height: 8),
           SegmentedButton<String>(
+            style: SegmentedButton.styleFrom(minimumSize: const Size(0, 44)),
             segments: const [
               ButtonSegment(value: 'bug', label: Text('Bug')),
               ButtonSegment(value: 'feature', label: Text('Feature')),

@@ -223,6 +223,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         content: Text(message),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.pop(ctx),
             child: const Text('OK'),
           ),
@@ -252,6 +253,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
@@ -295,7 +297,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
             });
           }
           return ListView(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
             children:
                 unlocked ? _unlockedChildren(context) : _lockedChildren(context),
           );
@@ -376,7 +378,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           if (snap.hasError) {
             return Text(
               "Couldn't load spend (${snap.error}).",
-              style: AymaType.sans(size: 13, color: ac.error),
+              style: AymaType.sans(size: 13, color: ac.errorText),
             );
           }
           final u = snap.data;
@@ -526,7 +528,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   Widget _kv(BuildContext context, String k, String v) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -665,7 +667,7 @@ class _Spend extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
@@ -679,6 +681,7 @@ class _Spend extends StatelessWidget {
             ),
             TextButton(
               key: const ValueKey('reset-money-tracker'),
+              style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
               onPressed: resetting ? null : onReset,
               child: const Text('Reset'),
             ),
@@ -746,7 +749,7 @@ class _Spend extends StatelessWidget {
                           _groupTitle(g),
                           style: AymaType.sans(size: 14, color: ac.fg),
                         ),
-                        const SizedBox(height: 2),
+                        const SizedBox(height: 4),
                         Text(
                           _when(g),
                           style: AymaType.sans(size: 11, color: ac.fgMute),

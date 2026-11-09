@@ -438,4 +438,129 @@ void main() {
     await tester.pump();
     expect(tester.widget<TextField>(field).obscureText, isTrue);
   });
+
+  // ── Jobs pass (Wave 1 cluster 9): spacing / colour / alignment ──────────
+
+  testWidgets('jobs pass: the panel ListView uses the 20 screen edge',
+      (tester) async {
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage()),
+      ),
+    );
+    // Same ListView drives locked and unlocked; edge 20 on both.
+    final list = tester.widget<ListView>(find.byType(ListView));
+    expect(list.padding, const EdgeInsets.fromLTRB(20, 20, 20, 40));
+  });
+
+  testWidgets('jobs pass: the spend load-error line uses the errorText token',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final api = _api((req) async {
+      if (req.url.path == '/usage') {
+        return http.Response('boom', 500);
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    final line = find.textContaining("Couldn't load spend");
+    expect(line, findsOneWidget);
+    final color = tester.widget<Text>(line).style!.color;
+    expect(color, AymaTokens.light.errorText);
+    expect(color, isNot(AymaTokens.light.error));
+  });
+
+  testWidgets('jobs pass: spend geometry — kv padding 8, Reset 44, on-grid gaps',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+        api: _usageApi(_usage(
+          groups: [
+            {
+              'id': 'room-1',
+              'kind': 'voice',
+              'day': '2026-09-26',
+              'last_ts': '2026-09-26T10:06:00+00:00',
+              'events': 6,
+              'cost_usd': 1.06,
+              'features': {'voice': 1.06},
+            },
+          ],
+        )),
+      ),
+    );
+
+    // Defect 9: _kv rows pad vertical 8 (the 'Mode' row is a _kv row).
+    final kvPad = tester.widget<Padding>(
+      find.ancestor(of: find.text('Mode'), matching: find.byType(Padding)).first,
+    );
+    expect(kvPad.padding, const EdgeInsets.symmetric(vertical: 8));
+
+    // Defect 6: the spend Reset TextButton clears the 44 floor.
+    final reset = find.byKey(const ValueKey('reset-money-tracker'));
+    expect(tester.getSize(reset).height, greaterThanOrEqualTo(44.0));
+
+    // Defects 10 + 14: the off-grid 6 and 2 gaps are gone from the panel.
+    expect(
+      find.byWidgetPredicate((w) => w is SizedBox && w.height == 6).evaluate(),
+      isEmpty,
+    );
+    expect(
+      find.byWidgetPredicate((w) => w is SizedBox && w.height == 2).evaluate(),
+      isEmpty,
+    );
+  });
+
+  testWidgets('jobs pass: the upgrade-dialog OK button clears the 44 floor',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    final api = _api((req) async {
+      if (req.url.path == '/credits/topup') {
+        return http.Response(
+          jsonEncode({
+            'detail': {
+              'error': 'upgrade_required',
+              'message': 'Upgrade your plan to keep going.',
+            },
+          }),
+          402,
+        );
+      }
+      return http.Response(jsonEncode(_usage()), 200);
+    });
+    await _pump(
+      tester,
+      DeveloperScreen(auth: MockFirebaseAuth(signedIn: true), api: api),
+    );
+    await tester.tap(find.byKey(const ValueKey('dev-free-reload')));
+    await tester.pumpAndSettle();
+    final ok = find.widgetWithText(TextButton, 'OK');
+    expect(ok, findsOneWidget);
+    expect(tester.getSize(ok).height, greaterThanOrEqualTo(44.0));
+  });
+
+  testWidgets('jobs pass: the reset-dialog Cancel button clears the 44 floor',
+      (tester) async {
+    DevPanelSession.instance.unlock('pw');
+    await _pump(
+      tester,
+      DeveloperScreen(
+        auth: MockFirebaseAuth(signedIn: true),
+        api: _usageApi(_usage(sinceReset: 1.08, allTime: 1.08)),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('reset-money-tracker')));
+    await tester.pumpAndSettle();
+    final cancel = find.widgetWithText(TextButton, 'Cancel');
+    expect(cancel, findsOneWidget);
+    expect(tester.getSize(cancel).height, greaterThanOrEqualTo(44.0));
+  });
 }
