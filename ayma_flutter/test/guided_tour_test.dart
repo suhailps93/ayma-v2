@@ -13,6 +13,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/widgets/voice_control_mark.dart';
 
 /// The Ayma-DRIVEN interactive tour (§11.2b): the backend pushes one step at a
 /// time; the client spotlights it with the shared [CoachMarkOverlay] in driven
@@ -806,6 +807,8 @@ void main() {
     late DocumentReference<Map<String, dynamic>> eventDoc;
     late List<int> tourPings;
     late int realTaps;
+    late int pageTaps;
+    late ScrollController pageScroll;
     late bool voiceLive;
     late String routerPath;
     late List<String> pushed;
@@ -836,11 +839,32 @@ void main() {
               Positioned(
                 left: 24,
                 bottom: 24,
-                child: GestureDetector(
-                  key: TourAnchors.keyFor(TourAnchors.homeOrb),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => realTaps++,
-                  child: const SizedBox(width: 64, height: 64),
+                child: VoiceControlMark(
+                  child: GestureDetector(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => realTaps++,
+                    child: const SizedBox(width: 64, height: 64),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 200,
+                top: 0,
+                width: 200,
+                height: 300,
+                child: ListView(
+                  key: const ValueKey('opened-page-list'),
+                  controller: pageScroll,
+                  children: [
+                    GestureDetector(
+                      key: const ValueKey('opened-page-button'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => pageTaps++,
+                      child: const SizedBox(height: 60),
+                    ),
+                    const SizedBox(height: 2000),
+                  ],
                 ),
               ),
             ],
@@ -910,6 +934,8 @@ void main() {
       eventDoc = fake.doc('users/u1/app_commands/tour_event');
       tourPings = <int>[];
       realTaps = 0;
+      pageTaps = 0;
+      pageScroll = ScrollController();
       voiceLive = false;
       routerPath = '/';
       pushed = <String>[];
@@ -973,7 +999,81 @@ void main() {
 
       expect(pushed, ['/profile/wiki']);
       expect((await lastEvent())!['attempt'], 1);
+      expect((await lastEvent())!['event'], 'performed');
+    });
+
+    testWidgets('the opened page scrolls and works while the tour waits, and '
+        'a tap on it is not the go', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a3b', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('opened-page-button')));
+      await settle(tester);
+      await tester.drag(
+        find.byKey(const ValueKey('opened-page-list')),
+        const Offset(0, -200),
+      );
+      await settle(tester);
+
+      expect(pageTaps, 1);
+      expect(pageScroll.offset, greaterThan(0));
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isTrue);
+      expect((await lastEvent())!['event'], 'performed');
+      expect(tourPings, isEmpty);
+    });
+
+    testWidgets('before the action runs the page stays blocked', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('a3c', command: navCommand));
+
+      await tester.tapAt(tester.getCenter(
+        find.byKey(const ValueKey('opened-page-button')),
+      ));
+      await settle(tester);
+
+      expect(pageTaps, 0);
+      expect(GuidedTourController.instance.step!.performed, isFalse);
+    });
+
+    testWidgets('on a call a performed step blocks the orb but not the page',
+        (tester) async {
+      addTearDown(shellStub());
+      voiceLive = true;
+      final svc = service();
+      await show(tester, svc, stepCmd('a3d', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
       expect(realTaps, 0);
+      expect((await lastEvent())!['event'], 'performed');
+
+      await tester.tap(find.byKey(const ValueKey('opened-page-button')));
+      await settle(tester);
+      expect(pageTaps, 1);
+    });
+
+    testWidgets('with no call the orb is live again on a performed step',
+        (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a3e', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(realTaps, 1);
+      expect((await lastEvent())!['event'], 'performed');
     });
 
     testWidgets('a double tap performs the step once', (tester) async {
