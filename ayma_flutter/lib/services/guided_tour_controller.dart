@@ -9,12 +9,14 @@ import 'tour_content.dart';
 /// Unlike the passive tour (a local `List<TourFeature>` the overlay walks on
 /// its own), each driven step is a single [feature] plus callbacks that report
 /// back to [AppCommandService] so the backend can ack it and wait for the
-/// user's real tap before sending the next step:
+/// user before sending the next step:
 ///  * [onShown]   — the spotlight is up (ack `ok:true`);
 ///  * [onAbsent]  — the anchor isn't on this build (ack `ok:false` → backend
 ///                  skips the step honestly);
-///  * [onTapped]  — the user tapped the highlighted control (the tour advances);
-///  * [onSkip]    — the user pressed Next on the card (move on WITHOUT a tap;
+///  * [onTapped]  — the user tapped the highlight: Ayma performs the step's
+///                  command, or a step with nothing to perform completes;
+///  * [onSkip]    — the user pressed Next on the card (the go after a
+///                  performed step, or a move on without performing it;
 ///                  optional — steps built outside the service may omit it);
 ///  * [onStop]    — the user pressed "Skip tour" (the whole tour ends).
 @immutable
@@ -29,6 +31,7 @@ class GuidedTourStep {
     required this.onTapped,
     required this.onStop,
     this.onSkip,
+    this.performed = false,
   });
 
   /// A per-command id; the overlay is keyed by it so every pushed step gets a
@@ -47,6 +50,35 @@ class GuidedTourStep {
   final VoidCallback onTapped;
   final VoidCallback onStop;
   final VoidCallback? onSkip;
+
+  /// The step's command ran and is confirmed: the highlight is gone so the
+  /// user can look at what opened, and the tour waits for their go.
+  final bool performed;
+
+  /// This step with [notice] as its card line, keeping the token so the
+  /// overlay stays up instead of re-measuring.
+  GuidedTourStep withOutcome({required bool performed, required String notice}) {
+    return GuidedTourStep(
+      token: token,
+      feature: TourFeature(
+        featureId: feature.featureId,
+        headline: feature.headline,
+        subtitle: notice,
+        icon: feature.icon,
+        anchorId: feature.anchorId,
+        tab: feature.tab,
+        typingAllowed: feature.typingAllowed,
+      ),
+      index: index,
+      total: total,
+      onShown: onShown,
+      onAbsent: onAbsent,
+      onTapped: onTapped,
+      onStop: onStop,
+      onSkip: onSkip,
+      performed: performed,
+    );
+  }
 }
 
 /// App-wide controller for the Ayma-driven tour's current step. A singleton like
@@ -61,6 +93,7 @@ class GuidedTourController extends ChangeNotifier {
 
   GuidedTourStep? _step;
   bool _sessionActive = false;
+  bool _voiceOnly = false;
 
   /// The step currently being spotlighted, or null when no driven tour step is
   /// up (including the brief gap between a tap and the next step).
@@ -76,10 +109,42 @@ class GuidedTourController extends ChangeNotifier {
   /// (founder, 2026-11-03: "it is not highlighting the right one").
   bool get sessionActive => _sessionActive;
 
+  /// Whether a live voice call is running, so the user's go is spoken only:
+  /// the card hides Next and a tap never counts as the go (a tap near the
+  /// orb can disconnect Ayma, founder 2026-11-08).
+  bool get voiceOnly => _voiceOnly;
+
+  /// Whether the step with [token] is still the one showing.
+  bool isShowing(String token) => _step?.token == token;
+
   /// Show (or replace) the current driven step and mark the session active.
-  void show(GuidedTourStep step) {
+  void show(GuidedTourStep step, {bool voiceOnly = false}) {
     _step = step;
     _sessionActive = true;
+    _voiceOnly = voiceOnly;
+    notifyListeners();
+  }
+
+  /// A call started or ended mid-step: the showing step follows it at once,
+  /// so a call that drops never leaves the user without Next.
+  void setVoiceOnly(bool voiceOnly) {
+    if (_voiceOnly == voiceOnly) return;
+    _voiceOnly = voiceOnly;
+    notifyListeners();
+  }
+
+  /// Record the outcome of the showing step's command: [performed] takes the
+  /// highlight down and waits for the go; otherwise the highlight stays so
+  /// the user can tap again. [notice] replaces the card line either way. A
+  /// no-op when [token] is no longer the step showing.
+  void recordOutcome(
+    String token, {
+    required bool performed,
+    required String notice,
+  }) {
+    final step = _step;
+    if (step == null || step.token != token) return;
+    _step = step.withOutcome(performed: performed, notice: notice);
     notifyListeners();
   }
 

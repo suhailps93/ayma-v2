@@ -142,6 +142,10 @@ class TourHost extends StatelessWidget {
       onAnchorTapped: step.onTapped,
       onSkipPressed: step.onSkip,
       onStopPressed: step.onStop,
+      hideNextButton: GuidedTourController.instance.voiceOnly,
+      pressThrough: false,
+      performed: step.performed,
+      protectVoiceControls: GuidedTourController.instance.voiceOnly,
     );
   }
 }

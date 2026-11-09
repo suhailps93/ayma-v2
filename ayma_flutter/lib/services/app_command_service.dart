@@ -23,6 +23,7 @@ import 'profile_service.dart';
 import 'push_service.dart';
 import 'screen_capture.dart';
 import 'theme_controller.dart';
+import 'tab_request.dart';
 import 'tour_anchors.dart';
 import 'tour_content.dart';
 import 'tour_controller.dart';
@@ -286,7 +287,7 @@ class AppCommandService {
     }
   }
 
-  /// Bridge an async tour tap to a model-narrated advance (§11.2b): on voice,
+  /// Bridge a tour response to a model-narrated turn (§11.2b): on voice,
   /// tell the live agent (data channel → `generate_reply`); otherwise fire the
   /// TEXT `/chat` continuation. Either way the model calls `advance_guided_tour`,
   /// which consumes the already-written `tour_event` and narrates/spotlights the
@@ -380,12 +381,14 @@ class AppCommandService {
   /// (e.g. no Firebase in a unit test) — voice navigation just won't work.
   void start() {
     _voiceActive = true;
+    GuidedTourController.instance.setVoiceOnly(true);
     _listen();
   }
 
   /// The voice session ended; keeps listening if the app is foregrounded.
   Future<void> stop() async {
     _voiceActive = false;
+    GuidedTourController.instance.setVoiceOnly(false);
     await _detachIfUnwanted();
   }
 
@@ -503,16 +506,9 @@ class AppCommandService {
     if (data['action'] == 'tour_step') {
       // The Ayma-driven tour spotlights one step and acks it only once the
       // overlay reports it shown (or its anchor absent), then waits for the
-      // user's real tap on a separate `tour_event` doc — so it owns its ack,
+      // user's response on a separate `tour_event` doc — so it owns its ack,
       // like ui_action (§11.2b).
       _runTourStep(snap.reference, data, id);
-      return;
-    }
-    if (data['action'] == 'tour_probe') {
-      // The tour's post-tap re-read (rewire): ack the CURRENT screen/route
-      // so the backend can verify the tap landed where it should before
-      // advancing. Owns its ack, like tour_step.
-      _runTourProbe(snap.reference, id);
       return;
     }
     if (_navigationActions.contains(data['action'])) {
@@ -832,8 +828,10 @@ class AppCommandService {
 
   /// Show one Ayma-driven tour step (§11.2b) and wire its reports back to the
   /// backend: ack `ok:true` once spotlighted, ack `ok:false` (anchor absent) so
-  /// the backend skips it, and — on the user's real tap or a "Skip tour" — a
-  /// `tour_event` write the backend's `advance_guided_tour` is polling for.
+  /// the backend skips it, and report the user's response on `tour_event`,
+  /// which the backend's `advance_guided_tour` polls: the confirmed outcome
+  /// of the step's command (`performed` / `action_failed`), a tap on a step
+  /// with nothing to perform (`tapped`), Next (`skip`) or "Skip tour" (`stop`).
   @visibleForTesting
   void runTourStep(
     DocumentReference<Map<String, dynamic>> ref,
@@ -876,7 +874,7 @@ class AppCommandService {
       await _deleteIfStillCommand(ref, id);
     }
 
-    void event(String name) {
+    void event(String name, {int? attempt}) {
       // Surface a failed write (don't swallow it): a silently-denied tour_event
       // write — e.g. a missing Firestore rule for the doc — is exactly what hung
       // the tour with no trace (founder/Scout, 2026-11-03). The tour degrades
@@ -886,6 +884,7 @@ class AppCommandService {
           .set(<String, dynamic>{
             'index': index,
             'event': name,
+            if (attempt != null) 'attempt': attempt,
             'ts': FieldValue.serverTimestamp(),
           })
           .catchError((Object e) {
@@ -906,13 +905,38 @@ class AppCommandService {
       final slug = cur.screen;
       if (slug.isEmpty) return true;
       if (tab != null) {
-        const slugs = ['ayma', 'explore', 'messages', 'profile_tab'];
-        return tab >= 0 && tab < slugs.length && slug == slugs[tab];
+        return tab >= 0 && tab < _tabSlugs.length && slug == _tabSlugs[tab];
       }
       if (stepRoute.isNotEmpty) return cur.route == stepRoute;
-      const tabSlugs = {'ayma', 'explore', 'messages', 'profile_tab'};
-      return tabSlugs.contains(slug) &&
+      return _tabSlugs.contains(slug) &&
           (cur.route.isEmpty || cur.route == '/');
+    }
+
+    final command = (cmd['command'] as Map?)?.cast<String, dynamic>();
+    final guided = GuidedTourController.instance;
+    var attempt = 0;
+    var inFlight = false;
+    var performed = false;
+
+    // Ayma performs the step: run its command, report the confirmed outcome
+    // and stay on the step. Only the user's go moves the tour. On a call the
+    // live agent is told so she can say so; in text the card already does.
+    Future<void> perform(Map<String, dynamic> stepCommand) async {
+      final ok = await runTourCommand(stepCommand);
+      inFlight = false;
+      if (!guided.isShowing(id)) return; // the user moved on meanwhile
+      performed = ok;
+      event(ok ? 'performed' : 'action_failed', attempt: attempt);
+      final go = _hasActiveVoice() ? 'say next' : 'tap Next';
+      guided.recordOutcome(
+        id,
+        performed: ok,
+        notice: ok
+            ? "Have a look. When you're ready, $go."
+            : "That didn't open. Tap the highlight to try again, or $go to "
+                'move on.',
+      );
+      if (_hasActiveVoice()) _kickTourAdvance(index);
     }
 
     void showStep() {
@@ -920,7 +944,6 @@ class AppCommandService {
       // coach-mark tour that happens to be up (e.g. a first-run
       // walkthrough) so the two never fight over the overlay.
       TourController.instance.finish();
-      final guided = GuidedTourController.instance;
       guided.show(
       GuidedTourStep(
         token: id,
@@ -945,13 +968,24 @@ class AppCommandService {
           guided.clearStep();
           unawaited(ack(false));
         },
-        // The ONLY thing that advances a step: the user's real tap on the
-        // spotlighted control (the press-through). It writes the tap event the
-        // backend's advance_guided_tour consumes, clears this step's spotlight
-        // (session stays active until tour_end), and KICKS a model turn so the
-        // tour advances even if no blocking advance_guided_tour happened to be
-        // mid-wait at tap time (founder/Scout live failure, 2026-11-03).
+        // The tap on the highlight. A step with a command is Ayma's to
+        // perform; the flag is set before anything awaits, so a double tap
+        // can't run it twice, and a performed step can't run again. A step
+        // with nothing to perform completes on the tap: it writes the event
+        // the backend's advance_guided_tour consumes, clears the spotlight
+        // (session stays active until tour_end), and KICKS a model turn so
+        // the tour advances even if no blocking advance_guided_tour happened
+        // to be mid-wait (founder/Scout live failure, 2026-11-03). On a call
+        // the go is spoken only, so that tap does nothing.
         onTapped: () {
+          if (command != null) {
+            if (inFlight || performed) return;
+            inFlight = true;
+            attempt++;
+            unawaited(perform(command));
+            return;
+          }
+          if (_hasActiveVoice()) return;
           event('tapped');
           guided.clearStep();
           _kickTourAdvance(index);
@@ -962,14 +996,16 @@ class AppCommandService {
           guided.endSession();
           _kickTourStop(index);
         },
-        // The card's Next button: move on WITHOUT a tap — a 'skip' event
-        // the backend consumes exactly like a spoken "next".
+        // The card's Next button: the go after a performed step, or a move
+        // on without performing it — a 'skip' event the backend consumes
+        // exactly like a spoken "next".
         onSkip: () {
           event('skip');
           guided.clearStep();
           _kickTourAdvance(index);
         },
       ),
+      voiceOnly: _hasActiveVoice(),
       );
     }
 
@@ -994,35 +1030,64 @@ class AppCommandService {
     }());
   }
 
-  /// Answer one `tour_probe` command (§11.2b rewire): ack the screen the
-  /// user is on right now (slug + route from [AppContext]) — the tour's
-  /// post-tap re-read. No UI is shown for a probe.
+  /// The shell's tabs, by [IndexedStack] slot, as [AppContext] names them.
+  static const _tabSlugs = ['ayma', 'explore', 'messages', 'profile_tab'];
+
+  /// How long a tour action may take to show up after it was dispatched.
+  static const _tourConfirmPolls = 40;
+  static const _tourConfirmInterval = Duration(milliseconds: 50);
+
+  /// Run one tour step's command and report whether it really happened. The
+  /// tour advances on the user's word after this, so unlike a spoken open it
+  /// waits for the router or the shell to show the result rather than
+  /// trusting the dispatch. Any failure is reported, never thrown.
   @visibleForTesting
-  void runTourProbe(
-    DocumentReference<Map<String, dynamic>> ref, {
-    required String id,
-  }) {
-    _runTourProbe(ref, id);
+  Future<bool> runTourCommand(Map<String, dynamic> cmd) async {
+    try {
+      final done = cmd['action'] == 'switch_tab'
+          ? _switchShellTab((cmd['tab'] as num?)?.toInt() ?? -1)
+          : _openAndConfirm(cmd);
+      return await done.timeout(_navigationAckCap, onTimeout: () => false);
+    } catch (e) {
+      debugPrint('Ayma tour action ${cmd['action']} failed: $e');
+      return false;
+    }
   }
 
-  void _runTourProbe(
-    DocumentReference<Map<String, dynamic>> ref,
-    String id,
-  ) {
-    final cur = AppContext.instance.current.value;
-    unawaited(() async {
-      await ref.parent
-          .doc('ack')
-          .set(<String, dynamic>{
-            'id': id,
-            'ok': true,
-            'screen': cur.screen,
-            'route': cur.route,
-            'ts': FieldValue.serverTimestamp(),
-          })
-          .catchError((_) {});
-      await _deleteIfStillCommand(ref, id);
-    }());
+  /// Open a page and confirm the router left where it was: on the target, or
+  /// wherever the target redirects to.
+  Future<bool> _openAndConfirm(Map<String, dynamic> cmd) async {
+    final target = _navigationTarget(cmd);
+    if (target == null) return false;
+    final before = _currentPath();
+    if (!await openDestination(target)) return false;
+    final bare = target.split('?').first;
+    return _confirmedWithin(() {
+      final now = _currentPath();
+      return now == bare || now != before;
+    });
+  }
+
+  /// Switch the shell's [IndexedStack] tab. Tabs share route '/', so the
+  /// confirmation is the slug the shell publishes once it has switched. A
+  /// request nobody picked up is withdrawn, so it can't fire later.
+  Future<bool> _switchShellTab(int tab) async {
+    if (tab < 0 || tab >= _tabSlugs.length) return false;
+    if (_chatPopupOpen()) await _closeChatPopup();
+    TabRequest.instance.request(tab);
+    final switched = await _confirmedWithin(
+      () => AppContext.instance.current.value.screen == _tabSlugs[tab],
+    );
+    if (!switched) TabRequest.instance.consume();
+    return switched;
+  }
+
+  Future<bool> _confirmedWithin(bool Function() landed) async {
+    for (var i = 0; i < _tourConfirmPolls; i++) {
+      if (landed()) return true;
+      await Future<void>.delayed(_tourConfirmInterval);
+    }
+    return landed();
   }
 
   /// Execute one `go_back` command and ack it with the outcome: `ok`,

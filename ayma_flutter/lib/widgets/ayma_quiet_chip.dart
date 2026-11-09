@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'voice_control_mark.dart';
 
 /// Shown during a live voice call while the agent has been told to "shut up"
 /// (server-side mute) so the silence reads as deliberate, not broken — with
@@ -52,22 +53,24 @@ class AymaQuietChip extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Semantics(
-            button: true,
-            label: 'Unmute Ayma',
-            excludeSemantics: true,
-            onTap: onUnmute,
-            child: TextButton.icon(
-              key: const Key('aymaQuietUnmute'),
-              onPressed: onUnmute,
-              icon: const Icon(Icons.volume_up_rounded, size: 16),
-              label: const Text('Unmute'),
-              style: TextButton.styleFrom(
-                foregroundColor: ac.onAccent,
-                backgroundColor: ac.accent,
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                shape: const StadiumBorder(),
+          VoiceControlMark(
+            child: Semantics(
+              button: true,
+              label: 'Unmute Ayma',
+              excludeSemantics: true,
+              onTap: onUnmute,
+              child: TextButton.icon(
+                key: const Key('aymaQuietUnmute'),
+                onPressed: onUnmute,
+                icon: const Icon(Icons.volume_up_rounded, size: 16),
+                label: const Text('Unmute'),
+                style: TextButton.styleFrom(
+                  foregroundColor: ac.onAccent,
+                  backgroundColor: ac.accent,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  shape: const StadiumBorder(),
+                ),
               ),
             ),
           ),

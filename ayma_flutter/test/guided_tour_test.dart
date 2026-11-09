@@ -1,21 +1,24 @@
 import 'package:ayma_flutter/services/app_command_service.dart';
 import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/guided_tour_controller.dart';
+import 'package:ayma_flutter/services/tab_request.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
+import 'package:ayma_flutter/widgets/tour_host.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ayma_flutter/widgets/voice_control_mark.dart';
 
 /// The Ayma-DRIVEN interactive tour (§11.2b): the backend pushes one step at a
 /// time; the client spotlights it with the shared [CoachMarkOverlay] in driven
-/// mode and reports shown / absent / tapped / stop back, so the agent advances
-/// only after the user taps the real control.
+/// mode and reports shown / absent / tapped / stop back. A tap on the highlight
+/// makes Ayma perform the step; only the user's go moves the tour on.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -565,22 +568,6 @@ void main() {
       expect(ack['screen'], 'explore');
     });
 
-    testWidgets('tour_probe acks the current screen and route, no UI',
-        (tester) async {
-      await tester.pumpWidget(controllerHost());
-      AppContext.instance.current.value =
-          const ScreenContext(screen: 'profile_tab', route: '/');
-      svc.runTourProbe(pending, id: 'p1');
-      await settle(tester);
-      final ack = (await fake.doc('users/u1/app_commands/ack').get()).data();
-      expect(ack, isNotNull);
-      expect(ack!['id'], 'p1');
-      expect(ack['ok'], isTrue);
-      expect(ack['screen'], 'profile_tab');
-      expect(ack['route'], '/');
-      expect(find.byKey(const ValueKey('coach-spotlight')), findsNothing);
-    });
-
     testWidgets('tour_end dismisses the overlay and acks ok', (tester) async {
       await tester.pumpWidget(controllerHost());
       GuidedTourController.instance.show(GuidedTourStep(
@@ -602,6 +589,412 @@ void main() {
       expect(ok, isTrue);
       await settle(tester);
       expect(GuidedTourController.instance.active, isFalse);
+    });
+  });
+
+  group('action-driven steps through the real TourHost (founder, 2026-11-08)', () {
+    late FakeFirebaseFirestore fake;
+    late DocumentReference<Map<String, dynamic>> pending;
+    late DocumentReference<Map<String, dynamic>> eventDoc;
+    late List<int> tourPings;
+    late int realTaps;
+    late int pageTaps;
+    late ScrollController pageScroll;
+    late bool voiceLive;
+    late String routerPath;
+    late List<String> pushed;
+
+    AppCommandService service() => AppCommandService(
+          firestore: fake,
+          auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+          sendTourContinuation: (index) async => tourPings.add(index),
+          sendTourStop: (index) async {},
+          hasActiveVoice: () => voiceLive,
+          chatPopupOpen: () => false,
+          currentPath: () => routerPath,
+          navigate: (path) {
+            pushed.add(path);
+            routerPath = path;
+          },
+        );
+
+    // The real TourHost over a real tappable control at the anchor, plus a
+    // stand-in for the shell's tab switch (TabRequest -> AppContext slug).
+    Widget host() {
+      return MaterialApp(
+        theme: AymaTheme.dark,
+        builder: (context, child) => TourHost(child: child!),
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 24,
+                bottom: 24,
+                child: VoiceControlMark(
+                  child: GestureDetector(
+                    key: TourAnchors.keyFor(TourAnchors.homeOrb),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => realTaps++,
+                    child: const SizedBox(width: 64, height: 64),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 200,
+                top: 0,
+                width: 200,
+                height: 300,
+                child: ListView(
+                  key: const ValueKey('opened-page-list'),
+                  controller: pageScroll,
+                  children: [
+                    GestureDetector(
+                      key: const ValueKey('opened-page-button'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => pageTaps++,
+                      child: const SizedBox(height: 60),
+                    ),
+                    const SizedBox(height: 2000),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    void Function() shellStub() {
+      const slugs = ['ayma', 'explore', 'messages', 'profile_tab'];
+      void listener() {
+        final tab = TabRequest.instance.consume();
+        if (tab != null) {
+          AppContext.instance.current.value =
+              ScreenContext(screen: slugs[tab], route: '/');
+        }
+      }
+
+      TabRequest.instance.pending.addListener(listener);
+      return () => TabRequest.instance.pending.removeListener(listener);
+    }
+
+    Map<String, dynamic> stepCmd(String id, {Map<String, dynamic>? command}) =>
+        <String, dynamic>{
+          'action': 'tour_step',
+          'id': id,
+          'index': 1,
+          'total': 9,
+          'anchor': TourAnchors.homeOrb,
+          'headline': 'Explore',
+          'say': 'Tap Explore.',
+          'command': command,
+        };
+
+    const tabCommand = <String, dynamic>{'action': 'switch_tab', 'tab': 1};
+    const navCommand = <String, dynamic>{
+      'action': 'navigate',
+      'screen': 'story',
+      'path': '/profile/wiki',
+    };
+    const anchorTap = Offset(56, 544);
+
+    Future<void> show(
+      WidgetTester tester,
+      AppCommandService svc,
+      Map<String, dynamic> cmd,
+    ) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host());
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: cmd['id'] as String);
+      await settle(tester);
+    }
+
+    Future<Map<String, dynamic>?> lastEvent() async =>
+        (await eventDoc.get()).data();
+
+    setUp(() {
+      GuidedTourController.instance.endSession();
+      AppContext.instance.current.value = const ScreenContext();
+      VoiceSessionController.active = null;
+      TabRequest.instance.consume();
+      fake = FakeFirebaseFirestore();
+      pending = fake.doc('users/u1/app_commands/pending');
+      eventDoc = fake.doc('users/u1/app_commands/tour_event');
+      tourPings = <int>[];
+      realTaps = 0;
+      pageTaps = 0;
+      pageScroll = ScrollController();
+      voiceLive = false;
+      routerPath = '/';
+      pushed = <String>[];
+    });
+
+    tearDown(() => GuidedTourController.instance.endSession());
+
+    testWidgets('the tap never reaches the real control, Ayma switches the '
+        'tab, and the tour waits for the go', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a1', command: tabCommand));
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(realTaps, 0);
+      expect(AppContext.instance.current.value.screen, 'explore');
+      final ev = await lastEvent();
+      expect(ev!['event'], 'performed');
+      expect(ev['index'], 1);
+      expect(ev['attempt'], 1);
+      // Still on this step, highlight gone, Next offered; no timed advance.
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isTrue);
+      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+      expect(find.textContaining('tap Next'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 30));
+      expect(guided.active, isTrue);
+      expect((await lastEvent())!['event'], 'performed');
+      // Text surface: no model turn is spent on a performed step.
+      expect(tourPings, isEmpty);
+    });
+
+    testWidgets('Next after a performed step is the go', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a2', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('coach-next')));
+      await settle(tester);
+
+      expect((await lastEvent())!['event'], 'skip');
+      expect(GuidedTourController.instance.active, isFalse);
+      expect(GuidedTourController.instance.sessionActive, isTrue);
+      expect(tourPings, [1]);
+    });
+
+    testWidgets('a tap on the spot after it is performed does not run it again',
+        (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('a3', command: navCommand));
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(pushed, ['/profile/wiki']);
+      expect((await lastEvent())!['attempt'], 1);
+      expect((await lastEvent())!['event'], 'performed');
+    });
+
+    testWidgets('the opened page scrolls and works while the tour waits, and '
+        'a tap on it is not the go', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a3b', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('opened-page-button')));
+      await settle(tester);
+      await tester.drag(
+        find.byKey(const ValueKey('opened-page-list')),
+        const Offset(0, -200),
+      );
+      await settle(tester);
+
+      expect(pageTaps, 1);
+      expect(pageScroll.offset, greaterThan(0));
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isTrue);
+      expect((await lastEvent())!['event'], 'performed');
+      expect(tourPings, isEmpty);
+    });
+
+    testWidgets('before the action runs the page stays blocked', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('a3c', command: navCommand));
+
+      await tester.tapAt(tester.getCenter(
+        find.byKey(const ValueKey('opened-page-button')),
+      ));
+      await settle(tester);
+
+      expect(pageTaps, 0);
+      expect(GuidedTourController.instance.step!.performed, isFalse);
+    });
+
+    testWidgets('on a call a performed step blocks the orb but not the page',
+        (tester) async {
+      addTearDown(shellStub());
+      voiceLive = true;
+      final svc = service();
+      await show(tester, svc, stepCmd('a3d', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+      expect(GuidedTourController.instance.step!.performed, isTrue);
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+      expect(realTaps, 0);
+      expect((await lastEvent())!['event'], 'performed');
+
+      await tester.tap(find.byKey(const ValueKey('opened-page-button')));
+      await settle(tester);
+      expect(pageTaps, 1);
+    });
+
+    testWidgets('with no call the orb is live again on a performed step',
+        (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a3e', command: tabCommand));
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(realTaps, 1);
+      expect((await lastEvent())!['event'], 'performed');
+    });
+
+    testWidgets('a double tap performs the step once', (tester) async {
+      addTearDown(shellStub());
+      final svc = service();
+      await show(tester, svc, stepCmd('a4', command: navCommand));
+
+      GuidedTourController.instance.step!.onTapped();
+      GuidedTourController.instance.step!.onTapped();
+      await settle(tester);
+
+      expect(pushed, ['/profile/wiki']);
+      expect((await lastEvent())!['attempt'], 1);
+    });
+
+    testWidgets('a failed action stays on the step, says so, and can be '
+        'retried', (tester) async {
+      final svc = service();
+      // No shell is listening, so the tab switch can't be confirmed.
+      await show(tester, svc, stepCmd('a5', command: tabCommand));
+
+      await tester.tapAt(anchorTap);
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+
+      expect((await lastEvent())!['event'], 'action_failed');
+      final guided = GuidedTourController.instance;
+      expect(guided.active, isTrue);
+      expect(guided.step!.performed, isFalse);
+      expect(find.textContaining("didn't open"), findsOneWidget);
+      expect(TabRequest.instance.pending.value, isNull);
+
+      addTearDown(shellStub());
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+      final ev = await lastEvent();
+      expect(ev!['event'], 'performed');
+      expect(ev['attempt'], 2);
+    });
+
+    testWidgets('a look step completes on the tap in text, without reaching '
+        'the real control', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd('a6'));
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(realTaps, 0);
+      expect((await lastEvent())!['event'], 'tapped');
+      expect(tourPings, [1]);
+    });
+
+    testWidgets('on a call a tap on the orb step is neither the go nor a real '
+        'orb tap, and Next is hidden', (tester) async {
+      voiceLive = true;
+      final svc = service();
+      await show(tester, svc, stepCmd('a7'));
+
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.byKey(const ValueKey('coach-skip')), findsOneWidget);
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect(realTaps, 0);
+      expect(await lastEvent(), isNull);
+      expect(GuidedTourController.instance.active, isTrue);
+      expect(tourPings, isEmpty);
+    });
+
+    testWidgets('on a call the highlight still performs the step and the agent '
+        'is told; the go stays spoken', (tester) async {
+      addTearDown(shellStub());
+      voiceLive = true;
+      final svc = service();
+      await show(tester, svc, stepCmd('a8', command: tabCommand));
+
+      await tester.tapAt(anchorTap);
+      await settle(tester);
+
+      expect((await lastEvent())!['event'], 'performed');
+      expect(tourPings, [1]);
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+      expect(find.textContaining('say next'), findsOneWidget);
+    });
+
+    testWidgets('a call ending mid-step gives Next back', (tester) async {
+      voiceLive = true;
+      final svc = service();
+      await show(tester, svc, stepCmd('a9'));
+      expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+
+      GuidedTourController.instance.setVoiceOnly(false);
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('coach-next')), findsOneWidget);
+    });
+
+    test('a navigate that never leaves the page reports false, not the '
+        'dispatch', () async {
+      final svc = AppCommandService(
+        firestore: fake,
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+        chatPopupOpen: () => false,
+        currentPath: () => '/',
+        navigate: (_) {},
+      );
+      expect(await svc.runTourCommand(navCommand), isFalse);
+    });
+
+    test('a navigate that redirects elsewhere still counts as landed',
+        () async {
+      var path = '/';
+      final svc = AppCommandService(
+        firestore: fake,
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+        chatPopupOpen: () => false,
+        currentPath: () => path,
+        navigate: (_) => path = '/skills',
+      );
+      expect(await svc.runTourCommand(navCommand), isTrue);
+    });
+
+    test('an unusable command reports false', () async {
+      final svc = service();
+      expect(await svc.runTourCommand({'action': 'nonsense'}), isFalse);
+      expect(
+        await svc.runTourCommand({'action': 'switch_tab', 'tab': 9}),
+        isFalse,
+      );
     });
   });
 }

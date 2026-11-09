@@ -4,6 +4,11 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## TOUR-ACTION-DRIVEN — Guided tour redesign (fleet/tour-action-driven off staging ac75fa1e, 2026-11-08) — DONE, awaiting staging sweep and device test
+- Ayma performs each step when the user taps the highlight, and the tour waits for the user's go (Next, or spoken on a call). See ARCHITECTURE §11.2b.
+- **Founder decided (2026-11-08, 4:09 PM PT):** the `explore_search` line no longer asks the user to tap and tell Ayma who, and an opened page scrolls and works while the tour waits; only the orb and voice controls stay blocked, and only on a live call.
+- **Follow-on, not built:** page-scoped voice explainer — on voice, "what does each item on this page do" runs the highlight sequence for that page only, explaining and performing nothing (founder, 2026-11-08). Branch on top of this one.
+
 ## PHOTO-ADD-FIXES — Fix photo adding: face-embedding non-fatal graceful degradation + moderation reason toast surfacing (fleet/photo-add-fixes off staging tip ac75fa1e, 2026-11-08) — DONE
 - **Bug 1 — Face-embedding step unconditionally raised in photo pipeline (BACKEND DEFECT — FIXED):**
   - **Root cause:** In `functions/bootstrap/media_embed.py:25-33`, `embed_image_bytes` unconditionally raised `DirectGoogleDisabledError` because embeddings call direct Vertex, which is disabled under the founder LiveKit-only inference rule. For any user with biometric face-matching consent (`biometric_consent.has_consent_fresh`), `photo_pipeline._embed_and_attrs` executed `embed_image_bytes` and failed before writing any `user_media` record, causing `POST /media` to return 502 for photos that had already passed moderation.

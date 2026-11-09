@@ -157,7 +157,7 @@ undone.)
 | Out-of-credits card: Upgrade | Open Plan | `EXCLUDED` purchase control — open Plan only |
 | Out-of-credits card: Keep exploring / dismiss | Dismiss the upsell | `UI` |
 | Voice-call bar (live call): mute, end call, open full-screen call | Mute mic / hang up / expand | Mute + end: COVERED in-call (`end_call` voice action; mute is a call control she can be asked about — the toggle itself is `UI` on the call screen); expand is presentation-only |
-| Guided-tour spotlight tap / "Skip tour" | Advance / end the Ayma-driven tour | COVERED — tour commands (`tour_step` acks, `tour_event`); starting one is `start_guided_tour` |
+| Guided-tour spotlight tap / Next / "Skip tour" | Ayma performs the step, then the user's go advances / end the Ayma-driven tour | COVERED — tour commands (`tour_step` acks, the step's registry command, `tour_event`); starting one is `start_guided_tour` |
 
 ## 3. Voice call screen — `voice_call_screen.dart`
 

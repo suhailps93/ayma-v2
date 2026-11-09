@@ -5,6 +5,7 @@ import '../services/feature_tour_store.dart';
 import '../services/tour_anchors.dart';
 import '../services/tour_content.dart';
 import '../theme.dart';
+import 'voice_control_mark.dart';
 
 /// Padding grown around a spotlighted widget for both the painted cutout and
 /// the press-through hit region, so the two always line up exactly.
@@ -43,6 +44,9 @@ const double _kHolePad = 8.0;
 /// a missing anchor. A step with no [TourFeature.anchorId] shows a centered
 /// callout with no cutout (an intro/outro).
 ///
+/// The Ayma-driven tour sets [pressThrough] to false: the tap on the highlight
+/// never reaches the real control, and the driver performs the step itself.
+///
 /// Finishing OR skipping marks every shown feature's `feature_id` seen (via
 /// [FeatureTourStore]) so it doesn't nag again, then calls [onFinish] to
 /// dismiss. Reduced-motion safe: the pulsing spotlight ring is dropped when
@@ -64,6 +68,9 @@ class CoachMarkOverlay extends StatefulWidget {
     this.onStopPressed,
     this.hideNextButton = false,
     this.chromeless = false,
+    this.pressThrough = true,
+    this.performed = false,
+    this.protectVoiceControls = false,
     this.stepIndex,
     this.stepTotal,
   });
@@ -113,10 +120,9 @@ class CoachMarkOverlay extends StatefulWidget {
   /// when null, the overlay advances its own list as before.
   final VoidCallback? onAnchorAbsent;
 
-  /// Fired when the user taps the spotlighted control (the press-through
-  /// hole-tap). When set, this REPLACES the passive local advance — the real
-  /// widget still acted (it was never blocked); the driver records the tap and
-  /// the backend sends the next step. When null, a hole-tap advances the list.
+  /// Fired when the user taps the spotlighted control (the hole-tap). When
+  /// set, this REPLACES the passive local advance and the driver decides what
+  /// the tap means. When null, a hole-tap advances the list.
   final VoidCallback? onAnchorTapped;
 
   /// Driven tours only: the callout card's Next button moves past the step
@@ -130,8 +136,8 @@ class CoachMarkOverlay extends StatefulWidget {
   /// before (writing seen-state).
   final VoidCallback? onStopPressed;
 
-  /// Hide the "Next" CTA so the only way forward is tapping the real control
-  /// (driven mode). Skip stays, so the user can always leave.
+  /// Hide the "Next" CTA (a driven tour inside a live call, where the go is
+  /// spoken only). Skip stays, so the user can always leave.
   final bool hideNextButton;
 
   /// Ayma-DRIVEN tour (§11.2b): show ONLY the spotlight highlight — no callout
@@ -140,6 +146,22 @@ class CoachMarkOverlay extends StatefulWidget {
   /// 2026-11-03: "I don't want the feature dialogues"). A single tiny,
   /// unobtrusive "Skip tour" affordance remains when [onStopPressed] is set.
   final bool chromeless;
+
+  /// Whether a tap on the cutout reaches the real widget behind it. False in
+  /// the driven tour: the driver performs the step itself, so the real control
+  /// (the voice orb among them) must never see the tap. A typing-allowed step
+  /// stays press-through either way, so the user can type.
+  final bool pressThrough;
+
+  /// The driven step's action ran: no highlight and no dimming, so the user
+  /// can look at what opened, with the card at the bottom until their go.
+  /// The overlay stops absorbing input, so the user can scroll and use the
+  /// page; only the card stays above it, and a tap on the page is never the go.
+  final bool performed;
+
+  /// A live call: a [performed] step keeps blocking the controls marked with
+  /// [VoiceControlMark], because a tap on one can disconnect Ayma.
+  final bool protectVoiceControls;
 
   /// Override the 0-based step index displayed in the callout card counter
   /// ("N of M"). Used in driven mode where [features] only contains the single
@@ -160,6 +182,8 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
   Rect? _rect;
   bool _ready = false;
   bool _finishing = false;
+  int? _viewId;
+  bool _probingVoiceControl = false;
 
   late final AnimationController _pulse = AnimationController(
     vsync: this,
@@ -326,8 +350,9 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
 
   /// The transparent cutout's rect in global coordinates — the painted hole and
   /// the press-through hit region share it, or null while no anchor is shown.
-  Rect? get _holeRect =>
-      _ready && _rect != null ? _rect!.inflate(_kHolePad) : null;
+  Rect? get _holeRect => _ready && _rect != null && !widget.performed
+      ? _rect!.inflate(_kHolePad)
+      : null;
 
   /// True when [position] lands on the composer's mic — the one control that
   /// advances a typing-allowed step. Send / attach / text-field taps press
@@ -352,10 +377,33 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     if (!_ready || _rect == null) return null;
     final feature = widget.features[_index];
     if (feature.anchorId == TourAnchors.asyncVoiceMic) return _holeRect;
+    if (!widget.pressThrough && !feature.typingAllowed) return _holeRect;
     if (feature.typingAllowed) {
       return widget.resolveRect(TourAnchors.asyncVoiceMic);
     }
     return null;
+  }
+
+  /// Whether a pointer at [position] would land on a [VoiceControlMark]: a real
+  /// hit test of what is on screen, so it finds the orb on any page's nav bar
+  /// and never a covered one. The gate reports no hit while this runs.
+  bool _overVoiceControl(Offset position) {
+    final viewId = _viewId;
+    if (_probingVoiceControl || !widget.protectVoiceControls || viewId == null) {
+      return false;
+    }
+    final result = HitTestResult();
+    _probingVoiceControl = true;
+    try {
+      WidgetsBinding.instance.hitTestInView(result, position, viewId);
+    } finally {
+      _probingVoiceControl = false;
+    }
+    return result.path.any((entry) {
+      final target = entry.target;
+      return target is RenderMetaData &&
+          target.metaData == VoiceControlMark.tag;
+    });
   }
 
   Offset? _downInHole;
@@ -383,8 +431,8 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     if (widget.features[_index].typingAllowed && !_isMicTap(event.position)) {
       return;
     }
-    // Driven mode: the real control just acted; tell the driver so the backend
-    // sends the next step — don't advance a local list.
+    // Driven mode: tell the driver, which owns what the tap means — don't
+    // advance a local list.
     final onTapped = widget.onAnchorTapped;
     if (onTapped != null) {
       FocusManager.instance.primaryFocus?.unfocus();
@@ -408,6 +456,7 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     final ac = context.ac;
     final feature = widget.features[_index];
     final isLast = _index == widget.features.length - 1;
+    _viewId = View.of(context).viewId;
     // Back is handled by the host shell's single PopScope (it skips the tour),
     // so this overlay owns no navigation of its own.
     return Material(
@@ -428,13 +477,16 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
                 child: _HoleGate(
                   hole: _holeRect,
                   consume: _micConsumeRect,
+                  openExcept: widget.performed ? _overVoiceControl : null,
                   child: AnimatedBuilder(
                     animation: _pulse,
                     builder: (context, _) => CustomPaint(
                       key: const ValueKey('coach-spotlight'),
                       painter: _SpotlightPainter(
-                        hole: _ready ? _rect : null,
-                        scrim: Colors.black.withValues(alpha: 0.72),
+                        hole: _ready && !widget.performed ? _rect : null,
+                        scrim: widget.performed
+                            ? Colors.transparent
+                            : Colors.black.withValues(alpha: 0.72),
                         ring: ac.accent,
                         glow: _pulse.isAnimating ? _pulse.value : 0,
                       ),
@@ -530,9 +582,13 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
     // the empty area around it passes taps through to the scrim/cutout below.
     final targetInBottomHalf =
         _rect != null && _rect!.center.dy > size.height / 2;
-    final alignment = _rect == null
-        ? Alignment.center
-        : (targetInBottomHalf ? Alignment.topCenter : Alignment.bottomCenter);
+    final alignment = widget.performed
+        ? Alignment.bottomCenter
+        : _rect == null
+            ? Alignment.center
+            : (targetInBottomHalf
+                ? Alignment.topCenter
+                : Alignment.bottomCenter);
     return LayoutBuilder(
       builder: (context, constraints) => Align(
         alignment: alignment,
@@ -560,26 +616,35 @@ class _CoachMarkOverlayState extends State<CoachMarkOverlay>
 /// (starting a live voice call) must not fire during the tour. Its child is
 /// paint-only (the scrim), so it never contributes its own hits.
 class _HoleGate extends SingleChildRenderObjectWidget {
-  const _HoleGate({required this.hole, this.consume, super.child});
+  const _HoleGate({
+    required this.hole,
+    this.consume,
+    this.openExcept,
+    super.child,
+  });
 
   final Rect? hole;
 
   /// Sub-rect of [hole] whose taps are absorbed, not pressed through.
   final Rect? consume;
 
+  /// When set, the whole gate is open and blocks only where this returns true.
+  final bool Function(Offset position)? openExcept;
+
   @override
   _RenderHoleGate createRenderObject(BuildContext context) =>
-      _RenderHoleGate(hole, consume);
+      _RenderHoleGate(hole, consume, openExcept);
 
   @override
   void updateRenderObject(BuildContext context, _RenderHoleGate renderObject) {
     renderObject.hole = hole;
     renderObject.consume = consume;
+    renderObject.openExcept = openExcept;
   }
 }
 
 class _RenderHoleGate extends RenderProxyBox {
-  _RenderHoleGate(this._hole, this._consume);
+  _RenderHoleGate(this._hole, this._consume, this._openExcept);
 
   Rect? _hole;
   set hole(Rect? value) {
@@ -591,8 +656,19 @@ class _RenderHoleGate extends RenderProxyBox {
     if (value != _consume) _consume = value;
   }
 
+  bool Function(Offset position)? _openExcept;
+  set openExcept(bool Function(Offset position)? value) {
+    _openExcept = value;
+  }
+
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    final openExcept = _openExcept;
+    if (openExcept != null) {
+      if (!openExcept(position) || !size.contains(position)) return false;
+      result.add(BoxHitTestEntry(this, position));
+      return true;
+    }
     // Inside the consume rect: absorb the tap — the widget behind (the
     // composer mic) must not act — but the hit still puts the observing
     // Listener on the hit path, so the tour can advance on the same tap.

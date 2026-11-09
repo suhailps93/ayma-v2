@@ -9,6 +9,7 @@ import '../theme.dart';
 import 'ayma_orb.dart';
 import 'messages_unread_icon.dart';
 import 'notification_bell.dart';
+import 'voice_control_mark.dart';
 
 /// The bottom tab bar in the Ayma design language: a translucent bar with a
 /// top hairline and four plain icons — no text labels, so whatever's above it
@@ -239,7 +240,8 @@ class AymaTabBar extends StatelessWidget {
     // Wrap a tour target in its anchor key (shell bar only — see [anchorKeys]).
     Widget anchored(int slot, Widget child) {
       final key = anchorKeys?[slot];
-      return key == null ? child : KeyedSubtree(key: key, child: child);
+      final marked = slot == 0 ? VoiceControlMark(child: child) : child;
+      return key == null ? marked : KeyedSubtree(key: key, child: marked);
     }
 
     Widget tab(int i, double hPad) => anchored(
