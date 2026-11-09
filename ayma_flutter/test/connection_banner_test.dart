@@ -73,8 +73,13 @@ void main() {
 
   testWidgets('offline state renders the offline banner over Explore',
       (tester) async {
-    final hb = _scripted([ProbeOutcome.failure, ProbeOutcome.failure]);
+    final hb = _scripted([
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+    ]);
     // Drive to offline before the banner mounts its start-up probe.
+    await hb.probeNow();
     await hb.probeNow();
     await hb.probeNow();
     expect(hb.state, ConnectionQuality.offline);
@@ -105,6 +110,7 @@ void main() {
     final hb = _scripted([
       ProbeOutcome.failure,
       ProbeOutcome.failure,
+      ProbeOutcome.failure,
       // The banner's start-up probe consumes one outcome after mounting.
       ProbeOutcome.failure,
       ProbeOutcome.good,
@@ -112,15 +118,16 @@ void main() {
     ]);
     await hb.probeNow();
     await hb.probeNow();
+    await hb.probeNow();
     expect(hb.state, ConnectionQuality.offline);
 
     await tester.pumpWidget(_shell(hb));
     await tester.pump(const Duration(milliseconds: 100));
     // The banner's start-up probe must land before the scripted recovery.
-    for (var i = 0; i < 100 && hb.probeCount < 3; i++) {
+    for (var i = 0; i < 100 && hb.probeCount < 4; i++) {
       await tester.pump(const Duration(milliseconds: 10));
     }
-    expect(hb.probeCount, 3);
+    expect(hb.probeCount, 4);
     expect(find.text('Offline — showing saved data'), findsOneWidget);
 
     // Two consecutive good probes recover to ok and the banner goes away.
@@ -174,7 +181,12 @@ void main() {
         tester.view.padding = const FakeViewPadding(top: statusBarInset * 3.0);
         tester.view.devicePixelRatio = 3.0;
         addTearDown(tester.view.reset);
-        final hb = _scripted([ProbeOutcome.failure, ProbeOutcome.failure]);
+        final hb = _scripted([
+          ProbeOutcome.failure,
+          ProbeOutcome.failure,
+          ProbeOutcome.failure,
+        ]);
+        await hb.probeNow();
         await hb.probeNow();
         await hb.probeNow();
         expect(hb.state, ConnectionQuality.offline);

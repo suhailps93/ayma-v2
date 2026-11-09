@@ -42,12 +42,29 @@ enum ProbeOutcome {
 ///
 /// Pure state machine (no timers, no I/O) so the transition rules are
 /// unit-testable on their own:
-/// - offline: 2 consecutive failures.
-/// - weak: 2 consecutive slow probes, or any lone (intermittent) failure.
-/// - recovery: 2 consecutive good probes (offline steps up through weak on
-///   the first sign of life, since one good probe is not yet recovery).
+/// - weak: 2 consecutive slow probes, or 2 consecutive failures.
+/// - offline: 3 consecutive failures.
+/// - recovery: one good probe clears weak (a fast, successful probe is
+///   proof the path works right now); offline steps up through weak on
+///   the first good probe and needs a second consecutive good for ok.
+///
+/// Why failures need a streak while one good probe clears weak at once
+/// (founder report, Nov 8 2026 — the weak banner up constantly on a
+/// healthy link): a single failed or timed-out probe is as often the
+/// SERVER waking up as the phone's connection. Staging runs
+/// min-instances=0 (never warm, by founder rule), and server logs from
+/// that day show /health requests held 10.6s and 21.3s by cold starts
+/// that still returned 200 — while the same session's real data
+/// requests ran a 40ms median server latency, all 200s. One missed
+/// heartbeat therefore carries no verdict; the old lone-failure ->
+/// weak rule turned every server cold start into minutes of "weak
+/// connection" banner (on a metered link the recovery probes sit 60s
+/// apart). A dead connection still surfaces: the OS connectivity
+/// stream records its own failures into this same ladder, and
+/// repeated failures walk weak -> offline.
 class ConnectionClassifier {
-  /// Consecutive same-outcome probes required to flip state either way.
+  /// Consecutive same-outcome probes in the classifier ladder (see the
+  /// [ConnectionClassifier] doc for how each outcome uses it).
   static const strikesToFlip = 2;
 
   ConnectionQuality _state = ConnectionQuality.ok;
@@ -63,10 +80,16 @@ class ConnectionClassifier {
         _good++;
         _slow = 0;
         _fail = 0;
-        if (_good >= strikesToFlip) {
+        if (_state == ConnectionQuality.weak) {
+          // One good probe is proof of life: clear weak at once instead
+          // of making the user wait out a second probe interval.
           _state = ConnectionQuality.ok;
         } else if (_state == ConnectionQuality.offline) {
-          _state = ConnectionQuality.weak;
+          // Offline is a stronger claim, so it still takes two
+          // consecutive good probes — the first is only a step up.
+          _state = _good >= strikesToFlip
+              ? ConnectionQuality.ok
+              : ConnectionQuality.weak;
         }
       case ProbeOutcome.slow:
         _slow++;
@@ -82,9 +105,14 @@ class ConnectionClassifier {
         _fail++;
         _good = 0;
         _slow = 0;
-        if (_fail >= strikesToFlip) {
+        // A lone failure is not a verdict (see the class doc: server
+        // cold starts eat single probes whole). Two in a row is a weak
+        // connection; three is offline. Failures never step the state
+        // UP, so an offline ladder is not undone by its own rungs.
+        if (_fail > strikesToFlip) {
           _state = ConnectionQuality.offline;
-        } else {
+        } else if (_fail == strikesToFlip &&
+            _state == ConnectionQuality.ok) {
           _state = ConnectionQuality.weak;
         }
     }
@@ -173,6 +201,10 @@ class ConnectionHeartbeat {
   final Stream<List<ConnectivityResult>>? _connectivityChangesOverride;
   final http.Client? _httpClient;
 
+  /// The probe's own long-lived client (created lazily, closed on
+  /// [stop]). Null when a client was injected for tests.
+  http.Client? _probeClient;
+
   /// Test seam: replaces the 15s/60s probe cadence (the production intervals
   /// are the class constants). Lets a test prove the timer chain re-arms.
   final Duration? _probeIntervalOverride;
@@ -226,6 +258,8 @@ class ConnectionHeartbeat {
     _timer = null;
     unawaited(_connectivitySub?.cancel());
     _connectivitySub = null;
+    _probeClient?.close();
+    _probeClient = null;
   }
 
   /// Foreground/background switch from the app lifecycle: backgrounding
@@ -290,15 +324,16 @@ class ConnectionHeartbeat {
     }
     final stopwatch = Stopwatch()..start();
     try {
-      final client = _httpClient ?? http.Client();
-      try {
-        final response = await client
-            .get(Uri.parse('${Env.apiBaseUrl}/health'))
-            .timeout(probeTimeout);
-        if (response.statusCode != 200) return ProbeOutcome.failure;
-      } finally {
-        if (_httpClient == null) client.close();
-      }
+      // One long-lived client, the way ApiClient holds a single client
+      // for all real data calls: the socket stays warm between probes,
+      // so the measured time is the path's latency — not a fresh
+      // DNS+TLS+TCP setup on every tick, a cost no app request pays
+      // on every call.
+      final client = _httpClient ?? (_probeClient ??= http.Client());
+      final response = await client
+          .get(Uri.parse('${Env.apiBaseUrl}/health'))
+          .timeout(probeTimeout);
+      if (response.statusCode != 200) return ProbeOutcome.failure;
     } catch (_) {
       return ProbeOutcome.failure;
     }
