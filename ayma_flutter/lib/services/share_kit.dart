@@ -125,10 +125,10 @@ class AymaShare {
   late final ShareService _reports =
       _reportShares ?? ShareService(api: api, httpClient: _httpClient);
 
-  /// "Send to Ayma": hand the target's context to the Ayma chat. The
-  /// kickoff renders as the reply-style card above the seeded message —
-  /// thumbnail, real subject, type label — and Ayma gets the whole
-  /// context with it. Navigation to the chat is the sheet's job.
+  /// "Send to Ayma": stage the target's card above the Ayma chat composer
+  /// as an un-sent draft attachment. The message leaves only when the
+  /// user taps send; no canned opener is sent or pre-filled. Navigation
+  /// to the chat is the sheet's job.
   void sendToAyma(ShareTarget target) {
     ChatInbox.instance.push(target.aymaKickoff());
   }
@@ -235,6 +235,7 @@ class ShareTargets {
     required String uid,
     required String name,
     String photoUrl = '',
+    bool editSelf = false,
   }) {
     final title = name.trim().isEmpty ? 'Profile' : name.trim();
     return ShareTarget(
@@ -245,11 +246,12 @@ class ShareTargets {
       route: '/profile/user/$uid',
       audience: ShareAudience.public,
       thumbnailUrl: photoUrl,
-      aymaKickoff: () => ChatKickoff.talkAbout(
+      aymaKickoff: () => ChatKickoff.draftAbout(
         targetUid: uid,
         label: title,
         shareKind: 'profile',
         photoUrl: photoUrl,
+        editSelf: editSelf,
       ),
     );
   }
@@ -269,7 +271,7 @@ class ShareTargets {
         route: '/profile/wiki',
         audience: ShareAudience.aymaOnly,
         thumbnailUrl: imageUrl,
-        aymaKickoff: () => ChatKickoff.talkAbout(
+        aymaKickoff: () => ChatKickoff.draftAbout(
           targetUid: uid,
           label: 'Your Story',
           shareKind: 'story',
@@ -321,7 +323,7 @@ class ShareTargets {
       route: '/match/$matchId',
       audience: ShareAudience.public,
       thumbnailUrl: otherPhoto,
-      aymaKickoff: () => ChatKickoff.talkAbout(
+      aymaKickoff: () => ChatKickoff.draftAbout(
         targetUid: otherUid,
         label: name.isEmpty ? 'them' : name,
         shareKind: 'match',
@@ -350,7 +352,7 @@ class ShareTargets {
         audience: ShareAudience.public,
         thumbnailUrl: photoUrl,
         externalOverride: externalOverride,
-        aymaKickoff: () => ChatKickoff.talkAbout(
+        aymaKickoff: () => ChatKickoff.draftAbout(
           targetUid: uid,
           label: title,
           shareKind: 'appearance',

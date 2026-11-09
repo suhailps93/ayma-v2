@@ -211,6 +211,23 @@ void main() {
         "Here's my chat with Jordan. What next?");
   });
 
+  test('addSharedTurn with empty text produces wire turn with placeholder', () {
+    final store = TranscriptStore();
+    store.addSharedTurn(
+      kind: 'profile',
+      uid: 'u2',
+      name: 'Dillu',
+      photo: 'https://x/p.jpg',
+      refId: '',
+      text: '',
+    );
+    final t = store.turns.single;
+    expect(t.role, TurnRole.user);
+    expect(t.sharedKind, 'profile');
+    expect(t.text, '');
+    expect(store.wireTurns().single['text'], '[shared profile]');
+  });
+
   test(
       'prependOlder splices an older page onto the front and survives its own trim',
       () {

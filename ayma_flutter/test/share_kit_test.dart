@@ -110,7 +110,7 @@ void main() {
     expect(captured?.subject, 'Dillu on Ayma');
   });
 
-  testWidgets('Send to Ayma pushes a talk-about kickoff with the photo',
+  testWidgets('Send to Ayma pushes a draft-about kickoff with the photo',
       (tester) async {
     final api = _FakeApi();
     await tester.pumpWidget(_sheetHost(_profileTarget(), AymaShare(api: api)));
@@ -119,7 +119,7 @@ void main() {
     await tester.tap(find.text('Send to Ayma'));
     await tester.pumpAndSettle();
     final k = ChatInbox.instance.take();
-    expect(k?.kind, 'talk_about');
+    expect(k?.kind, 'draft_about');
     expect(k?.shareKind, 'profile');
     expect(k?.targetUid, 'u2');
     expect(k?.label, 'Dillu');
@@ -127,8 +127,13 @@ void main() {
   });
 
   group('the chat card', () {
-    Future<void> pumpChat(WidgetTester tester,
-        {required ChatKickoff kickoff}) async {
+    Future<void> pumpChat(
+      WidgetTester tester, {
+      required ChatKickoff kickoff,
+      bool sendStaged = true,
+      String? text,
+      List<Map<String, dynamic>>? capturedCalls,
+    }) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -144,6 +149,9 @@ void main() {
           return http.Response('stream unavailable', 500);
         }
         if (request.url.path == '/chat') {
+          if (capturedCalls != null) {
+            capturedCalls.add(jsonDecode(request.body) as Map<String, dynamic>);
+          }
           return http.Response(
             jsonEncode({'reply': "Here's my read.", 'usage_capped': false}),
             200,
@@ -175,7 +183,92 @@ void main() {
       await tester.pumpAndSettle();
       ChatInbox.instance.push(kickoff);
       await tester.pumpAndSettle();
+      if (sendStaged) {
+        if (text != null && text.isNotEmpty) {
+          await tester.enterText(find.byType(TextField).last, text);
+          await tester.pump();
+        }
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pumpAndSettle();
+      }
     }
+
+    testWidgets(
+        'Send to Ayma stages the card above the composer — composer empty, nothing sent',
+        (tester) async {
+      final captured = <Map<String, dynamic>>[];
+      await pumpChat(
+        tester,
+        kickoff: _profileTarget().aymaKickoff(),
+        sendStaged: false,
+        capturedCalls: captured,
+      );
+      // Staged chip is visible above composer.
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Profile · Dillu'), findsOneWidget);
+      // Composer is empty and nothing is in transcript.
+      final field = tester.widget<TextField>(find.byType(TextField).last);
+      expect(field.controller?.text ?? '', isEmpty);
+      expect(find.text('PROFILE · TAP TO OPEN'), findsNothing);
+      expect(find.textContaining("Let's talk about"), findsNothing);
+      expect(captured, isEmpty);
+    });
+
+    testWidgets(
+        'tap send with card staged and no text sends card alone with no canned opener',
+        (tester) async {
+      final captured = <Map<String, dynamic>>[];
+      await pumpChat(
+        tester,
+        kickoff: _profileTarget().aymaKickoff(),
+        sendStaged: false,
+        capturedCalls: captured,
+      );
+      // Tap send with no text.
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+
+      // Card is in transcript, but no text bubble or canned opener.
+      expect(find.text('PROFILE · TAP TO OPEN'), findsOneWidget);
+      expect(find.textContaining("Let's talk about"), findsNothing);
+      expect(captured, hasLength(1));
+      expect(captured.single['viewing_profile_uid'], 'u2');
+      expect(captured.single['message'], '[shared profile]');
+    });
+
+    testWidgets(
+        'type own text and tap send sends card and text together',
+        (tester) async {
+      final captured = <Map<String, dynamic>>[];
+      await pumpChat(
+        tester,
+        kickoff: _profileTarget().aymaKickoff(),
+        sendStaged: true,
+        text: 'What is your honest read on them?',
+        capturedCalls: captured,
+      );
+
+      // Both card and user's typed message appear together.
+      expect(find.text('PROFILE · TAP TO OPEN'), findsOneWidget);
+      expect(find.text('What is your honest read on them?'), findsOneWidget);
+      expect(captured, hasLength(1));
+      expect(captured.single['viewing_profile_uid'], 'u2');
+      expect(captured.single['message'], 'What is your honest read on them?');
+    });
+
+    testWidgets('clearing the staged chip removes attachment without sending',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: _profileTarget().aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('clearSharedDraft')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsNothing);
+      expect(find.text('PROFILE · TAP TO OPEN'), findsNothing);
+    });
 
     testWidgets('a shared profile renders as a reply card with its photo, '
         'never a pin, and tapping it opens the profile', (tester) async {

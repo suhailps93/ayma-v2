@@ -158,7 +158,8 @@ class TranscriptStore extends ChangeNotifier {
           if (t.isFinal &&
               (t.text.isNotEmpty ||
                   t.imageUrl != null ||
-                  t.imageFile != null))
+                  t.imageFile != null ||
+                  t.sharedKind.isNotEmpty))
             {
               'role': t.role == TurnRole.ayma ? 'ayma' : 'user',
               'text': () {
@@ -169,10 +170,15 @@ class TranscriptStore extends ChangeNotifier {
                   s = '[Replying to ${t.replySubject}: "${t.replySnippet}"]\n$s';
                 }
                 final hasImage = t.imageUrl != null || t.imageFile != null;
-                if (!hasImage) return s;
-                return s.isEmpty
-                    ? '[shared a photo]'
-                    : '$s\n[shared a photo]';
+                if (hasImage) {
+                  return s.isEmpty
+                      ? '[shared a photo]'
+                      : '$s\n[shared a photo]';
+                }
+                if (t.sharedKind.isNotEmpty && s.isEmpty) {
+                  return '[shared ${t.sharedKind.replaceAll('_', ' ')}]';
+                }
+                return s;
               }(),
             },
       ];
