@@ -211,4 +211,80 @@ void main() {
       findsWidgets,
     );
   });
+
+  // Jobs pass (cluster 8): the pending-updates MaterialBanner shares the
+  // profile body's 20 left edge (M3 single-row default is start 16), keeps the
+  // M3 top 2, and its Review action clears the 44 touch floor.
+  testWidgets('pending-updates banner sits at the 20 edge; Review is >= 44',
+      (tester) async {
+    final mockHttp = MockClient((request) async {
+      if (request.url.path == '/profile/proposals') {
+        return http.Response(
+          jsonEncode({
+            'proposals': [
+              {
+                'page_id': 'identity',
+                'title': 'Identity',
+                'changes': [
+                  {'id': 'c1', 'op': 'add', 'text': 'A new line'},
+                ],
+              },
+            ],
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      if (request.url.path == '/explore/profile/u1') {
+        return http.Response(
+          jsonEncode({
+            'uid': 'u1',
+            'self': true,
+            'blocked': false,
+            'name': 'Sam',
+            'age': 29,
+            'location': 'Lisbon',
+            'photos': ['https://example.com/p1.jpg'],
+            'pages': [],
+            'liked': false,
+            'score': null,
+            'thread_id': null,
+            'has_chatted': false,
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'title': 'Story',
+          'sections': [],
+          'meta': {
+            'owner_uid': 'u1',
+            'viewer_can_edit': true,
+            'created_at': null,
+            'updated_at': null,
+          },
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api =
+        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+
+    await tester.pumpWidget(MaterialApp(
+      home: MyPublicProfileScreen(myUid: 'u1', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    final banner = tester.widget<MaterialBanner>(find.byType(MaterialBanner));
+    expect(banner.padding,
+        const EdgeInsetsDirectional.only(start: 20, top: 2));
+
+    final review =
+        tester.widget<TextButton>(find.widgetWithText(TextButton, 'Review'));
+    expect(
+        review.style!.minimumSize!.resolve(const <WidgetState>{})!.height, 44);
+  });
 }

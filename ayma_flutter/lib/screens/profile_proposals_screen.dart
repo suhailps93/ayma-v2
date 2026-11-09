@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
@@ -117,6 +118,7 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
   @override
   Widget build(BuildContext context) {
     final list = _proposals;
+    final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
@@ -124,12 +126,16 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
       ),
       body: _loadFailed
           ? CenteredScroll(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text("Couldn't load the suggestions."),
-                  TextButton(onPressed: _load, child: const Text('Retry')),
+                  TextButton(
+                      style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 44)),
+                      onPressed: _load,
+                      child: const Text('Retry')),
                 ],
               ),
             )
@@ -140,19 +146,18 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
                 )
               : list.isEmpty
                   ? const CenteredScroll(
-                      padding: EdgeInsets.all(24),
+                      padding: EdgeInsets.all(20),
                       child: Text('No suggestions right now'),
                     )
                   : ListView(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(20),
                       children: [
                         const _IntroCard(),
                         if (_error != null)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Text(_error!,
-                                style: TextStyle(
-                                    color: Theme.of(context).colorScheme.error)),
+                                style: TextStyle(color: ac.errorText)),
                           ),
                         for (final p in list)
                           _SectionCard(
@@ -239,9 +244,13 @@ class _SectionCard extends StatelessWidget {
                   spacing: 8,
                   children: [
                     TextButton(
+                        style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 44)),
                         onPressed: sectionBusy ? null : onDismissAll,
                         child: const Text('Dismiss all')),
                     TextButton(
+                        style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 44)),
                         onPressed: sectionBusy ? null : onApplyAll,
                         child: const Text('Apply all')),
                   ],
@@ -272,12 +281,16 @@ class _ChangeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final base = Theme.of(context).textTheme.bodyMedium;
-    // Diff colours from `suggested-diff-colors`: removed is red strikethrough,
-    // added is a muted gray (`onSurfaceVariant`), in both themes.
+    // Diff colours: removed is a muted gray (`onSurfaceVariant`) with a
+    // strikethrough and the "- " prefix carrying the meaning, added is the
+    // same muted gray without the strikethrough — both themes. Raw error on
+    // the card fails the 4.5 text floor (3.69/3.58); the red returns only once
+    // a card-safe error-text token exists (T4).
     final isRemove = change.op == 'remove';
     final style = isRemove
         ? base?.copyWith(
-            color: scheme.error, decoration: TextDecoration.lineThrough)
+            color: scheme.onSurfaceVariant,
+            decoration: TextDecoration.lineThrough)
         : base?.copyWith(color: scheme.onSurfaceVariant);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -293,6 +306,8 @@ class _ChangeRow extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 TextButton(
+                    style: TextButton.styleFrom(
+                        minimumSize: const Size(0, 44)),
                     onPressed: busy ? null : onDismiss,
                     child: const Text('Dismiss')),
                 // The app theme gives FilledButton a full-width minimum size;
