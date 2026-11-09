@@ -45,6 +45,7 @@ import inference_llm
 import token_ledger
 from config import CONFIG
 from gemini import Reply
+from tool_media import ImageToolResult
 
 logger = logging.getLogger("ayma.llm_provider")
 
@@ -1450,6 +1451,7 @@ class LiveKitProvider(LLMProvider):
                 "content": text or None,
                 "tool_calls": tool_calls,
             }]
+            opened_images: list[ImageToolResult] = []
             for call, tc in zip(calls, tool_calls):
                 name = call.get("name") or ""
                 _note(_tool_label(name))
@@ -1461,10 +1463,24 @@ class LiveKitProvider(LLMProvider):
                         result = await result
                 except Exception as tool_exc:  # noqa: BLE001 - report, don't crash
                     result = f"error: {tool_exc}"
+                if isinstance(result, ImageToolResult):
+                    # Same media-carrying result as gemini.py's loop
+                    # (open_replied_photo): text is the tool result; the
+                    # image is attached after the tool round.
+                    opened_images.append(result)
+                    result = result.text
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": str(result),
+                })
+            for opened in opened_images:
+                messages.append({
+                    "role": "user",
+                    "content": _user_content(
+                        opened.note or "[photo opened by a tool]",
+                        [opened.image],
+                    ),
                 })
             yield {"type": "status", "label": "Writing…"}
             follow_resp = await self._call(

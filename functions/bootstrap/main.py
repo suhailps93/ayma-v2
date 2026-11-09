@@ -145,6 +145,7 @@ from skills import (  # noqa: E402
     session_tool_declarations,
 )
 from skills import questionnaire as questionnaire_skill  # noqa: E402
+from skills import open_replied as open_replied_mod  # noqa: E402
 import turn_caps  # noqa: E402
 import context_opt  # noqa: E402
 import tool_labels  # noqa: E402
@@ -1619,6 +1620,11 @@ class _ChatCtx:
     # ``version``), or empty when the turn carries no share. Binds the
     # ``open_shared_report`` tool in the generation paths below.
     shared_ctx: dict = field(default_factory=dict)
+    # The photo reference a swipe-reply left in this turn's message (the
+    # ``[photo ref:<url>]`` marker inside the ``[Replying to ...]``
+    # prefix — ``url`` / ``subject``), or empty when the message is not a
+    # photo reply. Binds the ``open_replied_photo`` tool below.
+    reply_photo_ctx: dict = field(default_factory=dict)
 
 
 
@@ -1870,6 +1876,16 @@ async def _prepare_chat(
             "subject_name": req.shared_subject_name.strip(),
             "version": req.shared_ref_version.strip(),
         }
+    # A swipe-reply to a photo message carries only the reference too —
+    # a ``[photo ref:<url>]`` marker inside the ``[Replying to ...]``
+    # prefix the client puts on the message (founder 2026-11-09,
+    # reference not content) — bound here for the ``open_replied_photo``
+    # pull tool at generation time. Text-only replies carry no marker
+    # and stay exactly as they were.
+    reply_photo_ctx: dict = {}
+    _reply_ref = open_replied_mod.extract_reply_photo_ref(req.message)
+    if _reply_ref is not None:
+        reply_photo_ctx = {"subject": _reply_ref[0], "url": _reply_ref[1]}
     screen = req.screen.strip()
     viewing_profile_uid = req.viewing_profile_uid.strip()
     # Skip when the profile case already covers it — a bare "looking at X's
@@ -1987,6 +2003,14 @@ async def _prepare_chat(
         system_prompt += "\n\n" + _shared_report_context(
             shared_ctx["kind"], shared_ctx["subject_name"]
         )
+    # Photo-reply reference (founder 2026-11-09): the user replied to a
+    # photo — name it, and make opening it (via the bound tool) a
+    # precondition of answering about it, so a replied photo can never
+    # again be answered from whatever the conversation was about before.
+    if reply_photo_ctx:
+        system_prompt += "\n\n" + _replied_photo_context(
+            reply_photo_ctx["subject"]
+        )
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
         steps = skills.guided_tour._tour_steps(tour_state)
@@ -2033,6 +2057,7 @@ async def _prepare_chat(
             bool(req.profile_edit),
             photo_url, photo_source, photo_image,
             shared_ctx=shared_ctx,
+            reply_photo_ctx=reply_photo_ctx,
         ),
     )
 
@@ -2136,6 +2161,28 @@ def _shared_report_context(kind: str, subject_name: str) -> str:
         "you couldn't open what they shared — never answer about it from "
         "another profile, another report, or the earlier conversation "
         "instead."
+    )
+
+
+def _replied_photo_context(subject: str) -> str:
+    """The prompt block for a turn carrying a photo reply reference
+    (``reply_photo_ctx`` non-empty): the user replied to a photo in this
+    conversation, by reference only — the photo itself is NOT in this
+    prompt. Ayma opens the exact photo with the bound
+    ``open_replied_photo`` tool before answering about it; if the tool
+    says it could not be opened, she says so plainly instead of guessing
+    what it showed (the reply half of the founder's 2026-11-09
+    reference-not-content rule)."""
+    return (
+        "REPLIED PHOTO: the user replied to a photo in this conversation "
+        "— it is the quoted photo attached to their message. The photo "
+        "itself is not in this prompt: before you answer anything about "
+        "it, call `open_replied_photo` (no arguments) to open the actual "
+        "photo — it will be attached for you to see — and base your "
+        "answer on what you see in it. If the tool says the photo could "
+        "not be opened, tell the user plainly that you couldn't open the "
+        "photo they replied to — never guess at what it shows from "
+        "another photo or the earlier conversation instead."
     )
 
 
@@ -2561,6 +2608,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
             appearance=bool(ctx.appearance_finding_id),
             shared=bool(ctx.shared_ctx),
+            reply_photo=bool(ctx.reply_photo_ctx),
         ),
         tool_fns=make_session_tool_fns(
             get_db(),
@@ -2600,6 +2648,7 @@ async def _generate_chat_reply(ctx: _ChatCtx, req: ChatRequest):
                 if ctx.appearance_finding_id else None
             ),
             shared_ctx=ctx.shared_ctx or None,
+            reply_photo_ctx=ctx.reply_photo_ctx or None,
             # generate_image delivers through the same sink edit_photo
             # uses, so the reply's image_url / transcript attach below
             # work unchanged for a generated image.
@@ -2730,6 +2779,7 @@ async def chat_stream(
                             deep_dive=bool(ctx.deep_dive_report_id and ctx.deep_dive_target),
                             appearance=bool(ctx.appearance_finding_id),
                             shared=bool(ctx.shared_ctx),
+                            reply_photo=bool(ctx.reply_photo_ctx),
                         ),
                         tool_fns=make_session_tool_fns(
                             get_db(),
@@ -2769,6 +2819,7 @@ async def chat_stream(
                                 if ctx.appearance_finding_id else None
                             ),
                             shared_ctx=ctx.shared_ctx or None,
+                            reply_photo_ctx=ctx.reply_photo_ctx or None,
                             image_result=ctx.photo_edit_result,
                             feedback_result=ctx.feedback_draft,
                         ),

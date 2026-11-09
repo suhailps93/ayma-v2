@@ -34,6 +34,7 @@ from tool_labels import WORKING_LABELS as _WORKING_LABELS
 from tool_labels import outcome_label as _outcome_label
 from tool_labels import tool_label as _tool_label
 from tool_labels import working_label as _working_label
+from tool_media import ImageToolResult
 
 logger = logging.getLogger("ayma.gemini")
 
@@ -179,6 +180,7 @@ async def _reply_events_inference(
             seen.add(key)
             used.append(label or _tool_label(name))
 
+    opened_images: list[ImageToolResult] = []
     if response.function_calls and fns:
         messages.append(response.assistant_message)
         for call in response.function_calls:
@@ -204,12 +206,32 @@ async def _reply_events_inference(
                 )
             except Exception as exc:  # noqa: BLE001 - report to the model, don't crash
                 result = f"error: {exc}"
+            if isinstance(result, ImageToolResult):
+                # A media-carrying result (open_replied_photo): the text
+                # is the tool result the model reads; the image itself is
+                # attached after the tool round (below), presented like
+                # a photo on the user's own message.
+                opened_images.append(result)
+                result = result.text
             # Noted after the call: some labels depend on what it did.
             _note(call.name, label or _outcome_label(call.name, result))
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.id,
                 "content": json.dumps({"result": result}, default=str),
+            })
+        for opened in opened_images:
+            messages.append({
+                "role": "user",
+                "content": [
+                    inference_llm.image_part(
+                        opened.image[0], opened.image[1]
+                    ),
+                    {
+                        "type": "text",
+                        "text": opened.note or "[photo opened by a tool]",
+                    },
+                ],
             })
         yield {"type": "status", "label": "Writing…"}
         response = await _call()
