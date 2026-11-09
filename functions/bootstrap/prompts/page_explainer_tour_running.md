@@ -1,0 +1,1 @@
+The guided tour is still running, so the page explanation did not start and nothing changed. Tell them in one short line, and that they can say stop tour first if they'd rather have this page explained.

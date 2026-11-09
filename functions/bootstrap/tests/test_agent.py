@@ -345,6 +345,7 @@ def test_session_tools_come_from_the_shared_registry():
         len(skills.all_skills())
         + len(skills._STORY_MANAGE_REGISTRY)
         + len(app_control.VOICE_SKILLS)
+        + len(skills.guided_tour.VOICE_SKILLS)
     )
     assert all(llm.is_function_tool(t) for t in tools)
     # Ayma can edit/soft-remove the user's own story on a call, not only in text.
@@ -4280,6 +4281,12 @@ def test_detect_voice_command_routes_each_family(phrase, tool, keys):
     assert name == tool
     assert sorted(kwargs) == keys
     assert all(isinstance(v, str) and v for v in kwargs.values())
+
+
+def test_detect_voice_command_routes_the_page_explainer():
+    assert agent.detect_voice_command(
+        "what does each item on this page do?"
+    ) == ("explain_this_page", {})
 
 
 def test_detect_voice_command_passes_text_lane_values_through():

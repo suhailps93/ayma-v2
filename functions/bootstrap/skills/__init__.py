@@ -617,7 +617,7 @@ def make_livekit_tools(
     tools = []
     for s in (
         _REGISTRY + _recall_skills() + _web_search_skills() + _STORY_MANAGE_REGISTRY
-        + app_control.VOICE_SKILLS
+        + app_control.VOICE_SKILLS + guided_tour.VOICE_SKILLS
     ):
         description = s.declaration["description"]
         if s is set_voice_preference.SKILL and on_voice_change is not None:

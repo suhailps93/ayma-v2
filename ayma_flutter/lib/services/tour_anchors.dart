@@ -81,7 +81,26 @@ class TourAnchors {
   /// The "Accent Color" row inside Settings.
   static const settingsAccentRow = 'settings_accent_row';
 
+  /// The action rail on another member's profile — the page explainer's
+  /// items (§11.2c). Attached with [TourAnchorScope], since one profile can be
+  /// pushed on top of another.
+  static const publicProfileLike = 'public_profile_like';
+  static const publicProfileMessage = 'public_profile_message';
+  static const publicProfileWebResearch = 'public_profile_web_research';
+  static const publicProfileMatch = 'public_profile_match';
+  static const publicProfilePractice = 'public_profile_practice';
+  static const publicProfileDateSim = 'public_profile_date_sim';
+
   static final Map<String, GlobalKey> _keys = <String, GlobalKey>{};
+
+  /// Keys of the live [TourAnchorScope]s per id, most recently mounted last.
+  static final Map<String, List<GlobalKey>> _scoped =
+      <String, List<GlobalKey>>{};
+
+  static GlobalKey? _liveKey(String id) {
+    final scoped = _scoped[id];
+    return scoped != null && scoped.isNotEmpty ? scoped.last : _keys[id];
+  }
 
   /// The stable [GlobalKey] for [id] — the same instance on every call, so a
   /// widget can attach it and the engine can later find it.
@@ -91,14 +110,14 @@ class TourAnchors {
   /// The live [BuildContext] of the widget currently carrying [id]'s key, or
   /// null when nothing is mounted for it. The engine uses this to scroll an
   /// off-screen anchor (a Profile row) into view before spotlighting it.
-  static BuildContext? contextFor(String id) => _keys[id]?.currentContext;
+  static BuildContext? contextFor(String id) => _liveKey(id)?.currentContext;
 
   /// The global on-screen rect of the widget currently carrying [id]'s key, or
   /// null when nothing is mounted / laid out for it (a gated feature, the wrong
   /// tab, a build that doesn't ship it). A null rect makes the engine skip that
   /// step gracefully rather than block the tour.
   static Rect? rectFor(String id) {
-    final context = _keys[id]?.currentContext;
+    final context = _liveKey(id)?.currentContext;
     if (context == null) return null;
     final object = context.findRenderObject();
     if (object is! RenderBox || !object.attached || !object.hasSize) {
@@ -107,4 +126,38 @@ class TourAnchors {
     final origin = object.localToGlobal(Offset.zero);
     return origin & object.size;
   }
+}
+
+/// Attaches anchor [id] to [child] on a screen that can be on the stack more
+/// than once. Each instance owns its own key, so two mounted copies can't
+/// collide the way a shared [TourAnchors.keyFor] key would; the anchor resolves
+/// to the most recently mounted copy, which is the one on top.
+class TourAnchorScope extends StatefulWidget {
+  const TourAnchorScope({super.key, required this.id, required this.child});
+
+  final String id;
+  final Widget child;
+
+  @override
+  State<TourAnchorScope> createState() => _TourAnchorScopeState();
+}
+
+class _TourAnchorScopeState extends State<TourAnchorScope> {
+  late final GlobalKey _key = GlobalKey(debugLabel: 'tour:${widget.id}');
+
+  @override
+  void initState() {
+    super.initState();
+    (TourAnchors._scoped[widget.id] ??= <GlobalKey>[]).add(_key);
+  }
+
+  @override
+  void dispose() {
+    TourAnchors._scoped[widget.id]?.remove(_key);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      KeyedSubtree(key: _key, child: widget.child);
 }

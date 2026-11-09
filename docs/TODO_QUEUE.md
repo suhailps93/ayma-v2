@@ -4,10 +4,13 @@ Last updated: 2026-11-08. Update this file whenever an item changes; commit and 
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
+## TOUR-PAGE-EXPLAINER — Page-scoped voice explainer (fleet/tour-page-explainer on top of fleet/tour-action-driven, 2026-11-08) — DONE, merges after tour-action-driven, awaiting device test
+- On a call, "what does each item on this page do" highlights that page's items one by one and explains them, performing nothing. See ARCHITECTURE §11.2c.
+- Covered pages: another member's profile, Explore, the You tab, Settings. Other pages answer honestly that nothing is set up.
+
 ## TOUR-ACTION-DRIVEN — Guided tour redesign (fleet/tour-action-driven off staging ac75fa1e, 2026-11-08) — DONE, awaiting staging sweep and device test
 - Ayma performs each step when the user taps the highlight, and the tour waits for the user's go (Next, or spoken on a call). See ARCHITECTURE §11.2b.
 - **Founder decided (2026-11-08, 4:09 PM PT):** the `explore_search` line no longer asks the user to tap and tell Ayma who, and an opened page scrolls and works while the tour waits; only the orb and voice controls stay blocked, and only on a live call.
-- **Follow-on, not built:** page-scoped voice explainer — on voice, "what does each item on this page do" runs the highlight sequence for that page only, explaining and performing nothing (founder, 2026-11-08). Branch on top of this one.
 
 ## PHOTO-ADD-FIXES — Fix photo adding: face-embedding non-fatal graceful degradation + moderation reason toast surfacing (fleet/photo-add-fixes off staging tip ac75fa1e, 2026-11-08) — DONE
 - **Bug 1 — Face-embedding step unconditionally raised in photo pipeline (BACKEND DEFECT — FIXED):**

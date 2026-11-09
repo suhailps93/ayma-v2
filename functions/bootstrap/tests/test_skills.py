@@ -296,6 +296,7 @@ def test_make_livekit_tools_instruments_every_tool_when_on_call_is_given():
         len(skills.all_skills())
         + len(skills._STORY_MANAGE_REGISTRY)
         + len(app_control.VOICE_SKILLS)
+        + len(skills.guided_tour.VOICE_SKILLS)
     )
     # every tool's underlying callable is the _instrumented wrapper (carries
     # __wrapped__ back to the raw bound skill), not the raw bind() output.

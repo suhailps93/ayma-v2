@@ -186,6 +186,12 @@ def test_verdict_to_command_rejects_unresolvable_stack(tool, value):
     ) is None
 
 
+def test_verdict_to_command_maps_explain_page():
+    assert voice_actions.verdict_to_command(
+        Verdict(action="explain_page")
+    ) == ("explain_this_page", {})
+
+
 def test_verdict_to_command_maps_set_voice_and_start_tour():
     assert voice_actions.verdict_to_command(
         Verdict(

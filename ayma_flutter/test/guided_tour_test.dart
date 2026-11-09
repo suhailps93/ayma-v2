@@ -592,6 +592,215 @@ void main() {
     });
   });
 
+  group('page explainer through the real TourHost (founder, 2026-11-08)', () {
+    late FakeFirebaseFirestore fake;
+    late DocumentReference<Map<String, dynamic>> pending;
+    late DocumentReference<Map<String, dynamic>> eventDoc;
+    late List<int> tourPings;
+    late int likes;
+    late int orbTaps;
+    late List<String> pushed;
+    late bool voiceLive;
+
+    AppCommandService service() => AppCommandService(
+          firestore: fake,
+          auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'u1')),
+          sendTourContinuation: (index) async => tourPings.add(index),
+          sendTourStop: (index) async {},
+          hasActiveVoice: () => voiceLive,
+          chatPopupOpen: () => false,
+          currentPath: () => '/profile/user/x',
+          navigate: pushed.add,
+        );
+
+    // A like button on the rail and the voice orb, both real tappables.
+    Widget host() {
+      return MaterialApp(
+        theme: AymaTheme.dark,
+        builder: (context, child) => TourHost(child: child!),
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                right: 16,
+                top: 100,
+                child: TourAnchorScope(
+                  id: TourAnchors.publicProfileLike,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => likes++,
+                    child: const SizedBox(width: 64, height: 64),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 24,
+                bottom: 24,
+                child: GestureDetector(
+                  key: const ValueKey('orb'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => orbTaps++,
+                  child: const SizedBox(width: 64, height: 64),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Map<String, dynamic> stepCmd({Map<String, dynamic>? command}) =>
+        <String, dynamic>{
+          'action': 'tour_step',
+          'id': 'x1',
+          'index': 0,
+          'total': 6,
+          'anchor': TourAnchors.publicProfileLike,
+          'route': '/profile/user/:uid',
+          'headline': 'Like',
+          'say': 'The heart is your like.',
+          'command': command,
+          'explainer': true,
+        };
+
+    const likeCentre = Offset(752, 132);
+    const orbCentre = Offset(56, 544);
+
+    Future<void> show(
+      WidgetTester tester,
+      AppCommandService svc,
+      Map<String, dynamic> cmd,
+    ) async {
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      AppContext.instance.current.value = const ScreenContext(
+        screen: 'profile',
+        route: '/profile/user/:uid',
+      );
+      await tester.pumpWidget(host());
+      await pending.set(cmd);
+      svc.runTourStep(pending, cmd, id: cmd['id'] as String);
+      await settle(tester);
+    }
+
+    setUp(() {
+      GuidedTourController.instance.endSession();
+      VoiceSessionController.active = null;
+      fake = FakeFirebaseFirestore();
+      pending = fake.doc('users/u1/app_commands/pending');
+      eventDoc = fake.doc('users/u1/app_commands/tour_event');
+      tourPings = <int>[];
+      likes = 0;
+      orbTaps = 0;
+      pushed = <String>[];
+      voiceLive = true;
+    });
+
+    tearDown(() {
+      GuidedTourController.instance.endSession();
+      AppContext.instance.current.value = const ScreenContext();
+    });
+
+    testWidgets('a tap on the highlighted like fires nothing, and on a call '
+        'it is not the go', (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd());
+      expect(find.text('The heart is your like.'), findsOneWidget);
+
+      await tester.tapAt(likeCentre);
+      await settle(tester);
+
+      expect(likes, 0);
+      expect(pushed, isEmpty);
+      expect((await eventDoc.get()).exists, isFalse);
+      expect(tourPings, isEmpty);
+      expect(GuidedTourController.instance.step, isNotNull);
+    });
+
+    testWidgets('a command on an explainer step is never run', (tester) async {
+      final svc = service();
+      await show(
+        tester,
+        svc,
+        stepCmd(command: const {
+          'action': 'navigate',
+          'screen': 'story',
+          'path': '/profile/wiki',
+        }),
+      );
+
+      await tester.tapAt(likeCentre);
+      await settle(tester);
+
+      expect(pushed, isEmpty);
+      expect(likes, 0);
+      expect((await eventDoc.get()).exists, isFalse);
+    });
+
+    testWidgets('the orb never sees a tap and there is no Next on a call',
+        (tester) async {
+      final svc = service();
+      await show(tester, svc, stepCmd());
+      expect(find.text('Next'), findsNothing);
+
+      await tester.tapAt(orbCentre);
+      await settle(tester);
+
+      expect(orbTaps, 0);
+      expect(GuidedTourController.instance.step, isNotNull);
+    });
+
+    testWidgets('if the call drops, a tap completes the step and still fires '
+        'nothing', (tester) async {
+      voiceLive = false;
+      final svc = service();
+      await show(tester, svc, stepCmd());
+
+      await tester.tapAt(likeCentre);
+      await settle(tester);
+
+      expect(likes, 0);
+      expect(pushed, isEmpty);
+      expect((await eventDoc.get()).data()?['event'], 'tapped');
+      expect(tourPings, [0]);
+    });
+  });
+
+  group('TourAnchorScope', () {
+    testWidgets('two mounted copies do not collide and the newest resolves',
+        (tester) async {
+      Widget box(double top) => Positioned(
+            top: top,
+            left: 0,
+            child: TourAnchorScope(
+              id: TourAnchors.publicProfileLike,
+              child: const SizedBox(width: 10, height: 10),
+            ),
+          );
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Stack(children: [box(0), box(50)]),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      expect(TourAnchors.rectFor(TourAnchors.publicProfileLike)?.top, 50);
+
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Stack(children: [box(0)]),
+        ),
+      );
+      expect(TourAnchors.rectFor(TourAnchors.publicProfileLike)?.top, 0);
+
+      await tester.pumpWidget(const SizedBox());
+      expect(TourAnchors.rectFor(TourAnchors.publicProfileLike), isNull);
+    });
+  });
+
   group('action-driven steps through the real TourHost (founder, 2026-11-08)', () {
     late FakeFirebaseFirestore fake;
     late DocumentReference<Map<String, dynamic>> pending;

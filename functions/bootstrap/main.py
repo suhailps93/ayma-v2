@@ -1944,7 +1944,7 @@ async def _prepare_chat(
         system_prompt += "\n\n" + analysis_block
     if tour_active and not req.tour_continuation:
         current = skills.guided_tour._index_of(tour_state)
-        steps = skills.guided_tour._steps()
+        steps = skills.guided_tour._tour_steps(tour_state)
         step_info = f" (step {current + 1} of {len(steps)})" if 0 <= current < len(steps) else ""
         system_prompt += (
             f"\n\n[GUIDED TOUR ACTIVE{step_info}]\n"

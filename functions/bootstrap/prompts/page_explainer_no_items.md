@@ -1,0 +1,1 @@
+This page has no item-by-item explanation set up, or the app couldn't confirm which page they're on. Nothing is highlighted. Tell them so plainly in one short line, do not claim you highlighted anything, and do not invent what the controls do. You can call current_screen and describe only what it reports.

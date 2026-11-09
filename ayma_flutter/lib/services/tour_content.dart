@@ -116,6 +116,14 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     icon: Icons.tour_outlined,
     anchorId: TourAnchors.homeOrb,
   ),
+  TourFeature(
+    featureId: 'ayma_page_explainer',
+    headline: 'Ask what a page does',
+    subtitle: 'On a call, ask "what does each item on this page do?" and Ayma '
+        'highlights each one and explains it. She won\'t tap anything.',
+    icon: Icons.help_outline_rounded,
+    anchorId: TourAnchors.homeOrb,
+  ),
   // The Profile walkthrough: tap the Profile tab to open it (press-through,
   // §11.2a), then sub-steps spotlight the real rows inside — Story, Appearance
   // and the Ayma group — top to bottom, each scrolled into view.

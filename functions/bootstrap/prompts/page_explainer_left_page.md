@@ -1,0 +1,1 @@
+The next item couldn't be highlighted because the user is no longer on that page, so the explanation has ended. Tell them plainly in one short line, and do not guess at any other cause. Offer to explain the page they're on now if they want.

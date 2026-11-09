@@ -50,6 +50,9 @@ not name or clearly mean.
 - start_tour: the user asks to start, open, or be walked through the guided
   tour of the app. Stopping, quitting, or advancing the tour is NOT this
   (those stay conversation).
+- explain_page: the user asks what each item, button or thing on the page
+  they are on does ("what does each item on this page do", "explain this
+  page"). A question about one single control is NOT this (conversation).
 - end_call: the user IS signing off to Ayma, live, right now — a
   goodbye, or a disconnect / hang-up ask — see the strict rules below.
 - clarify: ONLY for a launch ask (practice or sim) that names no partner and
@@ -169,6 +172,8 @@ something else ("disconnect the Wi-Fi") means none.
 - "start the guided tour" → start_tour.
 - "walk me through the app" → start_tour.
 - "stop the tour" → none (a stop is not a start).
+- "what does each item on this page do" → explain_page.
+- "what does the heart do" → none (one control, she can just answer).
 - "goodbye Ayma" → end_call.
 - "bye Ayma, thank you" → end_call.
 - "okay, goodbye Ayma" → end_call.
@@ -241,6 +246,7 @@ Two full set_voice answers, exactly as they must look:
   {"action": "set_voice", "voice_kind": "accent",
    "voice_value": "southern American accent"}
 - {"action": "start_tour"}
+- {"action": "explain_page"}
 - {"action": "end_call"}
 - {"action": "clarify", "for": "<launch_practice|launch_sim>"}
 - {"action": "none"}
