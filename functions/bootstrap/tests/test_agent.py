@@ -346,6 +346,7 @@ def test_session_tools_come_from_the_shared_registry():
         + len(skills._STORY_MANAGE_REGISTRY)
         + len(app_control.VOICE_SKILLS)
         + len(skills.guided_tour.VOICE_SKILLS)
+        + len(skills._ANALYSIS_REGISTRY)
     )
     assert all(llm.is_function_tool(t) for t in tools)
     # Ayma can edit/soft-remove the user's own story on a call, not only in text.
