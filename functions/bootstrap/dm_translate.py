@@ -1,10 +1,10 @@
 """Cross-language DM translation — the hackathon cross-language dating feature.
 
 Two people who speak different languages can still connect: an incoming message
-in a language other than the reader's preferred language is translatable (the
-client shows the translation while keeping the original), and the reader can
-optionally have their own outgoing draft translated into the match's language
-before sending.
+in a language other than the reader's preferred language is translatable — the
+client puts a Translate button under that message's bubble and swaps the
+translation in place, with the original one tap away (founder, 2026-11-08: no
+thread-level translate toggles, no outgoing-draft translation).
 
 One function, :func:`translate`, backs ``POST /dm/translate``. It routes through
 the LLM provider abstraction on the ``translate`` surface (``config.

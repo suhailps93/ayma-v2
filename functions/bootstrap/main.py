@@ -4394,12 +4394,12 @@ async def dm_assist_endpoint(
 
 
 class DmTranslateRequest(BaseModel):
-    # The thread whose message/draft is being translated — used only to verify
+    # The thread whose message is being translated — used only to verify
     # the caller is a participant (pair-only, like every other /dm endpoint).
     thread_id: str = Field(min_length=1, max_length=128)
     text: str = Field(min_length=1, max_length=dm_translate.MAX_TEXT_CHARS)
-    # Language code or name to translate INTO (the reader's preferred language
-    # for an incoming message, or the match's language for an outgoing draft).
+    # Language code or name to translate INTO (the reader's preferred
+    # language, for an incoming message).
     target_lang: str = Field(min_length=1, max_length=32)
     # Optional hint for the source language; the model detects the real one.
     source_lang: str = Field(default="", max_length=32)

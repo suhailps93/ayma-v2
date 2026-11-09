@@ -92,115 +92,115 @@ DmMessage _incoming(String body, {String id = 'in1'}) => DmMessage(
       createdAt: DateTime.now(),
     );
 
+Future<_FakeDm> _pumpThread(
+  WidgetTester tester,
+  StreamController<List<DmMessage>> ctrl, {
+  DmTranslation Function(String text)? translate,
+}) async {
+  tester.view.physicalSize = const Size(1200, 2600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final dm = _FakeDm(ctrl, translate: translate);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: DmThreadScreen(
+        threadId: 'a__me',
+        dmService: dm,
+        apiClient: _api(),
+      ),
+    ),
+  );
+  await tester.pump();
+  return dm;
+}
+
 void main() {
   testWidgets(
-    'an incoming foreign-language bubble shows Translate; tapping renders the '
-    'translation with a "translated from" label while keeping the original',
+    'a foreign-language bubble gets a Translate button under it; tapping '
+    'swaps the bubble text to the translation in place, and the button '
+    'toggles back to the original',
     (tester) async {
-      tester.view.physicalSize = const Size(1200, 2600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(
+      final dm = await _pumpThread(
+        tester,
         ctrl,
         translate: (_) => const DmTranslation(
           translated: 'How are you?',
           detectedSourceLang: 'es',
         ),
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'a__me',
-            dmService: dm,
-            apiClient: _api(),
-          ),
-        ),
-      );
-      await tester.pump();
       ctrl.add([_incoming('¿Cómo estás?')]);
       await tester.pumpAndSettle();
 
-      // The original is shown with a subtle Translate affordance.
+      // The original is shown, with a Translate button under the bubble.
       expect(find.text('¿Cómo estás?'), findsOneWidget);
       expect(find.text('Translate'), findsOneWidget);
+      // Same-script detection ran exactly once, quietly, in the background.
+      expect(dm.translateCalls, hasLength(1));
+      expect(dm.translateCalls.single.text, '¿Cómo estás?');
+      expect(dm.translateCalls.single.target, isNotEmpty);
 
       await tester.tap(find.text('Translate'));
       await tester.pumpAndSettle();
 
-      // The translation renders, the original stays, and the source language
-      // is labelled.
+      // The bubble now shows the translation INSTEAD of the original, with
+      // the source language labelled and a way back on the same button.
       expect(find.text('How are you?'), findsOneWidget);
-      expect(find.text('¿Cómo estás?'), findsOneWidget);
+      expect(find.text('¿Cómo estás?'), findsNothing);
       expect(find.textContaining('translated from es'), findsOneWidget);
+      expect(find.text('Show original'), findsOneWidget);
+      // Revealing did not re-translate.
+      expect(dm.translateCalls, hasLength(1));
 
-      // The call targeted a non-empty preferred language (device locale here).
-      expect(dm.translateCalls.single.text, '¿Cómo estás?');
-      expect(dm.translateCalls.single.target, isNotEmpty);
+      await tester.tap(find.text('Show original'));
+      await tester.pumpAndSettle();
+      expect(find.text('¿Cómo estás?'), findsOneWidget);
+      expect(find.text('How are you?'), findsNothing);
+      expect(find.text('Show translation'), findsOneWidget);
+
+      await tester.tap(find.text('Show translation'));
+      await tester.pumpAndSettle();
+      expect(find.text('How are you?'), findsOneWidget);
+      expect(dm.translateCalls, hasLength(1));
     },
   );
 
   testWidgets(
-    'an incoming message already in the reader\'s language never shows '
-    'Translate: the backend returns the original and no affordance is offered',
+    'an incoming message already in the reader\'s language never shows a '
+    'Translate button: the backend returns the original and nothing is '
+    'offered',
     (tester) async {
-      tester.view.physicalSize = const Size(1200, 2600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
       final ctrl = StreamController<List<DmMessage>>.broadcast();
       // Same-script (Latin) text the backend resolves to the reader's own
-      // language: it hands back the original unchanged (confidence too low / not
-      // foreign), so the widget must offer nothing.
-      final dm = _FakeDm(
+      // language: it hands back the original unchanged (confidence too low /
+      // not foreign), so the widget must offer nothing.
+      await _pumpThread(
+        tester,
         ctrl,
         translate: (text) => DmTranslation(translated: text),
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'a__me',
-            dmService: dm,
-            apiClient: _api(),
-          ),
-        ),
-      );
-      await tester.pump();
       ctrl.add([_incoming('hey sexy')]);
       await tester.pumpAndSettle();
 
-      // The message shows, but there is NO Translate affordance on English.
       expect(find.text('hey sexy'), findsOneWidget);
       expect(find.text('Translate'), findsNothing);
-      expect(find.text('Already in your language'), findsNothing);
+      expect(find.text('Show original'), findsNothing);
+      expect(find.text('Show translation'), findsNothing);
     },
   );
 
   testWidgets(
-    'a short different-script (Malayalam) message still offers Translate and '
-    'translates on tap — script detection is reliable even when short',
+    'a short different-script (Malayalam) message still gets a Translate '
+    'button with no up-front call — script detection is reliable even when '
+    'short — and the button hit area is a full 48pt tall, below the bubble',
     (tester) async {
-      tester.view.physicalSize = const Size(1200, 2600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(
+      final dm = await _pumpThread(
+        tester,
         ctrl,
         translate: (_) =>
             const DmTranslation(translated: 'hi', detectedSourceLang: 'ml'),
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'a__me',
-            dmService: dm,
-            apiClient: _api(),
-          ),
-        ),
-      );
-      await tester.pump();
       ctrl.add([_incoming('ഹായ്')]);
       await tester.pumpAndSettle();
 
@@ -209,118 +209,136 @@ void main() {
       expect(find.text('Translate'), findsOneWidget);
       expect(dm.translateCalls, isEmpty);
 
+      // The button sits below the bubble and its hit area is 48pt tall.
+      final btn = find.byKey(const ValueKey('translate-btn-in1'));
+      expect(btn, findsOneWidget);
+      expect(tester.getSize(btn).height, 48);
+      expect(
+        tester.getTopLeft(btn).dy,
+        greaterThan(tester.getBottomLeft(find.text('ഹായ്')).dy),
+      );
+
       await tester.tap(find.text('Translate'));
       await tester.pumpAndSettle();
 
       expect(find.text('hi'), findsOneWidget);
+      expect(find.text('ഹായ്'), findsNothing);
       expect(find.textContaining('translated from ml'), findsOneWidget);
+      expect(find.text('Show original'), findsOneWidget);
       expect(dm.translateCalls.single.text, 'ഹായ്');
     },
   );
 
   testWidgets(
-    'outgoing translation is opt-in: off by default the typed text is sent '
-    'unchanged; no translate call is made',
+    'my own message never gets a Translate button, even in a foreign '
+    'language',
     (tester) async {
-      tester.view.physicalSize = const Size(1200, 2600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(ctrl);
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'a__me',
-            dmService: dm,
-            apiClient: _api(),
-          ),
-        ),
+      final dm = await _pumpThread(
+        tester,
+        ctrl,
+        translate: (_) =>
+            const DmTranslation(translated: 'hi', detectedSourceLang: 'ml'),
       );
-      await tester.pump();
-      ctrl.add(const []);
+      ctrl.add([
+        DmMessage(
+          id: 'mine1',
+          senderUid: 'me',
+          type: 'text',
+          body: 'ഹായ്',
+          createdAt: DateTime.now(),
+        ),
+      ]);
       await tester.pumpAndSettle();
 
-      // Outgoing translation is off by default: no "will translate" banner
-      // shows (the control itself is the menu toggle exercised in the next
-      // test).
-      expect(find.textContaining('Ayma will translate your message'),
-          findsNothing);
-
-      await tester.enterText(find.byType(TextField), 'hello there');
-      // WhatsApp composer model: send appears only once text is typed -
-      // pump the mic-to-send swap before tapping it.
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await tester.pumpAndSettle();
-
-      // Default (off): sent verbatim, and translation was never invoked.
-      expect(dm.sent, ['hello there']);
+      expect(find.text('ഹായ്'), findsOneWidget);
+      expect(find.text('Translate'), findsNothing);
       expect(dm.translateCalls, isEmpty);
     },
   );
 
   testWidgets(
-    'with outgoing translation enabled and the match language known, the send '
-    'flow previews the translation and only sends it once confirmed',
+    'a resolved translation is cached: a list rebuild does not re-detect or '
+    're-translate the same message',
     (tester) async {
-      tester.view.physicalSize = const Size(1200, 2600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-
       final ctrl = StreamController<List<DmMessage>>.broadcast();
-      final dm = _FakeDm(
+      final dm = await _pumpThread(
+        tester,
         ctrl,
-        // Incoming detects 'es'; the outgoing draft translates to a preview.
-        translate: (text) => text == 'see you tomorrow'
+        translate: (text) => text == '¿Cómo estás?'
             ? const DmTranslation(
-                translated: 'hasta mañana', detectedSourceLang: 'en')
-            : const DmTranslation(
-                translated: 'Hello', detectedSourceLang: 'es'),
+                translated: 'How are you?', detectedSourceLang: 'es')
+            : DmTranslation(translated: text),
       );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: DmThreadScreen(
-            threadId: 'a__me',
-            dmService: dm,
-            apiClient: _api(),
-          ),
+      final first = _incoming('¿Cómo estás?');
+      ctrl.add([first]);
+      await tester.pumpAndSettle();
+      expect(dm.translateCalls, hasLength(1));
+
+      // A rebuild with the same message plus a new one: the resolved message
+      // is not detected again.
+      ctrl.add([first, _incoming('good morning', id: 'in2')]);
+      await tester.pumpAndSettle();
+      final callsForFirst =
+          dm.translateCalls.where((c) => c.text == '¿Cómo estás?').length;
+      expect(callsForFirst, 1);
+      expect(find.text('Translate'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'the thread menu holds only Share this chat with Ayma and Block & '
+    'report — both translate options are gone',
+    (tester) async {
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      await _pumpThread(tester, ctrl);
+      ctrl.add(const []);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Share this chat with Ayma'), findsOneWidget);
+      expect(find.text('Block & report'), findsOneWidget);
+      expect(find.text('Auto-translate their messages'), findsNothing);
+      expect(find.text('Translate what I send'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'sending is never translated: typed text is sent exactly as typed, with '
+    'no preview sheet and no translate call for the draft',
+    (tester) async {
+      final ctrl = StreamController<List<DmMessage>>.broadcast();
+      final dm = await _pumpThread(
+        tester,
+        ctrl,
+        translate: (_) => const DmTranslation(
+          translated: 'Hello',
+          detectedSourceLang: 'es',
         ),
       );
-      await tester.pump();
       ctrl.add([_incoming('Hola')]);
       await tester.pumpAndSettle();
 
-      // Translate an incoming message so the match's language ('es') is known.
-      await tester.tap(find.text('Translate'));
-      await tester.pumpAndSettle();
-
-      // Turn on "translate what I send" from the thread menu, type a draft,
-      // and send.
-      await tester.tap(find.byIcon(Icons.more_vert));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Translate what I send'));
-      await tester.pumpAndSettle();
+      // Even after reading a foreign message, there is no "will translate"
+      // banner and no menu option to turn outgoing translation on.
       expect(find.textContaining('Ayma will translate your message'),
-          findsOneWidget);
+          findsNothing);
+
       await tester.enterText(find.byType(TextField), 'see you tomorrow');
       await tester.pump();
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pumpAndSettle();
 
-      // A preview shows exactly what will be sent, with the original kept.
-      expect(find.text('Send in their language?'), findsOneWidget);
-      expect(find.text('hasta mañana'), findsOneWidget);
-      // The original is kept visible in the preview (and still in the composer).
-      expect(find.text('see you tomorrow'), findsWidgets);
-      // Nothing sent until the user confirms.
-      expect(dm.sent, isEmpty);
-
-      await tester.tap(find.widgetWithText(FilledButton, 'Send'));
-      await tester.pumpAndSettle();
-
-      // The translated text is what actually gets sent.
-      expect(dm.sent, ['hasta mañana']);
+      expect(find.text('Send in their language?'), findsNothing);
+      expect(dm.sent, ['see you tomorrow']);
+      // Only the incoming detection call happened; the draft never went
+      // through translation.
+      expect(
+        dm.translateCalls.where((c) => c.text == 'see you tomorrow'),
+        isEmpty,
+      );
     },
   );
 }

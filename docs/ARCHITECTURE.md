@@ -1298,11 +1298,11 @@ The same single `/dm/assist` Muse call that produces the coaching chips/tip **al
 
 ### 6.12 Cross-language DM (real-time translation, powered by Muse)
 
-Two people who speak different languages can still connect: an incoming message in a language other than the reader's preferred language is translatable (the translation shows inline while the original stays visible), and the reader can optionally have their own outgoing draft translated into the match's language before it sends. Built on the existing DM thread and the LLM-provider abstraction — no new brain, no new data layer.
+Two people who speak different languages can still connect: an incoming message in a language other than the reader's preferred language carries a per-message Translate button under the bubble (founder, 2026-11-08 — no thread-level translate toggles, no outgoing translation). Built on the existing DM thread and the LLM-provider abstraction — no new brain, no new data layer.
 
 ```mermaid
 flowchart LR
-  DM["DM thread UI<br/>dm_thread_screen.dart<br/>incoming bubble · outgoing draft"]
+  DM["DM thread UI<br/>dm_thread_screen.dart<br/>incoming bubble + Translate button"]
   DM -->|"POST /dm/translate {text, target_lang, source_lang?}<br/>pair-only · 18+ (require_adult_uid)"| T["dm_translate.translate()<br/>get_llm_provider('translate')"]
   T -->|"LLM_PROVIDER_TRANSLATE=meta (default)"| Muse["Meta Muse Spark<br/>(OpenAI-compatible Meta Model API)"]
   T -.->|"on failure / translate=gemini"| Gem["Gemini (fallback)"]
@@ -1322,17 +1322,17 @@ Detection and translation happen in one model call; the model also returns a `co
 
 **Provider:** routed through the LLM provider abstraction on the **`translate` surface** (`LLM_PROVIDER_TRANSLATE`, `config.llm_provider_translate`), which **defaults to `meta`** (Muse/Meta — the cross-language feature is "powered by Muse"), with the standard Gemini fallback (`llm_meta_fallback`). Metered under the `dm_translate` token-ledger feature key, **cap-exempt** (`enforce_cap=False`): translating what a match just said must never be gated on the reader's credit balance.
 
-**Resilience & privacy:** a nicety that NEVER blocks the thread — on any model failure `translate()` returns the original text with an empty `detected_source_lang`, so the client simply shows the original. Pair-only + 18+/consent, exactly as the other DM endpoints: `POST /dm/translate` requires `require_adult_uid` and verifies the caller is a participant of `thread_id` (so it can't be used as a general-purpose translation API). The user's own text is never silently altered — outgoing translation is opt-in and previewed before it sends; the incoming original is always kept visible.
+**Resilience & privacy:** a nicety that NEVER blocks the thread — on any model failure `translate()` returns the original text with an empty `detected_source_lang`, so the client simply shows the original. Pair-only + 18+/consent, exactly as the other DM endpoints: `POST /dm/translate` requires `require_adult_uid` and verifies the caller is a participant of `thread_id` (so it can't be used as a general-purpose translation API). The user's own text is never altered — what they type is sent exactly as typed; incoming translation is per-message and reader-tapped, with the original one tap away on the same button.
 
-**Target language:** incoming messages translate INTO the reader's preferred language — the language set on the voice-engine switcher (`VoiceSelection.languageCode`, read best-effort from `GET /voice/engines`) if present, else the device locale (`PlatformDispatcher.locale`). Outgoing drafts translate INTO the match's language, learned from the `detected_source_lang` of an incoming message the reader has translated.
+**Target language:** incoming messages translate INTO the reader's preferred language — the language set on the voice-engine switcher (`VoiceSelection.languageCode`, read best-effort from `GET /voice/engines`) if present, else the device locale (`PlatformDispatcher.locale`).
 
 **Client UI (`dm_thread_screen.dart`):**
-- **Incoming:** each incoming text bubble (`_TranslatableText`) decides *whether to offer translation at all* so the reader is never offered "Translate" on a message already in their own language (the bug fixed 2026-10-29). Script detection (`lib/utils/dm_language.dart`, mirroring the backend) splits incoming text into:
+- **Incoming:** each incoming text bubble (`_TranslatableBubble`) decides *whether to offer translation at all* so the reader is never offered "Translate" on a message already in their own language (the bug fixed 2026-10-29). Script detection (`lib/utils/dm_language.dart`, mirroring the backend) splits incoming text into:
   - **Different writing system than the reader's language** (reliably foreign, e.g. Malayalam) → the subtle "Translate" affordance shows immediately, no detection round-trip.
   - **Same-script** (Latin↔Latin: English/Spanish/French for an English reader) → *ambiguous*, so the backend detector runs once quietly; it returns a real translation only when confident the text is a different language (see the confidence gate above), otherwise the original. "Translate" then appears only for confidently-foreign same-script messages (translation cached, revealed on tap); a message in the reader's own language shows nothing.
   - **Script-less noise** (emoji/numbers only) → never offered.
-  Tapping "Translate" shows the translation beneath the original with a "translated from `lang`" label and a Show-original / Hide toggle; the original is always present. A per-thread **"Auto-translate their messages"** toggle (thread menu) translates incoming messages on arrival (the same confidence/script gate still applies, so same-language messages stay untranslated).
-- **Outgoing:** an opt-in **"Translate what I send"** toggle (thread menu, off by default) with a quiet one-line banner while on. On send it translates the draft into the match's language and shows a confirm sheet (the exact text that will be sent, plus the user's original) — nothing is sent until the user confirms, so the user's words are never silently changed.
+  A **"Translate" button sits directly under the bubble** (the thread menu holds no translate options). Tapping it swaps the bubble text to the translation in place, labelled "translated from `lang`", and the button becomes "Show original" (then "Show translation"). Same-language messages get no button and take no extra space. Resolved results are cached per message id on the screen, so rebuilds never re-detect or re-translate.
+- **Outgoing:** none — what the user types is sent exactly as typed (founder, 2026-11-08: the "Translate what I send" toggle, its banner, and its confirm sheet were removed).
 - **Graceful everywhere:** a failed/unavailable translation degrades to the original with no error-blocking.
 
 ---
