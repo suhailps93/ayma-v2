@@ -78,8 +78,8 @@ class AymaOrb extends StatefulWidget {
   final bool showGlow;
 
   /// True only for an orb standing in for an actively-live voice call — see
-  /// the class doc. Swaps the accent material for the silver/metallic one;
-  /// leaves [state]'s motion untouched.
+  /// the class doc. Gates the accent-only "angelic glow" pass (it does not
+  /// swap in any separate material); leaves [state]'s motion untouched.
   final bool voiceLive;
 
   /// True for the nav-bar tab orbs (`AymaTabBar`). A placement
@@ -1096,12 +1096,13 @@ class AymaOrbPainter extends CustomPainter {
     final compact = tier == _Tier.small || tier == _Tier.tiny;
     final p = _StateParams.lerp(fromState, toState, transitionT);
 
-    // The material this frame paints with: the usual theme accent, or —
-    // only while [voiceLive] — the fixed silver/metallic tone. Every gradient
-    // below that used to reference [accent] directly now goes through this
-    // instead, so the whole sphere (base fill, shadow, wing fills, overlap
-    // shading, glow) shifts together as one material swap rather than
-    // a patchwork of independently-tinted pieces.
+    // The material this frame paints with is always the live theme accent —
+    // there is no separate [voiceLive] material swap any more (the retired
+    // silver/metallic treatment did that; the angelic-glow pass replaced it).
+    // Every glow tone below is re-hued onto that same accent through
+    // [AymaColors.orbGlowTone], so the whole sphere (base fill, shadow, wing
+    // fills, overlap shading, glow) stays one coherent accent material rather
+    // than a patchwork of independently-tinted pieces.
     final glowPearl =
         AymaColors.orbGlowTone(accent, AymaColors.orbGlowPearl);
     final glowLavender =
@@ -1115,14 +1116,13 @@ class AymaOrbPainter extends CustomPainter {
     final glowSphereHot =
         AymaColors.orbGlowTone(accent, AymaColors.orbGlowSphereHot);
     final material = accent;
-    // Highlights/rim/specular normally lerp toward pure white; while
-    // [voiceLive] they lerp toward a cool near-white instead, so the whole
-    // sphere reads as one consistent glowing metal rather than a silver body
-    // with warm-white glints sprinkled on top.
+    // Highlights/rim/specular always lerp toward pure white — neutral specular
+    // light, the same in text mode and on a live call. [voiceLive] adds the
+    // angelic glow, not a second hue, so these glints never carry a tint.
     final highlightWhite = Colors.white;
-    // A genuinely live call gets a visibly stronger presence on top of the
-    // material swap itself — brighter specular, a bigger/brighter bloom —
-    // so it reads as "lit up", not just "a different colour".
+    // A genuinely live call gets a visibly stronger presence through the
+    // angelic-glow pass — brighter specular, a bigger/brighter bloom — so it
+    // reads as "lit up", the accent-only glow doing the work.
     final liveBoost = voiceLive ? 1.0 : 0.0;
 
     // Small-size legibility: the petal/sphere alpha tuned for large sizes
