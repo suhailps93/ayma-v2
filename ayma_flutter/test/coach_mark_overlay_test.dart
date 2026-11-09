@@ -4,6 +4,7 @@ import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
+import 'package:ayma_flutter/widgets/chat_composer.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -765,6 +766,106 @@ void main() {
     expect(messagesRect, isNotNull);
     expect(orbRect == messagesRect, isFalse);
     expect(orbRect!.center.dx, greaterThan(messagesRect!.center.dx));
+  });
+
+  group('performed step on a live call', () {
+    Widget overlayOver(Widget page) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: Stack(
+        children: [
+          Positioned.fill(child: page),
+          Positioned.fill(
+            child: Theme(
+              data: AymaTheme.dark,
+              child: CoachMarkOverlay(
+                store: _FakeTourStore(),
+                onFinish: () {},
+                features: const [
+                  TourFeature(featureId: 'c', headline: 'C', subtitle: 'c'),
+                ],
+                pressThrough: false,
+                performed: true,
+                protectVoiceControls: true,
+                hideNextButton: true,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    testWidgets('a tap on the real nav-bar orb never reaches it, the tabs do',
+        (tester) async {
+      final selected = <int>[];
+      await tester.pumpWidget(overlayOver(MaterialApp(
+        theme: AymaTheme.dark,
+        home: Scaffold(
+          // At the top, clear of the card that sits at the bottom.
+          body: Align(
+            alignment: Alignment.topCenter,
+            child: AymaTabBar(
+              index: 1,
+              voice: null,
+              onSelected: selected.add,
+            ),
+          ),
+        ),
+      )));
+      await settle(tester);
+
+      await tester.tap(find.byType(AymaOrb), warnIfMissed: false);
+      await settle(tester);
+      expect(selected, isEmpty);
+
+      await tester.tap(find.byIcon(Icons.mail_outline_rounded));
+      await settle(tester);
+      expect(selected, [2]);
+    });
+
+    testWidgets('End voice and Mute on the real call bar never fire',
+        (tester) async {
+      var stops = 0;
+      var mutes = 0;
+      final controller = TextEditingController();
+      final focus = FocusNode();
+      addTearDown(controller.dispose);
+      addTearDown(focus.dispose);
+      final level = ValueNotifier<double>(0);
+      await tester.pumpWidget(overlayOver(MaterialApp(
+        theme: AymaTheme.dark,
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 390,
+              height: 56,
+              child: ChatComposer(
+                mode: ComposerMode.listening,
+                controller: controller,
+                focusNode: focus,
+                canSend: false,
+                onSend: () {},
+                onAttach: () {},
+                onMicPressed: () {},
+                onStopPressed: () => stops++,
+                onMuteTap: () => mutes++,
+                muted: false,
+                userAmplitude: level,
+                aiAmplitude: level,
+                statusLabel: 'Listening',
+              ),
+            ),
+          ),
+        ),
+      )));
+      await settle(tester);
+
+      await tester.tap(find.byIcon(Icons.stop_rounded), warnIfMissed: false);
+      await tester.tap(find.byIcon(Icons.mic_rounded), warnIfMissed: false);
+      await settle(tester);
+
+      expect(stops, 0);
+      expect(mutes, 0);
+    });
   });
 
   // Bug B regression: the overlay is hosted ABOVE the Navigator, so a route

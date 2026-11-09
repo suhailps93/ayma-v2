@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 import 'keyboard_dismiss.dart';
+import 'voice_control_mark.dart';
 
 /// Padding wrapping the composer bar at the bottom of a chat screen — shared
 /// by the Ayma chat (`ChatScreen`'s `_Composer`) and the user-to-user DM
@@ -387,13 +388,15 @@ class _ChatComposerState extends State<ChatComposer>
             onPressed: widget.onSend,
           )
         else
-          _RoundIconButton(
-            key: widget.micKey,
-            icon: Icons.mic_none_rounded,
-            tooltip: 'Talk to Ayma',
-            background: ac.bgElev,
-            foreground: ac.fgDim,
-            onPressed: widget.onMicPressed,
+          VoiceControlMark(
+            child: _RoundIconButton(
+              key: widget.micKey,
+              icon: Icons.mic_none_rounded,
+              tooltip: 'Talk to Ayma',
+              background: ac.bgElev,
+              foreground: ac.fgDim,
+              onPressed: widget.onMicPressed,
+            ),
           ),
       ],
     );
@@ -416,37 +419,39 @@ class _ChatComposerState extends State<ChatComposer>
             foreground: widget.muted ? ac.fgMute : ac.accent,
             onPressed: widget.onMuteTap,
           );
-    return Row(
-      children: [
-        leading,
-        Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onExpandTap,
-            child: Tooltip(
-              message: 'Open full-screen voice view',
-              child: Center(
-                child: Text(
-                  widget.statusLabel ?? '',
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: AymaType.mono(
-                    size: 10,
-                    color: ac.fgMute,
-                  ).copyWith(letterSpacing: 1.5),
+    return VoiceControlMark(
+      child: Row(
+        children: [
+          leading,
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onExpandTap,
+              child: Tooltip(
+                message: 'Open full-screen voice view',
+                child: Center(
+                  child: Text(
+                    widget.statusLabel ?? '',
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.mono(
+                      size: 10,
+                      color: ac.fgMute,
+                    ).copyWith(letterSpacing: 1.5),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        _RoundIconButton(
-          icon: Icons.stop_rounded,
-          tooltip: 'End voice',
-          background: ac.accent,
-          foreground: ac.onAccent,
-          onPressed: widget.onStopPressed,
-        ),
-      ],
+          _RoundIconButton(
+            icon: Icons.stop_rounded,
+            tooltip: 'End voice',
+            background: ac.accent,
+            foreground: ac.onAccent,
+            onPressed: widget.onStopPressed,
+          ),
+        ],
+      ),
     );
   }
 }

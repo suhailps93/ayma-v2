@@ -6,7 +6,7 @@ Ask the founder ONE short question at a time. While a question is pending, do no
 
 ## TOUR-ACTION-DRIVEN — Guided tour redesign (fleet/tour-action-driven off staging ac75fa1e, 2026-11-08) — DONE, awaiting staging sweep and device test
 - Ayma performs each step when the user taps the highlight, and the tour waits for the user's go (Next, or spoken on a call). See ARCHITECTURE §11.2b.
-- **Open, founder's call:** the `explore_search` narration still says "Tap the search and tell me who", but that step now only completes on the tap. The performed stage absorbs taps, so the user can look at an opened page but not scroll it.
+- **Founder decided (2026-11-08, 4:09 PM PT):** the `explore_search` line no longer asks the user to tap and tell Ayma who, and an opened page scrolls and works while the tour waits; only the orb and voice controls stay blocked, and only on a live call.
 - **Follow-on, not built:** page-scoped voice explainer — on voice, "what does each item on this page do" runs the highlight sequence for that page only, explaining and performing nothing (founder, 2026-11-08). Branch on top of this one.
 
 ## NOTE-155-OBSERVATIONS — Triage + fix for Scout NOTE 155 observations (fleet/n155-observations off staging 2a80d8e2, 2026-11-08) — DONE, lead engineer reviews + merges + builds

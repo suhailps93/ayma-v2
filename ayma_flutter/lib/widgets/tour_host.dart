@@ -145,6 +145,7 @@ class TourHost extends StatelessWidget {
       hideNextButton: GuidedTourController.instance.voiceOnly,
       pressThrough: false,
       performed: step.performed,
+      protectVoiceControls: GuidedTourController.instance.voiceOnly,
     );
   }
 }
