@@ -262,13 +262,14 @@ def classify_and_dedupe(db, uid: str, candidates: list[dict]) -> list[dict]:
        check a chat-shared photo already gets, §``_classify_shared_photo``),
        computed once and cached on its note from then on (bounded per call —
        see ``_MAX_NEW_EMBEDS_PER_CALL``).
-    2. Drop exact-duplicate images (same photo surfaced under two different
-       URLs — e.g. sent in chat AND also on the profile grid) by comparing
-       embeddings; first occurrence wins, so the input order (profile, then
-       chat, then web) decides which copy is kept.
+    2. Drop exact-duplicate URLs; first occurrence wins, so the input order
+       (profile, then chat, then web) decides which copy is kept. There is
+       no content dedupe: the embedding comparison the old pass used went
+       away with stored face embeddings (face-check rewire), and the same
+       photo under two different URLs now shows twice. Restoring it needs a
+       byte-hash pass over downloads, not a verdict.
 
-    Expects each candidate to carry a ``_embedding`` hint (already-known
-    embedding, or ``None``) — consumed and removed here.
+    A stale ``_embedding`` hint on a candidate is consumed and removed here.
     """
     import asyncio
     import biometric_consent

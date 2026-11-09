@@ -301,18 +301,24 @@ def test_classify_and_dedupe_computes_and_caches_a_verdict_for_an_unclassified_c
     assert "embedding" not in raw
 
 
-def test_classify_and_dedupe_drops_a_chat_photo_matching_a_kept_profile_photo(
+def test_classify_and_dedupe_drops_same_url_only(
     monkeypatch,
 ):
+    """Dedupe is URL-only since stored face embeddings went away: the same
+    photo under two different URLs is kept twice (content dedupe would need
+    a byte-hash pass over downloads), while the exact same URL twice drops
+    the second copy."""
     candidates = [
         {"id": "p", "url": "https://cdn/profile.jpg", "source": "profile",
-         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+         "is_user": "", "context": "", "deleted": False},
         {"id": "c", "url": "https://cdn/chat-same.jpg", "source": "chat",
-         "is_user": "", "context": "", "deleted": False, "_embedding": [1.0, 0.0]},
+         "is_user": "", "context": "", "deleted": False},
+        {"id": "dup", "url": "https://cdn/profile.jpg", "source": "profile",
+         "is_user": "", "context": "", "deleted": False},
     ]
     out = photo_notes.classify_and_dedupe(_Db(), "u1", candidates)
 
-    assert [p["id"] for p in out] == ["p"]
+    assert [p["id"] for p in out] == ["p", "c"]
 
 
 def test_classify_and_dedupe_defaults_profile_and_web_is_user_without_network_work(
