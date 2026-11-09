@@ -114,4 +114,5 @@ dependencies {
     // exposes it as `implementation`. Same BoM version as firebase_core.
     implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
     implementation("com.google.firebase:firebase-messaging")
+    implementation("com.android.installreferrer:installreferrer:2.2")
 }

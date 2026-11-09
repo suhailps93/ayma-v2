@@ -16,6 +16,7 @@ import 'services/accent_color_controller.dart';
 import 'services/auth_service.dart';
 import 'services/auth_session_state.dart';
 import 'services/deep_link_queue.dart';
+import 'services/install_referrer_service.dart';
 import 'services/push_service.dart';
 import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
@@ -67,6 +68,7 @@ Future<void> main() async {
   // RevenueCat bind, push sync) then run in the background.
   final push = PushService();
   setupAuthDeepLinkDrain();
+  unawaited(InstallReferrerService.instance.checkInstallReferrer());
 
   String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {

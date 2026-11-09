@@ -54,6 +54,7 @@ class MainActivity : FlutterActivity() {
 
     private var pushChannel: MethodChannel? = null
     private var micYieldManager: MicYieldManager? = null
+    private var installReferrerManager: InstallReferrerManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -212,11 +213,18 @@ class MainActivity : FlutterActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger
         ).also { it.attach() }
+
+        installReferrerManager = InstallReferrerManager(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger
+        ).also { it.attach() }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         micYieldManager?.detach()
         micYieldManager = null
+        installReferrerManager?.detach()
+        installReferrerManager = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
