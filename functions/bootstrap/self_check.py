@@ -554,6 +554,8 @@ class _Deps:
     settings_keys: list | None = None       # registry setting keys
     declared_tools: set | None = None       # session tool declaration names
     feedback_record: Callable | None = None  # (category, note) -> object
+    photo_retries: int = 4                  # attempts to wait for carousel mount
+    photo_retry_delay: float = 0.5          # sleep between carousel retry attempts
 
 
 class SelfCheckRunner:
@@ -737,7 +739,6 @@ class SelfCheckRunner:
         self.results.append(result)
         if result.status == FAIL:
             await self._file_bug(result)
-        await self._announce(self._line(result))
 
     def _recent_bug_docs(self) -> list:
         """Best-effort recent filed bug-report docs for this user, newest
@@ -1160,7 +1161,18 @@ class SelfCheckRunner:
         """
         if fn is None:
             return self._unbound("show_profile_photo")
-        out = str(await self._call(fn, op="goto", index=2) or "")
+        out = ""
+        # The goto may be issued before the open profile's photo carousel has
+        # finished registering on the client (e.g. while the profile screen's
+        # async GET /explore/profile/{uid} is still in flight). Wait / retry
+        # across a short window before ruling that the carousel failed to register.
+        retries = max(1, self.deps.photo_retries)
+        for attempt in range(retries):
+            out = str(await self._call(fn, op="goto", index=2) or "")
+            if not out.startswith("no_carousel:"):
+                break
+            if attempt < retries - 1 and self.deps.photo_retry_delay > 0:
+                await asyncio.sleep(self.deps.photo_retry_delay)
         if out.startswith("showing:"):
             return PASS, out[:120], ""
         if out.startswith("out_of_range:"):
@@ -1380,10 +1392,6 @@ class SelfCheckRunner:
 
     async def run(self) -> str:
         deps = self.deps
-        await self._announce(
-            "Self-check started — running each capability one by one; "
-            "each result lands here in the chat as its check finishes."
-        )
         destinations = deps.destinations
         if destinations is None:
             destinations = app_registry.destinations()
@@ -1650,15 +1658,15 @@ def build_report(
 
 
 async def run_self_check(db, uid: str, *, session_id: str = "") -> str:
-    """Production entry point used by the ``/chat`` deterministic hook.
+    """Production entry point used by the ``/chat`` deterministic hook and
+    voice session.
 
-    Progress lines are appended to the chat history as checks complete
-    (they land just before the persisted ``/self-check`` turn — a known
-    cosmetic quirk of running inside ``_prepare_chat``, which executes
-    before the user turn is persisted). The turn's reply text is the
-    short human summary only (counts line + any failures in plain
-    words); the full report is filed in the run's feedback record,
-    never returned as the reply.
+    End-of-run finish bubbles (the summary counts header, plus failure lines
+    when present) are appended to the chat history via ``_progress``. Per-check
+    results are never persisted as chat messages. The turn's reply text is
+    the short human summary only (counts line + any failures in plain words);
+    the full report is filed in the run's feedback record, never returned as
+    the reply.
     """
 
     def _progress(line: str) -> None:
