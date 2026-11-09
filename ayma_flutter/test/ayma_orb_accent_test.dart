@@ -28,11 +28,10 @@ Future<ByteData> _render(Color accent) async {
   return (await image.toByteData())!;
 }
 
-/// Share of opaque, clearly-coloured pixels whose hue is near Cherry Fuchsia.
-double _pinkShare(ByteData data) {
-  final pink = HSLColor.fromColor(AymaColors.accent).hue;
+/// Share of opaque, clearly-coloured pixels whose hue is near [hue] (degrees).
+double _hueShare(ByteData data, double hue) {
   var coloured = 0;
-  var pinkish = 0;
+  var matching = 0;
   for (var i = 0; i < data.lengthInBytes; i += 4) {
     final c = Color.fromARGB(data.getUint8(i + 3), data.getUint8(i),
         data.getUint8(i + 1), data.getUint8(i + 2));
@@ -42,11 +41,15 @@ double _pinkShare(ByteData data) {
       continue;
     }
     coloured++;
-    final d = (hsl.hue - pink).abs();
-    if (d < 25 || d > 335) pinkish++;
+    final d = (hsl.hue - hue).abs();
+    if (d < 25 || d > 335) matching++;
   }
-  return coloured == 0 ? 0 : pinkish / coloured;
+  return coloured == 0 ? 0 : matching / coloured;
 }
+
+/// Share of opaque, clearly-coloured pixels whose hue is near Cherry Fuchsia.
+double _pinkShare(ByteData data) =>
+    _hueShare(data, HSLColor.fromColor(AymaColors.accent).hue);
 
 void main() {
   test('default accent keeps the original ring and petal glow tones', () {
@@ -74,5 +77,16 @@ void main() {
     final green = (await tester.runAsync(() => _render(_green)))!;
     expect(_pinkShare(def), greaterThan(0.5));
     expect(_pinkShare(green), lessThan(0.02));
+  });
+
+  // V3 (jobs-voice-call): the connected-call angelic glow is accent-only —
+  // under a non-default accent the live-call orb re-hues its glow onto that
+  // accent rather than falling back to a fixed pink/silver tone. Both renders
+  // above use voiceLive: true, so this asserts the glow itself follows the
+  // live accent.
+  testWidgets('connected-call glow follows a non-default accent', (tester) async {
+    final green = (await tester.runAsync(() => _render(_green)))!;
+    final greenHue = HSLColor.fromColor(_green).hue;
+    expect(_hueShare(green, greenHue), greaterThan(0.5));
   });
 }

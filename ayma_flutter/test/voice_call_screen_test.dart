@@ -335,6 +335,13 @@ void main() {
       expect((buttonCenter.dx - screen.width / 2).abs(), lessThan(2));
       expect(buttonCenter.dy, greaterThan(orbCenter.dy));
       expect(buttonCenter.dy, greaterThan(screen.height * 0.8));
+
+      // Jobs pass (fleet/jobs-voice-call): the mute toggle sits 24 above the
+      // SafeArea bottom inset — the on-rhythm section gap, not the off-grid 28.
+      final positioned = tester.widget<Positioned>(
+        find.ancestor(of: button, matching: find.byType(Positioned)),
+      );
+      expect(positioned.bottom, 24);
     });
 
     testWidgets(

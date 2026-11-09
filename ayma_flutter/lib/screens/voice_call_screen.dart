@@ -174,7 +174,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                   // Inside the Scaffold's SafeArea, so the device's own bottom
                   // inset is already accounted for — this is just breathing
                   // room above it.
-                  bottom: 28,
+                  bottom: 24,
                   child: Center(
                     child: _MuteButton(
                       muted: voice.muted || voice.micYielded,
