@@ -95,4 +95,61 @@ void main() {
     expect(lightFgDimCardContrast, greaterThanOrEqualTo(4.5),
         reason: 'lightFgDim on lightBgCard contrast ($lightFgDimCardContrast) must be >= 4.5');
   });
+
+  test('reports pass contrast audits: bgElev, bg, and accentFaint surfaces', () {
+    // Defect 7: accent on bgElev fails 4.5:1 in both themes (4.32 dark / 3.57 light),
+    // while fgMute on bgElev passes (4.63 dark / 4.66 light).
+    final darkAccentElev = _contrastRatio(AymaColors.accent, AymaColors.darkBgElev);
+    final lightAccentElev = _contrastRatio(AymaColors.accent, AymaColors.lightBgElev);
+    expect(darkAccentElev, closeTo(4.32, 0.05));
+    expect(darkAccentElev, lessThan(4.5));
+    expect(lightAccentElev, closeTo(3.57, 0.05));
+    expect(lightAccentElev, lessThan(4.5));
+
+    final darkFgMuteElev = _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBgElev);
+    final lightFgMuteElev = _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBgElev);
+    expect(darkFgMuteElev, greaterThanOrEqualTo(4.5));
+    expect(lightFgMuteElev, greaterThanOrEqualTo(4.5));
+
+    // Defect 20: accent on bg fails 4.5:1 in light theme (3.83:1),
+    // while fgMute on bg passes in both (4.94 dark / 5.00 light).
+    final lightAccentBg = _contrastRatio(AymaColors.accent, AymaColors.lightBg);
+    expect(lightAccentBg, closeTo(3.83, 0.05));
+    expect(lightAccentBg, lessThan(4.5));
+
+    final darkFgMuteBg = _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBg);
+    final lightFgMuteBg = _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBg);
+    expect(darkFgMuteBg, greaterThanOrEqualTo(4.5));
+    expect(lightFgMuteBg, greaterThanOrEqualTo(4.5));
+
+    // Defects 22 & 24: banner message on accentFaint.
+    final darkAccentFaintSurface =
+        Color.alphaBlend(AymaTokens.dark.accentFaint, AymaColors.darkBg);
+    final lightAccentFaintSurface =
+        Color.alphaBlend(AymaTokens.light.accentFaint, AymaColors.lightBg);
+
+    // accent on accentFaint fails (4.32 dark / 3.46 light)
+    final darkAccentOnFaint = _contrastRatio(AymaColors.accent, darkAccentFaintSurface);
+    final lightAccentOnFaint = _contrastRatio(AymaColors.accent, lightAccentFaintSurface);
+    expect(darkAccentOnFaint, closeTo(4.32, 0.05));
+    expect(darkAccentOnFaint, lessThan(4.5));
+    expect(lightAccentOnFaint, closeTo(3.46, 0.05));
+    expect(lightAccentOnFaint, lessThan(4.5));
+
+    // error on accentFaint fails (3.97 dark / 3.76 light)
+    final darkErrorOnFaint = _contrastRatio(AymaColors.error, darkAccentFaintSurface);
+    final lightErrorOnFaint = _contrastRatio(AymaColors.error, lightAccentFaintSurface);
+    expect(darkErrorOnFaint, closeTo(3.97, 0.05));
+    expect(darkErrorOnFaint, lessThan(4.5));
+    expect(lightErrorOnFaint, closeTo(3.76, 0.05));
+    expect(lightErrorOnFaint, lessThan(4.5));
+
+    // fgDim on accentFaint passes in both themes (8.40 dark / 8.21 light)
+    final darkFgDimOnFaint = _contrastRatio(AymaColors.darkFgDim, darkAccentFaintSurface);
+    final lightFgDimOnFaint = _contrastRatio(AymaColors.lightFgDim, lightAccentFaintSurface);
+    expect(darkFgDimOnFaint, closeTo(8.40, 0.05));
+    expect(darkFgDimOnFaint, greaterThanOrEqualTo(4.5));
+    expect(lightFgDimOnFaint, closeTo(8.21, 0.05));
+    expect(lightFgDimOnFaint, greaterThanOrEqualTo(4.5));
+  });
 }
