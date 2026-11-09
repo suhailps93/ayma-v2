@@ -235,6 +235,9 @@ class _MatchReportScreenState extends State<MatchReportScreen>
                   ShareReportButton(
                     reportType: 'match',
                     reportId: r.matchId,
+                    subjectUid: r.otherUid,
+                    subjectName: r.otherName,
+                    subjectPhoto: r.otherPhoto,
                     apiClient: _api,
                   ),
                   ReportRefreshButton(

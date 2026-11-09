@@ -1,15 +1,13 @@
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
-import 'package:share_plus/share_plus.dart';
 
 import '../models/report_share.dart';
 import 'api_client.dart';
-import 'dm_service.dart';
 
 /// Sharing a report: snapshot it server-side (`POST /share`), fetch the
 /// server-rendered card PNG, and hand link + card to the native OS share
-/// sheet or a DM. The card is rendered by the backend
+/// sheet. The card is rendered by the backend
 /// (`share_page.render_card`) so the share, the DM and the link preview all
 /// show the same image.
 class ShareService {
@@ -56,30 +54,4 @@ class ShareService {
         '${tempDir.path}/ayma_share_${share.token.substring(0, 8)}${story ? '_story' : ''}.png');
     return file.writeAsBytes(r.bodyBytes, flush: true);
   }
-
-  /// The system share sheet with the link text and the link-preview card.
-  /// When the card can't be fetched, the link text is still shared on its
-  /// own so the chosen app (WhatsApp, ...) always gets it.
-  Future<void> shareViaSystem(ReportShare share) async {
-    XFile? file;
-    try {
-      file = XFile((await downloadCard(share)).path, mimeType: 'image/png');
-    } on Exception {
-      file = null;
-    }
-    await SharePlus.instance.share(ShareParams(
-      text: share.message,
-      subject: share.title,
-      files: file == null ? null : [file],
-    ));
-  }
-
-  /// Sends the report into the DM thread [threadId] as an in-app card that
-  /// opens the snapshot natively (never the external link).
-  Future<void> sendToThread(
-    DmService dm,
-    String threadId,
-    ReportShare share,
-  ) =>
-      dm.sendReportShare(threadId, share.token);
 }

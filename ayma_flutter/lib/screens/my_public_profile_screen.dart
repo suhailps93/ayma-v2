@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/photo_service.dart';
+import '../services/share_kit.dart';
+import '../widgets/ayma_share_sheet.dart';
 import 'public_profile_screen.dart' show ProfileBody;
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
@@ -78,8 +80,8 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
     super.dispose();
   }
 
-  /// Pick and add photos to the public carousel (the "Add photo" tile and the
-  /// app-bar camera button).
+  /// Pick and add photos to the public carousel (the photo strip's
+  /// "Add photo" tile, and the `edit=photos` deep link).
   Future<void> _addPhotos() async {
     final msg = await _photos.pickAndAdd();
     if (msg != null && msg.isNotEmpty && mounted) {
@@ -88,6 +90,28 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   }
 
   void _setPrimary(GridPhoto photo) => _photos.setPrimary(photo);
+
+  /// Share my own public profile, through the same share kit sheet as
+  /// sharing a profile from Explore. This button replaced the header's
+  /// add-photo icon (founder, 2026-11-08): the photo strip's add tile is
+  /// the one add-photo entry this page needs.
+  Future<void> _shareProfile() async {
+    PublicProfile? p;
+    try {
+      p = await _photoFuture;
+    } catch (_) {
+      p = null;
+    }
+    if (!mounted) return;
+    showAymaShareSheet(
+      context,
+      ShareTargets.profile(
+        uid: _uid,
+        name: (p?.name ?? '').isNotEmpty ? p!.name : 'My public profile',
+        photoUrl: p == null || p.photos.isEmpty ? '' : p.photos.first,
+      ),
+    );
+  }
 
   /// Tapping the opened image's delete button: block if it's the only public
   /// photo, otherwise confirm — the primary action removes it from the public
@@ -225,9 +249,10 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
             onPressed: _editManually,
           ),
           IconButton(
-            tooltip: 'Add photo',
-            icon: const Icon(Icons.add_a_photo_outlined),
-            onPressed: _addPhotos,
+            key: const ValueKey('myProfileShareButton'),
+            tooltip: 'Share',
+            icon: const Icon(Icons.share_outlined),
+            onPressed: _shareProfile,
           ),
         ],
       ),

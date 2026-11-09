@@ -9,11 +9,13 @@ import '../services/ayma_session.dart';
 import '../services/chat_inbox.dart';
 import '../services/date_sim_service.dart';
 import '../services/match_activity.dart';
+import '../services/share_kit.dart';
 import '../services/photo_carousel_registry.dart';
 import '../services/tab_request.dart';
 import '../services/tour_anchors.dart';
 import '../theme.dart';
 import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/ayma_share_sheet.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_rail_icons.dart';
@@ -421,7 +423,19 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
             children: [
               Column(
                 children: [
-                  _TitleBar(title: title),
+                  _TitleBar(
+                    title: title,
+                    onShare: p == null
+                        ? null
+                        : () => showAymaShareSheet(
+                              context,
+                              ShareTargets.profile(
+                                uid: p.uid,
+                                name: p.name,
+                                photoUrl: p.photos.isEmpty ? '' : p.photos.first,
+                              ),
+                            ),
+                  ),
                   Expanded(child: content),
                 ],
               ),
@@ -480,9 +494,13 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title});
+  const _TitleBar({required this.title, this.onShare});
 
   final String title;
+
+  /// Opens the share kit sheet for this profile; null while the profile
+  /// is still loading (the header then keeps its plain spacer).
+  final VoidCallback? onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -501,11 +519,19 @@ class _TitleBar extends StatelessWidget {
                 style: AymaType.sans(size: 16, weight: FontWeight.w600, color: context.ac.fg),
               ),
             ),
-            // Wide enough to clear the global Ayma orb launcher's own
-            // top-right footprint (`GlobalAymaLauncher`: 16px right inset +
-            // 8px tap padding + 48px orb ≈ 72px from the edge) so the title
-            // never runs under it.
-            const SizedBox(width: 80),
+            // The header's top-right slot carries the share button
+            // (founder, 2026-11-08) — the wide spacer that used to sit
+            // here only cleared the old floating orb launcher, which no
+            // longer exists.
+            if (onShare != null)
+              IconButton(
+                key: const ValueKey('profileShareButton'),
+                tooltip: 'Share',
+                icon: const Icon(Icons.share_outlined),
+                onPressed: onShare,
+              )
+            else
+              const SizedBox(width: 80),
           ],
         ),
       ),

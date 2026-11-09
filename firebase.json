@@ -32,6 +32,13 @@
           "serviceId": "ayma-api",
           "region": "us-central1"
         }
+      },
+      {
+        "source": "/p/**",
+        "run": {
+          "serviceId": "ayma-api",
+          "region": "us-central1"
+        }
       }
     ],
     "headers": [

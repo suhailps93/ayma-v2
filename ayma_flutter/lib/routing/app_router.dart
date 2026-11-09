@@ -10,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/auth_session_state.dart';
 import '../services/connection_heartbeat.dart';
 import '../services/deep_link_queue.dart';
+import '../services/share_kit.dart';
 import '../services/meta_integrations.dart';
 import '../services/app_context.dart';
 import '../services/screen_capture.dart';
@@ -53,6 +54,7 @@ import '../screens/delete_account_screen.dart';
 import '../screens/underage_screen.dart';
 import '../screens/release_notes_screen.dart';
 import '../screens/settings_screen.dart';
+import '../screens/shared_profile_link_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
 import '../screens/skills_screen.dart';
@@ -123,6 +125,10 @@ void setupAuthDeepLinkDrain([FirebaseAuth? auth]) {
         user.uid,
         navigate: (path) => navigateToRoute(path),
       );
+      // A page-share link that arrived signed-out: its target route was
+      // stashed by the link screen — open it now sign-in has landed.
+      final pendingShare = PendingPageShare.take();
+      if (pendingShare.isNotEmpty) navigateToRoute(pendingShare);
     }
   });
 }
@@ -150,8 +156,12 @@ final appRouter = GoRouter(
       BiometricInfoScreen.path,
       RecoveryScreen.path,
     };
-    // A shared-report link is public (the snapshot needs no auth).
-    if (!signedIn && !open.contains(loc) && !loc.startsWith('/s/')) {
+    // A shared-report link is public (the snapshot needs no auth), and a
+    // page-share link resolves its own target (teaser + stash signed-out).
+    if (!signedIn &&
+        !open.contains(loc) &&
+        !loc.startsWith('/s/') &&
+        !loc.startsWith('/p/')) {
       return SignInScreen.path;
     }
     if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
@@ -517,6 +527,11 @@ final appRouter = GoRouter(
       path: SharedReportScreen.path,
       builder: (context, state) =>
           SharedReportScreen(token: state.pathParameters['token']!),
+    ),
+    GoRoute(
+      path: SharedProfileLinkScreen.path,
+      builder: (context, state) =>
+          SharedProfileLinkScreen(token: state.pathParameters['token']!),
     ),
     GoRoute(
       path: RecoveryScreen.path,

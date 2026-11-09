@@ -61,6 +61,18 @@
                     android:host="justabot.info"
                     android:pathPrefix="/s/"/>
             </intent-filter>
+            <!-- Page-share links (https://justabot.info/p/<token>) open
+                 the shared target (a profile) natively. Same assetlinks
+                 verification as /s/ (the file covers the whole domain). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="justabot.info"
+                    android:pathPrefix="/p/"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
