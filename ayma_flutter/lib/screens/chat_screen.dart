@@ -724,12 +724,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     await _send(retry: seed, skipUserTurn: true);
   }
 
-  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report):
-  /// attach the report as an un-sent chip above an empty, focused composer.
-  /// Nothing is added to the transcript and nothing is sent — [_send] posts the
-  /// card the moment the user sends their own first message.
+  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report
+  /// or "Send to Ayma" on any shared target): attach the target as an un-sent
+  /// card staged above an empty, focused composer. Nothing is added to the
+  /// transcript and nothing is sent — [_send] posts the card when the user
+  /// taps send (with or without typed text).
   void _startDraftAbout(ChatKickoff k) {
+    final isSelf = k.editSelf ||
+        (k.targetUid.isNotEmpty && k.targetUid == _currentUid());
     if (k.targetUid.isNotEmpty) _viewingOverride = k.targetUid;
+    if (isSelf) _profileEdit = true;
+    if (k.shareKind == 'match' && k.refId.isNotEmpty) {
+      _matchReportId = k.refId;
+    }
     setState(() {
       _pendingShared = _SharedDraft(
         kind: k.shareKind.isEmpty ? 'deep_dive' : k.shareKind,
@@ -737,6 +744,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         name: k.label.isNotEmpty ? k.label : 'them',
         photo: k.photoUrl,
         refId: k.refId,
+        editSelf: isSelf,
       );
     });
     _composerFocus.requestFocus();
@@ -1936,7 +1944,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           mode: composerMode,
           controller: _composerController,
           focusNode: _composerFocus,
-          canSend: !_sending && (_canSend || _pendingImage != null),
+          canSend: !_sending &&
+              (_canSend || _pendingImage != null || _pendingShared != null),
           onSend: _send,
           onAttach: _attachImage,
           onMicPressed: _onPttMicPressed,
@@ -2134,18 +2143,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  String _sharedWireFallback() {
+    if (_store.turns.isNotEmpty) {
+      final t = _store.turns.last;
+      if (t.role == TurnRole.user && t.sharedKind.isNotEmpty) {
+        return '[shared ${t.sharedKind.replaceAll('_', ' ')}]';
+      }
+    }
+    return '(shared)';
+  }
+
   Future<void> _send({
     String? retry,
     bool skipUserTurn = false,
     String? clientMsgId,
   }) async {
-    // A draft attachment (an "Ask Ayma" report chip) is posted as a shared
-    // card the moment the user sends their own first message, then the send
-    // proceeds normally with that card as the tail user turn.
+    // A draft attachment (an "Ask Ayma" report chip or shared-card stage) is
+    // posted as a shared card when the user hits send. If they typed their own
+    // text, card and text arrive together; if empty, the card alone is sent.
     if (retry == null && _pendingShared != null && !_sending) {
       final draftText = _composerController.text.trim();
-      if (draftText.isEmpty) return;
       final ps = _pendingShared!;
+      if (ps.uid.isNotEmpty) _viewingOverride = ps.uid;
+      if (ps.editSelf) _profileEdit = true;
+      if (ps.kind == 'match' && ps.refId.isNotEmpty) {
+        _matchReportId = ps.refId;
+      }
       _store.addSharedTurn(
         kind: ps.kind,
         uid: ps.uid,
@@ -2163,7 +2186,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
-    if ((message.isEmpty && image == null) || _sending) return;
+    if ((message.isEmpty && image == null && !skipUserTurn) || _sending) return;
 
     // Messages are already waiting for credits: this one joins the line (they
     // go out in the order they were written) instead of jumping it.
@@ -2232,11 +2255,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (skipUserTurn) {
       // The caller already put this turn in the transcript (a shared
       // profile/conversation/match card). It's the tail of `window` and carries
-      // the same text as `message`; drop it here so it isn't sent twice, but it
-      // stays in the store for context on later turns.
+      // the same text as `message` (or placeholder if empty); drop it here so
+      // it isn't sent twice, but it stays in the store for context on later turns.
       if (window.isNotEmpty &&
           window.last['role'] == 'user' &&
-          window.last['text'] == message) {
+          (window.last['text'] == message ||
+              (message.isEmpty &&
+                  (window.last['text']?.startsWith('[shared ') ?? false)))) {
         window.removeLast();
       }
     } else if (retry == null) {
@@ -2304,7 +2329,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             replySubject.isNotEmpty &&
             replySnippet.isNotEmpty)
         ? '[Replying to $replySubject: "$replySnippet"]\n$message'
-        : (message.isEmpty ? '(shared a photo)' : message);
+        : (message.isEmpty
+            ? (image != null ? '(shared a photo)' : _sharedWireFallback())
+            : message);
     _store.addPending('Thinking…');
     _backgroundedDuringSend = false;
     final knownAymaBeforeSend = _store.turns
@@ -2362,7 +2389,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () =>
+                  _send(retry: wireMessage, skipUserTurn: skipUserTurn),
             ),
           );
         }
@@ -2382,7 +2410,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () =>
+                  _send(retry: wireMessage, skipUserTurn: skipUserTurn),
             ),
           );
         }
@@ -3378,8 +3407,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             controller: _composerController,
                             focusNode: _composerFocus,
                             canSend:
-                                (_canSend || _pendingImage != null) &&
-                                !_sending,
+                                (_canSend ||
+                                        _pendingImage != null ||
+                                        _pendingShared != null) &&
+                                    !_sending,
                             onSend: _send,
                             onAttach: _attachImage,
                             pendingImage: _pendingImage,
@@ -4405,6 +4436,7 @@ class _SharedDraft {
     required this.name,
     required this.photo,
     required this.refId,
+    this.editSelf = false,
   });
 
   final String kind;
@@ -4412,6 +4444,7 @@ class _SharedDraft {
   final String name;
   final String photo;
   final String refId;
+  final bool editSelf;
 }
 
 /// The card shown for a user turn that shared a person / conversation / match
@@ -5070,43 +5103,82 @@ class _Composer extends StatelessWidget {
                   ),
                 ),
               ),
-            if (pendingShared != null)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-                    decoration: BoxDecoration(
-                      color: ac.bgElev,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: ac.lineSoft, width: 0.5),
+            if (pendingShared != null) ...[
+              () {
+                final ps = pendingShared!;
+                final meta = switch (ps.kind) {
+                  'deep_dive' => (
+                      icon: Icons.travel_explore,
+                      label: 'Web research on ${ps.name}',
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.travel_explore, size: 16, color: ac.accent),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            'Web research on ${pendingShared!.name}',
-                            overflow: TextOverflow.ellipsis,
-                            style: AymaType.sans(size: 12.5, color: ac.fgDim),
+                  'match' => (
+                      icon: Icons.insights_rounded,
+                      label: ps.name.isEmpty
+                          ? 'Match report'
+                          : 'Match report with ${ps.name}',
+                    ),
+                  'story' => (
+                      icon: Icons.auto_stories_outlined,
+                      label: 'Your Story',
+                    ),
+                  'appearance' => (
+                      icon: Icons.photo_library_outlined,
+                      label: ps.name.isNotEmpty
+                          ? ps.name
+                          : 'Appearance report',
+                    ),
+                  'conversation' => (
+                      icon: Icons.forum_outlined,
+                      label: 'Chat with ${ps.name}',
+                    ),
+                  _ => (
+                      icon: Icons.person_outline,
+                      label: ps.name.isNotEmpty
+                          ? 'Profile · ${ps.name}'
+                          : 'Profile',
+                    ),
+                };
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 8, left: 2),
+                    child: Container(
+                      key: const ValueKey('stagedSharedChip'),
+                      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                      decoration: BoxDecoration(
+                        color: ac.bgElev,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: ac.lineSoft, width: 0.5),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(meta.icon, size: 16, color: ac.accent),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              meta.label,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  AymaType.sans(size: 12.5, color: ac.fgDim),
+                            ),
                           ),
-                        ),
-                        IconButton(
-                          onPressed: onClearShared,
-                          iconSize: 16,
-                          icon: const Icon(Icons.close),
-                          color: ac.fgMute,
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Remove attachment',
-                        ),
-                      ],
+                          IconButton(
+                            key: const ValueKey('clearSharedDraft'),
+                            onPressed: onClearShared,
+                            iconSize: 16,
+                            icon: const Icon(Icons.close),
+                            color: ac.fgMute,
+                            visualDensity: VisualDensity.compact,
+                            tooltip: 'Remove attachment',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ),
+                );
+              }(),
+            ],
             if (pendingImage != null)
               Align(
                 alignment: Alignment.centerLeft,
