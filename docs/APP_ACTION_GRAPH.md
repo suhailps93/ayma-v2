@@ -199,9 +199,7 @@ undone.)
 | Attachment button: Photo / Camera / File | Attach media | `UI` for the entry; OS picker is the user's |
 | Photo bubble (tap) | Image viewer | `UI` |
 | "Share this chat with Ayma" | Bring the thread into the Ayma chat | `UI` |
-| Auto-translate toggles ("Auto-translate their messages", "Translate what I send") | Translate the thread | `UI` |
-| "Show translation" / "Translate" / "Your original" on a bubble | Reveal translation/original | `UI` |
-| "Send in their language?" sheet: Send / Cancel | Confirm translated send | `UI` |
+| "Translate" / "Show original" / "Show translation" button under a bubble (only on an incoming message in a different language than the reader's) | Translate that one message in place / back to the original | `UI` |
 | Coach chips ("Things to talk about") | Insert a suggested line | `UI`; suggestions themselves come from her `dm_assist` |
 | "Heads up from Ayma" tip dismiss (X) | Dismiss the coach tip | `UI` |
 | Block & report / Block (menu) | Block the person | EXCLUDED — founder-confirmed 2026-11-06; refused by the `block_report` deny rule (see Exclusions) |
