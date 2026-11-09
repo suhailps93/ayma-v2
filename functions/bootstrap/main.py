@@ -690,6 +690,7 @@ app.include_router(appearance_router)
 import mcp_server  # noqa: E402
 
 app.mount(mcp_server.MOUNT_PATH, mcp_server.asgi_app)
+app.add_route(mcp_server.MOUNT_PATH, mcp_server.bare_mount_app)
 
 
 @app.get("/health")
