@@ -1,6 +1,17 @@
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:ayma_flutter/theme.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+double _contrastRatio(Color a, Color b) {
+  final l1 = a.computeLuminance();
+  final l2 = b.computeLuminance();
+  final lighter = math.max(l1, l2);
+  final darker = math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
 
 /// Task 1 of the Cherry Fuchsia batch: every real colour literal lives in
 /// `lib/theme.dart`, not scattered as `Color(0x...)`/`Color.fromRGBO`/
@@ -41,5 +52,26 @@ void main() {
       expect(content.contains(entry.value), isFalse,
           reason: '${entry.key} still has the literal ${entry.value}');
     }
+  });
+
+  test('fgMute contrast is at least 4.5:1 against bgElev and bg in both themes', () {
+    expect(AymaColors.darkFgMute, const Color(0xFF8B8274));
+    expect(AymaColors.lightFgMute, const Color(0xFF706B60));
+
+    // Dark theme: fgMute against bg and bgElev (the sheet surface).
+    final darkBgContrast = _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBg);
+    final darkElevContrast = _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBgElev);
+    expect(darkBgContrast, greaterThanOrEqualTo(4.5),
+        reason: 'darkFgMute on darkBg contrast ($darkBgContrast) must be >= 4.5');
+    expect(darkElevContrast, greaterThanOrEqualTo(4.5),
+        reason: 'darkFgMute on darkBgElev contrast ($darkElevContrast) must be >= 4.5');
+
+    // Light theme: fgMute against bg and bgElev (the sheet surface).
+    final lightBgContrast = _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBg);
+    final lightElevContrast = _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBgElev);
+    expect(lightBgContrast, greaterThanOrEqualTo(4.5),
+        reason: 'lightFgMute on lightBg contrast ($lightBgContrast) must be >= 4.5');
+    expect(lightElevContrast, greaterThanOrEqualTo(4.5),
+        reason: 'lightFgMute on lightBgElev contrast ($lightElevContrast) must be >= 4.5');
   });
 }

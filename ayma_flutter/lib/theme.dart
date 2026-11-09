@@ -28,7 +28,7 @@ class AymaColors {
   static const darkLineSoft = Color(0xFF2A261F);
   static const darkFg = Color(0xFFEDE9DE);
   static const darkFgDim = Color(0xFFBAB3A3);
-  static const darkFgMute = Color(0xFF7E7669);
+  static const darkFgMute = Color(0xFF8B8274);
 
   // Light
   static const lightBg = Color(0xFFFAF8F4);
@@ -38,7 +38,7 @@ class AymaColors {
   static const lightLineSoft = Color(0xFFDDD9D2);
   static const lightFg = Color(0xFF1A1714);
   static const lightFgDim = Color(0xFF4A443B);
-  static const lightFgMute = Color(0xFF7A7468);
+  static const lightFgMute = Color(0xFF706B60);
 
   // Shared across themes
   //
