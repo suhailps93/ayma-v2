@@ -724,19 +724,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     await _send(retry: seed, skipUserTurn: true);
   }
 
-  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report):
-  /// attach the report as an un-sent chip above an empty, focused composer.
-  /// Nothing is added to the transcript and nothing is sent — [_send] posts the
-  /// card the moment the user sends their own first message.
+  /// A "draft about this" kickoff (e.g. "Ask Ayma" on a Web-research report
+  /// or "Send to Ayma" on any shared target): attach the target as an un-sent
+  /// card staged above an empty, focused composer. Nothing is added to the
+  /// transcript and nothing is sent — [_send] posts the card when the user
+  /// taps send (with or without typed text).
   void _startDraftAbout(ChatKickoff k) {
+    final isSelf = k.editSelf ||
+        (k.targetUid.isNotEmpty && k.targetUid == _currentUid());
     if (k.targetUid.isNotEmpty) _viewingOverride = k.targetUid;
+    if (isSelf) _profileEdit = true;
+    if (k.shareKind == 'match' && k.refId.isNotEmpty) {
+      _matchReportId = k.refId;
+    }
     setState(() {
+      _pageContext = null;
       _pendingShared = _SharedDraft(
         kind: k.shareKind.isEmpty ? 'deep_dive' : k.shareKind,
         uid: k.targetUid,
         name: k.label.isNotEmpty ? k.label : 'them',
         photo: k.photoUrl,
         refId: k.refId,
+        editSelf: isSelf,
       );
     });
     _composerFocus.requestFocus();
@@ -747,6 +756,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// what [_send] folds into `/chat`; never touches the transcript.
   void _applyPageContext(ChatKickoff k) {
     if (!mounted) return;
+    if (_pendingShared != null) return;
     setState(() => _pageContext = k.screenContext);
   }
 
@@ -1936,7 +1946,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           mode: composerMode,
           controller: _composerController,
           focusNode: _composerFocus,
-          canSend: !_sending && (_canSend || _pendingImage != null),
+          canSend: !_sending &&
+              (_canSend || _pendingImage != null || _pendingShared != null),
           onSend: _send,
           onAttach: _attachImage,
           onMicPressed: _onPttMicPressed,
@@ -2134,18 +2145,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  String _sharedWireFallback() {
+    if (_store.turns.isNotEmpty) {
+      final t = _store.turns.last;
+      if (t.role == TurnRole.user && t.sharedKind.isNotEmpty) {
+        return '[shared ${t.sharedKind.replaceAll('_', ' ')}]';
+      }
+    }
+    return '(shared)';
+  }
+
   Future<void> _send({
     String? retry,
     bool skipUserTurn = false,
     String? clientMsgId,
   }) async {
-    // A draft attachment (an "Ask Ayma" report chip) is posted as a shared
-    // card the moment the user sends their own first message, then the send
-    // proceeds normally with that card as the tail user turn.
+    // A draft attachment (an "Ask Ayma" report chip or shared-card stage) is
+    // posted as a shared card when the user hits send. If they typed their own
+    // text, card and text arrive together; if empty, the card alone is sent.
     if (retry == null && _pendingShared != null && !_sending) {
       final draftText = _composerController.text.trim();
-      if (draftText.isEmpty) return;
       final ps = _pendingShared!;
+      if (ps.uid.isNotEmpty) _viewingOverride = ps.uid;
+      if (ps.editSelf) _profileEdit = true;
+      if (ps.kind == 'match' && ps.refId.isNotEmpty) {
+        _matchReportId = ps.refId;
+      }
       _store.addSharedTurn(
         kind: ps.kind,
         uid: ps.uid,
@@ -2163,7 +2188,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     final message = retry ?? _composerController.text.trim();
     final image = retry == null ? _pendingImage : null;
-    if ((message.isEmpty && image == null) || _sending) return;
+    if ((message.isEmpty && image == null && !skipUserTurn) || _sending) return;
 
     // Messages are already waiting for credits: this one joins the line (they
     // go out in the order they were written) instead of jumping it.
@@ -2232,11 +2257,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (skipUserTurn) {
       // The caller already put this turn in the transcript (a shared
       // profile/conversation/match card). It's the tail of `window` and carries
-      // the same text as `message`; drop it here so it isn't sent twice, but it
-      // stays in the store for context on later turns.
+      // the same text as `message` (or placeholder if empty); drop it here so
+      // it isn't sent twice, but it stays in the store for context on later turns.
       if (window.isNotEmpty &&
           window.last['role'] == 'user' &&
-          window.last['text'] == message) {
+          (window.last['text'] == message ||
+              (message.isEmpty &&
+                  (window.last['text']?.startsWith('[shared ') ?? false)))) {
         window.removeLast();
       }
     } else if (retry == null) {
@@ -2304,7 +2331,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             replySubject.isNotEmpty &&
             replySnippet.isNotEmpty)
         ? '[Replying to $replySubject: "$replySnippet"]\n$message'
-        : (message.isEmpty ? '(shared a photo)' : message);
+        : (message.isEmpty
+            ? (image != null ? '(shared a photo)' : _sharedWireFallback())
+            : message);
     _store.addPending('Thinking…');
     _backgroundedDuringSend = false;
     final knownAymaBeforeSend = _store.turns
@@ -2362,7 +2391,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () =>
+                  _send(retry: wireMessage, skipUserTurn: skipUserTurn),
             ),
           );
         }
@@ -2382,7 +2412,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
-              onPressed: () => _send(retry: message),
+              onPressed: () =>
+                  _send(retry: wireMessage, skipUserTurn: skipUserTurn),
             ),
           );
         }
@@ -3378,8 +3409,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             controller: _composerController,
                             focusNode: _composerFocus,
                             canSend:
-                                (_canSend || _pendingImage != null) &&
-                                !_sending,
+                                (_canSend ||
+                                        _pendingImage != null ||
+                                        _pendingShared != null) &&
+                                    !_sending,
                             onSend: _send,
                             onAttach: _attachImage,
                             pendingImage: _pendingImage,
@@ -3401,6 +3434,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             onClearReply: _clearReply,
                             pageContextLabel:
                                 (!_voice.isActive &&
+                                        _pendingShared == null &&
                                         (_activePageContext?.screen ?? '')
                                             .isNotEmpty)
                                     ? _activePageContext!.label
@@ -3881,7 +3915,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 if (turn.sharedKind.isNotEmpty)
                   Padding(
                     padding: EdgeInsets.only(bottom: !showBubble ? 0 : 8),
-                    child: _SharedRefCard(turn: turn),
+                    child: _SharedRefCard.fromTurn(turn),
                   ),
                 if (hasImage)
                   Padding(
@@ -4405,6 +4439,7 @@ class _SharedDraft {
     required this.name,
     required this.photo,
     required this.refId,
+    this.editSelf = false,
   });
 
   final String kind;
@@ -4412,34 +4447,71 @@ class _SharedDraft {
   final String name;
   final String photo;
   final String refId;
+  final bool editSelf;
 }
 
-/// The card shown for a user turn that shared a person / conversation / match
-/// report into the chat. Tapping opens the underlying screen.
+/// The card shown for a shared person / conversation / match / story / report.
+/// Used both when staged above the composer (with an [onClear] button) and
+/// in the transcript as a sent turn. Tapping opens the underlying screen.
 class _SharedRefCard extends StatelessWidget {
-  const _SharedRefCard({required this.turn});
+  const _SharedRefCard({
+    super.key,
+    required this.kind,
+    required this.name,
+    required this.photo,
+    required this.refId,
+    required this.uid,
+    this.onClear,
+  });
 
-  final TranscriptTurn turn;
+  factory _SharedRefCard.fromTurn(TranscriptTurn turn) => _SharedRefCard(
+        kind: turn.sharedKind,
+        name: turn.sharedName,
+        photo: turn.sharedPhoto,
+        refId: turn.sharedRefId,
+        uid: turn.sharedUid,
+      );
+
+  factory _SharedRefCard.fromDraft(
+    _SharedDraft draft, {
+    Key? key,
+    VoidCallback? onClear,
+  }) =>
+      _SharedRefCard(
+        key: key,
+        kind: draft.kind,
+        name: draft.name,
+        photo: draft.photo,
+        refId: draft.refId,
+        uid: draft.uid,
+        onClear: onClear,
+      );
+
+  final String kind;
+  final String name;
+  final String photo;
+  final String refId;
+  final String uid;
+  final VoidCallback? onClear;
 
   ({String label, IconData icon, String route, String kindLabel}) get _meta =>
-      switch (turn.sharedKind) {
+      switch (kind) {
         'conversation' => (
-            label: 'Your chat with ${turn.sharedName}',
+            label: 'Your chat with $name',
             icon: Icons.forum_outlined,
-            route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+            route: refId.isEmpty ? '' : '/dm/$refId',
             kindLabel: 'CHAT',
           ),
         'deep_dive' => (
-            label: 'Web research on ${turn.sharedName}',
+            label: 'Web research on $name',
             icon: Icons.travel_explore,
-            route:
-                turn.sharedRefId.isEmpty ? '' : '/deep-dive/${turn.sharedRefId}',
+            route: refId.isEmpty ? '' : '/deep-dive/$refId',
             kindLabel: 'WEB FINDING',
           ),
         'match' => (
-            label: '${turn.sharedName} · match report',
+            label: '$name · match report',
             icon: Icons.insights_rounded,
-            route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
+            route: refId.isEmpty ? '' : '/match/$refId',
             kindLabel: 'MATCH REPORT',
           ),
         'story' => (
@@ -4449,18 +4521,15 @@ class _SharedRefCard extends StatelessWidget {
             kindLabel: 'STORY',
           ),
         'appearance' => (
-            label: turn.sharedName,
+            label: name,
             icon: Icons.photo_library_outlined,
-            route: turn.sharedRefId.isEmpty
-                ? ''
-                : '/appearance/${turn.sharedRefId}',
+            route: refId.isEmpty ? '' : '/appearance/$refId',
             kindLabel: 'APPEARANCE REPORT',
           ),
         _ => (
-            label: turn.sharedName,
+            label: name,
             icon: Icons.person_outline,
-            route:
-                turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
+            route: uid.isEmpty ? '' : '/profile/user/$uid',
             kindLabel: 'PROFILE',
           ),
       };
@@ -4473,7 +4542,7 @@ class _SharedRefCard extends StatelessWidget {
       onTap: m.route.isEmpty ? null : () => context.push(m.route),
       borderRadius: BorderRadius.circular(14),
       child: Container(
-        width: 240,
+        width: onClear != null ? 260 : 240,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: ac.bgElev,
@@ -4487,9 +4556,9 @@ class _SharedRefCard extends StatelessWidget {
               child: SizedBox(
                 width: 40,
                 height: 40,
-                child: turn.sharedPhoto.isNotEmpty
+                child: photo.isNotEmpty
                     ? AymaPhoto(
-                        url: turn.sharedPhoto,
+                        url: photo,
                         displayWidth: 40,
                         error: Icon(m.icon, size: 18, color: ac.fgMute),
                       )
@@ -4524,6 +4593,18 @@ class _SharedRefCard extends StatelessWidget {
                 ],
               ),
             ),
+            if (onClear != null) ...[
+              const SizedBox(width: 4),
+              IconButton(
+                key: const ValueKey('clearSharedDraft'),
+                onPressed: onClear,
+                iconSize: 16,
+                icon: const Icon(Icons.close),
+                color: ac.fgMute,
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Remove attachment',
+              ),
+            ],
           ],
         ),
       ),
@@ -5075,35 +5156,10 @@ class _Composer extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 8, left: 2),
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-                    decoration: BoxDecoration(
-                      color: ac.bgElev,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: ac.lineSoft, width: 0.5),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.travel_explore, size: 16, color: ac.accent),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            'Web research on ${pendingShared!.name}',
-                            overflow: TextOverflow.ellipsis,
-                            style: AymaType.sans(size: 12.5, color: ac.fgDim),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: onClearShared,
-                          iconSize: 16,
-                          icon: const Icon(Icons.close),
-                          color: ac.fgMute,
-                          visualDensity: VisualDensity.compact,
-                          tooltip: 'Remove attachment',
-                        ),
-                      ],
-                    ),
+                  child: _SharedRefCard.fromDraft(
+                    pendingShared!,
+                    key: const ValueKey('stagedSharedChip'),
+                    onClear: onClearShared,
                   ),
                 ),
               ),

@@ -109,6 +109,7 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         uid: _uid,
         name: (p?.name ?? '').isNotEmpty ? p!.name : 'My public profile',
         photoUrl: p == null || p.photos.isEmpty ? '' : p.photos.first,
+        editSelf: true,
       ),
     );
   }

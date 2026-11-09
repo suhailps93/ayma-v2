@@ -115,22 +115,25 @@ class ChatKickoff {
 
   /// Bring something into the Ayma chat as an *un-sent draft attachment*: the
   /// chat opens with a card chip above an empty, focused composer so the user
-  /// types their own question with the report attached as context. Unlike
+  /// types their own question with the target attached as context. Unlike
   /// [talkAbout] (which seeds a message and auto-sends), nothing is sent until
-  /// the user hits send. [shareKind] is `deep_dive` etc.; [refId] the report id.
+  /// the user hits send. [shareKind] is `profile` / `story` / `deep_dive` /
+  /// `match` / `appearance`; [refId] the report id or match id.
   factory ChatKickoff.draftAbout({
     required String targetUid,
     String label = '',
     String shareKind = 'deep_dive',
     String photoUrl = '',
     String refId = '',
+    bool editSelf = false,
   }) =>
       ChatKickoff._('draft_about',
           targetUid: targetUid,
           label: label,
           shareKind: shareKind,
           photoUrl: photoUrl,
-          refId: refId);
+          refId: refId,
+          editSelf: editSelf);
 
   /// Open the Ayma chat with [text] pre-filled (and focused) in the composer
   /// as an un-sent draft — e.g. a shared-report link to discuss with her.
@@ -232,7 +235,16 @@ class ChatInbox {
   /// and pulls it in, so the card appears without reopening the chat.
   final ValueNotifier<int> resultsLanded = ValueNotifier(0);
 
-  void push(ChatKickoff k) => pending.value = k;
+  void push(ChatKickoff k) {
+    // A tab-switch page_context update must never overwrite an in-flight
+    // explicit kickoff (e.g. a share / draft_about or background skill).
+    if (k.kind == 'page_context' &&
+        pending.value != null &&
+        pending.value!.kind != 'page_context') {
+      return;
+    }
+    pending.value = k;
+  }
 
   void resultLanded() => resultsLanded.value++;
 
