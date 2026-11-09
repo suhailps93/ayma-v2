@@ -963,4 +963,91 @@ void main() {
     // the callout at 2.0.
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'callout card satisfies jobs pass standards: padding 20, radius 18, '
+      'counter in fgDim, skip aligns with copy, button heights >= 48',
+      (tester) async {
+    await tester.pumpWidget(host(store: _FakeTourStore(), onFinish: () {}));
+    await settle(tester);
+
+    // Defect 1: scroll padding is 20 all round
+    final scroll =
+        tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView));
+    expect(scroll.padding, const EdgeInsets.all(20));
+
+    // Defect 2: Card corner radius is 18
+    final cardContainer = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byType(SingleChildScrollView),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    final boxDecoration = cardContainer.decoration as BoxDecoration;
+    expect(boxDecoration.borderRadius, BorderRadius.circular(18));
+
+    // Defect 3: Counter "1 of 3" uses fgDim
+    final counterText = tester.widget<Text>(find.text('1 of 3'));
+    expect(counterText.style?.color, AymaTokens.dark.fgDim);
+
+    // Defect 6 & 7: Button heights >= 48
+    final skipSize = tester.getSize(find.byKey(const ValueKey('coach-skip')));
+    expect(skipSize.height, greaterThanOrEqualTo(48));
+
+    final nextSize = tester.getSize(find.byKey(const ValueKey('coach-next')));
+    expect(nextSize.height, greaterThanOrEqualTo(48));
+
+    // Verify: Skip label left edge aligns with the headline left edge
+    final alphaPos = tester.getTopLeft(find.text('Alpha'));
+    final skipPos = tester.getTopLeft(find.text('Skip tour'));
+    expect(skipPos.dx, equals(alphaPos.dx));
+  });
+
+  testWidgets('spotlight mode: NEW label uses fgDim', (tester) async {
+    await tester.pumpWidget(
+        host(store: _FakeTourStore(), onFinish: () {}, spotlight: true));
+    await settle(tester);
+
+    final newLabel = tester.widget<Text>(find.text('NEW'));
+    expect(newLabel.style?.color, AymaTokens.dark.fgDim);
+  });
+
+  testWidgets(
+      'chromeless driven tour: skip button height >= 48 and on-scrim foreground',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: CoachMarkOverlay(
+          store: _FakeTourStore(),
+          onFinish: () {},
+          features: const [
+            TourFeature(
+              featureId: 'intro',
+              headline: 'Intro',
+              subtitle: 'centered step',
+            ),
+          ],
+          chromeless: true,
+          onStopPressed: () {},
+          maxMeasureAttempts: 3,
+        ),
+      ),
+    ));
+    await settle(tester);
+
+    // Chromeless mode: NO card, NO next button
+    expect(find.byKey(const ValueKey('coach-next')), findsNothing);
+    expect(find.text('Intro'), findsNothing);
+
+    // Chromeless skip button exists, height >= 48, and foreground is AymaTokens.dark.fg
+    final skipBtn = find.byKey(const ValueKey('coach-skip'));
+    expect(skipBtn, findsOneWidget);
+    expect(tester.getSize(skipBtn).height, greaterThanOrEqualTo(48));
+
+    final textBtn = tester.widget<TextButton>(skipBtn);
+    expect(textBtn.style?.foregroundColor?.resolve({}), AymaTokens.dark.fg);
+  });
 }
