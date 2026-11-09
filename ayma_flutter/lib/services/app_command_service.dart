@@ -350,6 +350,17 @@ class AppCommandService {
   Timer? _resubscribe;
   String _lastHandledId = '';
 
+  /// The backend's `tour_state` doc for the running driven tour, captured
+  /// from the first `tour_step` command (see [_watchTourState]).
+  DocumentReference<Map<String, dynamic>>? _tourStateRef;
+  bool _tourStateListenerOn = false;
+  DateTime? _lastTourStateCheck;
+
+  /// How stale the backend `tour_state` may be before the client treats
+  /// the tour as over on its own — mirrors the backend's own TTL
+  /// (`_TOUR_STATE_TTL_SECONDS` in skills/guided_tour.py).
+  static const _tourStateTtl = Duration(minutes: 15);
+
   /// The `search_explore` command whose loaded results still owe the backend
   /// tool a report (its id, and the search text Explore must have run for).
   String _awaitingExploreId = '';
@@ -396,6 +407,9 @@ class AppCommandService {
   Future<void> setForeground(bool foreground) async {
     _foreground = foreground;
     if (foreground) {
+      // Back in front: if the tour ended server-side while we were away,
+      // its overlay must not still be standing there.
+      unawaited(checkTourState());
       _listen();
     } else {
       await _detachIfUnwanted();
@@ -442,6 +456,68 @@ class AppCommandService {
     }
   }
 
+  /// Keep one eye on the backend's `tour_state` while a driven tour is up.
+  ///
+  /// TEARDOWN GUARANTEE (founder, 2026-11-09): a tour that ends server-side
+  /// must ALWAYS take its overlay — card included — down with it. The
+  /// `tour_end` command alone is not that guarantee: `pending` is a single
+  /// slot the next command overwrites, so an end queued behind other
+  /// traffic can be lost unseen, and a tour state can simply expire (the
+  /// backend's own 15-minute TTL) while the app sits open. Either used to
+  /// leave the last step's card on screen forever. This check runs when
+  /// the app returns to the foreground, when the screen changes, and when
+  /// an unrelated command arrives, and it ends the local session only when
+  /// the state actually says the tour is over (inactive, or stale past
+  /// the TTL). A failed read never tears anything down.
+  void _watchTourState(DocumentReference<Map<String, dynamic>> stateRef) {
+    _tourStateRef = stateRef;
+    if (_tourStateListenerOn) return;
+    _tourStateListenerOn = true;
+    AppContext.instance.current.addListener(_onScreenChangedForTour);
+  }
+
+  void _onScreenChangedForTour() {
+    if (!GuidedTourController.instance.sessionActive) {
+      AppContext.instance.current.removeListener(_onScreenChangedForTour);
+      _tourStateListenerOn = false;
+      _tourStateRef = null;
+      return;
+    }
+    final last = _lastTourStateCheck;
+    final now = DateTime.now();
+    if (last != null && now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastTourStateCheck = now;
+    unawaited(checkTourState());
+  }
+
+  /// One teardown check against the backend's `tour_state` (see
+  /// [_watchTourState]). A no-op unless a driven session is up and a state
+  /// ref was captured from a `tour_step`.
+  @visibleForTesting
+  Future<void> checkTourState() async {
+    final guided = GuidedTourController.instance;
+    if (!guided.sessionActive) return;
+    final ref = _tourStateRef;
+    if (ref == null) return;
+    Map<String, dynamic>? data;
+    try {
+      data = (await ref.get()).data();
+    } catch (_) {
+      return; // unreadable is not "over" — never tear down on a guess
+    }
+    if (data == null) return;
+    var over = data['active'] != true;
+    final updated = data['updated_at'];
+    if (!over &&
+        updated is Timestamp &&
+        DateTime.now().difference(updated.toDate()) > _tourStateTtl) {
+      over = true;
+    }
+    if (over) guided.endSession();
+  }
+
   void _scheduleResubscribe() {
     _sub?.cancel();
     _sub = null;
@@ -463,6 +539,11 @@ class AppCommandService {
       return;
     }
     if (id.isNotEmpty) _lastHandledId = id;
+    if (data['action'] != 'tour_step' && data['action'] != 'tour_end') {
+      // A live tour whose backend state has moved on (ended / expired)
+      // must not outlive the next unrelated command — its card included.
+      unawaited(checkTourState());
+    }
     if (data['action'] == 'ui_action') {
       unawaited(_runUiAction(snap.reference, data, id));
       return;
@@ -856,6 +937,7 @@ class AppCommandService {
     final commands = ref.parent; // users/{uid}/app_commands
     final ackRef = commands.doc('ack');
     final eventRef = commands.doc('tour_event');
+    _watchTourState(commands.doc('tour_state'));
 
     Future<void> ack(bool ok, {String? reason}) async {
       final cur = AppContext.instance.current.value;
@@ -922,14 +1004,33 @@ class AppCommandService {
     var inFlight = false;
     var performed = false;
 
-    // Ayma performs the step: run its command, report the confirmed outcome
-    // and stay on the step. Only the user's go moves the tour. On a call the
-    // live agent is told so she can say so; in text the card already does.
-    Future<void> perform(Map<String, dynamic> stepCommand) async {
-      final ok = await runTourCommand(stepCommand);
-      inFlight = false;
-      if (!guided.isShowing(id)) return; // the user moved on meanwhile
-      performed = ok;
+    // STATE-BASED COMPLETION (founder, 2026-11-09 — "fix this for once and
+    // for all. No repeat"): a step with a command is complete when the app
+    // LOOKS the way the command would leave it — the destination route is
+    // the current one, or the shell sits on the command's tab — however it
+    // got that way. Completion used to depend on the overlay intercepting
+    // one tap on the highlight, so a user who did exactly what Ayma asked
+    // by tapping the REAL bell (Notifications opened) left the tour
+    // insisting nothing had happened: that tap never reached the tour.
+    bool goalReached() {
+      final c = command;
+      if (c == null) return false;
+      if (c['action'] == 'switch_tab') {
+        final t = (c['tab'] as num?)?.toInt() ?? -1;
+        return t >= 0 &&
+            t < _tabSlugs.length &&
+            AppContext.instance.current.value.screen == _tabSlugs[t];
+      }
+      final target = _navigationTarget(c);
+      if (target == null) return false;
+      final bare = target.split('?').first;
+      return bare.isNotEmpty && _currentPath() == bare;
+    }
+
+    // The one outcome report every completion path shares: the confirmed
+    // outcome on `tour_event`, and the step resting as performed/failed
+    // until the user's go.
+    void reportOutcome(bool ok) {
       event(ok ? 'performed' : 'action_failed', attempt: attempt);
       final go = _hasActiveVoice() ? 'say next' : 'tap Next';
       guided.recordOutcome(
@@ -941,6 +1042,72 @@ class AppCommandService {
                 'move on.',
       );
       if (_hasActiveVoice()) _kickTourAdvance(index);
+    }
+
+    // The step's goal turned true WITHOUT the tour performing it — the
+    // user did it themselves. Complete the step from the state, with the
+    // same bookkeeping as a performed tap (one attempt, one event).
+    void completeFromState() {
+      if (inFlight || performed || !guided.isShowing(id)) return;
+      performed = true;
+      attempt++;
+      reportOutcome(true);
+    }
+
+    // Ayma performs the step: run its command, report the confirmed outcome
+    // and stay on the step. Only the user's go moves the tour. On a call the
+    // live agent is told so she can say so; in text the card already does.
+    Future<void> perform(Map<String, dynamic> stepCommand) async {
+      final ok = await runTourCommand(stepCommand);
+      inFlight = false;
+      if (!guided.isShowing(id)) return; // the user moved on meanwhile
+      performed = ok;
+      reportOutcome(ok);
+    }
+
+    // While this step is up, follow the app's ACTUAL state: AppContext
+    // republishes on every screen/route change, which is exactly when a
+    // step's goal may have become true — so each republication re-checks
+    // the goal, and the step completes the moment it is true, whoever
+    // made it true. For an explainer step (nothing to perform; page-scoped
+    // by construction) the same watch is the leave-page teardown: a user
+    // who leaves the explained page for good ends the explainer instead
+    // of leaving its card standing over another page. The watch removes
+    // itself when the step leaves the screen or is performed.
+    void watchGoal() {
+      if (command == null && !explainer) return;
+      var offPagePublishes = 0;
+      void check() {
+        if (!guided.isShowing(id) || performed) {
+          AppContext.instance.current.removeListener(check);
+          return;
+        }
+        if (command != null) {
+          if (!inFlight && goalReached()) {
+            AppContext.instance.current.removeListener(check);
+            completeFromState();
+          }
+          return;
+        }
+        // Explainer: the page it explains is gone — and stays gone (two
+        // consecutive off-page publications: the leave itself and the
+        // landing after it, never a single transitional frame). The
+        // sequence is over, exactly as the backend treats a blocked
+        // explainer on a left page. Report the stop so Ayma ends it her
+        // side too, and take the card down here and now.
+        if (onStepScreen()) {
+          offPagePublishes = 0;
+          return;
+        }
+        if (++offPagePublishes >= 2) {
+          AppContext.instance.current.removeListener(check);
+          event('stop');
+          guided.endSession();
+          _kickTourStop(index);
+        }
+      }
+
+      AppContext.instance.current.addListener(check);
     }
 
     void showStep() {
@@ -1035,6 +1202,11 @@ class AppCommandService {
       ),
       voiceOnly: _hasActiveVoice(),
       );
+      // The goal may ALREADY be true as the step lands (the user got there
+      // first, or did it during the previous step): complete from the
+      // state at once instead of waiting for a tap that already happened.
+      if (command != null && goalReached()) completeFromState();
+      watchGoal();
     }
 
     if (onStepScreen()) {
@@ -1049,7 +1221,7 @@ class AppCommandService {
     unawaited(() async {
       for (var i = 0; i < 8; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        if (onStepScreen()) {
+        if (onStepScreen() || goalReached()) {
           showStep();
           return;
         }
