@@ -338,7 +338,7 @@ def test_open_screen_reports_failure_when_the_app_never_acks(monkeypatch):
     db = _Db()  # no client — nothing ever acks
     out = _run(app_control._bind_open_screen(db, "me")("matches"))
     assert out == app_control._NOT_NAVIGATED
-    assert "did NOT navigate" in out
+    assert "has not confirmed" in out
 
 
 def test_open_screen_reports_failure_on_a_not_ok_ack(monkeypatch):
@@ -426,6 +426,85 @@ def test_await_ack_with_an_explicit_timeout_does_not_rewait(monkeypatch):
         return await task
 
     assert _run(_scenario()) is None
+
+
+def test_watch_late_ack_fires_callback_when_ack_arrives(monkeypatch):
+    _fast_acks(monkeypatch, timeout=0.3, poll=0.01)
+    from skills import app_control_queue as acq
+
+    db = _Db()
+    received = []
+    cmd_id = acq._queue_command(
+        db, "me", {"action": "navigate", "screen": "voice_preference"}
+    )
+
+    async def _run_test():
+        task = asyncio.ensure_future(
+            acq.watch_late_ack(
+                db, "me", cmd_id, lambda data: received.append(data), timeout=0.5
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert received == []
+        db.store[_ACK] = {"id": cmd_id, "ok": True}
+        await task
+        assert len(received) == 1
+        assert received[0]["id"] == cmd_id
+        assert received[0]["ok"] is True
+
+    _run(_run_test())
+
+
+def test_watch_late_ack_drops_superseded_command(monkeypatch):
+    _fast_acks(monkeypatch, timeout=0.3, poll=0.01)
+    from skills import app_control_queue as acq
+
+    db = _Db()
+    received = []
+    cmd_1 = acq._queue_command(
+        db, "me", {"action": "navigate", "screen": "voice_preference"}
+    )
+
+    async def _run_test():
+        task = asyncio.ensure_future(
+            acq.watch_late_ack(
+                db, "me", cmd_1, lambda data: received.append(data), timeout=0.5
+            )
+        )
+        await asyncio.sleep(0.05)
+        # cmd_2 supersedes cmd_1
+        cmd_2 = acq._queue_command(
+            db, "me", {"action": "navigate", "screen": "explore"}
+        )
+        # Late ack arrives for cmd_1
+        db.store[_ACK] = {"id": cmd_1, "ok": True}
+        await task
+        assert received == []
+
+    _run(_run_test())
+
+
+def test_watch_late_ack_ignores_false_ack(monkeypatch):
+    _fast_acks(monkeypatch, timeout=0.3, poll=0.01)
+    from skills import app_control_queue as acq
+
+    db = _Db()
+    received = []
+    cmd_id = acq._queue_command(
+        db, "me", {"action": "navigate", "screen": "voice_preference"}
+    )
+
+    async def _run_test():
+        task = asyncio.ensure_future(
+            acq.watch_late_ack(
+                db, "me", cmd_id, lambda data: received.append(data), timeout=0.2
+            )
+        )
+        db.store[_ACK] = {"id": cmd_id, "ok": False}
+        await task
+        assert received == []
+
+    _run(_run_test())
 
 
 def test_open_screen_rejects_an_unknown_screen():
@@ -1525,7 +1604,7 @@ def test_app_action_delete_account_is_navigate_only():
 def test_navigate_only_is_honest_when_the_app_never_navigates(monkeypatch):
     _fast_acks(monkeypatch)
     out = _run(app_control._bind_account_action(_Db(), "me")("delete_account"))
-    assert out.startswith("Not done, by design") and "did NOT navigate" in out
+    assert out.startswith("Not done, by design") and "has not confirmed" in out
 
 
 def test_no_tool_path_sends_delete_or_withdraw_to_the_app():
@@ -2033,8 +2112,8 @@ def test_run_app_command_is_honest_when_the_app_never_navigates(monkeypatch):
     _fast_acks(monkeypatch)
     db = _Db()  # no client ever acks
     out = _run(app_control.run_app_command(db, "me", "voice_preference"))
-    assert "didn't switch screens" in out
-    # Never a false success and never the raw directive string.
+    assert "hasn't confirmed opening" in out
+    # Never a false success, never a definitive false failure, never raw directive string.
     assert not out.startswith("Opening ") and "navigated:" not in out
 
 
@@ -2119,7 +2198,7 @@ def test_run_profile_command_is_honest_when_the_app_never_navigates(monkeypatch)
     db.seed_user("me", "Me")
     db.seed_user("u-sofia", "Sofia Ruiz")
     out = _run(app_control.run_profile_command(db, "me", "Sofia"))
-    assert "didn't switch screens" in out
+    assert "hasn't confirmed opening" in out
     assert not out.startswith("Opening ")
 
 # --- deterministic pre-model launch commands (voice backstop, prod 2284) ----

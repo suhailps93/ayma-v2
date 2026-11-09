@@ -34,11 +34,12 @@ def _prompt(name: str, **fill: str) -> str:
 # The cap on how much of the client's search-results report reaches the model.
 _RESULT_MAX_CHARS = 1500
 
-# The shared honest-failure line for every navigation tool — the model must
-# relay this, not soften it into a success.
+# The shared honest line for every navigation tool when unconfirmed — the model
+# must relay this truthfully without claiming a false failure or false success.
 _NOT_NAVIGATED = (
-    "The app did NOT navigate — tell the user it didn't work and where to "
-    "find it themselves."
+    "The app has not confirmed the navigation yet — tell the user it "
+    "hasn't switched yet and where to find it in the menu if it doesn't "
+    "open shortly."
 )
 _NOT_APPLIED = "The app did NOT apply that — tell the user it didn't work."
 
@@ -67,12 +68,63 @@ def _ack_doc(db, uid: str):
     )
 
 
+# The last command queued per user: uid -> {"id": cmd_id, "payload": payload, "ts": time.monotonic()}
+_LAST_QUEUED: dict[str, dict] = {}
+
+
+def get_last_queued(uid: str) -> dict | None:
+    """The most recent command queued for ``uid``, if any."""
+    return _LAST_QUEUED.get(uid)
+
+
 def _queue_command(db, uid: str, payload: dict) -> str:
     """Write one UI command to the pending doc with a fresh unique ``id``
     (what the client's ack echoes back) and return that id."""
     cmd_id = uuid.uuid4().hex
     _command_doc(db, uid).set({**payload, "id": cmd_id, "ts": _server_ts()})
+    _LAST_QUEUED[uid] = {
+        "id": cmd_id,
+        "payload": payload,
+        "ts": time.monotonic(),
+    }
     return cmd_id
+
+
+async def watch_late_ack(
+    db,
+    uid: str,
+    cmd_id: str,
+    on_ack,
+    timeout: float = 90.0,
+) -> None:
+    """Poll the ack doc in the background for a late ack on ``cmd_id`` (up to
+    the client's 90s stale window). If ``cmd_id`` acks with ok: True and has not
+    been superseded by a newer command, invokes ``on_ack(data)``."""
+    from skills import app_control  # deferred: the facade owns the knobs
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        last = _LAST_QUEUED.get(uid)
+        if last and last.get("id") != cmd_id:
+            return  # Superseded by a newer command
+
+        try:
+            snap = await asyncio.to_thread(_ack_doc(db, uid).get)
+            data = snap.to_dict() if getattr(snap, "exists", False) else None
+        except Exception:  # noqa: BLE001
+            data = None
+
+        if data and str(data.get("id") or "") == cmd_id:
+            last = _LAST_QUEUED.get(uid)
+            if last and last.get("id") != cmd_id:
+                return
+            if data.get("ok"):
+                res = on_ack(data)
+                if asyncio.iscoroutine(res):
+                    await res
+            return
+
+        await asyncio.sleep(app_control._ACK_POLL_SECONDS)
 
 
 # Other skills queue a UI command without waiting for the ack (send_dm_message

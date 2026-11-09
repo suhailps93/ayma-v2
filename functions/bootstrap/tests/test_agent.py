@@ -5712,6 +5712,63 @@ def test_command_claim_gate_dead_client_end_to_end(monkeypatch):
     asyncio.run(_run())
 
 
+def test_command_claim_gate_late_ack_race_correction(monkeypatch):
+    """Reproduce the race: ack arrives after the wait timeout. Navigation is executed
+    by the client, so:
+    1. The initial line spoken upon timeout must NOT definitively claim failure
+       (e.g. must not claim 'nothing changed on your screen' or 'didn't go through').
+    2. When the late ack arrives with ok: True, Ayma speaks a correction confirming
+       the page opened (e.g. 'There it is — Models is open now.') and clears gate.failed.
+    """
+    import skills
+
+    class _LateAckStore(_CmdStore):
+        """A client where ack is delayed past the timeout, then arrives."""
+        def __setitem__(self, key, value):
+            if key == self._pending and isinstance(value, dict) and value.get("id"):
+                self.queued.append(dict(value))
+                dict.__setitem__(self, key, value)
+                return
+            super().__setitem__(key, value)
+
+        def ack_pending(self, ok=True):
+            if self.queued:
+                cmd = self.queued[-1]
+                self[self._ack] = {"id": cmd["id"], "ok": ok, "ts": 12345}
+
+    db = _CmdDb("u1")
+    store = _LateAckStore("u1")
+    db.store = store
+    monkeypatch.setattr(agent, "get_db", lambda: db)
+    monkeypatch.setattr(skills.app_control, "_ACK_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(skills.app_control, "_ACK_POLL_SECONDS", 0.05)
+    dedupe = skills.VoiceTurnDedupe()
+    session = _GateSession()
+    tools = agent._session_tools(_CmdCtx(), "u1", dedupe=dedupe)
+    agent.relay_voice_commands(session, tools, dedupe, uid="u1")
+
+    async def _run():
+        session.user_turn("open the models page")
+        await _drain_until(lambda: bool(session.said), timeout=10.0)
+
+        # 1. Spoken line must not contradict the navigation:
+        initial_line = session.said[0]
+        assert "nothing changed" not in initial_line
+        assert "didn't go through" not in initial_line
+        assert initial_line == agent._COMMAND_NOT_CONFIRMED_LINE
+        assert "hasn't confirmed" in initial_line
+
+        # 2. Late ack arrives: client successfully navigated to Models
+        store.ack_pending(ok=True)
+
+        # 3. Ayma speaks a correction that the page opened
+        await _drain_until(lambda: len(session.said) >= 2, timeout=5.0)
+        correction = session.said[1]
+        assert "Models is open now" in correction or "opened Models" in correction
+
+    asyncio.run(_run())
+
+
 # --- disconnect / hang-up sign-offs (founder directive 2026-11-07, 2cy) ---
 # "disconnect" ends the call from everywhere: the deterministic net routes
 # a whole-utterance disconnect to the same end_call teardown the goodbye
