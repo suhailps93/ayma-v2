@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_chat_modal.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -625,6 +626,285 @@ void main() {
       );
       expect(find.text('I love bouldering in the gym.'), findsNWidgets(2));
       expect(find.text('And outdoor sport climbing too!'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on a photo: swiping a user photo with no caption shows the reply preview with the photo thumbnail',
+    (tester) async {
+      const photoUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'uploads%2Fu1%2Flake.jpg?alt=media&token=t2';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': '',
+            'image_path': '',
+            'image_url': photoUrl,
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsNothing);
+
+      // Swipe the photo itself — an image-only message has no text to grab.
+      // (warnIfMissed off: the photo's own tap detector sits above the image
+      // widget in the hit test; the drag still lands on the swipe wrapper.)
+      await tester.fling(
+        find.byType(CachedNetworkImage),
+        const Offset(-300, 0),
+        1000,
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+
+      // The preview names the sender and shows the photo, not a blank line.
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsOneWidget);
+      expect(find.text('Replying to You'), findsOneWidget);
+      expect(find.text('Photo'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('composerReplyPreview')),
+          matching: find.byKey(const ValueKey('composerReplyThumb')),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on a photo: sending carries the photo reference on the wire and renders the quoted card with the photo',
+    (tester) async {
+      const photoUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'uploads%2Fu1%2Flake.jpg?alt=media&token=t2';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': '',
+            'image_path': '',
+            'image_url': photoUrl,
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.fling(
+        find.byType(CachedNetworkImage),
+        const Offset(-300, 0),
+        1000,
+        warnIfMissed: false,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'That was us at the lake!');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      // The wire message names the photo reply and carries the photo's
+      // reference (its stored URL) — never the photo itself.
+      expect(capture.requests, hasLength(1));
+      final sent = capture.requests.first;
+      expect(
+        sent['message'],
+        '[Replying to You: "[photo ref:$photoUrl]"]\nThat was us at the lake!',
+      );
+      // The context window marks the original turn as a photo turn.
+      final recent = (sent['recent_turns'] as List).cast<Map<String, dynamic>>();
+      expect(
+        recent.any(
+          (t) => t['role'] == 'user' && t['text'] == '[shared a photo]',
+        ),
+        isTrue,
+      );
+
+      // In the thread: the quoted card shows the photo thumbnail.
+      expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byKey(const ValueKey('quotedReplyThumb')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.text('You'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.text('Photo'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('That was us at the lake!'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'swipe to reply on an Ayma image: swiping her image message shows the preview and the send carries caption plus photo reference',
+    (tester) async {
+      const generatedUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'ayma_generated%2Fu1%2Fcaricature.png?alt=media&token=t3';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'ayma',
+            'text': 'Here is the caricature you asked for',
+            'image_path': 'ayma_generated/u1/caricature.png',
+            'image_url': generatedUrl,
+            'tools': ['Generated an image'],
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.fling(
+        find.textContaining('Here is the caricature'),
+        const Offset(300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('composerReplyPreview')), findsOneWidget);
+      expect(find.text('Replying to Ayma'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('composerReplyPreview')),
+          matching: find.byKey(const ValueKey('composerReplyThumb')),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(find.byType(TextField), 'Make the smile bigger');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('composerSendButton')));
+      await tester.pumpAndSettle();
+
+      expect(capture.requests, hasLength(1));
+      final sent = capture.requests.first;
+      expect(
+        sent['message'],
+        '[Replying to Ayma: "Here is the caricature you asked for '
+        '[photo ref:$generatedUrl]"]\nMake the smile bigger',
+      );
+
+      expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byKey(const ValueKey('quotedReplyThumb')),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'history restore: a restored photo reply re-renders its quoted card with the photo, never the raw reference text',
+    (tester) async {
+      const photoUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/'
+          'uploads%2Fu1%2Flake.jpg?alt=media&token=t2';
+      final capture = _CaptureClient(
+        historyMessages: [
+          {
+            'role': 'user',
+            'text': '',
+            'image_path': '',
+            'image_url': photoUrl,
+            'created_at':
+                DateTime.now().subtract(const Duration(hours: 2)).toIso8601String(),
+          },
+          {
+            'role': 'user',
+            'text': '[Replying to You: "[photo ref:$photoUrl]"]\n'
+                'That was us at the lake!',
+            'created_at':
+                DateTime.now().subtract(const Duration(hours: 1)).toIso8601String(),
+          },
+        ],
+      );
+      final voice = _TestVoice();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.light,
+          home: Scaffold(
+            body: ChatScreen(
+              apiClient: capture.api(),
+              voiceController: voice,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The quoted card is restored with its photo thumbnail…
+      expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.byKey(const ValueKey('quotedReplyThumb')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('quotedReplyCard')),
+          matching: find.text('You'),
+        ),
+        findsOneWidget,
+      );
+      // …and the raw reference marker never renders as message text.
+      expect(find.textContaining('photo ref:'), findsNothing);
+      expect(find.text('That was us at the lake!'), findsOneWidget);
     },
   );
 }
