@@ -221,7 +221,7 @@ undone.)
 
 | Control | Does | Ayma |
 |---|---|---|
-| Score / summary sections, "You vs them" rows | Read the report | COVERED — content is in her screen context |
+| Score / summary sections, "You vs them" rows | Read the report | COVERED — the pair briefing (`viewing_profile_uid`) carries the score/grounding; a shared report card pulls the full report by reference (`open_shared_report`); on voice the live `current_screen` mirror. (The pinned-chat page snapshot no longer rides inline — §5.6a, 2026-11-09.) |
 | Message / open thread entry | Go to the DM | COVERED `open_message_thread` |
 | Practice / sim entries | Launch practice or sim | COVERED `open_practice_date` / `open_date_sim` |
 | Accept / Pass (request) | Decide the request | `UI` |
@@ -388,7 +388,7 @@ and also `UI`:
 | Continue with free plan | Stay on free | `UI` |
 | Restore purchases | Restore store purchases | `UI` (store flow is the user's) |
 | Manage subscription / Manage in store | Open store subscription page | `UI` (leaves the app) |
-| Usage rows / credits display | Read usage | COVERED — in her screen context + `plan_facts` |
+| Usage rows / credits display | Read usage | COVERED — `plan_facts` (the authoritative path); on voice also the live `current_screen` mirror. (The pinned-chat page snapshot no longer rides inline — §5.6a, 2026-11-09.) |
 
 ## 24. Notifications centre + preferences
 

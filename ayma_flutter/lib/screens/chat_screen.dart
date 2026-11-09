@@ -2533,8 +2533,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectName: screenCtx?.subjectName ?? '',
           screenNote: screenCtx?.note ?? '',
           screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
           screenPreviousRoute: screenCtx != null
               ? (NavigationHistory.instance.previous?.path ?? '')
               : '',
@@ -2574,8 +2572,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           screenSubjectName: screenCtx?.subjectName ?? '',
           screenNote: screenCtx?.note ?? '',
           screenRoute: screenCtx?.route ?? '',
-          screenDetail: screenCtx?.detail ?? '',
-          screenVisible: screenCtx?.visible ?? '',
           screenPreviousRoute: screenCtx != null
               ? (NavigationHistory.instance.previous?.path ?? '')
               : '',

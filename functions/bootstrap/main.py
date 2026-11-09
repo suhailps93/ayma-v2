@@ -1361,8 +1361,6 @@ class ChatRequest(_TruncatingModel):
         "screen_route": 200,
         "screen_previous_route": 200,
         "screen_previous_label": 200,
-        "screen_detail": 1500,
-        "screen_visible": 3200,
     }
     message: str = Field(min_length=1, max_length=4000)
     session_id: str = _SESSION_ID
@@ -1433,18 +1431,23 @@ class ChatRequest(_TruncatingModel):
     # Story: unlocks the photo-note tool, scoped to that photo.
     photo_url: str = Field(default="", max_length=2000)
     photo_source: str = Field(default="", max_length=16)
-    # The screen the user was looking at when this chat was opened (the
-    # floating Ayma launcher's page-context threading, §F4) — the same shape
-    # as the Flutter client's `ScreenContext`/`AppContext`. Folded into the
-    # system prompt as a short one-line description
-    # (`skills.app_control._describe`) unless `screen == "profile"`, which
-    # already gets the much richer `viewing_profile_uid` briefing above.
+    # A REFERENCE to the screen the user was looking at when this chat was
+    # opened (the floating Ayma launcher's page-context threading, §F4) —
+    # the slug, route, subject and the small note/query, NOT the page's
+    # contents. Folded into the system prompt as a short one-line
+    # description built server-side from the registry
+    # (`skills.app_control._describe`) unless `screen == "profile"`,
+    # which already gets the much richer `viewing_profile_uid` briefing
+    # above. The whole-page live capture (`detail`/`visible`, the Nov-8
+    # inline snapshot) is deliberately NOT accepted here (founder
+    # 2026-11-09: reference, not content). Voice keeps the full live
+    # capture through its own mirror (`POST /voice/context`), never the
+    # chat request.
     screen: str = Field(default="", max_length=32)
     screen_subject_uid: str = Field(default="", max_length=128)
     screen_subject_name: str = Field(default="", max_length=200)
     screen_note: str = Field(default="", max_length=500)
-    # The generic capture of that screen (route pattern, a screen-owned
-    # summary, and the live text + operable controls); see
+    # The route pattern of that screen (e.g. `/explore`); see
     # `app_registry.json` `screen_context`.
     screen_route: str = Field(default="", max_length=200)
     # The page before the current one in the session navigation history
@@ -1452,8 +1455,6 @@ class ChatRequest(_TruncatingModel):
     # can name it and knows go_back returns there.
     screen_previous_route: str = Field(default="", max_length=200)
     screen_previous_label: str = Field(default="", max_length=200)
-    screen_detail: str = Field(default="", max_length=1500)
-    screen_visible: str = Field(default="", max_length=3200)
     # A guided-tour continuation ping (§11.2b): the client fires a minimal /chat
     # turn when the user taps the spotlighted control, so the model calls
     # advance_guided_tour (which consumes the already-written tour_event and
@@ -1879,17 +1880,21 @@ async def _prepare_chat(
         ""
         if not (screen or screen_route)
         or (screen == "profile" and viewing_profile_uid)
+        # Reference only (founder 2026-11-09): the description is built
+        # server-side from the registry via the screen slug / route /
+        # subject / note — the whole-page `detail`/`visible` snapshot no
+        # longer rides inline, so those keys are absent here (`_describe`
+        # tolerates their absence and simply omits the "on screen now"
+        # live-capture line). Voice still passes them from its own mirror.
         else app_control_mod._describe(
             {
                 "screen": screen,
                 "subject_uid": req.screen_subject_uid.strip(),
                 "subject_name": req.screen_subject_name.strip(),
                 "note": req.screen_note.strip(),
-                "detail": req.screen_detail.strip(),
                 "route": screen_route,
                 "previous_route": req.screen_previous_route.strip(),
                 "previous_label": req.screen_previous_label.strip(),
-                "visible": req.screen_visible.strip(),
             }
         )
     )
