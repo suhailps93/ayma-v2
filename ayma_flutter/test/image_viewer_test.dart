@@ -223,6 +223,39 @@ void main() {
     expect(find.byIcon(Icons.close), findsOneWidget);
   });
 
+  testWidgets(
+      'jobs pass: note pill radius 18 + (16,8) padding, top chrome (8,8) padding '
+      '(defects 36-38)', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AymaImageViewer(file: File(_fixturePath), note: 'A note'),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Defect 38 + 37: note pill radius 18, padding horizontal 16 / vertical 8.
+    final pill = tester.widget<Container>(
+      find
+          .ancestor(of: find.text('A note'), matching: find.byType(Container))
+          .first,
+    );
+    final deco = pill.decoration as BoxDecoration;
+    expect(deco.borderRadius, BorderRadius.circular(18));
+    expect(pill.padding,
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 8));
+
+    // Defect 36: the top chrome row's own padding is on-grid (8,8). Scope to
+    // the Padding that directly wraps the chrome Row (icon buttons carry their
+    // own all(8), which equals symmetric(8,8), so match on the Row child).
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Padding &&
+          w.child is Row &&
+          w.padding == const EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('X dismisses the viewer back to the underlying screen', (
     tester,
   ) async {

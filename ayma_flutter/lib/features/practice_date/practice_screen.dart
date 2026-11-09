@@ -298,7 +298,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
               ),
               child: Text('End',
                   style: AymaType.sans(
-                      size: 15, weight: FontWeight.w600, color: ac.accent)),
+                      size: 15, weight: FontWeight.w600, color: ac.accentText)),
             ),
           if (_start != null && _error == null)
             PopupMenuButton<String>(

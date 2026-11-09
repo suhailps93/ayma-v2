@@ -96,6 +96,23 @@ void main() {
         reason: 'lightFgDim on lightBgCard contrast ($lightFgDimCardContrast) must be >= 4.5');
   });
 
+  test('V8 (jobs story-media): fgMute-on-bgElev passes 4.5:1 (4.63 dark / 4.66 light)',
+      () {
+    // The reportBox eyebrow, part labels, and teaser detail in the story
+    // editor stay fgMute on bgElev — this is the explicit guard for that
+    // decision (fgMute-on-bgCard is guarded separately above).
+    final darkFgMuteElev =
+        _contrastRatio(AymaColors.darkFgMute, AymaColors.darkBgElev);
+    final lightFgMuteElev =
+        _contrastRatio(AymaColors.lightFgMute, AymaColors.lightBgElev);
+    expect(darkFgMuteElev, closeTo(4.63, 0.05));
+    expect(darkFgMuteElev, greaterThanOrEqualTo(4.5),
+        reason: 'darkFgMute on darkBgElev ($darkFgMuteElev) must be >= 4.5');
+    expect(lightFgMuteElev, closeTo(4.66, 0.05));
+    expect(lightFgMuteElev, greaterThanOrEqualTo(4.5),
+        reason: 'lightFgMute on lightBgElev ($lightFgMuteElev) must be >= 4.5');
+  });
+
   test('reports pass contrast audits: bgElev, bg, and accentFaint surfaces', () {
     // Defect 7: accent on bgElev fails 4.5:1 in both themes (4.32 dark / 3.57 light),
     // while fgMute on bgElev passes (4.63 dark / 4.66 light).
@@ -151,5 +168,84 @@ void main() {
     expect(darkFgDimOnFaint, greaterThanOrEqualTo(4.5));
     expect(lightFgDimOnFaint, closeTo(8.21, 0.05));
     expect(lightFgDimOnFaint, greaterThanOrEqualTo(4.5));
+  });
+
+  // -------------------------------------------------------------------------
+  // Token-defects T1–T4 (jobs-token-defects): the derived text-safe tokens
+  // fix the accent/error/success/warning-as-text and accent-as-text failures
+  // the raw tokens exhibit above. The raw-token assertions above still hold —
+  // this chunk added NEW derived tokens, it did not change the raw ones.
+  // -------------------------------------------------------------------------
+
+  // The founder's own accent pick (terracotta) — the second accent every
+  // derived-accent assertion must also clear, not just the Cherry default.
+  const terracotta = Color(0xFFE07A5F);
+
+  AymaTokens lightAcc(Color a) => AymaTokens.light.withAccent(a);
+  AymaTokens darkAcc(Color a) => AymaTokens.dark.withAccent(a);
+
+  for (final pick in <(String, Color)>[
+    ('default Cherry Fuchsia', AymaColors.accent),
+    ('founder terracotta', terracotta),
+  ]) {
+    final (label, accent) = pick;
+    test('T1: accentText reads >=4.5:1 as text on bg/bgElev/accentFaint '
+        'in both themes ($label)', () {
+      for (final t in [lightAcc(accent), darkAcc(accent)]) {
+        final faint = Color.alphaBlend(t.accentFaint, t.bg);
+        expect(_contrastRatio(t.accentText, t.bg), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on bg');
+        expect(_contrastRatio(t.accentText, t.bgElev), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on bgElev');
+        expect(_contrastRatio(t.accentText, faint), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on accentFaint');
+      }
+    });
+
+    test('T4: FilledButton label (onAccent) reads >=4.5:1 on accent in both '
+        'themes ($label)', () {
+      for (final t in [lightAcc(accent), darkAcc(accent)]) {
+        expect(_contrastRatio(t.onAccent, t.accent), greaterThanOrEqualTo(4.5),
+            reason: '$label onAccent on accent');
+      }
+    });
+  }
+
+  test('T2: errorText reads >=4.5:1 as text on bg in both themes', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.errorText, t.bg), greaterThanOrEqualTo(4.5),
+          reason: 'errorText on bg');
+    }
+  });
+
+  test('T3: success/warning icon tints read >=3:1 on bg in both themes', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.successText, t.bg), greaterThanOrEqualTo(3.0),
+          reason: 'successText (icon floor) on bg');
+      expect(_contrastRatio(t.warningText, t.bg), greaterThanOrEqualTo(3.0),
+          reason: 'warningText (icon floor) on bg');
+    }
+  });
+
+  test('T3: success/warning as TEXT read >=4.5:1 on bg in both themes '
+      '(facts row)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.successText, t.bg), greaterThanOrEqualTo(4.5),
+          reason: 'successText on bg');
+      expect(_contrastRatio(t.warningText, t.bg), greaterThanOrEqualTo(4.5),
+          reason: 'warningText on bg');
+    }
+  });
+
+  test('derived accent stays recognisably the SAME hue as the live accent '
+      '(darkened/lightened only, never hardcoded)', () {
+    for (final accent in [AymaColors.accent, terracotta]) {
+      for (final t in [lightAcc(accent), darkAcc(accent)]) {
+        final liveHue = HSLColor.fromColor(accent).hue;
+        final textHue = HSLColor.fromColor(t.accentText).hue;
+        expect((liveHue - textHue).abs(), lessThan(1.0),
+            reason: 'accentText hue must track the live accent');
+      }
+    }
   });
 }
