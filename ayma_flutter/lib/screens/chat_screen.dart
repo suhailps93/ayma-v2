@@ -885,6 +885,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ? "Let's go through my public profile together — tell me what's there "
               "and what you'd change."
         : switch (k.shareKind) {
+            'story' =>
+              "Here's my story — the portrait you've written about me. "
+                  "Let's go through it together: what's in it, and what "
+                  "should change?",
+            'appearance' =>
+              "Here's my appearance report. Walk me through it — what "
+                  "stands out, and what should I do with it?",
             'conversation' =>
               "Here's my conversation with $who. Pull it up and tell me what "
                   "you make of it — and what I should do next.",
@@ -4401,29 +4408,49 @@ class _SharedRefCard extends StatelessWidget {
 
   final TranscriptTurn turn;
 
-  ({String label, IconData icon, String route}) get _meta => switch (turn
-      .sharedKind) {
-    'conversation' => (
-      label: 'Your chat with ${turn.sharedName}',
-      icon: Icons.forum_outlined,
-      route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
-    ),
-    'deep_dive' => (
-      label: 'Web research on ${turn.sharedName}',
-      icon: Icons.travel_explore,
-      route: turn.sharedRefId.isEmpty ? '' : '/deep-dive/${turn.sharedRefId}',
-    ),
-    'match' => (
-      label: '${turn.sharedName} · match report',
-      icon: Icons.insights_rounded,
-      route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
-    ),
-    _ => (
-      label: turn.sharedName,
-      icon: Icons.person_outline,
-      route: turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
-    ),
-  };
+  ({String label, IconData icon, String route, String kindLabel}) get _meta =>
+      switch (turn.sharedKind) {
+        'conversation' => (
+            label: 'Your chat with ${turn.sharedName}',
+            icon: Icons.forum_outlined,
+            route: turn.sharedRefId.isEmpty ? '' : '/dm/${turn.sharedRefId}',
+            kindLabel: 'CHAT',
+          ),
+        'deep_dive' => (
+            label: 'Web research on ${turn.sharedName}',
+            icon: Icons.travel_explore,
+            route:
+                turn.sharedRefId.isEmpty ? '' : '/deep-dive/${turn.sharedRefId}',
+            kindLabel: 'WEB FINDING',
+          ),
+        'match' => (
+            label: '${turn.sharedName} · match report',
+            icon: Icons.insights_rounded,
+            route: turn.sharedRefId.isEmpty ? '' : '/match/${turn.sharedRefId}',
+            kindLabel: 'MATCH REPORT',
+          ),
+        'story' => (
+            label: 'Your Story',
+            icon: Icons.auto_stories_outlined,
+            route: '/profile/wiki',
+            kindLabel: 'STORY',
+          ),
+        'appearance' => (
+            label: turn.sharedName,
+            icon: Icons.photo_library_outlined,
+            route: turn.sharedRefId.isEmpty
+                ? ''
+                : '/appearance/${turn.sharedRefId}',
+            kindLabel: 'APPEARANCE REPORT',
+          ),
+        _ => (
+            label: turn.sharedName,
+            icon: Icons.person_outline,
+            route:
+                turn.sharedUid.isEmpty ? '' : '/profile/user/${turn.sharedUid}',
+            kindLabel: 'PROFILE',
+          ),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -4473,7 +4500,9 @@ class _SharedRefCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    m.route.isEmpty ? 'SHARED WITH AYMA' : 'TAP TO OPEN',
+                    m.route.isEmpty
+                        ? 'SHARED WITH AYMA'
+                        : '${m.kindLabel} · TAP TO OPEN',
                     style: AymaType.mono(
                       size: 8,
                       color: ac.fgMute,

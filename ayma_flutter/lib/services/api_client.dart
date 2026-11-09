@@ -11,6 +11,7 @@ import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
+import '../models/share_link.dart';
 import 'biometric_consent.dart';
 
 /// Target budget for interactive API and Firestore waits (PERF_PLAN Phase 1).
@@ -3115,6 +3116,32 @@ class ApiClient {
           'report_id': reportId,
         }),
       );
+
+  /// `POST /share-link` — snapshot a shareable page (a profile; the
+  /// reusable share kit's public kinds) behind a public `/p/` link
+  /// (idempotent per target). Ayma-only kinds are refused server-side.
+  Future<LinkShare> createLinkShare(String kind, String targetId) async =>
+      LinkShare.fromMap(
+        await _sendJson('POST', '/share-link', {
+          'kind': kind,
+          'target_id': targetId,
+        }),
+      );
+
+  /// `GET /p/{token}/data` — the public, unauthenticated target identity
+  /// behind a page-share link, for the deep-link route.
+  Future<PageShareTarget> pageShareTarget(String token) async {
+    final r = await _http.get(_uri('/p/${Uri.encodeComponent(token)}/data'));
+    if (r.statusCode != 200) {
+      throw ApiException(
+        'page share failed.',
+        statusCode: r.statusCode,
+        body: r.body,
+      );
+    }
+    return PageShareTarget.fromMap(
+        jsonDecode(r.body) as Map<String, dynamic>);
+  }
 
   /// `GET /s/{token}/data` — the public, unauthenticated snapshot behind a
   /// share link, in the same shape as [getReport].

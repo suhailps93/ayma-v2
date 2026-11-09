@@ -92,6 +92,8 @@ import skill_memory  # noqa: E402
 import explore as explore_mod  # noqa: E402
 import profile_manual  # noqa: E402
 import public_profile as public_profile_mod  # noqa: E402
+import page_share  # noqa: E402
+import page_share_page  # noqa: E402
 import share  # noqa: E402
 import share_page  # noqa: E402
 import referral_page  # noqa: E402
@@ -4444,6 +4446,32 @@ class ShareCreateRequest(BaseModel):
     report_id: str = Field(min_length=1, max_length=256)
 
 
+class ShareLinkRequest(BaseModel):
+    kind: str = Field(min_length=1, max_length=64)
+    target_id: str = Field(min_length=1, max_length=256)
+
+
+@app.post("/share-link")
+async def share_link_create(
+    req: ShareLinkRequest, uid: str = Depends(require_adult_uid)
+) -> dict[str, object]:
+    """Snapshot a shareable page (a profile — the reusable share kit's
+    public kinds) behind an unguessable public ``/p/`` link, idempotent
+    per target. Ayma-only kinds (story) are refused here by design:
+    ``page_share`` has no builder for them, so no public link can ever
+    exist for them. See ``page_share.create``."""
+    try:
+        return await asyncio.to_thread(
+            page_share.create, get_db(), uid, req.kind.strip(), req.target_id.strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such target.") from None
+
+
 class ShareRevokeRequest(BaseModel):
     token: str = Field(min_length=1, max_length=128)
 
@@ -4531,6 +4559,39 @@ async def assetlinks() -> list[dict[str, object]]:
             },
         }
     ]
+
+
+# --- Page shares (the reusable share kit's public links) -----------------
+
+
+async def _public_page_share(token: str) -> dict:
+    pub = await asyncio.to_thread(page_share.fetch_public, get_db(), token)
+    if pub is None:
+        raise HTTPException(status_code=404, detail="This link isn't available.")
+    return pub
+
+
+@app.get("/p/{token}", response_class=HTMLResponse)
+async def page_share_html(token: str) -> HTMLResponse:
+    """Public, unauthenticated landing for a shared page: the target's
+    public teaser plus platform routing (app if installed, else the
+    right store). Firebase Hosting / the justabot.info redirects proxy
+    ``/p/**`` here, the same pattern as ``/r/`` and ``/s/``."""
+    pub = await _public_page_share(token)
+    return HTMLResponse(page_share_page.render_page(token, pub))
+
+
+@app.get("/p/{token}/data")
+async def page_share_data(token: str) -> dict[str, object]:
+    """The link's target identity, for the app's deep-link route: the app
+    resolves the token, then opens the target natively."""
+    pub = await _public_page_share(token)
+    return {
+        "kind": pub["kind"],
+        "target_id": pub["target_id"],
+        "title": pub["title"],
+        "summary": pub["summary"],
+    }
 
 
 # --- Referrals (founder feature 2026-09-29): shareable invite link ---------

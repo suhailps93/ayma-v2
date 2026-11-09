@@ -204,6 +204,9 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
           ShareReportButton(
             reportType: 'deep_dive',
             reportId: widget.reportId,
+            subjectUid: meta?.otherUid ?? '',
+            subjectName: meta?.name ?? '',
+            subjectPhoto: meta?.subjectImage ?? '',
             apiClient: _api,
           ),
           // Just the re-run action — the header "Ask Ayma" button was

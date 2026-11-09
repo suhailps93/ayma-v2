@@ -19,6 +19,8 @@ import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
 import 'chat_screen.dart';
 import '../widgets/ayma_back_button.dart';
+import '../services/share_kit.dart';
+import '../widgets/ayma_share_sheet.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
@@ -523,6 +525,18 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         surfaceTintColor: Colors.transparent,
         foregroundColor: ac.fg,
         title: const SizedBox.shrink(),
+        actions: [
+          // Your Story is private (founder, 2026-11-08): the share
+          // button is here, but the Story target is Ayma-only — the
+          // sheet offers "Send to Ayma" and nothing else, and the kit
+          // refuses any external share for the kind outright.
+          AymaShareButton(
+            target: ShareTargets.story(
+              uid: _uid,
+              imageUrl: _livePhotos.isEmpty ? '' : _livePhotos.first.url,
+            ),
+          ),
+        ],
       ),
       body: _content(),
     );

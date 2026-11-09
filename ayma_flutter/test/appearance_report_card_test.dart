@@ -512,13 +512,18 @@ void main() {
         -300,
         scrollable: find.byType(Scrollable).first,
       );
-      // Tapping Share goes straight to the native OS share sheet — no Ayma
-      // intermediate sheet, no per-app buttons. (The real render + system
-      // sheet is covered by the service tests; here a capturing fake records
-      // that the button is wired to the native share with the smart-link
-      // caption.)
+      // Tapping Share opens the unified share-kit sheet (founder,
+      // 2026-11-08) with the same two options as every page; "Send
+      // externally" runs the native card share, unchanged. (The real
+      // render + system sheet is covered by the service tests; here a
+      // capturing fake records that the external path is wired to the
+      // native share with the smart-link caption.)
+      await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+      await tester.pumpAndSettle();
+      expect(find.text('Send to Ayma'), findsOneWidget);
+      expect(find.text('Send externally'), findsOneWidget);
       await tester.runAsync(() async {
-        await tester.tap(find.byKey(const ValueKey('reportCardShare')));
+        await tester.tap(find.text('Send externally'));
         for (var i = 0; i < 40 && shares.isEmpty; i++) {
           await tester.pump(const Duration(milliseconds: 50));
           await Future<void>.delayed(const Duration(milliseconds: 10));

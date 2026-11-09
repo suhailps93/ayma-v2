@@ -79,7 +79,8 @@ import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:ayma_flutter/widgets/nav_bar_shell.dart';
 import 'package:ayma_flutter/widgets/oauth_code_dialog.dart';
 import 'package:ayma_flutter/widgets/out_of_credits.dart';
-import 'package:ayma_flutter/widgets/share_report_sheet.dart';
+import 'package:ayma_flutter/services/share_kit.dart';
+import 'package:ayma_flutter/widgets/ayma_share_sheet.dart';
 import 'package:ayma_flutter/widgets/ayma_toast.dart';
 import 'package:ayma_flutter/screens/push_primer_dialog.dart';
 import 'package:ayma_flutter/services/push_permission.dart';
@@ -332,49 +333,14 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
     ),
     'out-of-credits sheet': (context) =>
         showOutOfCreditsSheet(context, service: LayoutFakeRc()),
-    'share report sheet': (context) => showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => ShareReportSheet(
-        reportType: 'deep_dive',
+    'share sheet': (context) => showAymaShareSheet(
+      context,
+      ShareTargets.webResearch(
         reportId: 'r1',
-        apiClient: api,
+        subjectUid: 'her',
+        subjectName: kLongName,
       ),
     ),
-    // The Instagram-DM-style "send to a user" picker (BUG P): avatar + name
-    // rows with a per-row Send button and a search box, mutual matches first.
-    // Seeded with one mutual match and one DM-only thread so both the matched
-    // badge and a plain row, plus the search field and keyboard, lay out
-    // cleanly at every size, scale and direction.
-    'send-to-user recipient picker': (context) async {
-      final fs = FakeFirebaseFirestore();
-      await fs.doc('users/her/profile/main').set({'name': kLongName});
-      await fs.doc('users/bob/profile/main').set({'name': 'Bob'});
-      await fs.doc('matches/her__me').set({
-        'uids': ['her', 'me'],
-        'status': 'mutual_interest',
-        'score': 0.9,
-      });
-      await fs.doc('dm_threads/her__me').set({
-        'participants': ['her', 'me'],
-        'unread': {'me': 0},
-      });
-      await fs.doc('dm_threads/bob__me').set({
-        'participants': ['bob', 'me'],
-        'unread': {'me': 0},
-      });
-      if (!context.mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (_) => RecipientPicker(
-          dmService: DmService(auth: kLayoutAuth, firestore: fs, api: api),
-          matchService:
-              MatchService(auth: kLayoutAuth, firestore: fs, api: api),
-          api: api,
-        ),
-      );
-    },
     // The sign-in greeting's critical-consent dialog (§3.3): the four faithful
     // consent points + the three legal-screen buttons must lay out at every
     // matrix size, scale and direction.

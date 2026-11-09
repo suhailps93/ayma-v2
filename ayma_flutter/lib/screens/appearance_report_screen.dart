@@ -10,6 +10,8 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/profile_service.dart';
 import '../services/report_card_share.dart';
+import '../services/share_kit.dart';
+import '../widgets/ayma_share_sheet.dart';
 import '../services/report_events.dart';
 import '../theme.dart';
 import '../widgets/appearance_report_card.dart';
@@ -391,13 +393,13 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 label: 'Share',
                 hint: 'Share your report card image',
                 excludeSemantics: true,
-                onTap: _sharing ? null : () => _openShare(card, ac.accent),
+                onTap: _sharing ? null : () => _openShareSheet(card, ac.accent, uid),
                 child: SizedBox(
                   height: 48,
                   child: FilledButton.icon(
                     key: const ValueKey('reportCardShare'),
                     onPressed:
-                        _sharing ? null : () => _openShare(card, ac.accent),
+                        _sharing ? null : () => _openShareSheet(card, ac.accent, uid),
                     // Report-card PNG render + share sheet — wings only.
                     icon: _sharing
                         ? const AymaWingLoader(size: 18, showLabel: false)
@@ -427,8 +429,27 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     );
   }
 
-  /// Renders the card image and opens the native OS share sheet directly —
-  /// the one share path that always worked. The user picks the destination
+  /// The big Share button runs on the shared share kit (founder,
+  /// 2026-11-08): the sheet offers "Send to Ayma" — the report as a
+  /// reply-style card in the Ayma chat — and "Send externally", which is
+  /// [_openShare] below, unchanged: the CURRENT run's rendered card image
+  /// with its caption through the system share sheet. (The card is built
+  /// from the live on-screen run, never a cached older one, and the
+  /// private "What to do next" section is never part of it.)
+  void _openShareSheet(AppearanceCardData card, Color accent, String uid) {
+    showAymaShareSheet(
+      context,
+      ShareTargets.appearance(
+        uid: uid,
+        title: 'Your appearance report',
+        photoUrl: card.photoUrls.isEmpty ? '' : card.photoUrls.first,
+        externalOverride: (_) => _openShare(card, accent),
+      ),
+    );
+  }
+
+  /// Renders the card image and opens the native OS share sheet — the
+  /// kit's external path for this page. The user picks the destination
   /// (WhatsApp, Instagram, Messages, save-to-photos, …) there; Ayma targets no
   /// single app itself.
   Future<void> _openShare(AppearanceCardData card, Color accent) async {

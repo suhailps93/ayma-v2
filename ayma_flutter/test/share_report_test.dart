@@ -1,6 +1,7 @@
-// Shareable reports: ReportShare, ShareService (card download, native share,
-// DM send), the share sheet's "Share to Ayma" hand-off, and the read-only
-// SharedReportScreen deep-link view.
+// Shareable reports on the unified share kit: ReportShare, ShareService
+// (snapshot + card download), the kit sheet's two options ("Send to Ayma"
+// / "Send externally") for report targets, the exact-record rule for the
+// external payload, and the read-only SharedReportScreen deep-link view.
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,7 +9,7 @@ import 'package:ayma_flutter/models/report_share.dart';
 import 'package:ayma_flutter/screens/shared_report_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
-import 'package:ayma_flutter/services/dm_service.dart';
+import 'package:ayma_flutter/services/share_kit.dart';
 import 'package:ayma_flutter/services/share_service.dart';
 import 'package:ayma_flutter/widgets/share_report_sheet.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -17,14 +18,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:share_plus/share_plus.dart';
 
-const _token = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG';
+const _token = 'tok-abc123';
 
 final _share = ReportShare.fromMap({
   'token': _token,
   'url': 'https://justabot.info/s/$_token',
   'card_url': 'https://justabot.info/s/$_token/card.png',
-  'title': 'Appearance',
+  'title': 'Web research on Dillu',
   'summary': 'Score: 7',
 });
 
@@ -36,7 +38,7 @@ MockClient _backend(List<http.Request> seen) => MockClient((req) async {
               'token': _token,
               'url': _share.url,
               'card_url': _share.cardUrl,
-              'title': 'Appearance',
+              'title': 'Web research on Dillu',
               'summary': 'Score: 7',
             }),
             200);
@@ -71,26 +73,15 @@ MockClient _backend(List<http.Request> seen) => MockClient((req) async {
 ApiClient _api(MockClient c) =>
     ApiClient(httpClient: c, auth: MockFirebaseAuth(signedIn: true));
 
-class _FakeDm extends DmService {
-  _FakeDm() : super(auth: MockFirebaseAuth(signedIn: true));
-  final List<(String, String)> reportShares = [];
-
-  @override
-  Future<void> markThreadRead(String threadId) async {}
-
-  @override
-  Future<void> sendReportShare(String threadId, String shareToken) async =>
-      reportShares.add((threadId, shareToken));
-}
-
 void main() {
   late Directory tmp;
   setUp(() => tmp = Directory.systemTemp.createTempSync('share_test'));
   tearDown(() => tmp.deleteSync(recursive: true));
+  tearDown(() => ChatInbox.instance.take());
 
   test('ReportShare builds the story card url and a link message', () {
     expect(_share.storyCardUrl, '${_share.cardUrl}?format=story');
-    expect(_share.message, 'Appearance — Score: 7\n${_share.url}');
+    expect(_share.message, 'Web research on Dillu — Score: 7\n${_share.url}');
   });
 
   test('downloadCard fetches the story format when asked', () async {
@@ -115,16 +106,8 @@ void main() {
     expect(() => svc.downloadCard(_share), throwsA(isA<ApiException>()));
   });
 
-  test('sendToThread sends an in-app report card, not the external link',
-      () async {
-    final svc = ShareService(httpClient: _backend([]), tempDir: tmp);
-    final dm = _FakeDm();
-    await svc.sendToThread(dm, 'a__b', _share);
-    expect(dm.reportShares, [('a__b', _token)]);
-  });
-
-  testWidgets('"Share to Ayma" drafts the link into the Ayma chat',
-      (tester) async {
+  testWidgets('the report share button opens the kit sheet with the two '
+      'options, and Send to Ayma hands the report to the chat', (tester) async {
     final seen = <http.Request>[];
     final router = GoRouter(routes: [
       GoRoute(
@@ -133,7 +116,9 @@ void main() {
                 appBar: AppBar(actions: [
                   ShareReportButton(
                     reportType: 'deep_dive',
-                    reportId: 'u1',
+                    reportId: 'dive-opened',
+                    subjectUid: 'u2',
+                    subjectName: 'Dillu',
                     apiClient: _api(_backend(seen)),
                   ),
                 ]),
@@ -142,29 +127,57 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.tap(find.byTooltip('Share'));
     await tester.pumpAndSettle();
-    for (final label in ['Share', 'Share to Ayma', 'Send to a user']) {
-      expect(find.text(label), findsOneWidget);
-    }
-    // The per-app Instagram Story button is gone — the native "Share" covers
-    // Instagram (and everything else) through the OS share sheet.
-    expect(find.text('Instagram Story'), findsNothing);
-    await tester.tap(find.text('Share to Ayma'));
+    // The unified sheet: exactly the founder's two labels.
+    expect(find.text('Send to Ayma'), findsOneWidget);
+    expect(find.text('Send externally'), findsOneWidget);
+    expect(find.text('Share to Ayma'), findsNothing);
+    expect(find.text('Send to a user'), findsNothing);
+    await tester.tap(find.text('Send to Ayma'));
     await tester.pumpAndSettle();
 
-    final body = jsonDecode(seen.firstWhere((r) => r.url.path == '/share').body);
-    expect(body, {'report_type': 'deep_dive', 'report_id': 'u1'});
     final k = ChatInbox.instance.take();
-    expect(k?.kind, 'draft_text');
-    expect(k?.draftBody, contains('Appearance'));
-    expect(k?.draftBody, isNot(contains('justabot.info')));
+    expect(k?.kind, 'draft_about');
+    expect(k?.shareKind, 'deep_dive');
+    expect(k?.refId, 'dive-opened');
+    expect(k?.targetUid, 'u2');
+    // Sending to Ayma needs no public snapshot at all.
+    expect(seen.where((r) => r.url.path == '/share'), isEmpty);
+  });
+
+  test('Send externally composes the share from the exact opened record',
+      () async {
+    final seen = <http.Request>[];
+    final backend = _backend(seen);
+    ShareParams? captured;
+    final kit = AymaShare(
+      api: _api(backend),
+      httpClient: backend,
+      systemShare: (p) async => captured = p,
+    );
+    await kit.shareExternally(
+      _FakeContext(),
+      ShareTargets.webResearch(
+        reportId: 'dive-opened',
+        subjectUid: 'u2',
+        subjectName: 'Dillu',
+      ),
+    );
+    // The snapshot was created for THIS report id — the one the user
+    // opened — never re-resolved by pair/person to a different record.
+    final create =
+        seen.firstWhere((r) => r.url.path == '/share' && r.method == 'POST');
+    expect(jsonDecode(create.body),
+        {'report_type': 'deep_dive', 'report_id': 'dive-opened'});
+    // And the composed share is that snapshot's own title/summary/link.
+    expect(captured?.text, 'Web research on Dillu — Score: 7\n${_share.url}');
+    expect(captured?.subject, 'Web research on Dillu');
   });
 
   testWidgets('SharedReportScreen renders the public snapshot',
       (tester) async {
     final seen = <http.Request>[];
     await tester.pumpWidget(MaterialApp(
-      home: SharedReportScreen(
-          token: _token, apiClient: _api(_backend(seen))),
+      home: SharedReportScreen(token: _token, apiClient: _api(_backend(seen))),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Hello from a snapshot.'), findsOneWidget);
@@ -172,3 +185,7 @@ void main() {
     expect(seen.single.headers.containsKey('authorization'), isFalse);
   });
 }
+
+/// A bare context for the non-widget external path (the fake system
+/// share ignores it).
+class _FakeContext extends Fake implements BuildContext {}

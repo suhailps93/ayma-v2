@@ -398,12 +398,6 @@ class DmService {
   Future<void> sendText(String threadId, String text) =>
       _api.sendDmMessage(threadId, type: 'text', body: text);
 
-  /// Sends a shared report as an in-app card; the backend reads title,
-  /// summary and card image from the stored snapshot for [shareToken].
-  Future<void> sendReportShare(String threadId, String shareToken) =>
-      _api.sendDmMessage(threadId,
-          type: 'shared_report', shareToken: shareToken);
-
   Future<void> sendPhoto(String threadId, String storagePath) =>
       _api.sendDmMessage(threadId, type: 'photo', body: storagePath);
 
