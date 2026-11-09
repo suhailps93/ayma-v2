@@ -122,6 +122,7 @@ class LivingReportView extends StatefulWidget {
     this.hideBlock,
     this.myUid,
     this.emptyBuilder,
+    this.extraRightPadding = 0,
   });
 
   final String reportType;
@@ -181,6 +182,11 @@ class LivingReportView extends StatefulWidget {
   /// failure — unchanged behaviour for every report type that doesn't supply
   /// one.
   final WidgetBuilder? emptyBuilder;
+
+  /// Extra padding added to the right edge of the report's text column —
+  /// used by `PublicProfileScreen` to reserve a gutter for the floating
+  /// action rail (64px wide) so text never runs beneath the rail. Default 0.
+  final double extraRightPadding;
 
   @override
   State<LivingReportView> createState() => LivingReportViewState();
@@ -670,7 +676,7 @@ class LivingReportViewState extends State<LivingReportView>
       shrinkWrap: widget.shrinkWrap,
       physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       padding: EdgeInsets.fromLTRB(
-        20, 16, 20, (_selecting && !widget.shrinkWrap) ? 96 : 40,
+        20, 16, 20 + widget.extraRightPadding, (_selecting && !widget.shrinkWrap) ? 96 : 40,
       ),
       children: [
             if (widget.showTitle) ...[
