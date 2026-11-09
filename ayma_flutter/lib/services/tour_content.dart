@@ -112,7 +112,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     featureId: 'ayma_guided_tour',
     headline: 'Let Ayma show you around',
     subtitle: 'Say "walk me through the app" and Ayma gives you a live, guided '
-        'tour — she opens each page, highlights what to tap, and waits for you.',
+        'tour — she opens each page, highlights it, tells you about it, and '
+        'waits for you to say "next".',
     icon: Icons.tour_outlined,
     anchorId: TourAnchors.homeOrb,
   ),
@@ -156,6 +157,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     headline: 'Ayma, your way',
     subtitle: "Open Settings, then Ayma's models, to choose her brain and her voice.",
     icon: Icons.tune_rounded,
+    anchorId: TourAnchors.profileAymaSettingsRow,
+    tab: 3,
+  ),
+  TourFeature(
+    featureId: 'ayma_image_model',
+    headline: 'Pick her image model',
+    subtitle: "Open Settings, then Ayma's models, to choose which model she "
+        'uses to create and edit images in chat. Gemini is the default; more '
+        'appear as they are switched on.',
+    icon: Icons.image_outlined,
     anchorId: TourAnchors.profileAymaSettingsRow,
     tab: 3,
   ),

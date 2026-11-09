@@ -36,7 +36,7 @@ is left untouched.
 | 1 | `gemini.generate_reply_events` Vertex branch | ayma-api, ayma-api-staging | text chat | `genai.Client(vertexai=True)` on Vertex `global` (`USE_VERTEX=true`), else Dev API via `GOOGLE_API_KEY` | `llm_route_chat`/`llm_percent_chat`/`llm_allowlist_chat`, or `llm_fallback_to_google` after a gateway failure |
 | 2 | `gemini.generate_json` Vertex tail | ayma-api, ayma-api-staging | matching, reports, vision reads, moderation, DM ingest, practice JSON, wiki | same client as #1 | `llm_route_json`/`llm_route_vision` + percents/allowlists, or the Google fallback; HEIC/m4a/webm/ogg/aac media skipped the gateway unconditionally |
 | 3 | `gemini.research` | ayma-api, ayma-api-staging | deep-dive research, public-profile discovery, chat `web_search` tool | Vertex `google_search` + `url_context` grounding on `gemini-3.7-flash` | always direct, no routing |
-| 4 | `gemini.generate_image` / `edit_image` | ayma-api, ayma-api-staging | `generate_image` / `edit_photo` chat skills | Vertex `gemini-2.5-flash-image` | always direct, no routing |
+| 4 | `gemini.generate_image` / `edit_image` | ayma-api, ayma-api-staging | `generate_image` / `edit_photo` chat skills | Vertex `gemini-2.5-flash-image` | always direct, no routing | — **RESTORED 2026-11-08 as the ONE founder-authorized scoped exception; see below** |
 | 5 | `voice_preview._synthesize` | ayma-api, ayma-api-staging | voice-preset picker samples | Vertex `gemini-2.5-flash-preview-tts` | always direct on a cache miss (hits stay cached in Storage) |
 | 6 | `media_embed.embed_image_bytes` | ayma-api, ayma-api-staging | same-person face signals (shared-photo verify, appearance own-photo check, gallery lazy match, dive scoring, web-candidate match) | raw Vertex aiplatform `:embedContent` REST (`gemini-embedding-2`) | always direct, no routing |
 | 7 | `gemini_batch.submit_json_batch` / `poll_json_batch` | ayma-api via `POST /cron/lint` | wiki lint sweep | Vertex Batch API on `gemini-3.7-flash` | always direct, no routing |
@@ -51,7 +51,24 @@ Disposition:
   `config/llm_routing` override can re-arm the direct path. A gateway failure
   now fails the call honestly. Unsupported media (HEIC etc.) raises an honest
   error instead of silently going to Vertex.
-- #3, #4, #5, #6, #7 — DISABLED behind their existing call shape (they raise
+- #4 — **RESTORED 2026-11-08** as the ONE founder-authorized direct-Google
+  inference exception, scoped to image generation only (founder decision,
+  relayed by Astro). The direct Gemini image call now lives in the dedicated
+  module `functions/bootstrap/image_gen.py` (a pluggable provider catalog +
+  the same fail-closed daily cap web search uses: `image_gen_usage/{day}`,
+  `IMAGE_GEN_DAILY_CAP` default 100, checked-and-incremented in one
+  `@firestore.transactional` BEFORE any provider call). `gemini.generate_image`
+  / `edit_image` are the public face — they route through `image_gen` and hold
+  no direct call of their own, so the no-direct-Google static scan
+  (`tests/test_llm_call_site_coverage.py`) names **only `image_gen.py`** on its
+  image-generation exception list; every other module stays LiveKit-only.
+  Direct Gemini image calls bill Google, chosen knowingly; this exception does
+  NOT extend to any other surface. A second catalog entry, `xai-direct`
+  (`grok-imagine-image-2.0`), ships READY-BUT-UNAVAILABLE: with no `XAI_API_KEY`
+  it is not listed and any routed call returns `unconfigured` with no provider
+  call. The DirectGoogleDisabledError raise is removed from these two functions
+  (replaced, not left alongside).
+- #3, #5, #6, #7 — DISABLED behind their existing call shape (they raise
   `llm_routing.DirectGoogleDisabledError`; no new flags). The LiveKit gateway
   provably has no equivalent (probed live 2026-10-25, see
   `docs/LIVEKIT_INFERENCE_MIGRATION.md`: `/embeddings`, `/images/generations`,
@@ -62,8 +79,9 @@ Disposition:
   - #3: deep dives fail honestly (`failed` run status); the chat `web_search`
     tool returns an "unavailable" error the model relays; public-profile
     discovery skips that source and keeps the others.
-  - #4: both skills catch it and reply in chat that image generation isn't
-    available (message kept user-safe — the skills interpolate it).
+  - #4: no longer disabled — restored as the scoped exception above. Both
+    skills still catch a non-``ok`` outcome and relay the honest, user-safe
+    message (paused / unconfigured / error) as a plain chat turn.
   - #5: cached clips keep serving; uncached presets get an honest 502.
   - #6: all 7 call sites already `try/except` → `unknown`/skip; face signals
     degrade to "unknown", never a crash.

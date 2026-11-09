@@ -282,6 +282,14 @@ PF_AYMA_TTS_VOICE = "ayma_tts_voice"
 # any stored ``ayma_cascade_brain``). Read/written by ``/brain/preference``
 # and the Models screen's one save, ``/models/preference``.
 PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
+# The user's chosen IMAGE-generation model (Models screen, independent of the
+# text Brain and the voice stack). One of ``image_gen`` catalog provider ids
+# (``gemini-direct`` by default); "" / absent = the catalog default
+# (``image_gen.default_model_id``). Read by ``image_gen.read_image_model_pref``
+# and written by ``/image-model/preference``. A provider that is not configured
+# on this deploy (e.g. ``xai-direct`` with no ``XAI_API_KEY``) is never offered
+# or accepted, so a saved value always resolves to an available provider.
+PF_AYMA_IMAGE_MODEL = "ayma_image_model"
 # Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
 # ARCHITECTURE §1.1): "livekit" (LiveKit Cloud Agents — now the default, served
 # by the hosted ``ayma-lk`` worker) or "cloudrun" (GCP Cloud Run, opt-out via

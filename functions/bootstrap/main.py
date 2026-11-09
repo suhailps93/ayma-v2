@@ -690,6 +690,7 @@ app.include_router(appearance_router)
 import mcp_server  # noqa: E402
 
 app.mount(mcp_server.MOUNT_PATH, mcp_server.asgi_app)
+app.add_route(mcp_server.MOUNT_PATH, mcp_server.bare_mount_app)
 
 
 @app.get("/health")
@@ -6090,8 +6091,82 @@ async def set_brain_preference(
     return {"ok": True, "current": brain}
 
 
+@app.get("/image-model/preference")
+async def get_image_model_preference(
+    uid: str = Depends(require_uid),
+) -> dict[str, object]:
+    """The image-generation model catalog + the user's current choice (Models
+    screen, independent of the text Brain and the voice stack). Image
+    generation is the ONE founder-authorized direct-Google exception
+    (``image_gen.py``). Shape:
+    ``{models:[{id,label,description,model,available}], current, default}`` —
+    ``current`` is the saved ``ayma_image_model`` ("" when unset) and
+    ``default`` is the catalog default (``gemini-direct``) the UI pre-selects.
+    Only CONFIGURED providers are listed (no ``XAI_API_KEY`` → no Grok entry).
+    No model spend."""
+    import image_gen
+
+    models = image_gen.available_models()
+    available_ids = {m["id"] for m in models}
+    try:
+        snap = schema.profile_doc(get_db(), uid).get()
+        current = str(
+            (snap.to_dict() or {}).get(schema.PF_AYMA_IMAGE_MODEL, "")
+        ).strip()
+    except Exception:  # noqa: BLE001 - never block the settings screen on a read
+        logger.exception("could not read ayma_image_model for %s", uid)
+        current = ""
+    if current not in available_ids:
+        current = ""
+    return {
+        "models": models,
+        "current": current,
+        "default": image_gen.DEFAULT_PROVIDER,
+    }
+
+
+class ImageModelPreferenceBody(BaseModel):
+    image_model: str = Field(min_length=1, max_length=32)
+
+
+@app.post("/image-model/preference")
+async def set_image_model_preference(
+    body: ImageModelPreferenceBody, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Persist the user's image-generation model on
+    ``users/{uid}/profile/main`` (``ayma_image_model``). Only a CONFIGURED
+    provider from the catalog is accepted — an unavailable provider (e.g.
+    ``xai-direct`` with no ``XAI_API_KEY``) is, from the client's side, simply
+    not an available image model here, so it 422s rather than being saved."""
+    import image_gen
+    from firebase_admin import firestore
+
+    choice = body.image_model.strip()
+    if choice not in {m["id"] for m in image_gen.available_models()}:
+        raise HTTPException(status_code=422, detail="Unknown image model.")
+    try:
+        schema.profile_doc(get_db(), uid).set(
+            {
+                schema.PF_AYMA_IMAGE_MODEL: choice,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("could not save ayma_image_model for %s", uid)
+        raise HTTPException(
+            status_code=502, detail="Could not save preference."
+        ) from exc
+    return {"ok": True, "current": choice}
+
+
 class ModelsPreferenceBody(BaseModel):
     brain: str = Field(min_length=1, max_length=32)
+    # The image-generation model (Models screen, independent of Brain/voice).
+    # Optional: "" leaves the saved pick untouched (the UI omits it when the
+    # catalog offers only the default). A non-empty value must be a configured
+    # catalog provider id.
+    image_model: str = Field(default="", max_length=32)
     mode: str = Field(min_length=1, max_length=32)
     realtime_model_id: str = Field(default="", max_length=64)
     stt_id: str = Field(default="", max_length=128)
@@ -6141,6 +6216,14 @@ async def set_models_preference(
     brain_resp = await set_brain_preference(
         BrainPreferenceBody(brain=body.brain), uid=uid
     )
+    # Image model LAST and only when the client sent one (the picker is shown
+    # only when more than the default is available). A plain profile update
+    # against an already-listed catalog id; it 422s on an unavailable one.
+    image_choice = body.image_model.strip()
+    if image_choice:
+        await set_image_model_preference(
+            ImageModelPreferenceBody(image_model=image_choice), uid=uid
+        )
     if body.reconnect:
         # Mark BEFORE the client tears down + re-bootstraps, so the new
         # session claims the one-shot announcement (agent._open_main_call).

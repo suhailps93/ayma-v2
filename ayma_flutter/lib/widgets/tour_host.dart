@@ -111,10 +111,17 @@ class TourHost extends StatelessWidget {
     );
   }
 
-  /// The Ayma-driven tour's single spotlighted step (§11.2b): rendered through
-  /// [CoachMarkOverlay] with callout card (headline, say text, counter, Skip
-  /// tour and Next CTAs). Keyed by the step's token so each pushed step gets a
-  /// fresh measure.
+  /// The Ayma-driven tour's single spotlighted step. Two kinds share this
+  /// path and render differently (founder, 2026-11-08):
+  ///  * a real driven-tour step (§11.2b) is CHROMELESS — only the spotlight,
+  ///    no callout card and no "Skip tour" row. Ayma performs the move and
+  ///    then announces it (and waits for the user's spoken/typed "go") in her
+  ///    own voice/chat line, so an on-screen guideline card would just double
+  ///    it. The user leaves via "stop" (voice/text) or the system Back
+  ///    (`MainShellScreen`'s `PopScope` → [GuidedTourController.stopFromBack]).
+  ///  * a §11.2c page-explainer step (look-only) keeps its callout card and
+  ///    Skip tour exactly as built.
+  /// Keyed by the step's token so each pushed step gets a fresh measure.
   /// Prepare for a DRIVEN step: deliberately NO navigation. The rewire
   /// (founder, 2026-11-07) makes the backend + client verify the user is
   /// already on the step's screen BEFORE the step is shown (the tour_step
@@ -129,19 +136,29 @@ class TourHost extends StatelessWidget {
   }
 
   Widget _drivenOverlay(GuidedTourStep step) {
+    // A real driven-tour step shows no card and no on-screen Skip tour — only
+    // the spotlight; a page explainer keeps its card. The chromeless step
+    // still ends via "stop" (voice/text) or system Back, so it drops the
+    // card's Skip/Next handlers entirely.
+    final chromeless = !step.explainer;
     return CoachMarkOverlay(
       key: ValueKey('guided-tour-${step.token}'),
       features: [step.feature],
       stepIndex: step.index,
       stepTotal: step.total,
-      chromeless: false,
+      chromeless: chromeless,
       onPrepareStep: _prepareDrivenStep,
       onFinish: GuidedTourController.instance.endSession,
       onAnchorShown: step.onShown,
       onAnchorAbsent: step.onAbsent,
       onAnchorTapped: step.onTapped,
-      onSkipPressed: step.onSkip,
-      onStopPressed: step.onStop,
+      // No card in a driven-tour step → no card Next; the explainer keeps its
+      // Next/Skip via the card.
+      onSkipPressed: chromeless ? null : step.onSkip,
+      // The chromeless driven step has no "Skip tour" row at all (founder,
+      // 2026-11-08); the explainer keeps its Skip. Back + spoken "stop" still
+      // end a chromeless tour through the controller.
+      onStopPressed: chromeless ? null : step.onStop,
       hideNextButton: GuidedTourController.instance.voiceOnly,
       pressThrough: false,
       performed: step.performed,

@@ -209,6 +209,8 @@ def test_mcp_protocol_end_to_end(monkeypatch, fake_db):
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
+    import main
+
     _enable(monkeypatch)
     monkeypatch.setattr(token_ledger, "get_db", lambda: fake_db)
     fake_db.docs[("users", UID, "profile", "main")] = {
@@ -242,6 +244,19 @@ def test_mcp_protocol_end_to_end(monkeypatch, fake_db):
                         getattr(c, "text", "") or "" for c in (getattr(res, "content", []) or [])
                     )
                     assert "Alex" in blob
+            # The same SDK client on the exact URL the app shows (no trailing
+            # slash), through the real app: the session manager only runs once
+            # per process, so this shares the lifespan above.
+            app_client = httpx.AsyncClient(
+                transport=ASGITransport(app=main.app),
+                base_url="http://test",
+                headers={"Authorization": f"Bearer {raw}"},
+            )
+            async with streamable_http_client("http://test/mcp", http_client=app_client) as streams:
+                async with ClientSession(streams[0], streams[1]) as session:
+                    await session.initialize()
+                    tools = await session.list_tools()
+                    assert "get_profile" in {t.name for t in tools.tools}
 
     import asyncio
 
@@ -720,3 +735,26 @@ def test_revoke_connection_idempotent(monkeypatch, fake_db):
         json={"token_id": token_id}
     )
     assert r2.status_code == 200 and r2.json()["ok"] is True
+
+
+# ---- the bare /mcp URL the app shows (no trailing-slash redirect) -------- #
+
+
+def test_bare_mcp_url_flag_off_503_no_redirect(fake_db):
+    import main
+
+    client = TestClient(main.app, follow_redirects=False)
+    r = client.post("/mcp", json={})
+    assert r.status_code == 503 and r.json()["error"] == "mcp_disabled"
+
+
+def test_bare_mcp_url_requires_token_no_redirect(monkeypatch, fake_db):
+    import main
+
+    _enable(monkeypatch)
+    client = TestClient(main.app, follow_redirects=False)
+    r = client.post("/mcp", json={})
+    assert r.status_code == 401 and r.json()["error"] == "invalid_token"
+    # The exact route must not shadow the mounted sub-routes.
+    assert client.get("/mcp/connect").status_code == 200
+    assert client.post("/mcp/", json={}).status_code == 401

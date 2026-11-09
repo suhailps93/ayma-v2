@@ -964,7 +964,31 @@ class AppCommandService {
         ),
         index: index,
         total: total,
-        onShown: () => unawaited(ack(true)),
+        explainer: explainer,
+        onShown: () {
+          unawaited(ack(true));
+          // VOICE, nothing to perform (the orb "this is me" step): on a live
+          // call the orb IS the call bar, so the user can't tap the highlight
+          // to complete the step — and advance_guided_tour would wait the full
+          // ~110s tap window for a tour_event that can never come (founder,
+          // 2026-11-08). Rest the step the instant it's shown: report it as
+          // performed-and-waiting, so the tour moves on the user's SPOKEN "go"
+          // (skip_guided_tour) and never on an orb tap. (A page explainer is
+          // already treated as performed server-side, so it needs none of
+          // this; a text step still completes on the tap below.)
+          if (command == null && !explainer && _hasActiveVoice()) {
+            if (!guided.isShowing(id)) return;
+            performed = true;
+            attempt++;
+            event('performed', attempt: attempt);
+            guided.recordOutcome(
+              id,
+              performed: true,
+              notice: "Have a look. When you're ready, say next.",
+            );
+            _kickTourAdvance(index);
+          }
+        },
         // Anchor not present: ack so the backend skips the step, and clear the
         // spotlight — but keep the SESSION active (the backend sends the next
         // step), so the passive tour can't slip in during the gap.
@@ -1030,6 +1054,14 @@ class AppCommandService {
           return;
         }
       }
+      // Parking this step honestly: a PRIOR step's spotlight may still be up
+      // (a voice no-command step the user left on their own "go", or any step
+      // whose session outlived its screen). Drop that zombie overlay before we
+      // ack — it must not sit as a stale scrim over the screen the backend is
+      // about to navigate us to for the re-presented step. The SESSION stays
+      // active (so the passive tour can't slip in), only the stale spotlight
+      // clears.
+      if (guided.active && !guided.isShowing(id)) guided.clearStep();
       await ack(false, reason: 'not_on_screen');
     }());
   }

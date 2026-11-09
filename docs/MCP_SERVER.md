@@ -100,7 +100,9 @@ If the server reports the feature off (503), the screen shows an honest note
 that a code can be entered but won't connect until the flag is on, rather than
 letting the attempt fail quietly.
 
-Mounting (in `main.py`, additive): `app.mount("/mcp", mcp_server.asgi_app)` plus
+Mounting (in `main.py`, additive): `app.mount("/mcp", mcp_server.asgi_app)`, an
+exact `/mcp` route (`mcp_server.bare_mount_app`) so the slashless URL the app
+shows is served directly instead of a trailing-slash 307 to `http://`, plus
 a startup/shutdown that runs the streamable-HTTP session manager's lifespan (a
 mounted sub-app's lifespan is not run by the parent). The existing `RateLimiter`
 ASGI middleware already covers the `/mcp` prefix (`rate_mcp`, default

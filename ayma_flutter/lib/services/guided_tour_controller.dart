@@ -32,6 +32,7 @@ class GuidedTourStep {
     required this.onStop,
     this.onSkip,
     this.performed = false,
+    this.explainer = false,
   });
 
   /// A per-command id; the overlay is keyed by it so every pushed step gets a
@@ -55,6 +56,14 @@ class GuidedTourStep {
   /// user can look at what opened, and the tour waits for their go.
   final bool performed;
 
+  /// A §11.2c page-explainer step (look-only highlighting), as opposed to a
+  /// real driven-tour step. The two share this overlay path, but render
+  /// differently: an explainer keeps its callout card (it stays exactly as
+  /// built), while a driven-tour step is chromeless — no card at all, just the
+  /// spotlight, since Ayma announces it in her own voice/chat line (founder,
+  /// 2026-11-08). [TourHost] reads this to pick the rendering.
+  final bool explainer;
+
   /// This step with [notice] as its card line, keeping the token so the
   /// overlay stays up instead of re-measuring.
   GuidedTourStep withOutcome({required bool performed, required String notice}) {
@@ -77,6 +86,7 @@ class GuidedTourStep {
       onStop: onStop,
       onSkip: onSkip,
       performed: performed,
+      explainer: explainer,
     );
   }
 }

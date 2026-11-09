@@ -50,6 +50,8 @@ Vertex. The as-built map and routing table are `docs/ARCHITECTURE.md` section 0;
 `docs/LIVEKIT_INFERENCE_MIGRATION.md`. Gateway cannot do embeddings, image models, Google Search/Maps grounding, or
 voice context compression.
 
+**Image generation — the ONE scoped direct-Google exception** (founder decision 2026-11-08, `fleet/image-gen-restore`): because the LiveKit gateway serves no image model, `generate_image`/`edit_photo` call Gemini's image model DIRECTLY (billed to Google, chosen knowingly). This exception is image generation ONLY — never extend it to chat/matching/JSON/vision/voice. The direct call lives solely in `functions/bootstrap/image_gen.py` (a pluggable provider catalog + a fail-closed daily cap `image_gen_usage/{day}`, `IMAGE_GEN_DAILY_CAP` default 100); the no-direct-Google static scan exempts only that module. Per-user pick `ayma_image_model` (Models screen; `gemini-direct` default; `xai-direct` ships unavailable until an `XAI_API_KEY` secret lands). See ARCHITECTURE §0 routing table + `docs/DIRECT_GOOGLE_KILL_AUDIT.md` #4.
+
 **Feature flags** (branch `all-features-on`, doc `docs/FEATURE_FLAGS.md` there): one Firestore doc
 `config/feature_flags`, cached 60 s. Resolution: env `FLAG_<NAME>` > the doc > legacy `config/llm_routing`
 and `app_config/sentry` > code default. Flag keys: `llm_route_json|vision|chat` (`inference`/`vertex`),

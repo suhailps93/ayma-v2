@@ -480,9 +480,13 @@ async def edit_image(
     uid: str | None = None,
     feature: str = "misc",
 ) -> tuple[bytes, str]:
-    """DISABLED (founder rule 2026-11-04 — see ``docs/DIRECT_GOOGLE_KILL_AUDIT.md``
-    item 4): photo editing needs the direct-Google image model, which the
-    LiveKit gateway does not serve. Raises instead of calling Google."""
+    """Edit ``image_bytes`` per ``instruction`` with the user's selected image
+    model (the ``edit_photo`` tool, §"Chat about it"). Returns the edited
+    image's raw bytes and mime type.
+
+    Thin wrapper over :func:`generate_image` (same model, same call shape) —
+    kept as its own name so the edit path's callers/tests and the generation
+    path's stay independently greppable."""
     return await generate_image(
         instruction, image=(image_bytes, mime_type), uid=uid, feature=feature
     )
@@ -495,10 +499,27 @@ async def generate_image(
     uid: str | None = None,
     feature: str = "misc",
 ) -> tuple[bytes, str]:
-    """DISABLED (founder rule 2026-11-04 — see ``docs/DIRECT_GOOGLE_KILL_AUDIT.md``
-    item 4): image generation needs the direct-Google image model, which the
-    LiveKit gateway does not serve. Raises instead of calling Google. The
-    message is user-safe: both skill callers interpolate it into a chat reply."""
-    raise llm_routing.DirectGoogleDisabledError(
-        "image generation isn't available right now"
+    """Generate an image from ``prompt`` with the user's selected image model
+    (Models screen; default Gemini-direct). Pass ``image=(bytes, mime)`` to
+    ground the generation in a reference photo (an edit, or "a caricature of
+    ME"); without it this is pure text-to-image. Returns the generated image's
+    raw bytes and mime type.
+
+    Image generation is the ONE founder-authorized direct-Google inference
+    exception (``image_gen.py``, 2026-11-08): the direct provider call, the
+    pluggable model catalog and the fail-closed daily cap all live there, so
+    this stays a thin public face with no direct call of its own. The per-user
+    credit gate (:func:`token_ledger.check`) runs first so an out-of-credits
+    user never consumes the daily cap. On a non-``ok`` outcome this raises
+    ``RuntimeError`` carrying the outcome's user-safe message — both skill
+    callers (``skills.generate_image`` / ``skills.photo_edit``) catch it and
+    relay it as a plain-text chat turn instead of a broken image."""
+    import image_gen
+
+    token_ledger.check(uid)
+    outcome = await image_gen.generate(
+        prompt, image=image, uid=uid, feature=feature
     )
+    if outcome.status == image_gen.STATUS_OK:
+        return outcome.image_bytes, outcome.mime
+    raise RuntimeError(outcome.message)
