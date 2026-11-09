@@ -4,8 +4,13 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/notification_center_screen.dart';
 import 'package:ayma_flutter/screens/notification_prefs_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/ayma_orb.dart';
+import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
+import 'package:ayma_flutter/widgets/messages_unread_icon.dart';
+import 'package:ayma_flutter/widgets/notification_bell.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +63,26 @@ class _FakeSvc extends NotificationService {
     _prefs[category] = enabled;
     prefWrites.add((category, enabled));
   }
+}
+
+/// A NotificationService whose stream errors, to exercise the load-error line.
+class _ErrSvc extends _FakeSvc {
+  _ErrSvc() : super(const []);
+
+  @override
+  Stream<List<AppNotification>> watch() => Stream.error('boom');
+}
+
+/// A DmService whose unread total is a fixed non-zero count, so the Messages
+/// badge renders without any Firebase wiring.
+class _FakeDm extends DmService {
+  _FakeDm()
+      : super(
+            auth: MockFirebaseAuth(
+                signedIn: true, mockUser: MockUser(uid: 'me')));
+
+  @override
+  Stream<int> watchTotalUnread() => Stream.value(3);
 }
 
 /// An ApiClient whose `/profiles/mini` returns the given name/photo per uid.
@@ -127,14 +152,13 @@ Widget _routerHost(NotificationService svc, ApiClient api,
 void main() {
   setUp(() {
     final b = TestWidgetsFlutterBinding.ensureInitialized();
-    // An `ayma_checkin` row's leading icon is a live `AymaOrb`, whose
-    // ambient motion runs on a never-ending `AnimationController.repeat()`
-    // (see that widget's `_syncMotion`) — exactly what `disableAnimations`
-    // (the accessibility "reduce motion" signal it already checks) turns
-    // off. Without this, `pumpAndSettle()` below would hang forever waiting
-    // for a frame that never stops being scheduled (same fix as
-    // `public_profile_screen_test.dart`, which hits the same orb via the
-    // persistent tab bar).
+    // The empty/first-emission state runs the looping `AymaWingLoader`, whose
+    // ambient motion is driven by a never-ending `AnimationController.repeat()`
+    // — exactly what `disableAnimations` (the accessibility "reduce motion"
+    // signal it already checks) turns off. Without this, `pumpAndSettle()`
+    // below could hang forever waiting for a frame that never stops being
+    // scheduled. (Row leading icons are now the static `AymaWingsIcon`/glyphs,
+    // not the previously-animated orb.)
     b.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(disableAnimations: true);
   });
@@ -384,6 +408,110 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(svc.dismissedAll, isFalse);
+  });
+
+  // --- Jobs pass (fleet/jobs-notifications): icon system + quiet-unread
+  // treatment + on-accent badge ink + load-error token. ---
+
+  testWidgets('unread rows carry no accent wash and no left accent bar',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'dm_message', 'hi', 'dm_thread/a__me', actorUid: 'a'),
+    ]);
+    await tester.pumpWidget(
+        _host(svc, _api({'a': {'name': 'Ash', 'photo': ''}})));
+    await tester.pumpAndSettle();
+
+    final wash = AymaTokens.light.accent.withValues(alpha: 0.06);
+    for (final c in tester.widgetList<Container>(find.byType(Container))) {
+      final d = c.decoration;
+      if (d is! BoxDecoration) continue;
+      // The removed unread treatment was a Container whose decoration carried
+      // the accent wash and a 3px left accent bar — assert neither survives.
+      expect(d.color, isNot(wash), reason: 'the unread accent wash is removed');
+      final border = d.border;
+      if (border is Border) {
+        final isAccentBar =
+            border.left.width == 3 && border.left.color == AymaTokens.light.accent;
+        expect(isAccentBar, isFalse, reason: 'the left accent bar is removed');
+      }
+    }
+  });
+
+  testWidgets(
+      'check-in and default-type rows use the flat wings glyph, never the orb',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'ayma_checkin', 'Checking in on you.', 'chat'),
+      _n('2', 'system_other', 'A system note.', 'chat'),
+    ]);
+    await tester.pumpWidget(_host(svc, _api()));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AymaOrb), findsNothing);
+    expect(find.byType(AymaWingsIcon), findsNWidgets(2));
+  });
+
+  testWidgets('unread-count badge text uses on-accent ink, not white',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'dm_message', 'hi', 'dm_thread/a__me', actorUid: 'a'),
+    ]);
+    await tester.pumpWidget(
+        _host(svc, _api({'a': {'name': 'Ash', 'photo': ''}})));
+    await tester.pumpAndSettle();
+
+    final badgeText = tester.widget<Text>(find.text('1'));
+    expect(badgeText.style!.color, AymaTokens.light.onAccent);
+    expect(badgeText.style!.color, isNot(Colors.white));
+  });
+
+  testWidgets('load-error line uses the derived errorText token, not raw error',
+      (tester) async {
+    final svc = _ErrSvc();
+    await tester.pumpWidget(_host(svc, _api()));
+    await tester.pumpAndSettle();
+
+    final err = tester
+        .widget<Text>(find.textContaining('Could not load notifications'));
+    expect(err.style!.color, AymaTokens.light.errorText);
+    expect(err.style!.color, isNot(AymaColors.error));
+  });
+
+  testWidgets('bell badge label ink is on-accent in both renderings',
+      (tester) async {
+    final svc = _FakeSvc([
+      _n('1', 'dm_message', 'hi', 'dm_thread/a__me', actorUid: 'a'),
+    ]);
+    for (final compact in [true, false]) {
+      await tester.pumpWidget(MaterialApp(
+        theme: AymaTheme.light,
+        home: Scaffold(
+            body: NotificationBellButton(service: svc, compact: compact)),
+      ));
+      await tester.pumpAndSettle();
+      final badge = tester.widget<Badge>(find.byType(Badge));
+      expect(badge.textColor, AymaTokens.light.onAccent,
+          reason: 'compact=$compact');
+      expect(badge.textColor, isNot(Colors.white), reason: 'compact=$compact');
+    }
+  });
+
+  testWidgets('messages-unread badge label ink is on-accent', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: MessagesUnreadIcon(
+          icon: Icons.chat_bubble_outline,
+          color: AymaTokens.light.fg,
+          service: _FakeDm(),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final badge = tester.widget<Badge>(find.byType(Badge));
+    expect(badge.textColor, AymaTokens.light.onAccent);
+    expect(badge.textColor, isNot(Colors.white));
   });
 
   testWidgets('prefs screen toggles a category', (tester) async {
