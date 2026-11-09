@@ -175,7 +175,11 @@ def test_stale_list_flags_stale_and_unavailable_only():
     vendor_spend.record(db, _payload(
         vendor="codemagic", metric="plan",
         fetched_at=(now - timedelta(hours=40)).isoformat()))
-    out = vendor_spend.build(db, _snap(), now)
+    snap = _snap()
+    # The fixture snap is frozen at Oct 25; at real test time its google
+    # fetch is weeks stale, which would flag cloud_run stale here.
+    snap["google"]["fetched_at"] = now.isoformat()
+    out = vendor_spend.build(db, snap, now)
     by_id = {a["id"]: a for a in out["stale"]}
     assert by_id["codemagic"]["kind"] == "stale"
     assert by_id["codemagic"]["age_hours"] == 40.0

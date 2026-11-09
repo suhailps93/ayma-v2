@@ -94,6 +94,7 @@ TOOL_LABELS = {
     "ui_action": "Did that on your screen",
     # Model stack (skills/set_model_stack.py)
     "set_brain": "Switched Ayma's brain",
+    "set_voice_brain": "Switched Ayma's voice brain",
     "set_voice_mode": "Changed the voice mode",
     "set_realtime_model": "Changed the voice model",
     "set_stt": "Changed the speech-to-text",
@@ -229,6 +230,7 @@ WORKING_LABELS = {
     "app_action": "Doing that…",
     # Model stack (skills/set_model_stack.py)
     "set_brain": "Switching Ayma's brain…",
+    "set_voice_brain": "Switching Ayma's voice brain…",
     "set_voice_mode": "Changing the voice mode…",
     "set_realtime_model": "Changing the voice model…",
     "set_stt": "Changing the speech-to-text…",

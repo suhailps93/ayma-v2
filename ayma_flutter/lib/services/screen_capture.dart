@@ -74,6 +74,7 @@ const Map<String, String> kNoContextRoutes = {
   '/recover':
       'deleted-account recovery at sign-in; Ayma is not running before sign-in',
   '/s/:token': 'public shared-report link opened outside a session',
+  '/p/:token': 'public page-share link opened outside a session',
 };
 
 /// One `ui_action_policy.deny` rule.
