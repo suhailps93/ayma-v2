@@ -109,8 +109,10 @@ class TranscriptTurn {
   final String feedbackTitle;
   final String feedbackBody;
 
-  /// How the user resolved this turn's feedback draft card: `'sent'` or
-  /// `'dismissed'` once they have, `''` while it is still a draft. Kept on
+  /// How the user resolved this turn's feedback draft card: `'sent'`
+  /// once filed, `'dismissed'` if they declined, `'sent-shown'` once
+  /// the transient post-send confirmation has expired (terminal — a
+  /// recreated card renders nothing), `''` while still a draft. Kept on
   /// the turn itself (not only in the card's widget State) so a recreated
   /// card — ListView recycling, a turn replacement — restores the resolved
   /// state instead of presenting a fresh, sendable draft for feedback
@@ -321,7 +323,7 @@ class TranscriptStore extends ChangeNotifier {
   }
 
   /// Record how the user resolved this turn's feedback draft card
-  /// (`'sent'` / `'dismissed'`) on the turn itself — see
+  /// (`'sent'` / `'dismissed'` / `'sent-shown'`) on the turn itself — see
   /// [TranscriptTurn.feedbackOutcome]. No-op if [turn] is no longer in
   /// the window or already carries [outcome].
   void markFeedbackOutcome(TranscriptTurn turn, String outcome) {

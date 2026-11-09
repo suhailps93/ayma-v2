@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -74,9 +75,10 @@ class FeedbackBubbleCard extends StatefulWidget {
   final VoidCallback? onDismiss;
   final VoidCallback? onSent;
 
-  /// True when this bubble was already submitted in this session (the
-  /// chat keeps the offer around in its sent state): a recreated card
-  /// restores the sent view instead of a fresh, submittable form.
+  /// True when this bubble was already submitted in this session: a
+  /// recreated card restores the sent view instead of a fresh,
+  /// submittable form. The restored sent view still auto-dismisses
+  /// after the same brief linger as a fresh submit.
   final bool initiallySent;
 
   @override
@@ -96,10 +98,26 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
     super.initState();
     _shotFile = widget.screenshotFile;
     _shotPath = widget.screenshotPath;
+    if (_sent) _startSentExpiry();
   }
   bool _sending = false;
   late bool _sent = widget.initiallySent;
   bool _dismissed = false;
+
+  /// The sent confirmation is transient: it lingers briefly (the same
+  /// 3 seconds the success toast shows), then the card dismisses
+  /// itself, so the thanks never sits at the end of the thread for
+  /// the rest of the session.
+  Timer? _sentExpiry;
+
+  void _startSentExpiry() {
+    _sentExpiry?.cancel();
+    _sentExpiry = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _dismissed = true);
+      widget.onDismiss?.call();
+    });
+  }
 
   @override
   void didUpdateWidget(covariant FeedbackBubbleCard oldWidget) {
@@ -127,6 +145,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
 
   @override
   void dispose() {
+    _sentExpiry?.cancel();
     _body.dispose();
     super.dispose();
   }
@@ -183,6 +202,7 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
       AymaToast.show(context, 'Thanks — sent to the team.',
           kind: AymaToastKind.success);
       widget.onSent?.call();
+      _startSentExpiry();
     } catch (e) {
       if (!mounted) return;
       setState(() => _sending = false);

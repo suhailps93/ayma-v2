@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -35,6 +36,7 @@ class FeedbackDraftCard extends StatefulWidget {
     this.platformOverride,
     this.onDismiss,
     this.onSent,
+    this.onSentExpired,
     this.resolvedOutcome = '',
   });
 
@@ -60,11 +62,18 @@ class FeedbackDraftCard extends StatefulWidget {
   /// Called once the feedback has been filed successfully.
   final VoidCallback? onSent;
 
-  /// How a previous instance of this card was resolved: `'sent'` or
-  /// `'dismissed'`, restored from the transcript turn. A recreated card
-  /// (ListView recycling, turn replacement) seeds its state from this,
-  /// so already-filed feedback never reappears as a fresh draft the
-  /// user can send a second time.
+  /// Called when the post-send thanks confirmation has lingered
+  /// briefly and auto-dismissed, so the host can record the terminal
+  /// outcome (`'sent-shown'`) and a recreated card renders nothing.
+  final VoidCallback? onSentExpired;
+
+  /// How a previous instance of this card was resolved: `'sent'`,
+  /// `'dismissed'`, or `'sent-shown'` (sent, and the transient thanks
+  /// confirmation has already come and gone), restored from the
+  /// transcript turn. A recreated card (ListView recycling, turn
+  /// replacement) seeds its state from this, so already-filed feedback
+  /// never reappears as a fresh draft the user can send a second time,
+  /// and a spent confirmation never reappears either.
   final String resolvedOutcome;
 
   @override
@@ -85,11 +94,34 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
   bool _editing = false;
   bool _sending = false;
   late bool _sent = widget.resolvedOutcome == 'sent';
-  late bool _dismissed = widget.resolvedOutcome == 'dismissed';
+  late bool _dismissed = widget.resolvedOutcome == 'dismissed' ||
+      widget.resolvedOutcome == 'sent-shown';
   File? _shot;
+
+  /// The sent confirmation is transient: it lingers briefly (the same
+  /// 3 seconds the success toast shows), then the card removes itself
+  /// from the thread and reports the expiry, so the outcome recorded
+  /// on the turn becomes terminal (`'sent-shown'`).
+  Timer? _sentExpiry;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_sent) _startSentExpiry();
+  }
+
+  void _startSentExpiry() {
+    _sentExpiry?.cancel();
+    _sentExpiry = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _dismissed = true);
+      widget.onSentExpired?.call();
+    });
+  }
 
   @override
   void dispose() {
+    _sentExpiry?.cancel();
     _title.dispose();
     _body.dispose();
     super.dispose();
@@ -162,6 +194,7 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
       AymaToast.show(context, 'Thanks — sent to the team.',
           kind: AymaToastKind.success);
       widget.onSent?.call();
+      _startSentExpiry();
     } catch (e) {
       if (!mounted) return;
       setState(() => _sending = false);
