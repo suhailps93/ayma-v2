@@ -274,6 +274,35 @@ def test_counter_contention_exhaustion_fails_closed(monkeypatch):
     assert calls == []
 
 
+def test_counter_error_before_transaction_starts_denies_the_call(monkeypatch):
+    """Regression test for ledger websearch-reserve: a counter error raised
+    BEFORE the transaction starts (e.g. collection lookup or transaction
+    creation fails) must fail closed — denying the search and making no
+    provider call."""
+    _settings(monkeypatch)
+
+    class _BrokenCollectionDb:
+        def collection(self, name):
+            raise RuntimeError("firestore collection down")
+
+    calls = []
+    _stub_provider(monkeypatch, calls)
+    outcome = _run(web_search.search("anything", db=_BrokenCollectionDb(), now=NOW))
+    assert outcome.status == web_search.STATUS_ERROR
+    assert calls == []
+
+    class _BrokenTxnDb:
+        def collection(self, name):
+            return _Collection(self, name)
+
+        def transaction(self):
+            raise RuntimeError("firestore transaction down")
+
+    outcome2 = _run(web_search.search("anything", db=_BrokenTxnDb(), now=NOW))
+    assert outcome2.status == web_search.STATUS_ERROR
+    assert calls == []
+
+
 def test_day_boundary_is_midnight_pacific(monkeypatch):
     _settings(monkeypatch, cap=2)
     db = _Db()
