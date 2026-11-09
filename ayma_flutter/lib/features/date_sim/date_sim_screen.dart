@@ -568,7 +568,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                 _error!,
                 key: const Key('dateSimError'),
                 textAlign: TextAlign.center,
-                style: AymaType.sans(size: 14, color: ac.error),
+                style: AymaType.sans(size: 14, color: ac.errorText),
               ),
             ],
             const SizedBox(height: 28),
@@ -685,7 +685,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     _error!,
                     key: const Key('dateSimStopError'),
                     textAlign: TextAlign.center,
-                    style: AymaType.sans(size: 13, color: ac.error),
+                    style: AymaType.sans(size: 13, color: ac.errorText),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -693,7 +693,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
                   key: const Key('dateSimStopButton'),
                   onPressed: _stopping ? null : _stop,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: ac.error,
+                    // Label + stop icon read as text-safe error; the border
+                    // keeps raw error (decorative, 3:1 is enough).
+                    foregroundColor: ac.errorText,
                     side: BorderSide(color: ac.error),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
@@ -722,7 +724,7 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     _error!,
                     key: const Key('dateSimContinueError'),
                     textAlign: TextAlign.center,
-                    style: AymaType.sans(size: 13, color: ac.error),
+                    style: AymaType.sans(size: 13, color: ac.errorText),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -734,7 +736,9 @@ class _DateSimScreenState extends State<DateSimScreen> {
                     key: const Key('dateSimContinueButton'),
                     onPressed: _continuing ? null : _chooseAndContinue,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: ac.accent,
+                      // Label + icon as text-safe accent; border keeps raw
+                      // accent (decorative, 3:1 is enough).
+                      foregroundColor: ac.accentText,
                       side: BorderSide(color: ac.accent),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
@@ -1004,7 +1008,7 @@ class _AvatarGate extends StatelessWidget {
             error!,
             key: const Key('dateSimAvatarGateError'),
             textAlign: TextAlign.center,
-            style: AymaType.sans(size: 13.5, color: ac.error),
+            style: AymaType.sans(size: 13.5, color: ac.errorText),
           ),
         ],
       ],
@@ -1228,7 +1232,8 @@ Future<int?> showSimContinueChooser(
                   key: Key('dateSimContinueOption_$n'),
                   onPressed: () => Navigator.of(ctx).pop(n),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: ac.accent,
+                    // Option label as text-safe accent; border keeps raw accent.
+                    foregroundColor: ac.accentText,
                     side: BorderSide(color: ac.accent),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),

@@ -146,6 +146,43 @@ class AymaColors {
     return darkContrast >= whiteContrast ? Colors.black : Colors.white;
   }
 
+  /// WCAG 2.x relative-luminance contrast ratio between two opaque colours.
+  static double contrastRatio(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    final hi = la > lb ? la : lb;
+    final lo = la > lb ? lb : la;
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  /// Derives a legible shade of [color] for use as TEXT (or a semantic icon)
+  /// by shifting only its HSL lightness — down on a light background, up on a
+  /// dark one — until it clears [target] contrast against EVERY colour in
+  /// [backgrounds]. Hue and saturation are preserved, so a user's chosen
+  /// accent stays recognisably itself; only its lightness moves far enough to
+  /// read. Always terminates with a passing colour: pure black (light bg) /
+  /// pure white (dark bg) clears any real target, so the bounded search can
+  /// never fall through. [target] is set a notch above the 4.5:1 text floor
+  /// so the result keeps a margin after device/float rounding.
+  static Color textSafe(
+    Color color,
+    List<Color> backgrounds, {
+    required bool bgIsLight,
+    double target = 4.6,
+  }) {
+    final hsl = HSLColor.fromColor(color);
+    const step = 0.02;
+    for (var i = 0; i <= 60; i++) {
+      final l =
+          (hsl.lightness + (bgIsLight ? -step * i : step * i)).clamp(0.0, 1.0);
+      final cand = hsl.withLightness(l).toColor();
+      if (backgrounds.every((b) => contrastRatio(cand, b) >= target)) {
+        return cand;
+      }
+    }
+    return bgIsLight ? const Color(0xFF000000) : const Color(0xFFFFFFFF);
+  }
+
   /// Hyperlink colour used by [MarkdownText] — a
   /// distinct, conventional "link blue", deliberately not tied to the
   /// user-configurable accent (a link should stay recognisable as a link
@@ -316,6 +353,35 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
         accentFaint: AymaColors.accentFaint(accent),
         onAccent: AymaColors.onAccentFor(accent),
       );
+
+  /// Whether this token set sits on a light background — selects the direction
+  /// the text-safe derivations shift lightness.
+  bool get _bgIsLight => bg.computeLuminance() > 0.5;
+
+  /// The live [accent] darkened (light theme) / lightened (dark theme) until it
+  /// reads ≥4.5:1 as TEXT on every surface it is drawn on — [bg], [bgElev], and
+  /// an [accentFaint] fill over [bg]. Every accent-coloured *label* routes
+  /// through this, while accent *icons* keep [accent] itself (they only need
+  /// the 3:1 icon floor). Derived from whatever accent the user picked — never
+  /// a hardcoded colour — so any pick stays legible (see [AymaColors.textSafe]).
+  Color get accentText => AymaColors.textSafe(
+        accent,
+        [bg, bgElev, Color.alphaBlend(accentFaint, bg)],
+        bgIsLight: _bgIsLight,
+      );
+
+  /// [error]/[success]/[warning] shifted per theme to clear the 4.5:1 text
+  /// floor on [bg]. Dark [success]/[warning] already pass, so they return
+  /// unchanged there; everything else is darkened/lightened just enough.
+  /// Semantic *labels* and the debrief section icon tints route through these;
+  /// raw [error]/[success]/[warning] stay for fills, borders and the error
+  /// icons that only need the 3:1 non-text floor.
+  Color get errorText =>
+      AymaColors.textSafe(error, [bg], bgIsLight: _bgIsLight);
+  Color get successText =>
+      AymaColors.textSafe(success, [bg], bgIsLight: _bgIsLight);
+  Color get warningText =>
+      AymaColors.textSafe(warning, [bg], bgIsLight: _bgIsLight);
 
   @override
   AymaTokens lerp(ThemeExtension<AymaTokens>? other, double t) {
@@ -546,7 +612,9 @@ class AymaTheme {
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: t.accent),
+        // Text-safe accent so every TextButton label clears the 4.5:1 text
+        // floor in both themes (accent-as-text fails the light bg at 3.83:1).
+        style: TextButton.styleFrom(foregroundColor: t.accentText),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: t.bgElev,
