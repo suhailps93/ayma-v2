@@ -1262,4 +1262,80 @@ void main() {
       expect(find.byType(DateSimScreen), findsNothing);
     },
   );
+
+  testWidgets(
+    'date sim jobs-pass: setup insets, stepper touch targets, and run button height',
+    (tester) async {
+      final h = _Harness();
+      await tester.pumpWidget(_wrap(h.screen()));
+      await _settle(tester);
+
+      // Defect 11: Setup padding has 20 horizontal edge
+      final setupScroll = tester.widget<SingleChildScrollView>(
+          find.byType(SingleChildScrollView).first);
+      expect(setupScroll.padding, const EdgeInsets.fromLTRB(20, 24, 20, 24));
+
+      // Stepper touch targets >= 48
+      final decSize =
+          tester.getSize(find.byKey(const Key('dateSimCountDecrement')));
+      expect(decSize.height, greaterThanOrEqualTo(48));
+      expect(decSize.width, greaterThanOrEqualTo(48));
+
+      final incSize =
+          tester.getSize(find.byKey(const Key('dateSimCountIncrement')));
+      expect(incSize.height, greaterThanOrEqualTo(48));
+      expect(incSize.width, greaterThanOrEqualTo(48));
+
+      // Run button height >= 52
+      final runSize = tester.getSize(find.byKey(const Key('dateSimRunButton')));
+      expect(runSize.height, greaterThanOrEqualTo(52));
+    },
+  );
+
+  testWidgets(
+    'date sim jobs-pass: live transcript insets and stop button height',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'running');
+      await h.say(0, 'you', 'hey');
+      await tester.pumpWidget(_wrap(h.screen2('sim1')));
+      await _settle(tester);
+
+      final transcriptList =
+          tester.widget<ListView>(find.byKey(const Key('dateSimTranscript')));
+      expect(transcriptList.padding, const EdgeInsets.fromLTRB(20, 16, 20, 16));
+
+      // Live Stop button height >= 52
+      final stopSize =
+          tester.getSize(find.byKey(const Key('dateSimStopButton')));
+      expect(stopSize.height, greaterThanOrEqualTo(52));
+    },
+  );
+
+  testWidgets(
+    'date sim jobs-pass: finished footer insets, button heights, and reset target',
+    (tester) async {
+      final h = _Harness();
+      h.simId = 'sim1';
+      await h.start(status: 'done');
+      await h.say(0, 'you', 'hey');
+      await h.finish();
+      await tester.pumpWidget(_wrap(h.screen2('sim1')));
+      await _settle(tester);
+
+      final resetSize =
+          tester.getSize(find.byKey(const Key('dateSimResetButton')));
+      expect(resetSize.height, greaterThanOrEqualTo(48));
+      expect(resetSize.width, greaterThanOrEqualTo(48));
+
+      final continueSize =
+          tester.getSize(find.byKey(const Key('dateSimContinueButton')));
+      expect(continueSize.height, greaterThanOrEqualTo(52));
+
+      final doneSize =
+          tester.getSize(find.byKey(const Key('dateSimDoneButton')));
+      expect(doneSize.height, greaterThanOrEqualTo(52));
+    },
+  );
 }

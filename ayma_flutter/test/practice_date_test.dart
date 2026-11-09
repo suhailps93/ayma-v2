@@ -11,6 +11,8 @@ import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:ayma_flutter/services/voice_transport.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/chat_composer.dart'
+    show kChatListBottomInset;
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -665,5 +667,91 @@ void main() {
     // teardown cancels the idle timer synchronously in its prefix.
     unawaited(ayma.stop());
     expect(ayma.userIdleArmedAtForTest, isNull);
+  });
+
+  testWidgets(
+      'practice screen jobs-pass: margins, insets, touch targets, and contrast',
+      (tester) async {
+    final api = _practiceApi();
+    await tester.pumpWidget(_wrap(PracticeScreen(uid: 'her', api: api)));
+    await _settle(tester);
+
+    // Defect 15: input hintStyle uses fgDim
+    final input =
+        tester.widget<TextField>(find.byKey(const Key('practiceInput')));
+    expect(input.decoration?.hintStyle?.color, AymaColors.darkFgDim);
+
+    // Send a message so the conversation list and End button appear
+    await tester.enterText(find.byKey(const Key('practiceInput')), 'hey!');
+    await tester.tap(find.byKey(const Key('practiceSendButton')));
+    await _settle(tester);
+
+    // Defect 1: message list padding has 20 horizontal edge
+    final list =
+        tester.widget<ListView>(find.byKey(const Key('practiceMessages')));
+    expect(list.padding,
+        const EdgeInsets.fromLTRB(20, 16, 20, kChatListBottomInset));
+
+    // Defect 3: coach hint margin has 20 horizontal edge
+    final hint =
+        tester.widget<Container>(find.byKey(const Key('practiceCoachHint')));
+    expect(hint.margin, const EdgeInsets.fromLTRB(20, 0, 20, 8));
+
+    // Defect 8: End button touch target >= 48
+    final endButtonSize =
+        tester.getSize(find.byKey(const Key('practiceEndButton')));
+    expect(endButtonSize.height, greaterThanOrEqualTo(48));
+    expect(endButtonSize.width, greaterThanOrEqualTo(48));
+
+    // Voice screen checks: Defect 4 & Defect 9
+    final voice = _FakePracticeVoice();
+    await tester.pumpWidget(
+        _wrap(PracticeVoiceScreen(uid: 'her', name: 'Dana', voice: voice)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 10));
+
+    final voiceEndSize =
+        tester.getSize(find.byKey(const Key('practiceVoiceEndTextButton')));
+    expect(voiceEndSize.height, greaterThanOrEqualTo(48));
+    expect(voiceEndSize.width, greaterThanOrEqualTo(48));
+
+    voice.setCoach('Ask an open question back.');
+    await tester.pump();
+    final voiceHint = tester
+        .widget<Container>(find.byKey(const Key('practiceVoiceCoachHint')));
+    expect(voiceHint.margin, const EdgeInsets.fromLTRB(20, 0, 20, 8));
+
+    // Debrief screen checks: Defect 5 & Done button height
+    final debriefApi = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/practice/debrief') {
+          return _json({
+            'status': 'ready',
+            'empty': false,
+            'simulation': true,
+            'what_worked': ['Great opener'],
+            'suggested_next_lines': ['How is your day?'],
+            'avoid': ['Closed questions'],
+          });
+        }
+        return http.Response('no', 404);
+      }),
+    );
+    await tester.pumpWidget(_wrap(PracticeDebriefScreen(
+      uid: 'her',
+      sessionId: 'practice_1',
+      name: 'Dana',
+      api: debriefApi,
+    )));
+    await _settle(tester);
+
+    final debriefList =
+        tester.widget<ListView>(find.byKey(const Key('practiceDebrief')));
+    expect(debriefList.padding, const EdgeInsets.fromLTRB(20, 8, 20, 24));
+
+    final doneButtonSize =
+        tester.getSize(find.byKey(const Key('debriefDoneButton')));
+    expect(doneButtonSize.height, greaterThanOrEqualTo(48));
   });
 }

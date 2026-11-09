@@ -126,7 +126,7 @@ class _PracticeDebriefScreenState extends State<PracticeDebriefScreen> {
     final d = _debrief!;
     return ListView(
       key: const Key('practiceDebrief'),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       children: [
         Text(
           d.empty
@@ -205,7 +205,7 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 22),
+      padding: const EdgeInsets.only(bottom: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -222,7 +222,7 @@ class _Section extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           if (items.isEmpty)
             Text(emptyLabel,
                 style: AymaType.sans(size: 14, color: ac.fgMute, height: 1.4))
