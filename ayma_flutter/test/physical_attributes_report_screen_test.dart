@@ -73,6 +73,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.textContaining("Couldn't load that report"), findsOneWidget);
-    expect(find.text('Retry'), findsOneWidget);
+    final retryFinder = find.widgetWithText(TextButton, 'Retry');
+    expect(retryFinder, findsOneWidget);
+    expect(tester.getSize(retryFinder).height, greaterThanOrEqualTo(48.0));
   });
 }

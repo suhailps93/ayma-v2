@@ -400,8 +400,8 @@ class AppearanceReportCard extends StatelessWidget {
       // A generous transparent hit area around the small visible chip, so the
       // target is comfortable to tap even on the smallest polaroid.
       child: SizedBox(
-        width: 40,
-        height: 40,
+        width: 48,
+        height: 48,
         child: Center(
           child: Container(
             width: 26,

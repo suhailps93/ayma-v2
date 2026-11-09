@@ -191,7 +191,7 @@ class FaceReportView extends StatelessWidget {
               ),
         if (onCorrect != null)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 8),
             child: Text('Tap to correct',
                 style: AymaType.mono(size: 9.5, color: ac.fgMute)
                     .copyWith(letterSpacing: 0.8)),
@@ -280,6 +280,9 @@ class _AddToStoryButtonState extends State<AddToStoryButton> {
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 48),
+      ),
       onPressed: _done ? null : _add,
       icon: Icon(_done ? Icons.check : Icons.auto_stories_outlined, size: 16),
       label: Text(_done ? 'In your story' : 'Add this to my story'),
@@ -297,9 +300,9 @@ class _ReportPhoto extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 280),
+        constraints: const BoxConstraints(maxHeight: 320),
         child: Image.network(
           url,
           fit: BoxFit.cover,
@@ -307,7 +310,7 @@ class _ReportPhoto extends StatelessWidget {
           loadingBuilder: (c, w, p) => p == null
               ? w
               : Container(
-                  height: 200,
+                  height: 220,
                   color: ac.bgCard,
                   child: const Center(
                     child: AymaWingLoader(
@@ -361,7 +364,7 @@ class _ScoreHeader extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text('/10',
-                    style: AymaType.sans(size: 15, color: ac.fgMute)),
+                    style: AymaType.sans(size: 15, color: ac.fgDim)),
               ),
               const Spacer(),
               if (verdict.isNotEmpty)
@@ -394,7 +397,7 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Text(text, style: AymaType.mono(size: 10, color: ac.fgMute)),
     );
   }
@@ -427,14 +430,14 @@ class _FeatureRow extends StatelessWidget {
                   style: AymaType.mono(size: 11, color: ac.fgDim)),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           ScoreBar(value: score, max: 10),
           if (note.isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(note,
                 style: AymaType.sans(size: 12, color: ac.fgDim, height: 1.4)),
           ],
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Divider(height: 1, thickness: 1, color: ac.lineSoft),
         ],
       ),
@@ -454,7 +457,7 @@ class _QuickFacts extends StatelessWidget {
       children: [
         for (final e in entries)
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -493,7 +496,7 @@ class _Bullet extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -520,13 +523,13 @@ class _RecoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(category.toUpperCase(),
-              style: AymaType.mono(size: 9, color: ac.accent)),
-          const SizedBox(height: 3),
+              style: AymaType.mono(size: 9, color: ac.fgMute)),
+          const SizedBox(height: 4),
           Text(text,
               style: AymaType.sans(size: 13, color: ac.fg, height: 1.4)),
         ],

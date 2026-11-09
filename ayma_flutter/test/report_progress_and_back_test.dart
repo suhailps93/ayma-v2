@@ -14,6 +14,8 @@ import 'package:ayma_flutter/services/pending_chat_queue.dart';
 import 'package:ayma_flutter/widgets/ayma_back_button.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/widgets/living_report_view.dart';
+import 'package:ayma_flutter/widgets/report_progress.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -274,5 +276,68 @@ void main() {
 
     await tester.tap(find.byKey(const Key('chatDismissKeyboardButton')));
     await tester.pump();
+  });
+
+  testWidgets('ReportProgressBanner geometry and text color', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: const Scaffold(
+        body: ReportProgressBanner(message: 'Updating…'),
+      ),
+    ));
+    await tester.pump();
+
+    final banner = find.byType(ReportProgressBanner);
+    expect(banner, findsOneWidget);
+    final container = tester.widget<Container>(
+      find.descendant(of: banner, matching: find.byType(Container)).first,
+    );
+    expect(container.padding,
+        const EdgeInsets.symmetric(horizontal: 20, vertical: 12));
+
+    final text = tester.widget<Text>(find.text('Updating…'));
+    expect(text.style?.color, AymaColors.darkFgDim);
+
+    final sizedBox = tester.widget<SizedBox>(
+      find.descendant(
+        of: banner,
+        matching: find.byWidgetPredicate((w) => w is SizedBox && w.height == null),
+      ),
+    );
+    expect(sizedBox.width, 12);
+  });
+
+  testWidgets(
+      'ReportFailedBanner geometry, text color, and Try-again button target >= 48',
+      (tester) async {
+    bool retried = false;
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: Scaffold(
+        body: ReportFailedBanner(
+          message: 'Failed to update',
+          onRetry: () => retried = true,
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final banner = find.byType(ReportFailedBanner);
+    expect(banner, findsOneWidget);
+    final container = tester.widget<Container>(
+      find.descendant(of: banner, matching: find.byType(Container)).first,
+    );
+    expect(
+        container.padding, const EdgeInsets.only(left: 20, right: 12));
+
+    final text = tester.widget<Text>(find.text('Failed to update'));
+    expect(text.style?.color, AymaColors.darkFgDim);
+
+    final tryAgainFinder = find.widgetWithText(TextButton, 'Try again');
+    expect(tryAgainFinder, findsOneWidget);
+    expect(tester.getSize(tryAgainFinder).height, greaterThanOrEqualTo(48.0));
+
+    await tester.tap(tryAgainFinder);
+    expect(retried, isTrue);
   });
 }

@@ -346,7 +346,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
           if (running) const _UpdatingBanner(),
           if (showCard) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
@@ -357,7 +357,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                     label: 'Your Appearance report card',
                     child: Container(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
                             color: ReportCardColors.shadow.withAlpha(0x40),
@@ -367,7 +367,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                         ],
                       ),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(18),
                         child: AspectRatio(
                           aspectRatio:
                               AppearanceReportCard.width /
@@ -387,7 +387,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
               child: Semantics(
                 button: true,
                 label: 'Share',
@@ -492,7 +492,7 @@ class _UpdatingBanner extends StatelessWidget {
       child: Container(
         width: double.infinity,
         color: ac.bgElev,
-        padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
         child: Row(
           children: [
             const AymaWingLoader(size: 16, showLabel: false),
@@ -520,7 +520,7 @@ class _NextSteps extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -531,17 +531,17 @@ class _NextSteps extends StatelessWidget {
               style: AymaType.serif(size: 28, color: ac.fg),
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           Text(
             'Only you see this. It is never part of the shared card.',
             style: AymaType.sans(size: 12.5, color: ac.fgMute),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           for (final (category, text) in steps)
             Container(
               width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: ac.bgElev,
                 borderRadius: BorderRadius.circular(16),
@@ -552,7 +552,7 @@ class _NextSteps extends StatelessWidget {
                 children: [
                   Text(
                     category.toUpperCase(),
-                    style: AymaType.mono(size: 9.5, color: ac.accent),
+                    style: AymaType.mono(size: 9.5, color: ac.fgMute),
                   ),
                   const SizedBox(height: 4),
                   Text(
