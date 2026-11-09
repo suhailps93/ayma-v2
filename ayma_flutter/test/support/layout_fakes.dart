@@ -388,6 +388,14 @@ Object? _bodyFor(String path) {
       ],
     };
   }
+  if (path.startsWith('/p/')) {
+    return {
+      'kind': 'profile',
+      'target_id': 'her',
+      'title': kLongName,
+      'summary': kLongText,
+    };
+  }
   if (path == '/admin/feedback') {
     return {
       'feedback': [

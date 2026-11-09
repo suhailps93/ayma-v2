@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/share_kit.dart';
 import '../theme.dart';
 import '../widgets/ayma_wing_loader.dart';
+import '../widgets/overflow_guards.dart';
 import 'sign_in_screen.dart';
 
 /// The in-app landing for a page-share link
@@ -81,42 +82,40 @@ class _SharedProfileLinkScreenState extends State<SharedProfileLinkScreen> {
     final t = _target;
     return Scaffold(
       appBar: AppBar(title: const Text('Ayma')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: _failed
-              ? Text(
-                  "This link isn't available.",
-                  textAlign: TextAlign.center,
-                  style: AymaType.sans(size: 15, color: ac.fg),
-                )
-              : t == null
-                  ? const AymaWingLoader(lines: AymaLoaderLines.publicProfile)
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
+      body: CenteredScroll(
+        padding: const EdgeInsets.all(24),
+        child: _failed
+            ? Text(
+                "This link isn't available.",
+                textAlign: TextAlign.center,
+                style: AymaType.sans(size: 15, color: ac.fg),
+              )
+            : t == null
+                ? const AymaWingLoader(lines: AymaLoaderLines.publicProfile)
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        t.title,
+                        textAlign: TextAlign.center,
+                        style: AymaType.sans(
+                            size: 20, weight: FontWeight.w600, color: ac.fg),
+                      ),
+                      if (t.summary.isNotEmpty) ...[
+                        const SizedBox(height: 8),
                         Text(
-                          t.title,
+                          t.summary,
                           textAlign: TextAlign.center,
-                          style: AymaType.sans(
-                              size: 20, weight: FontWeight.w600, color: ac.fg),
-                        ),
-                        if (t.summary.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            t.summary,
-                            textAlign: TextAlign.center,
-                            style: AymaType.sans(size: 14, color: ac.fgMute),
-                          ),
-                        ],
-                        const SizedBox(height: 24),
-                        FilledButton(
-                          onPressed: () => context.go(SignInScreen.path),
-                          child: const Text('Sign in to see this profile'),
+                          style: AymaType.sans(size: 14, color: ac.fgMute),
                         ),
                       ],
-                    ),
-        ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        onPressed: () => context.go(SignInScreen.path),
+                        child: const Text('Sign in to see this profile'),
+                      ),
+                    ],
+                  ),
       ),
     );
   }

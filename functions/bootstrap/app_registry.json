@@ -54,6 +54,7 @@
     {"route": "/chat", "reason": "pre-signup marketing chat; the signed-in chat is the ayma destination"},
     {"route": "/recover", "reason": "deleted-account recovery flow, reached only at sign-in"},
     {"route": "/s/:token", "reason": "public shared-report link opened from outside the app"},
+    {"route": "/p/:token", "reason": "public page-share link opened from outside the app"},
     {"route": "/profile/usage/trial", "reason": "trial paywall needs a server-issued offer; payment pages open as the Plan page only"},
     {"route": "/settings/google-account", "reason": "Google account linking is hidden from the v1 UI"},
     {"route": "/settings/instagram", "reason": "Instagram is V2, behind the meta_integrations flag (default off)"},
@@ -110,7 +111,8 @@
       {"route": "/splash", "reason": "start-up bootstrap; there is no signed-in session or content yet"},
       {"route": "/signin", "reason": "sign-in screen: credentials and codes only, and Ayma is not running before sign-in"},
       {"route": "/recover", "reason": "deleted-account recovery at sign-in; Ayma is not running before sign-in"},
-      {"route": "/s/:token", "reason": "public shared-report link opened outside a session"}
+      {"route": "/s/:token", "reason": "public shared-report link opened outside a session"},
+      {"route": "/p/:token", "reason": "public page-share link opened outside a session"}
     ]
   },
   "ui_action_policy": {
