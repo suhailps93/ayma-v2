@@ -248,4 +248,119 @@ void main() {
       }
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Jobs token follow-up T1–T6: track token, card-safe error token, boundary
+  // token, and the T2-new selected-fill decision. All values derived via
+  // AymaColors.textSafe (no hand-picked shades); the raw assertions above are
+  // unchanged.
+  // -------------------------------------------------------------------------
+
+  // T2 — track token: clears the 3:1 non-text floor vs bg AND vs the accent
+  // fill it sits behind, in both themes, for BOTH the default cherry and the
+  // founder terracotta. One measured physical ceiling is recorded: terracotta
+  // (luminance 0.31) in dark mode tops out at ~2.95:1 vs a pure-white track —
+  // no colour clears 3:1 vs a fill that light while also clearing the near-
+  // black bg, so the derivation lands pure white (maximum separation).
+  for (final pick in <(String, Color)>[
+    ('default Cherry Fuchsia', AymaColors.accent),
+    ('founder terracotta', terracotta),
+  ]) {
+    final (label, accent) = pick;
+    test('T2: track token clears 3:1 vs bg in both themes ($label)', () {
+      for (final t in [lightAcc(accent), darkAcc(accent)]) {
+        expect(_contrastRatio(t.track, t.bg), greaterThanOrEqualTo(3.0),
+            reason: '$label track vs bg');
+      }
+    });
+  }
+
+  test('T2: track token clears 3:1 vs the accent fill (cherry both themes, '
+      'terracotta light); terracotta-dark is the measured 2.95 ceiling', () {
+    // Cherry (default): clears 3:1 vs its own fill in both themes.
+    expect(_contrastRatio(lightAcc(AymaColors.accent).track, AymaColors.accent),
+        greaterThanOrEqualTo(3.0),
+        reason: 'cherry track vs fill (light)');
+    expect(_contrastRatio(darkAcc(AymaColors.accent).track, AymaColors.accent),
+        greaterThanOrEqualTo(3.0),
+        reason: 'cherry track vs fill (dark)');
+    // Terracotta light: clears 3:1 vs fill.
+    expect(_contrastRatio(lightAcc(terracotta).track, terracotta),
+        greaterThanOrEqualTo(3.0),
+        reason: 'terracotta track vs fill (light)');
+    // Terracotta dark: physical ceiling — the derivation lands pure white and
+    // still only reaches ~2.95 (white itself is the max against a lum-0.31
+    // fill). Assert the known ceiling, not 3:1.
+    final terraDarkTrack = darkAcc(terracotta).track;
+    expect(terraDarkTrack, const Color(0xFFFFFFFF),
+        reason: 'terracotta-dark track derivation lands pure white (max)');
+    expect(_contrastRatio(terraDarkTrack, terracotta), closeTo(2.95, 0.03),
+        reason: 'terracotta-dark track vs fill is the measured 2.95 ceiling');
+  });
+
+  // T4 — card-safe error text: clears the 4.5:1 text floor on bgCard AND
+  // bgElev in both themes (plain errorText fails there). Base tokens, no
+  // accent dependency.
+  test('T4: errorTextCard reads >=4.5:1 on bgCard AND bgElev in both themes',
+      () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.errorTextCard, t.bgCard), greaterThanOrEqualTo(4.5),
+          reason: 'errorTextCard on bgCard');
+      expect(_contrastRatio(t.errorTextCard, t.bgElev), greaterThanOrEqualTo(4.5),
+          reason: 'errorTextCard on bgElev');
+      // Stronger than errorText, so it also clears bg (the universally-safe
+      // error label, used for the app-wide field errorStyle).
+      expect(_contrastRatio(t.errorTextCard, t.bg), greaterThanOrEqualTo(4.5),
+          reason: 'errorTextCard on bg');
+    }
+    // The existing bg-only errorText, by contrast, FAILS on bgCard — this is
+    // exactly why the card-safe token was needed.
+    expect(_contrastRatio(AymaTokens.light.errorText, AymaTokens.light.bgCard),
+        lessThan(4.5));
+    expect(_contrastRatio(AymaTokens.dark.errorText, AymaTokens.dark.bgCard),
+        lessThan(4.5));
+  });
+
+  // T5 — boundary token: clears the 3:1 non-text floor on bg, bgElev AND
+  // bgCard in both themes, so one token reads whether the edge sits on the
+  // page, an elevated surface, or a card.
+  test('T5: boundary token reads >=3:1 vs bg, bgElev and bgCard in both themes',
+      () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.boundary, t.bg), greaterThanOrEqualTo(3.0),
+          reason: 'boundary vs bg');
+      expect(_contrastRatio(t.boundary, t.bgElev), greaterThanOrEqualTo(3.0),
+          reason: 'boundary vs bgElev');
+      expect(_contrastRatio(t.boundary, t.bgCard), greaterThanOrEqualTo(3.0),
+          reason: 'boundary vs bgCard');
+    }
+    // The raw line/lineSoft borders it replaces were hairline-faint (<1.6:1).
+    expect(_contrastRatio(AymaTokens.dark.lineSoft, AymaTokens.dark.bgCard),
+        lessThan(1.5));
+  });
+
+  // T2-new — SegmentedButton selected fill DECISION: ember (secondary) stays.
+  // A naive accent fill breaks legibility (white-on-accent fails the 4.5 text
+  // floor); ember keeps 8.35:1 with white, the M3-default secondaryContainer
+  // mapping and zero custom code.
+  test('T2-new: selected SegmentedButton fill (ember) keeps white label '
+      '>=4.5:1 in both themes (8.35); a naive accent fill would fail', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      // Ember (secondary) is the selected fill; onSecondaryContainer is white.
+      expect(_contrastRatio(Colors.white, t.secondary),
+          greaterThanOrEqualTo(4.5),
+          reason: 'white on ember (selected fill)');
+      expect(_contrastRatio(Colors.white, t.secondary), closeTo(8.35, 0.05),
+          reason: 'ember legibility is 8.35 both themes');
+    }
+    // The measured reason option (a) is closed: a plain accent fill fails the
+    // 4.5 text floor with white (cherry 4.06, terracotta 2.95).
+    expect(_contrastRatio(Colors.white, AymaColors.accent), lessThan(4.5));
+    expect(_contrastRatio(Colors.white, terracotta), lessThan(4.5));
+    // And a derived darker accent fill (accentText-as-fill) with white also
+    // fails in DARK, where accentText lightens the accent to read on dark bg.
+    expect(_contrastRatio(Colors.white, darkAcc(AymaColors.accent).accentText),
+        lessThan(4.5),
+        reason: 'white-on-accentText fails in dark — option (a) closed');
+  });
 }

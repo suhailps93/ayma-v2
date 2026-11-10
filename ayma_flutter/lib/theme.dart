@@ -54,17 +54,6 @@ class AymaColors {
   static const accent = Color(0xFFDA4B65); // Cherry Fuchsia
   static const secondary = Color(0xFF7A3D20); // deepened ember
 
-  // Ayma Sol "voice is live" material (`AymaOrb.voiceLive`) — a fixed
-  // silver/liquid-mercury palette that intentionally does NOT derive from
-  // [accent], so a live voice call reads as a different material rather
-  // than a paler version of whatever accent colour is active. A cool,
-  // faintly blue mid-tone grey (chosen for contrast headroom: dark enough
-  // that [orbSilverHighlight]-tinted wings/specular clearly pop lighter
-  // against it, light enough that shaded edges still read as steel, not
-  // charcoal) plus a cool near-white for every highlight/rim/specular pass.
-  static const orbSilverBase = Color(0xFF828BA0);
-  static const orbSilverHighlight = Color(0xFFF4F8FF);
-
   // Ayma Sol "connected call" angelic-glow palette (`AymaOrbPainter`'s
   // `angelicGlow`/`connectedGlow` pass, active whenever `voiceLive` is true —
   // full intensity at `speaking`, dimmer through `listening`/`thinking`, see
@@ -370,6 +359,26 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
         bgIsLight: _bgIsLight,
       );
 
+  /// Dedicated track colour for progress rings and slider inactive tracks — a
+  /// strong neutral derived from [line] (lightened on dark, darkened on light)
+  /// until it clears the 3:1 non-text floor against BOTH [bg] and the live
+  /// [accent] fill the track sits behind. The old track used [lineSoft], which
+  /// was invisible against [bg] (1.2–1.3:1) and failed 3:1 against the fill in
+  /// light; this reads clearly against both. Derived against the *live* accent
+  /// so any user pick stays separated from its own track (see
+  /// [AymaColors.textSafe]). Non-text, so the 3:1 floor applies — [target] is
+  /// 3.3 for margin. One known physical ceiling: a very light accent (the
+  /// founder terracotta #E07A5F, luminance 0.31) tops out at ~2.95:1 against a
+  /// pure-white track in dark mode because no colour clears 3:1 against a fill
+  /// that light while also clearing the near-black [bg] — the derivation then
+  /// lands pure white, the maximum separation achievable.
+  Color get track => AymaColors.textSafe(
+        line,
+        [bg, accent],
+        bgIsLight: _bgIsLight,
+        target: 3.3,
+      );
+
   /// [error]/[success]/[warning] shifted per theme to clear the 4.5:1 text
   /// floor on [bg]. Dark [success]/[warning] already pass, so they return
   /// unchanged there; everything else is darkened/lightened just enough.
@@ -382,6 +391,29 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       AymaColors.textSafe(success, [bg], bgIsLight: _bgIsLight);
   Color get warningText =>
       AymaColors.textSafe(warning, [bg], bgIsLight: _bgIsLight);
+
+  /// Card-safe error text — [error] shifted per theme until it clears the
+  /// 4.5:1 text floor on [bgCard] AND [bgElev] (and, being stronger than
+  /// [errorText], on [bg] too, plus faint error/accent tints). Plain
+  /// [errorText] is derived against [bg] only and fails on elevated surfaces
+  /// (bgCard 4.20/4.03, bgElev-light 4.37); route error *labels* that render on
+  /// a card, an elevated strip, a dialog surface, or a faint tint through this.
+  /// Bg-level error labels stay on [errorText]. Derived, never hand-picked.
+  Color get errorTextCard =>
+      AymaColors.textSafe(error, [bgCard, bgElev], bgIsLight: _bgIsLight);
+
+  /// A single strengthened boundary colour for card/field borders — derived
+  /// from [line] (toward [fgMute]) until it clears the 3:1 non-text floor
+  /// against ALL of [bg], [bgElev] and [bgCard] in both themes, so one token
+  /// reads whether the edge sits on the page, an elevated surface or a card.
+  /// The raw [line]/[lineSoft] borders were hairline-faint (1.08–1.57:1); this
+  /// reads at a glance. Non-text, 3:1 floor; derived, not eyeballed.
+  Color get boundary => AymaColors.textSafe(
+        line,
+        [bg, bgElev, bgCard],
+        bgIsLight: _bgIsLight,
+        target: 3.0,
+      );
 
   @override
   AymaTokens lerp(ThemeExtension<AymaTokens>? other, double t) {
@@ -590,7 +622,7 @@ class AymaTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: const BorderRadius.all(Radius.circular(18)),
-          side: BorderSide(color: t.lineSoft, width: 0.5),
+          side: BorderSide(color: t.boundary, width: 0.5),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -614,7 +646,20 @@ class AymaTheme {
       textButtonTheme: TextButtonThemeData(
         // Text-safe accent so every TextButton label clears the 4.5:1 text
         // floor in both themes (accent-as-text fails the light bg at 3.83:1).
-        style: TextButton.styleFrom(foregroundColor: t.accentText),
+        // minimumSize floor is 44 (the absolute minimum) — the rendered height
+        // is still 48 via M3's `materialTapTargetSize: padded`; declaring 48
+        // here would fight that sizing. App-wide, so per-screen overrides are
+        // unnecessary.
+        style: TextButton.styleFrom(
+          foregroundColor: t.accentText,
+          minimumSize: const Size(0, 44),
+        ),
+      ),
+      // SegmentedButton's M3 default is Size.fromHeight(40.0) — below the 44
+      // floor; the padded tap target still renders it at 48. App-wide so the
+      // per-screen SegmentedButton minimums are unnecessary.
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: SegmentedButton.styleFrom(minimumSize: const Size(0, 44)),
       ),
       chipTheme: ChipThemeData(
         backgroundColor: t.bgElev,
@@ -629,13 +674,23 @@ class AymaTheme {
         fillColor: t.bgElev,
         hintStyle: AymaType.sans(size: 15, color: t.fgMute),
         labelStyle: AymaType.sans(size: 15, color: t.fgDim),
-        enabledBorder: border(t.line),
+        enabledBorder: border(t.boundary),
         focusedBorder: border(t.accent, 1.5),
         // Styled with the error token so it matches the palette (§14.1).
         errorBorder: border(t.error),
         focusedErrorBorder: border(t.error, 1.5),
-        errorStyle: AymaType.sans(size: 12, color: t.error),
+        // The error helper renders below the field on the *containing* surface,
+        // which for fields inside dialogs/sheets is bgCard/bgElev (AlertDialog
+        // maps to surfaceContainerHigh = bgCard), where plain errorText fails
+        // 4.5:1 (bgCard 4.20/4.03). The card-safe token clears 4.5 on bg,
+        // bgElev and bgCard alike, so it is correct on every host surface.
+        errorStyle: AymaType.sans(size: 12, color: t.errorTextCard),
       ),
+      // Progress-ring/slider track colour: inactive slider tracks default to
+      // surfaceContainerHighest (= bgCard), invisible against bg (1.15:1).
+      // Route them through the dedicated track token. The active track keeps
+      // the M3 default `primary` (= accent).
+      sliderTheme: SliderThemeData(inactiveTrackColor: t.track),
       progressIndicatorTheme:
           ProgressIndicatorThemeData(color: t.accent),
     );

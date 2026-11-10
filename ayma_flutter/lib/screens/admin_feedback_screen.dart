@@ -129,7 +129,7 @@ class _FeedbackCardTile extends StatelessWidget {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -180,7 +180,6 @@ class _FeedbackCardTile extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: SegmentedButton<String>(
-              style: SegmentedButton.styleFrom(minimumSize: const Size(0, 44)),
               showSelectedIcon: false,
               segments: const [
                 ButtonSegment(value: 'new', label: Text('New')),

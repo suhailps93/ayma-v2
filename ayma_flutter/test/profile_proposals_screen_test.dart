@@ -40,9 +40,6 @@ Widget _host(ApiClient api) => MaterialApp(
       home: ProfileProposalsScreen(apiClient: api),
     );
 
-double _minHeight(TextButton b) =>
-    b.style!.minimumSize!.resolve(const <WidgetState>{})!.height;
-
 void main() {
   testWidgets('list screen edge is the 20 standard', (tester) async {
     final api = _api(MockClient((req) async => http.Response(
@@ -81,9 +78,10 @@ void main() {
     final scroll = tester.widget<CenteredScroll>(find.byType(CenteredScroll));
     expect(scroll.padding, const EdgeInsets.all(20));
 
-    final retry =
-        tester.widget<TextButton>(find.widgetWithText(TextButton, 'Retry'));
-    expect(_minHeight(retry), 44);
+    // Local Size(0,44) override removed (T3); the theme minimum now renders
+    // Retry at 48 (padded tap target), clearing the 44 floor.
+    expect(
+        tester.getSize(find.widgetWithText(TextButton, 'Retry')).height, 48);
   });
 
   testWidgets('every TextButton clears the 44 touch floor', (tester) async {
@@ -97,20 +95,22 @@ void main() {
 
     // Per-row Dismiss (one per change), section Dismiss all + Apply all (the
     // section has >1 change, so the "all" bar renders). Every one must be >=44.
+    // Local Size(0,44) overrides removed (T3): every TextButton renders 48 via
+    // the theme minimum + M3 padded tap target.
     for (final label in const ['Dismiss', 'Dismiss all', 'Apply all']) {
-      final buttons =
-          tester.widgetList<TextButton>(find.widgetWithText(TextButton, label));
-      expect(buttons, isNotEmpty, reason: 'expected a "$label" TextButton');
-      for (final b in buttons) {
-        expect(_minHeight(b), 44, reason: '$label must be >= 44 tall');
+      final finder = find.widgetWithText(TextButton, label);
+      expect(finder, findsWidgets, reason: 'expected a "$label" TextButton');
+      for (var i = 0; i < finder.evaluate().length; i++) {
+        expect(tester.getSize(finder.at(i)).height, 48,
+            reason: '$label must render 48 tall');
       }
     }
-    // The sibling Apply FilledButtons are the 44 reference they now match.
-    for (final apply
-        in tester.widgetList<FilledButton>(
-            find.widgetWithText(FilledButton, 'Apply'))) {
-      expect(
-          apply.style!.minimumSize!.resolve(const <WidgetState>{})!.height, 44);
+    // The sibling per-row Apply FilledButtons keep their load-bearing local
+    // Size(0,44) (the FilledButton theme is infinite-width inside the Wrap —
+    // see profile_proposals_screen, build 2208) and also render 48.
+    final applyFinder = find.widgetWithText(FilledButton, 'Apply');
+    for (var i = 0; i < applyFinder.evaluate().length; i++) {
+      expect(tester.getSize(applyFinder.at(i)).height, 48);
     }
   });
 

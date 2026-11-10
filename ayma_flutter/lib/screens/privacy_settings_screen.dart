@@ -319,7 +319,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             leading: Icon(Icons.delete_outline, color: ac.error),
             title: Text('Delete account',
-                style: AymaType.sans(size: 15, color: ac.error)),
+                style: AymaType.sans(size: 15, color: ac.errorText)),
             subtitle: Text('Permanently remove your data after 30 days.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),

@@ -132,8 +132,6 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
                 children: [
                   const Text("Couldn't load the suggestions."),
                   TextButton(
-                      style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 44)),
                       onPressed: _load,
                       child: const Text('Retry')),
                 ],
@@ -244,13 +242,9 @@ class _SectionCard extends StatelessWidget {
                   spacing: 8,
                   children: [
                     TextButton(
-                        style: TextButton.styleFrom(
-                            minimumSize: const Size(0, 44)),
                         onPressed: sectionBusy ? null : onDismissAll,
                         child: const Text('Dismiss all')),
                     TextButton(
-                        style: TextButton.styleFrom(
-                            minimumSize: const Size(0, 44)),
                         onPressed: sectionBusy ? null : onApplyAll,
                         child: const Text('Apply all')),
                   ],
@@ -306,13 +300,14 @@ class _ChangeRow extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 TextButton(
-                    style: TextButton.styleFrom(
-                        minimumSize: const Size(0, 44)),
                     onPressed: busy ? null : onDismiss,
                     child: const Text('Dismiss')),
-                // The app theme gives FilledButton a full-width minimum size;
-                // inside a Row that is an infinite width, which fails layout
-                // and left this whole screen blank (build 2208).
+                // Kept local (NOT redundant with the theme TextButton/
+                // SegmentedButton minimums): FilledButton's theme style is
+                // Size.fromHeight(52), an infinite width that fails layout
+                // inside this Wrap and left the whole screen blank (build
+                // 2208). The local Size(0, 44) constrains the width and renders
+                // it at 48 (padded tap target), matching the Dismiss button.
                 FilledButton(
                     style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 44)),

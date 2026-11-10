@@ -542,7 +542,7 @@ class _PlanScreenState extends State<PlanScreen> {
                               child: Text(
                                 "Couldn't load your plan.",
                                 style: AymaType.sans(
-                                    size: 14, color: ac.error),
+                                    size: 14, color: ac.errorText),
                               ),
                             ),
                           )
@@ -1213,7 +1213,6 @@ class _ActionBar extends StatelessWidget {
                     width: double.infinity,
                     child: TextButton(
                       key: const ValueKey('continue-free'),
-                      style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                       onPressed: onContinueFree,
                       child: const Text('Continue with free plan'),
                     ),
