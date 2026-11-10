@@ -126,13 +126,14 @@ void main() {
       await tester.pumpAndSettle();
 
       // D8: the location button carries zero leading inset (defect 8 strips
-      // the M3 TextButton.icon padding). The button is a full-width ListView
-      // child that centres its content (no Align wrapper, unlike calendar), so
-      // the fix is the padding, not an absolute x. D13: its icon measures 18.
+      // the M3 TextButton.icon padding) AND is now wrapped in
+      // Align(centerLeft), so its icon reaches the shared x=20 left edge like
+      // the calendar button — the padding alone was not enough. D13: 18.
       final locIcon = find.byIcon(Icons.my_location);
       final locBtn = tester.widget<TextButton>(
           find.ancestor(of: locIcon, matching: find.byType(TextButton)));
       expect(locBtn.style?.padding?.resolve({}), EdgeInsets.zero);
+      expect(tester.getTopLeft(locIcon).dx, closeTo(left, 0.5));
       expect(tester.widget<Icon>(locIcon).size, 18);
 
       // D13: selfie + photo leading icons unify at 18.

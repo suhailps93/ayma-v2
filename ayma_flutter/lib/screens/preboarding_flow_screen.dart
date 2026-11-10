@@ -652,13 +652,16 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                           const InputDecoration(hintText: 'e.g. Austin, TX'),
                     ),
                     const SizedBox(height: 8),
-                    TextButton.icon(
-                      onPressed: _detectingLocation ? null : _useMyLocation,
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                      icon: const Icon(Icons.my_location, size: 18),
-                      label: Text(_detectingLocation
-                          ? 'Detecting…'
-                          : 'Use my current location'),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _detectingLocation ? null : _useMyLocation,
+                        style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                        icon: const Icon(Icons.my_location, size: 18),
+                        label: Text(_detectingLocation
+                            ? 'Detecting…'
+                            : 'Use my current location'),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     PartnerPreferencesFields(
