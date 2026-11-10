@@ -282,4 +282,55 @@ void main() {
       });
     }
   }
+
+  // Jobs pass cluster 20 — defects 10, 11, 12 (spacing/color, no behavior).
+  // Themes are built INSIDE each body so the google_fonts asset load happens
+  // under the test binding, never at collection time.
+  for (final dark in [false, true]) {
+    final label = dark ? 'dark' : 'light';
+    ThemeData theme() => dark ? AymaTheme.dark : AymaTheme.light;
+
+    testWidgets('$label: toast card sits 20 from each screen edge (defect 10)',
+        (tester) async {
+      await _pump(tester, theme: theme());
+      AymaToast.show(_ctx(tester), 'Saved', kind: AymaToastKind.success);
+      await tester.pumpAndSettle();
+      final positioned = tester.widget<Positioned>(
+          find.ancestor(of: _toast, matching: find.byType(Positioned)).first);
+      expect(positioned.left, 20);
+      expect(positioned.right, 20);
+      AymaToast.hide();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('$label: toast card border reads boundary (defect 11)',
+        (tester) async {
+      final t = theme();
+      await _pump(tester, theme: t);
+      AymaToast.show(_ctx(tester), 'Saved', kind: AymaToastKind.success);
+      await tester.pumpAndSettle();
+      final ac = t.extension<AymaTokens>()!;
+      final bordered = tester
+          .widgetList<Container>(
+              find.descendant(of: _toast, matching: find.byType(Container)))
+          .firstWhere((c) =>
+              c.decoration is BoxDecoration &&
+              (c.decoration as BoxDecoration).border != null);
+      final side = ((bordered.decoration as BoxDecoration).border as Border).top;
+      expect(side.color, ac.boundary);
+      AymaToast.hide();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('$label: toast kind label renders mono 10 (defect 12)',
+        (tester) async {
+      await _pump(tester, theme: theme());
+      AymaToast.show(_ctx(tester), 'Saved', kind: AymaToastKind.success);
+      await tester.pumpAndSettle();
+      final labelText = tester.widget<Text>(find.text('DONE'));
+      expect(labelText.style!.fontSize, 10);
+      AymaToast.hide();
+      await tester.pumpAndSettle();
+    });
+  }
 }

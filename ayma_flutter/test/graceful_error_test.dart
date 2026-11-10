@@ -80,4 +80,18 @@ void main() {
         reason: 'Go back must trigger an app-root rebuild, not a no-op');
     expect(tester.takeException(), isNull);
   });
+
+  // Jobs pass cluster 20 — defect 16. The widget forces the dark palette by
+  // design (O2), so the target is identical in both themes; the rendered
+  // height is the arbiter for the vertical: 16 bump.
+  testWidgets('Go back rendered height is >= 48 (defect 16)', (tester) async {
+    await tester.pumpWidget(
+      gracefulErrorWidget(FlutterErrorDetails(exception: StateError('x'))),
+    );
+    final box = find
+        .ancestor(of: find.text('Go back'), matching: find.byType(Container))
+        .first;
+    expect(tester.getSize(box).height, greaterThanOrEqualTo(48));
+    expect(tester.takeException(), isNull);
+  });
 }

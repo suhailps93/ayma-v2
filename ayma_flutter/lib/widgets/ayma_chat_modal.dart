@@ -185,7 +185,7 @@ class _AymaChatModalSheet extends StatefulWidget {
   /// docked and full sizes.
   static const _expandedAbove = (dockedSize + fullSize) / 2;
 
-  static const _cornerRadius = 22.0;
+  static const _cornerRadius = 28.0;
 
   @override
   State<_AymaChatModalSheet> createState() => _AymaChatModalSheetState();
@@ -502,7 +502,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
                       width: 36,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: ac.lineSoft,
+                        color: ac.boundary,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -535,7 +535,7 @@ class _AymaChatModalSheetState extends State<_AymaChatModalSheet>
       builder: (context, size, child) {
         final docked = _dockedness(size);
         final edge = BorderSide(
-          color: ac.lineSoft.withValues(alpha: ac.lineSoft.a * docked),
+          color: ac.boundary.withValues(alpha: ac.boundary.a * docked),
           width: 0.5,
         );
         // How far the sheet's top edge has risen into the status bar: the

@@ -243,8 +243,8 @@ class _AymaToastLayerState extends State<_AymaToastLayer>
       media.padding.bottom + AymaTabBar.contentHeight,
     ].reduce((a, b) => a > b ? a : b);
     return Positioned(
-      left: 16,
-      right: 16,
+      left: 20,
+      right: 20,
       bottom: bottom + 12,
       child: SafeArea(
         top: false,
@@ -372,7 +372,7 @@ class AymaToastCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: surface,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: ac.line, width: 0.5),
+              border: Border.all(color: ac.boundary, width: 0.5),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: dark ? 0.45 : 0.12),
@@ -400,7 +400,7 @@ class AymaToastCard extends StatelessWidget {
                     children: [
                       Text(
                         style.label.toUpperCase(),
-                        style: AymaType.mono(size: 9.5, color: ac.fgDim),
+                        style: AymaType.mono(size: 10, color: ac.fgDim),
                       ),
                       const SizedBox(height: 4),
                       Text(

@@ -217,7 +217,7 @@ class OutOfCreditsBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       child: Row(
         children: [
