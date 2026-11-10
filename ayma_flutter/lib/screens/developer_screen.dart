@@ -223,7 +223,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         content: Text(message),
         actions: [
           TextButton(
-            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.pop(ctx),
             child: const Text('OK'),
           ),
@@ -253,7 +252,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         ),
         actions: [
           TextButton(
-            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
@@ -681,7 +679,6 @@ class _Spend extends StatelessWidget {
             ),
             TextButton(
               key: const ValueKey('reset-money-tracker'),
-              style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
               onPressed: resetting ? null : onReset,
               child: const Text('Reset'),
             ),

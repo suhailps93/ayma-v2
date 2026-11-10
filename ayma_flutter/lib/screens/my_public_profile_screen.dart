@@ -275,8 +275,6 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
                       'public profile.'),
               actions: [
                 TextButton(
-                    style:
-                        TextButton.styleFrom(minimumSize: const Size(0, 44)),
                     onPressed: _reviewUpdates,
                     child: const Text('Review')),
               ],
