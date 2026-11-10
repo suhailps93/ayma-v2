@@ -276,4 +276,92 @@ void main() {
         AymaType.mono(weight: FontWeight.w400).fontFamily);
     expect(code!.style?.backgroundColor, isNotNull);
   });
+
+  // R1 — list-item gap is on the 4pt fine grid (was 3, off-grid). The gap is
+  // the bottom padding wrapping each list-item Row; it renders 4 in both
+  // themes (the value is theme-independent, asserted under both for parity).
+  // The AymaTokens extension is injected directly (not the full AymaTheme,
+  // whose serif textTheme would try to fetch a web font in tests).
+  for (final theme in <(String, AymaTokens)>[
+    ('light', AymaTokens.light),
+    ('dark', AymaTokens.dark),
+  ]) {
+    final (name, tokens) = theme;
+    testWidgets('R1: list-item bottom gap renders 4, never 3 ($name)',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(extensions: [tokens]),
+        home: Scaffold(
+          body: MarkdownText('- one\n- two\n- three',
+              style: const TextStyle(fontSize: 14)),
+        ),
+      ));
+      final gaps = tester
+          .widgetList<Padding>(find.byType(Padding))
+          .map((p) => p.padding)
+          .whereType<EdgeInsets>()
+          .where((e) => e.bottom > 0 && e.left == 0 && e.top == 0 && e.right == 0)
+          .toList();
+      // Every list-item wrapper uses bottom:4; none remain at the old 3.
+      expect(gaps.where((e) => e.bottom == 4), isNotEmpty,
+          reason: 'list items wrap in EdgeInsets.only(bottom: 4)');
+      expect(gaps.where((e) => e.bottom == 3), isEmpty,
+          reason: 'no list item keeps the old off-grid 3pt gap');
+    });
+  }
+
+  // R5 — the MarkdownText DEFAULT link (no explicit linkColor) renders through
+  // the text-safe linkText token, not the raw AymaColors.link, in both themes.
+  for (final theme in <(String, AymaTokens)>[
+    ('light', AymaTokens.light),
+    ('dark', AymaTokens.dark),
+  ]) {
+    final (name, tokens) = theme;
+    testWidgets('R5: default link renders through linkText, not raw link '
+        '($name)', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(extensions: [tokens]),
+        home: Scaffold(
+          body: MarkdownText('see [the docs](https://example.com) here',
+              style: const TextStyle(fontSize: 14)),
+        ),
+      ));
+      TextSpan? linkSpan;
+      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+        (rt.text as TextSpan).visitChildren((s) {
+          if (s is TextSpan && s.text == 'the docs') linkSpan = s;
+          return true;
+        });
+      }
+      expect(linkSpan, isNotNull, reason: 'link text span rendered');
+      expect(linkSpan!.style?.color, tokens.linkText,
+          reason: 'default link uses the derived linkText token');
+      expect(linkSpan!.style?.color, isNot(AymaColors.link),
+          reason: 'default link is NOT the raw (failing) link blue');
+      expect(linkSpan!.style?.decoration, TextDecoration.underline);
+    });
+  }
+
+  // R5 — an explicit linkColor (e.g. chat passes accentText) still wins over
+  // the linkText default: the override path is unchanged.
+  testWidgets('R5: explicit linkColor overrides the linkText default',
+      (tester) async {
+    const override = Color(0xFF123456);
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(extensions: [AymaTokens.dark]),
+      home: Scaffold(
+        body: MarkdownText('a [link](https://x.com) b',
+            style: const TextStyle(fontSize: 14), linkColor: override),
+      ),
+    ));
+    TextSpan? linkSpan;
+    for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+      (rt.text as TextSpan).visitChildren((s) {
+        if (s is TextSpan && s.text == 'link') linkSpan = s;
+        return true;
+      });
+    }
+    expect(linkSpan?.style?.color, override,
+        reason: 'explicit linkColor is respected, default not applied');
+  });
 }

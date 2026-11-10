@@ -132,7 +132,7 @@ class _MatchCard extends StatelessWidget {
                       style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
                 ),
                 Text('${(match.score * 100).round()}%',
-                    style: AymaType.mono(size: 12, color: ac.accent)),
+                    style: AymaType.mono(size: 12, color: ac.accentText)),
               ],
             ),
             const SizedBox(height: 8),
@@ -300,7 +300,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                   children: [
                     Text('${(m.score * 100).round()}% match',
                         style: AymaType.mono(
-                            size: 14, weight: FontWeight.w600, color: ac.accent)),
+                            size: 14, weight: FontWeight.w600, color: ac.accentText)),
                     if (m.myExplanation.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(m.myExplanation,
