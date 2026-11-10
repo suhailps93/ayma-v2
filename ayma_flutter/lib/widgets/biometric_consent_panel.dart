@@ -124,7 +124,7 @@ class _BiometricConsentPanelState extends State<BiometricConsentPanel> {
           const SizedBox(height: 8),
           Text(
             _error!,
-            style: AymaType.sans(size: 13, color: AymaColors.error),
+            style: AymaType.sans(size: 13, color: ac.errorText),
           ),
         ],
         const SizedBox(height: 12),
