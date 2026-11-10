@@ -460,4 +460,34 @@ void main() {
           reason: 'boundary on bgCard reads (the fix)');
     }
   });
+
+  // Defect R11: the ScoreBar FLAT fill (default [accent]) sat on a [lineSoft]
+  // track that measured only 2.88:1 in light — below the 3:1 non-text floor.
+  // score_bar.dart now defaults the track to the purpose-built [track] token,
+  // which is derived against the live accent to clear 3:1 in both themes.
+  // Ratios computed live from the token values, never hardcoded.
+  test('ScoreBar flat fill (accent) clears 3:1 against its default track', () {
+    // The contract: the accent flat fill reads against its default track in
+    // BOTH themes at the 3:1 non-text floor. Ratios are measured live.
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      final label = t == AymaTokens.light ? 'light' : 'dark';
+      final ratio = _contrastRatio(t.accent, t.track);
+      expect(ratio, greaterThanOrEqualTo(3.0),
+          reason: 'accent-on-track in $label is $ratio, must be >= 3.0');
+    }
+
+    // The defect R11 was light-only: the old [lineSoft] track measured
+    // 2.88:1 (sub-floor); the [track] token raises it to ~3.33:1 (pass).
+    expect(_contrastRatio(AymaTokens.light.accent, AymaTokens.light.lineSoft),
+        lessThan(3.0),
+        reason: 'original light failure: lineSoft track was below 3:1');
+    expect(_contrastRatio(AymaTokens.light.accent, AymaTokens.light.lineSoft),
+        closeTo(2.88, 0.05),
+        reason: 'the original light-theme failure was 2.88:1');
+    expect(_contrastRatio(AymaTokens.light.accent, AymaTokens.light.track),
+        greaterThan(
+            _contrastRatio(AymaTokens.light.accent, AymaTokens.light.lineSoft)),
+        reason: 'the track token must separate better than lineSoft in light');
+
+  });
 }
