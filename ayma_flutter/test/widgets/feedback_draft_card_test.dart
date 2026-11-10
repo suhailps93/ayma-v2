@@ -58,8 +58,8 @@ ApiClient _api(List<Map<String, dynamic>> captured) => ApiClient(
       ),
     );
 
-Widget _wrap(Widget child) => MaterialApp(
-      theme: AymaTheme.light,
+Widget _wrap(Widget child, [ThemeData? theme]) => MaterialApp(
+      theme: theme ?? AymaTheme.light,
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );
 
@@ -264,5 +264,135 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     expect(find.byKey(const ValueKey('feedback-sent')), findsNothing);
     expect(expired, isTrue);
+  });
+
+  // Jobs pass cluster 20 — defects 5, 6, 7, 8, 9 (spacing/color, no behavior).
+  FeedbackDraftCard draft({
+    required String kind,
+    String resolvedOutcome = '',
+  }) =>
+      FeedbackDraftCard(
+        kind: kind,
+        title: 'Orb flickers',
+        body: 'it flickers',
+        resolvedOutcome: resolvedOutcome,
+        api: _api([]),
+        chatService: _FakeChatService(),
+        picker: _FakePicker(),
+        appVersionOverride: '1.30.0',
+        platformOverride: 'android',
+      );
+
+  // Themes are built INSIDE each body (never at collection time) so the
+  // google_fonts asset load happens under the test binding.
+  for (final dark in [false, true]) {
+    final label = dark ? 'dark' : 'light';
+    ThemeData makeTheme() => dark ? AymaTheme.dark : AymaTheme.light;
+
+    testWidgets('$label: draft card border reads boundary (defect 5)',
+        (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(_wrap(draft(kind: 'feature'), theme));
+      final border = tester
+          .widgetList<Container>(find.descendant(
+              of: find.byType(FeedbackDraftCard),
+              matching: find.byType(Container)))
+          .map((c) => c.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((d) => d.border is Border)
+          .border as Border;
+      expect(border.top.color, ac.boundary);
+    });
+
+    testWidgets('$label: sent check icon reads successText (defect 6)',
+        (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester
+          .pumpWidget(_wrap(draft(kind: 'bug', resolvedOutcome: 'sent'), theme));
+      final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+      expect(icon.color, ac.successText);
+    });
+
+    testWidgets('$label: feature kind chip text + icon read fg, fill '
+        'unchanged (defect 7)', (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(_wrap(draft(kind: 'feature'), theme));
+      final icon =
+          tester.widget<Icon>(find.byIcon(Icons.lightbulb_outline));
+      expect(icon.color, ac.fg);
+      final chip = find
+          .ancestor(
+              of: find.byIcon(Icons.lightbulb_outline),
+              matching: find.byType(Container))
+          .first;
+      final fill =
+          (tester.widget<Container>(chip).decoration as BoxDecoration).color;
+      expect(fill, ac.accentFaint);
+      final text = tester.widget<Text>(
+          find.descendant(of: chip, matching: find.byType(Text)));
+      expect(text.style!.color, ac.fg);
+    });
+
+    testWidgets('$label: bug kind chip text + icon read fg, fill unchanged '
+        '(defect 7)', (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(_wrap(draft(kind: 'bug'), theme));
+      final icon =
+          tester.widget<Icon>(find.byIcon(Icons.bug_report_outlined));
+      expect(icon.color, ac.fg);
+      final chip = find
+          .ancestor(
+              of: find.byIcon(Icons.bug_report_outlined),
+              matching: find.byType(Container))
+          .first;
+      final fill =
+          (tester.widget<Container>(chip).decoration as BoxDecoration).color;
+      expect(fill, ac.warning.withValues(alpha: 0.16));
+      final text = tester.widget<Text>(
+          find.descendant(of: chip, matching: find.byType(Text)));
+      expect(text.style!.color, ac.fg);
+    });
+  }
+
+  testWidgets('body field hides the counter, matching the title (defect 8)',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackDraftCard(
+      kind: 'bug',
+      title: 'Orb flickers',
+      body: 'it flickers',
+      api: _api([]),
+      chatService: _FakeChatService(),
+      picker: _FakePicker(),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+    await tester.tap(find.byKey(const ValueKey('feedback-edit')));
+    await tester.pump();
+    final body = tester.widget<TextField>(
+        find.byKey(const ValueKey('feedback-body-field')));
+    expect(body.decoration!.counterText, '');
+  });
+
+  testWidgets('draft screenshot thumbnail radius is 12 (defect 9)',
+      (tester) async {
+    await tester.pumpWidget(_wrap(FeedbackDraftCard(
+      kind: 'bug',
+      title: 'Orb flickers',
+      body: 'it flickers',
+      api: _api([]),
+      chatService: _FakeChatService(),
+      picker: _FakePicker(),
+      appVersionOverride: '1.30.0',
+      platformOverride: 'android',
+    )));
+    await tester.tap(find.byKey(const ValueKey('feedback-add-shot')));
+    await tester.pump();
+    final clip = tester.widget<ClipRRect>(find.descendant(
+        of: find.byType(FeedbackDraftCard), matching: find.byType(ClipRRect)));
+    expect(clip.borderRadius, BorderRadius.circular(12));
   });
 }

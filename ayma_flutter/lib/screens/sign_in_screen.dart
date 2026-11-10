@@ -572,7 +572,7 @@ class _SignInScreenState extends State<SignInScreen>
               // the native escape hatch.
               keyboardDismissBehavior:
                   ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: const EdgeInsets.fromLTRB(20, 40, 20, 32),
+              padding: const EdgeInsets.fromLTRB(20, 40, 20, 24),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 420),
                 child: Column(
@@ -638,14 +638,18 @@ class _SignInScreenState extends State<SignInScreen>
                     // so a user who doesn't want to be spoken to can silence
                     // her. Tapping it (or the orb) stops the voice session.
                     if (_voice.isActive) ...[
-                      const SizedBox(height: 8),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => _voice.stop(),
-                        child: Text(
-                          'Tap to mute',
-                          textAlign: TextAlign.center,
-                          style: AymaType.sans(size: 12, color: ac.fgMute),
+                      SizedBox(
+                        height: 48,
+                        child: Center(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _voice.stop(),
+                            child: Text(
+                              'Tap to mute',
+                              textAlign: TextAlign.center,
+                              style: AymaType.sans(size: 12, color: ac.fgMute),
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -658,7 +662,7 @@ class _SignInScreenState extends State<SignInScreen>
                         color: ac.fg,
                       ).copyWith(letterSpacing: 8),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     Text(
                       'Your AI matchmaker',
                       textAlign: TextAlign.center,
@@ -812,7 +816,7 @@ class _SignInScreenState extends State<SignInScreen>
         Text(
           _createHint!,
           textAlign: TextAlign.center,
-          style: AymaType.sans(size: 12.5, color: ac.fgMute),
+          style: AymaType.sans(size: 12, color: ac.fgMute),
         ),
       ],
       const SizedBox(height: 12),
@@ -833,6 +837,7 @@ class _SignInScreenState extends State<SignInScreen>
         alignment: Alignment.centerRight,
         child: TextButton(
           onPressed: _forgotPassword,
+          style: TextButton.styleFrom(padding: EdgeInsets.zero),
           child: Text(
             'Forgot password?',
             style: AymaType.sans(size: 13, color: ac.fgMute),
@@ -844,7 +849,7 @@ class _SignInScreenState extends State<SignInScreen>
         Text(
           'Check your email — we sent a reset link to $_resetSentTo.',
           textAlign: TextAlign.center,
-          style: AymaType.sans(size: 12.5, color: ac.fgMute),
+          style: AymaType.sans(size: 12, color: ac.fgMute),
         ),
       ],
     ],
