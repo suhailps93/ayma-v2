@@ -433,7 +433,7 @@ class ExploreScreenState extends State<ExploreScreen> {
               automaticallyImplyBack: true,
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: KeyedSubtree(
                 key: TourAnchors.keyFor(TourAnchors.exploreSearch),
                 child: TextField(
@@ -466,12 +466,12 @@ class ExploreScreenState extends State<ExploreScreen> {
             SizedBox(
               // The chip row's height follows the text size, so large text
               // never squeezes the chips' labels.
-              height: MediaQuery.textScalerOf(context).scale(14) + 24,
+              height: MediaQuery.textScalerOf(context).scale(14) + 34,
               child: KeyedSubtree(
                 key: TourAnchors.keyFor(TourAnchors.exploreFilters),
                 child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
                   for (final f in _Filter.values)
                     Padding(
@@ -490,7 +490,8 @@ class ExploreScreenState extends State<ExploreScreen> {
                               () => _filter = _filter == f ? _Filter.all : f);
                           _syncContext();
                         },
-                        visualDensity: VisualDensity.compact,
+                        labelPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
                       ),
                     ),
                 ],
@@ -546,7 +547,7 @@ class ExploreScreenState extends State<ExploreScreen> {
                 cards.isEmpty || (isSearching && cards.every((c) => c.isSelf));
             if (hasNoMatches) {
               return CenteredScroll(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: Text(
                   _filter == _Filter.all
                       ? 'No one matches that yet.'
@@ -566,7 +567,7 @@ class ExploreScreenState extends State<ExploreScreen> {
                   ScrollViewKeyboardDismissBehavior.onDrag,
               slivers: [
                 SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
                   // Two columns on a phone; more on the Fold's inner
                   // display, a tablet or landscape, instead of two
                   // giant cards.
@@ -701,6 +702,8 @@ class _Card extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.person_outline),
               title: Text('View $name’s profile'),
               onTap: () {
@@ -709,6 +712,8 @@ class _Card extends StatelessWidget {
               },
             ),
             ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.auto_awesome),
               title: Text('Ask Ayma about $name'),
               onTap: () {
@@ -720,6 +725,7 @@ class _Card extends StatelessWidget {
                 context.go(MainShellScreen.path);
               },
             ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -815,7 +821,7 @@ class _Card extends StatelessWidget {
                     style: card.isSelf
                         ? AymaType.sans(size: 11, color: ac.fgMute)
                         : score != null
-                            ? AymaType.mono(size: 10, color: ac.accent)
+                            ? AymaType.mono(size: 10, color: ac.accentText)
                             : AymaType.sans(size: 11, color: ac.fgMute),
                   ),
                 ],

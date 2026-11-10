@@ -1120,9 +1120,12 @@ void main() {
     expect(find.text('LINKS'), findsOneWidget);
     expect(find.text('SOCIAL PROFILES'), findsOneWidget);
 
-    await tester.tap(find.byKey(
+    final linkBlock = find.byKey(
       const ValueKey('livingReportBlock:link:https://example.com/alumni/suhailps93'),
-    ));
+    );
+    await tester.ensureVisible(linkBlock);
+    await tester.pumpAndSettle();
+    await tester.tap(linkBlock);
     await tester.pumpAndSettle();
     expect(find.text('Ask Ayma'), findsOneWidget);
     await _sendComposer(tester, 'that is not my github');
@@ -1482,6 +1485,14 @@ void main() {
       final expectedHeading = AymaType.mono(size: 15);
       expect(heading.style?.fontFamily, expectedHeading.fontFamily);
       expect(heading.style?.fontFamily, isNot(expectedBody.fontFamily));
+
+      // Jobs pass (cluster 16, defect 13): the heading reads in the
+      // contrast-safe accentText token, not raw accent.
+      final headingCtx = tester.element(find.descendant(
+        of: find.byKey(const ValueKey('livingReportSection:Summary')),
+        matching: find.byType(Text),
+      ));
+      expect(heading.style?.color, headingCtx.ac.accentText);
     });
   });
 }

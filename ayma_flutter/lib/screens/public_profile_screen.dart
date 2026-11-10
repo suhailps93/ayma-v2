@@ -861,7 +861,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                     icon: page == 0
                         ? Icons.star_rounded
                         : Icons.star_outline_rounded,
-                    iconColor: page == 0 ? ac.accent : Colors.white,
+                    iconColor: Colors.white,
                     onTap: () {
                       final grid = widget.editing!.controller.photos;
                       if (page >= 0 && page < grid.length) {
@@ -919,7 +919,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
             child: Text(widget.blockedMessage!,
-                style: AymaType.sans(size: 13, color: AymaColors.error)),
+                style: AymaType.sans(size: 13, color: ac.errorText)),
           ),
       ],
     );

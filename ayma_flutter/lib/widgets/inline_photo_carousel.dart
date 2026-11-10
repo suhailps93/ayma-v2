@@ -411,7 +411,7 @@ class _EditableThumb extends StatelessWidget {
                     color: Colors.black.withValues(alpha: 0.62),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.star_rounded, size: 12, color: accent),
+                  child: Icon(Icons.star_rounded, size: 12, color: Colors.white),
                 ),
               ),
           ],
