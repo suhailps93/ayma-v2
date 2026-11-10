@@ -39,7 +39,7 @@ class PickerInfoLabel extends StatelessWidget {
             child: Text(
               label,
               style: AymaType.mono(size: 10, color: ac.fgMute)
-                  .copyWith(letterSpacing: 1.5),
+                  .copyWith(letterSpacing: 2),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -50,7 +50,7 @@ class PickerInfoLabel extends StatelessWidget {
             tooltip: 'What does this do?',
             visualDensity: VisualDensity.compact,
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             onPressed: () => showPickerExplanation(
               context,
               title: title,

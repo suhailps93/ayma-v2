@@ -208,10 +208,11 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text('Could not load brains ($_error).',
-              style: AymaType.sans(size: 13, color: AymaColors.error)),
+              style: AymaType.sans(size: 13, color: ac.errorText)),
           const SizedBox(height: 8),
           TextButton(
             onPressed: _load,
+            style: TextButton.styleFrom(padding: EdgeInsets.zero),
             child: const Text('Retry'),
           ),
         ],
@@ -296,7 +297,7 @@ class _BrainSelectorControlState extends State<BrainSelectorControl> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        border: Border.all(color: ac.lineSoft),
+        border: Border.all(color: ac.boundary),
         borderRadius: BorderRadius.circular(8),
       ),
       child: DropdownButton<String>(
