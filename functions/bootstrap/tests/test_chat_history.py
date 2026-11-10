@@ -290,6 +290,75 @@ def test_recent_uses_each_voice_turns_own_persisted_time():
     assert len(set(got)) == 6
 
 
+def test_recent_keeps_real_per_turn_times_when_a_session_is_re_synced():
+    # Founder addendum 2026-11-09: an OLDER voice session's turns got 9:40 PM
+    # stamps the night they synced back into history — tonight's session seeded
+    # from that old conversation (recent_turns = role/text only) and re-persisted
+    # the window into a FRESH raw_turns doc with tonight's `updated_at` and NO
+    # per-turn time. On read, newest-doc-first made that timeless re-sync copy
+    # win and collapse the turns onto tonight's minute. An existing per-turn
+    # time must be immutable through any re-sync.
+    original_stamps = [
+        datetime(2026, 11, 8, 5, 27, tzinfo=timezone.utc),
+        datetime(2026, 11, 8, 5, 32, tzinfo=timezone.utc),
+        datetime(2026, 11, 8, 5, 40, tzinfo=timezone.utc),
+    ]
+    turns = [
+        ("user", "Can you walk me through the app?"),
+        ("ayma", "Take a look, and just say next when you're ready."),
+        ("user", "next"),
+    ]
+    tonight = datetime(2026, 11, 10, 5, 40, tzinfo=timezone.utc)  # sync time = 9:40
+    db = _FakeDB(
+        raw_rows=[
+            # The original session, with each turn's own real per-turn time.
+            {"_id": "01ORIGINAL",
+             "turns": [
+                {"role": r, "text": t, "created_at": s.isoformat()}
+                for (r, t), s in zip(turns, original_stamps)
+             ],
+             "updated_at": original_stamps[-1]},
+            # Tonight's re-sync of the SAME turns: no per-turn time, newest
+            # `updated_at`. Without the immutability guard this copy would win
+            # and stamp every turn ~9:40 tonight.
+            {"_id": "01TONIGHT",
+             "turns": [{"role": r, "text": t} for (r, t) in turns],
+             "updated_at": tonight},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    got = [datetime.fromisoformat(m["created_at"]) for m in r["messages"]]
+    # Every turn RETAINS its original real time — no collapse onto tonight.
+    assert got == original_stamps
+    assert all(g.date() == datetime(2026, 11, 8).date() for g in got)
+    assert all(g != tonight for g in got)
+    # And the turn is not echoed twice despite living in two docs.
+    assert len(r["messages"]) == 3
+
+
+def test_recent_prefers_the_original_session_time_for_legacy_resync():
+    # Even with NO per-turn times anywhere (a pre-fix session), a re-sync into a
+    # newer doc must not move the turns to tonight — the earliest session's time
+    # wins, so the conversation stays on the day it actually happened.
+    old = datetime(2026, 11, 8, 5, 40, tzinfo=timezone.utc)
+    tonight = datetime(2026, 11, 10, 5, 40, tzinfo=timezone.utc)
+    db = _FakeDB(
+        raw_rows=[
+            {"_id": "01OLD",
+             "turns": [{"role": "user", "text": "Hey, how are you?"}],
+             "updated_at": old},
+            {"_id": "01TONIGHT",
+             "turns": [{"role": "user", "text": "Hey, how are you?"}],
+             "updated_at": tonight},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    assert len(r["messages"]) == 1
+    got = datetime.fromisoformat(r["messages"][0]["created_at"])
+    assert got.date() == datetime(2026, 11, 8).date()
+    assert got <= old and got != tonight
+
+
 def test_recent_falls_back_to_session_time_for_legacy_untimed_turns():
     # A pre-fix raw_turns doc with no per-turn created_at still renders in
     # intra-session order from the session `updated_at` (old behavior intact).
