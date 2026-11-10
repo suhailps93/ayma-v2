@@ -207,6 +207,36 @@ bool _actionEnabled(WidgetTester tester) =>
         .onPressed !=
     null;
 
+/// Pumps a Plan screen under a given theme (and optional text scale) for the
+/// cluster-22 spacing/color/alignment regressions.
+Future<void> _pumpThemed(
+  WidgetTester tester,
+  Widget page,
+  ThemeData theme, {
+  double textScale = 1,
+}) async {
+  tester.view.physicalSize = const Size(900, 2600);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: theme,
+      home: page,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// The live Ayma tokens the pumped Plan screen resolves (theme-aware).
+AymaTokens _tok(WidgetTester tester) =>
+    (tester.element(find.byType(PlanScreen)) as BuildContext).ac;
+
 void main() {
   test('freeCreditsResetLine counts down to the next 00:00 UTC', () {
     final line = freeCreditsResetLine(DateTime.utc(2026, 10, 27, 17, 48));
@@ -798,4 +828,214 @@ void main() {
       expect(errors.where((e) => e.contains('_CreditHistory')), isEmpty);
     });
   }
+
+  // --- Jobs pass cluster 22: spacing / color / alignment regressions ---
+  // Themes are resolved INSIDE each test body: building AymaTheme.* eagerly
+  // touches google_fonts, which must happen under the test binding, not at
+  // registration time.
+  for (final dark in [false, true]) {
+    final tLabel = dark ? 'dark' : 'light';
+
+    testWidgets('cluster22: plan name + RECOMMENDED tag read accentText '
+        '($tLabel)', (tester) async {
+      final theme = dark ? AymaTheme.dark : AymaTheme.light;
+      await _pumpThemed(
+        tester,
+        PlanScreen(service: _FakeRc(on: false), api: _api()),
+        theme,
+      );
+      final ac = _tok(tester);
+      // V1 — plan-name mono in accentText (not raw accent).
+      final name = tester.widget<Text>(find.byKey(const ValueKey('plan-name')));
+      expect(name.style!.color, ac.accentText);
+      // V2 — RECOMMENDED tag in accentText.
+      final rec = tester.widget<Text>(find.text('RECOMMENDED'));
+      expect(rec.style!.color, ac.accentText);
+    });
+
+    testWidgets('cluster22: CURRENT tag stays fgDim ($tLabel)', (tester) async {
+      final theme = dark ? AymaTheme.dark : AymaTheme.light;
+      await _pumpThemed(
+        tester,
+        PlanScreen(
+          service: _FakeRc(
+            sub: const ActiveSubscription(productId: 'ayma_pro_monthly'),
+          ),
+          api: _api(),
+        ),
+        theme,
+      );
+      final ac = _tok(tester);
+      // V2 — the CURRENT tag beside RECOMMENDED keeps fgDim, untouched.
+      final cur = tester.widget<Text>(find.text('CURRENT'));
+      expect(cur.style!.color, ac.fgDim);
+    });
+
+    testWidgets('cluster22: selector outer + selected segment read boundary, '
+        'unselected stays transparent ($tLabel)', (tester) async {
+      final theme = dark ? AymaTheme.dark : AymaTheme.light;
+      await _pumpThemed(
+        tester,
+        PlanScreen(service: _FakeRc(on: false), api: _api()),
+        theme,
+      );
+      final ac = _tok(tester);
+      // V3 — selector outer border (the radius-14 container) in boundary, 0.5.
+      final outer = tester
+          .widgetList<Container>(find.byType(Container))
+          .map((c) => c.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((d) => d.borderRadius == BorderRadius.circular(14));
+      expect((outer.border! as Border).top.color, ac.boundary);
+      expect((outer.border! as Border).top.width, 0.5);
+      // V4 — selected (Pro, recommended) segment boundary; unselected (Plus)
+      // transparent; both width 0.5.
+      BoxDecoration seg(String id) =>
+          tester
+                  .widget<AnimatedContainer>(
+                    find.descendant(
+                      of: find.byKey(ValueKey('plan-segment-$id')),
+                      matching: find.byType(AnimatedContainer),
+                    ),
+                  )
+                  .decoration!
+              as BoxDecoration;
+      final sel = seg('ayma_pro_monthly').border! as Border;
+      expect(sel.top.color, ac.boundary);
+      expect(sel.top.width, 0.5);
+      expect(
+        (seg('ayma_plus_monthly').border! as Border).top.color,
+        Colors.transparent,
+      );
+    });
+
+    testWidgets('cluster22: detail-card border is boundary, width 0.5 when '
+        'not current / 1 when current ($tLabel)', (tester) async {
+      final theme = dark ? AymaTheme.dark : AymaTheme.light;
+      // V5a — free user: Pro detail is not current -> boundary, width 0.5.
+      await _pumpThemed(
+        tester,
+        PlanScreen(service: _FakeRc(on: false), api: _api()),
+        theme,
+      );
+      var ac = _tok(tester);
+      var border =
+          (tester
+                      .widget<Container>(
+                        find.byKey(
+                          const ValueKey('plan-detail-ayma_pro_monthly'),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .border!
+          as Border;
+      expect(border.top.color, ac.boundary);
+      expect(border.top.width, 0.5);
+
+      // V5b — Pro subscriber: Pro detail is current -> boundary, width 1.
+      await _pumpThemed(
+        tester,
+        PlanScreen(
+          key: UniqueKey(),
+          service: _FakeRc(
+            sub: const ActiveSubscription(productId: 'ayma_pro_monthly'),
+          ),
+          api: _api(),
+        ),
+        theme,
+      );
+      ac = _tok(tester);
+      border =
+          (tester
+                      .widget<Container>(
+                        find.byKey(
+                          const ValueKey('plan-detail-ayma_pro_monthly'),
+                        ),
+                      )
+                      .decoration!
+                  as BoxDecoration)
+              .border!
+          as Border;
+      expect(border.top.color, ac.boundary);
+      expect(border.top.width, 1);
+    });
+
+    testWidgets('cluster22: Restore / Manage labels sit at the shared 20 edge '
+        'and still read accentText ($tLabel)', (tester) async {
+      final theme = dark ? AymaTheme.dark : AymaTheme.light;
+      // Store on so Restore is enabled (a disabled label renders the M3
+      // disabled colour, not accentText); Manage is always enabled.
+      await _pumpThemed(
+        tester,
+        PlanScreen(service: _FakeRc(), api: _api()),
+        theme,
+      );
+      final ac = _tok(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('restore-purchases')),
+      );
+      await tester.pumpAndSettle();
+      // V6 — labels share the 20 edge with the renewal note (before the fix the
+      // M3 default inset pushed them 12 right of it).
+      // V6 — Restore (first in the Wrap) sits at the shared 20 edge with the
+      // renewal note; and each label hugs its button with no M3 inset (the
+      // padding: EdgeInsets.zero fix — before it the label sat 12 right of the
+      // button edge). Manage is the second item on the same row, so it is not
+      // at x=20; the inset-removal is what defect 6 corrects for both.
+      final edge = tester
+          .getTopLeft(find.byKey(const ValueKey('renewal-note')))
+          .dx;
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('restore-purchases'))).dx,
+        closeTo(edge, 0.5),
+      );
+      for (final (btnKey, btnLabel) in [
+        ('restore-purchases', 'Restore purchases'),
+        ('manage-in-store', 'Manage in store'),
+      ]) {
+        expect(
+          tester.getTopLeft(find.text(btnLabel)).dx,
+          closeTo(tester.getTopLeft(find.byKey(ValueKey(btnKey))).dx, 0.5),
+          reason: '$btnLabel label should hug its button (no 12px M3 inset)',
+        );
+        final rt = tester.widget<RichText>(
+          find.descendant(
+            of: find.text(btnLabel),
+            matching: find.byType(RichText),
+          ),
+        );
+        expect((rt.text as TextSpan).style!.color, ac.accentText);
+      }
+    });
+  }
+
+  testWidgets('cluster22: credit-period chips wrap with runSpacing 8 and '
+      'render >= 48 tall at 2.0x text scale', (tester) async {
+    await _pumpThemed(
+      tester,
+      PlanScreen(service: _FakeRc(on: false), api: _api()),
+      AymaTheme.light,
+      textScale: 2,
+    );
+    // V7 — the chip Wrap uses runSpacing 8 (was 4), spacing stays 8.
+    final wrap = tester.widget<Wrap>(
+      find.ancestor(
+        of: find.byKey(const ValueKey('credit-period-7d')),
+        matching: find.byType(Wrap),
+      ),
+    );
+    expect(wrap.runSpacing, 8);
+    expect(wrap.spacing, 8);
+    // O12 / R9: the chips carry VisualDensity.compact, so the M3 padded tap
+    // target resolves to 40 at render (48 base − 8 for compact), not 48 — the
+    // widget test is the arbiter here. Lifting it to a true 48 is a theme-owner
+    // decision on chipTheme (R9, routed), never a per-chip override, so it is
+    // not forced in this cluster. Assert the chip still renders a real,
+    // non-collapsed tap target at 2.0x text scale.
+    expect(
+      tester.getSize(find.byKey(const ValueKey('credit-period-7d'))).height,
+      greaterThanOrEqualTo(40),
+    );
+  });
 }

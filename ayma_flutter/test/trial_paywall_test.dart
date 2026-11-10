@@ -373,4 +373,67 @@ void main() {
     });
   });
 
+  // --- Jobs pass cluster 22: spacing / alignment regressions ---
+  group('TrialPaywallScreen jobs pass (cluster 22)', () {
+    Future<void> pump(WidgetTester tester, ThemeData theme) async {
+      tester.view.physicalSize = const Size(800, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: TrialPaywallScreen(
+            offer: _offer,
+            service: _FakeRc(),
+            api: _api(),
+            now: DateTime(2026, 10, 23),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // Themes are resolved INSIDE each test body: building AymaTheme.* eagerly
+    // touches google_fonts, which must happen under the test binding.
+    for (final dark in [false, true]) {
+      final tLabel = dark ? 'dark' : 'light';
+
+      testWidgets('title, steps and footer content sit at the 20 edge '
+          '($tLabel)', (tester) async {
+        await pump(tester, dark ? AymaTheme.dark : AymaTheme.light);
+        // V8 — the 24 edge became 20: title, first step icon, Continue.
+        expect(
+          tester.getTopLeft(find.byKey(const ValueKey('trial-title'))).dx,
+          closeTo(20, 0.5),
+        );
+        expect(
+          tester.getTopLeft(find.byIcon(Icons.lock_open_rounded)).dx,
+          closeTo(20, 0.5),
+        );
+        expect(
+          tester.getTopLeft(find.byKey(const ValueKey('trial-continue'))).dx,
+          closeTo(20, 0.5),
+        );
+      });
+
+      testWidgets('Continue-to-fine-print gap is 12 and the step title-to-body '
+          'gap is 4 ($tLabel)', (tester) async {
+        await pump(tester, dark ? AymaTheme.dark : AymaTheme.light);
+        // V9 — Continue bottom to fine-print top = 12 (was 10).
+        final contBottom = tester
+            .getRect(find.byKey(const ValueKey('trial-continue')))
+            .bottom;
+        final fineTop = tester
+            .getRect(find.byKey(const ValueKey('trial-fine-print')))
+            .top;
+        expect(fineTop - contBottom, closeTo(12, 0.5));
+        // V10 — 'Today' step title bottom to its body top = 4 (was 2).
+        final titleBottom = tester.getRect(find.text('Today')).bottom;
+        final bodyTop = tester
+            .getRect(find.textContaining('Unlock Ayma Pro:'))
+            .top;
+        expect(bodyTop - titleBottom, closeTo(4, 0.5));
+      });
+    }
+  });
 }
