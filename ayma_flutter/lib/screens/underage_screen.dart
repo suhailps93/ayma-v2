@@ -30,7 +30,7 @@ class UnderageScreen extends StatelessWidget {
           // text instead of overflowing.
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(28),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -44,7 +44,7 @@ class UnderageScreen extends StatelessWidget {
                     "We're sorry — come back when you're 18.",
                     style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 24),
                   OutlinedButton(
                     key: const Key('underage_terms'),
                     onPressed: () => LegalLinks.openTerms(context),
@@ -53,6 +53,7 @@ class UnderageScreen extends StatelessWidget {
                   const SizedBox(height: 8),
                   TextButton(
                     key: const Key('underage_sign_out'),
+                    style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                     onPressed: () async {
                       try {
                         await (signOut ?? FirebaseAuth.instance.signOut)();

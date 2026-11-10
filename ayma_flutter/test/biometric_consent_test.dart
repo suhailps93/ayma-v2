@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'package:ayma_flutter/legal/biometric_consent_text.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
+import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/biometric_consent.dart';
 import 'package:ayma_flutter/services/legal_links.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/biometric_consent_panel.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -459,8 +461,8 @@ void main() {
 
       final link = find.byKey(const Key('consent_terms_link'));
       expect(link, findsOneWidget);
-      // The hit region is a padded chip about 48dp tall, not glyph-tight.
-      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+      // The hit region is a padded chip ~48dp tall, not glyph-tight.
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(48));
 
       for (final spot in spotsFor(tester, link)) {
         await tester.tapAt(spot);
@@ -481,7 +483,7 @@ void main() {
 
       final link = find.byKey(const Key('consent_privacy_link'));
       expect(link, findsOneWidget);
-      expect(tester.getSize(link).height, greaterThanOrEqualTo(40));
+      expect(tester.getSize(link).height, greaterThanOrEqualTo(48));
 
       for (final spot in spotsFor(tester, link)) {
         await tester.tapAt(spot);
@@ -534,6 +536,169 @@ void main() {
       await tester.pump();
       expect(termsChecked(tester), isFalse);
       expect(opened, isEmpty);
+    });
+  });
+
+  // Jobs pass (cluster 10): spacing, colour and tap-target assertions for the
+  // nine defects fixed in this cluster.
+  group('jobs pass: spacing, colour, targets', () {
+    testWidgets('consent screen ListView inset is 20/20/20/40', (tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded((_) async => _json({'ok': true}));
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => BiometricConsentScreen(api: rec.api),
+          ),
+          GoRoute(
+            path: SplashScreen.path,
+            builder: (_, __) => const Text('x'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<ListView>(find.byType(ListView)).padding,
+        const EdgeInsets.fromLTRB(20, 20, 20, 40),
+      );
+    });
+
+    testWidgets('info screen scroll-view top inset is 20', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: BiometricInfoScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<SingleChildScrollView>(find.byType(SingleChildScrollView))
+            .padding,
+        const EdgeInsets.fromLTRB(20, 20, 20, 40),
+      );
+    });
+
+    Future<void> pumpSettings(
+      WidgetTester tester, {
+      required Future<http.Response> Function(http.Request) handler,
+      required MockFirebaseAuth auth,
+    }) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded(handler);
+      final router = GoRouter(
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, __) => BiometricConsentSettingsScreen(
+              api: rec.api,
+              auth: auth,
+              clearPushToken: () async {},
+            ),
+          ),
+          GoRoute(
+            path: '/signin',
+            builder: (_, __) => const Text('screen:signin'),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+    }
+
+    Future<http.Response> consentedGet(http.Request req) async {
+      if (req.method == 'GET') {
+        return _json({
+          'consented': true,
+          'consent_version': kBiometricConsentVersion,
+          'consented_at': '2026-10-25T10:00:00+00:00',
+          'region': 'US',
+        });
+      }
+      return _json({'ok': true, 'withdrawn': true});
+    }
+
+    testWidgets('settings ListView top inset is 20 and TextButtons are >= 44 '
+        'tall (M3 padded target)', (tester) async {
+      await pumpSettings(
+        tester,
+        handler: consentedGet,
+        auth: MockFirebaseAuth(signedIn: true),
+      );
+      expect(
+        tester.widget<ListView>(find.byType(ListView)).padding,
+        const EdgeInsets.fromLTRB(20, 20, 20, 40),
+      );
+      // The always-present "Sign out instead" TextButton.
+      expect(
+        tester.getSize(find.byKey(const Key('biometric_sign_out'))).height,
+        greaterThanOrEqualTo(44),
+      );
+      // The two dialog TextButtons (Cancel, Withdraw and delete).
+      await tester.tap(find.byKey(const Key('biometric_withdraw')));
+      await tester.pumpAndSettle();
+      for (final button in tester.widgetList<TextButton>(
+        find.byType(TextButton),
+      )) {
+        expect(
+          tester.getSize(find.byWidget(button)).height,
+          greaterThanOrEqualTo(44),
+        );
+      }
+    });
+
+    testWidgets('settings error line uses the ac.errorText token', (
+      tester,
+    ) async {
+      await pumpSettings(
+        tester,
+        handler: (req) async {
+          if (req.method == 'GET') return consentedGet(req);
+          return http.Response('fail', 500);
+        },
+        auth: MockFirebaseAuth(signedIn: true),
+      );
+      await tester.tap(find.byKey(const Key('biometric_withdraw')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('biometric_withdraw_confirm')));
+      await tester.pumpAndSettle();
+      final ctx = tester.element(
+        find.byType(BiometricConsentSettingsScreen),
+      );
+      final errorText = tester.widget<Text>(
+        find.textContaining("Couldn't withdraw"),
+      );
+      expect(errorText.style!.color, ctx.ac.errorText);
+      expect(errorText.style!.color, isNot(AymaColors.error));
+    });
+
+    testWidgets('panel error line uses the ac.errorText token', (tester) async {
+      tester.view.physicalSize = const Size(1080, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final rec = _Recorded((_) async => http.Response('fail', 500));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: BiometricConsentPanel(api: rec.api, onAgreed: () {}),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('biometric_consent_checkbox')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('biometric_consent_agree')));
+      await tester.pumpAndSettle();
+      final ctx = tester.element(find.byType(BiometricConsentPanel));
+      final errorText = tester.widget<Text>(
+        find.textContaining("Couldn't save"),
+      );
+      expect(errorText.style!.color, ctx.ac.errorText);
+      expect(errorText.style!.color, isNot(AymaColors.error));
     });
   });
 }
