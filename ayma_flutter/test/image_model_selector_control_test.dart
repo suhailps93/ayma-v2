@@ -70,8 +70,8 @@ ApiClient _api({
   return ApiClient(httpClient: mock, auth: MockFirebaseAuth(signedIn: true));
 }
 
-Widget _host(Widget child) => MaterialApp(
-      theme: AymaTheme.light,
+Widget _host(Widget child, [ThemeData? theme]) => MaterialApp(
+      theme: theme ?? AymaTheme.light,
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );
 
@@ -155,6 +155,38 @@ void main() {
     expect(find.text('Gemini (Google)'), findsOneWidget);
     expect(find.byType(AymaWingLoader), findsNothing);
   });
+
+  for (final (name, make) in [
+    ('light', () => AymaTheme.light),
+    ('dark', () => AymaTheme.dark),
+  ]) {
+    testWidgets(
+        'dropdown container border color equals boundary and clears 3:1 on bg/bgElev/bgCard ($name)',
+        (tester) async {
+      await tester.pumpWidget(
+          _host(ImageModelSelectorControl(api: _api()), make()));
+      await tester.pumpAndSettle();
+
+      final ac = tester.element(find.byType(ImageModelSelectorControl)).ac;
+      final container = tester.widget<Container>(find
+          .ancestor(
+              of: find.byKey(const ValueKey('image-model-dropdown')),
+              matching: find.byType(Container))
+          .first);
+      final border = (container.decoration as BoxDecoration).border as Border;
+      expect(border.top.color, ac.boundary,
+          reason: 'dropdown container border is boundary ($name)');
+      for (final (label, surface) in [
+        ('bg', ac.bg),
+        ('bgElev', ac.bgElev),
+        ('bgCard', ac.bgCard),
+      ]) {
+        final ratio = AymaColors.contrastRatio(border.top.color, surface);
+        expect(ratio, greaterThanOrEqualTo(3.0),
+            reason: 'image-model dropdown border vs $label = $ratio in $name');
+      }
+    });
+  }
 }
 
 /// Drives `/image-model/preference` at the logical level so a test can force a
