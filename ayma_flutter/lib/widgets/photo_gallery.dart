@@ -171,7 +171,10 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 decoration: BoxDecoration(color: edge, shape: BoxShape.circle),
               ),
               const SizedBox(width: 8),
-              Text(label, style: AymaType.sans(size: 12, color: edge)),
+              Text(label,
+                  style: AymaType.sans(
+                      size: 12,
+                      color: edge == ac.error ? ac.errorTextCard : edge)),
             ]),
             if (p.sourcePage.isNotEmpty) ...[
               const SizedBox(height: 4),

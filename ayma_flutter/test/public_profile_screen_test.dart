@@ -1023,5 +1023,13 @@ void main() {
       matching: find.byType(ListView),
     ));
     expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 40));
+
+    // Jobs pass (cluster 16, defect 9): the blocked message reads in the
+    // contrast-safe errorText token, not raw AymaColors.error.
+    final blockedFinder = find.text("You've blocked this person.");
+    expect(blockedFinder, findsOneWidget);
+    final blockedCtx = tester.element(blockedFinder);
+    expect(tester.widget<Text>(blockedFinder).style!.color,
+        blockedCtx.ac.errorText);
   });
 }

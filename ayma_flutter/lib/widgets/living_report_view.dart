@@ -93,7 +93,7 @@ import 'score_bar.dart';
 /// Exactly three roles, applied nowhere else in this file:
 ///  * [_titleStyle]   — the report's own title. Serif display, size 24.
 ///  * [_headingStyle] — a section heading. Mono, all-caps letter-spaced
-///    eyebrow, size 11 — matches Story's existing numbered-section
+///    eyebrow, size 15 — matches Story's existing numbered-section
 ///    convention, now the ONE section-heading style everywhere.
 ///  * [_bodyStyle]    — flowing sentence/prose text (`text` blocks). The
 ///    app's standard sans (Geist) body style, size 14, line-height 1.5 —
@@ -852,7 +852,7 @@ class _SectionView extends StatelessWidget {
         GestureDetector(
           key: ValueKey('livingReportSection:${section.heading}'),
           onTap: onHeadingTap,
-          child: Text(section.heading.toUpperCase(), style: _headingStyle(ac.accent)),
+          child: Text(section.heading.toUpperCase(), style: _headingStyle(ac.accentText)),
         ),
         const SizedBox(height: 12),
         for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 8), child: r),
@@ -1006,7 +1006,7 @@ class _BlockRow extends StatelessWidget {
       onTap: onTap,
       onLongPress: onLongPress,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
           color: selected ? ac.accent.withValues(alpha: 0.14) : null,
           borderRadius: BorderRadius.circular(10),
@@ -1020,7 +1020,7 @@ class _BlockRow extends StatelessWidget {
                 size: 18,
                 color: selected ? ac.accent : ac.fgMute,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
             ],
             Expanded(child: child),
           ],
@@ -1173,9 +1173,9 @@ class _StatRow extends StatelessWidget {
   static Color _bandColor(BuildContext context, double value, double max) {
     final ac = context.ac;
     final frac = max <= 0 ? 0.0 : (value / max).clamp(0.0, 1.0);
-    if (frac >= 0.7) return ac.success;
-    if (frac >= 0.4) return ac.warning;
-    return ac.error;
+    if (frac >= 0.7) return ac.successText;
+    if (frac >= 0.4) return ac.warningText;
+    return ac.errorText;
   }
 
   @override
@@ -1233,7 +1233,7 @@ class _StatRow extends StatelessWidget {
                       style: AymaType.sans(size: 12, color: ac.fgMute)),
                 ),
               if (basisRest.isNotEmpty && source != null)
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
               if (source != null) _SourceTag(source: source),
             ],
           ),
@@ -1258,7 +1258,7 @@ class _SourceTag extends StatelessWidget {
     final color = measured ? ac.success : ac.fgMute;
     final icon = measured ? Icons.check_circle : Icons.auto_awesome;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(999),
@@ -1266,10 +1266,10 @@ class _SourceTag extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 10, color: color),
+          Icon(icon, size: 10, color: measured ? ac.successText : ac.fgMute),
           const SizedBox(width: 4),
           Text(source.toUpperCase(),
-              style: AymaType.mono(size: 8, color: color)
+              style: AymaType.mono(size: 8, color: ac.fg)
                   .copyWith(letterSpacing: 0.6)),
         ],
       ),
@@ -1299,14 +1299,14 @@ class _NonNumericStat extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: color.withValues(alpha: 0.5)),
             ),
             child: Text(valueStr,
-                style: AymaType.mono(size: 10, color: color)
+                style: AymaType.mono(size: 10, color: ac.fg)
                     .copyWith(letterSpacing: 0.5)),
           ),
           if (block.label.isNotEmpty) ...[
@@ -1362,7 +1362,7 @@ class _LinkRow extends StatelessWidget {
             label,
             maxLines: isSocial ? 1 : 2,
             overflow: TextOverflow.ellipsis,
-            style: AymaType.sans(size: 13, color: ac.accent, height: 1.35),
+            style: AymaType.sans(size: 13, color: ac.accentText, height: 1.35),
           ),
         ),
         // A link's own "visit it" affordance lives here, separate from the
@@ -1375,7 +1375,7 @@ class _LinkRow extends StatelessWidget {
             onTap: () => _openUrl(block.url),
             child: SizedBox(
               width: 48,
-              height: 40,
+              height: 48,
               child: Center(
                 child: Icon(Icons.open_in_new, size: 14, color: ac.accent),
               ),
@@ -1451,7 +1451,7 @@ class _LinkifiedTextState extends State<_LinkifiedText> {
     final text = widget.text;
     _disposeRecognizers();
     if (!_urlPattern.hasMatch(text)) return Text(text, style: widget.style);
-    final link = context.ac.accent;
+    final link = context.ac.accentText;
     final spans = <InlineSpan>[];
     var idx = 0;
     for (final m in _urlPattern.allMatches(text)) {
@@ -1514,7 +1514,7 @@ class _PhotoRow extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text('Open photo link',
                           textAlign: TextAlign.center,
-                          style: AymaType.sans(size: 9, color: ac.accent)),
+                          style: AymaType.sans(size: 9, color: ac.fgDim)),
                     ],
                   ),
                 ),
@@ -1536,7 +1536,7 @@ class _PhotoRow extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text('PENDING',
-                      style: AymaType.mono(size: 8, color: ac.accent)
+                      style: AymaType.mono(size: 8, color: ac.accentText)
                           .copyWith(letterSpacing: 1)),
                 ),
               if (block.caption.isNotEmpty)
@@ -1548,7 +1548,7 @@ class _PhotoRow extends StatelessWidget {
                     style: AymaType.sans(
                       size: 12.5,
                       soft: true,
-                      color: hasUrl ? ac.accent : ac.fgMute,
+                      color: hasUrl ? ac.accentText : ac.fgMute,
                     ).copyWith(
                       decoration: hasUrl ? TextDecoration.underline : null,
                     ),
@@ -1617,7 +1617,7 @@ class _SelectionBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
           child: Row(
             children: [
               Expanded(
@@ -1646,7 +1646,7 @@ class _ErrorMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return CenteredScroll(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
