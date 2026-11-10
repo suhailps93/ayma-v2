@@ -267,7 +267,7 @@ class _ImageModelSelectorControlState extends State<ImageModelSelectorControl> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        border: Border.all(color: ac.lineSoft),
+        border: Border.all(color: ac.boundary),
         borderRadius: BorderRadius.circular(8),
       ),
       child: DropdownButton<String>(
