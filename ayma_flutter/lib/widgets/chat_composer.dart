@@ -266,14 +266,14 @@ class _ChatComposerState extends State<ChatComposer>
     final phase = _phase;
     final voiceMode = widget.mode != ComposerMode.text;
 
-    // Inner horizontal 14 matches the message bubbles' own inner padding,
+    // Inner horizontal 16 matches the message bubbles' own inner padding,
     // so the hint text starts where bubble text starts and the mic/send
-    // circle sits 14 from the pill's edge (was 6 — it crowded the edge).
+    // circle sits 16 from the pill's edge (was 6 — it crowded the edge).
     // Vertical stays 6 on purpose: 44px buttons + 2x6 lands the pill at
     // exactly 56, twice its 28 corner radius — a true pill.
     final content = Padding(
       key: ValueKey(voiceMode),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: voiceMode ? _voiceRow(ac) : _textRow(ac),
     );
 

@@ -1,3 +1,4 @@
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/collapsible_message_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -104,5 +105,47 @@ void main() {
     await _pump(tester, text);
     expect(_plain(tester), contains('bold'));
     expect(_plain(tester), isNot(contains('**')));
+  });
+
+  testWidgets(
+      'expander clears the 44 touch floor and labels in accentText',
+      (tester) async {
+    final text = _longMessage(2000);
+    // The Ayma tokens (so `context.ac` resolves) plus the app's real
+    // textButtonTheme minimum (0, 44) — the floor defect 45 restores by
+    // dropping Size.zero + shrinkWrap. Kept off AymaTheme.dark (google_fonts).
+    final theme = ThemeData(
+      extensions: const [AymaTokens.dark],
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: CollapsibleMessageText(
+              text,
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ),
+      ),
+    );
+    final btn = find.widgetWithText(
+      TextButton,
+      'Show full message (${text.length} characters)',
+    );
+    expect(btn, findsOneWidget);
+    // Defect 45: `minimumSize: Size.zero` + `tapTargetSize: shrinkWrap`
+    // removed, so the theme minimum (0, 44) governs (padded tap target 48);
+    // with the overrides the button rendered ~26 tall.
+    expect(tester.getSize(btn).height, greaterThanOrEqualTo(44.0));
+    // Defect 46: label routes through accentText (text-safe), not raw accent.
+    final label = tester.widget<Text>(
+      find.descendant(of: btn, matching: find.byType(Text)),
+    );
+    expect(label.style?.color, AymaTokens.dark.accentText);
   });
 }

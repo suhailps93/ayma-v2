@@ -83,7 +83,7 @@ class _CollapsibleMessageTextState extends State<CollapsibleMessageText> {
           style: widget.style,
           linkColor: widget.linkColor,
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton(
@@ -91,8 +91,6 @@ class _CollapsibleMessageTextState extends State<CollapsibleMessageText> {
             style: TextButton.styleFrom(
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: Text(
               _expanded
@@ -100,7 +98,7 @@ class _CollapsibleMessageTextState extends State<CollapsibleMessageText> {
                   : 'Show full message (${widget.text.length} characters)',
               style: AymaType.sans(
                 size: 13,
-                color: ac.accent,
+                color: ac.accentText,
                 weight: FontWeight.w600,
               ),
             ),
