@@ -96,7 +96,7 @@ class PhoneNumberFieldState extends State<PhoneNumberField> {
             onPressed: widget.enabled ? _pickCountry : null,
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              minimumSize: Size.zero,
+              minimumSize: const Size(0, 44),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: Row(

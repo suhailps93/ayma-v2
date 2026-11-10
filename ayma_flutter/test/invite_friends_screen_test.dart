@@ -48,6 +48,27 @@ void main() {
         findsOneWidget);
   });
 
+  // Defects 2 + 3 / V10: the screen sits at the 20 standard edge with 40 of
+  // scroll-end room, and the body -> link-card gap is the 24 rhythm value
+  // (was edge 24/16/24/32 and gap 28).
+  testWidgets('uses the 20 screen edge (40 bottom) and a 24 body->card gap',
+      (tester) async {
+    await _pump(tester);
+
+    final scroll = find.byType(SingleChildScrollView);
+    expect(scroll, findsOneWidget);
+    expect(tester.widget<SingleChildScrollView>(scroll).padding,
+        const EdgeInsets.fromLTRB(20, 20, 20, 40));
+
+    // The body -> link-card gap is 24 (a height-only spacer; a square
+    // SizedBox(24,24) elsewhere is excluded via width==null).
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is SizedBox && w.height == 24 && w.width == null),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('the Share button invokes the share seam with the invite text',
       (tester) async {
     final shared = <String>[];
