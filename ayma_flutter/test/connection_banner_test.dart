@@ -141,6 +141,47 @@ void main() {
     await _unmount(tester);
   });
 
+  // V7 (brief): the weak strip and the offline strip share identical 16/6
+  // padding + 14 icon + 12 text by design ("same treatment"), so they must
+  // render the SAME content height — otherwise the two strips would visibly
+  // jump when connection quality flaps weak <-> offline. (R7 holds this shared
+  // geometry as a pair; this test guards that it stays matched here.)
+  testWidgets('weak and offline strips render the same height', (tester) async {
+    double stripRowHeight(String label) => tester
+        .getSize(find.ancestor(of: find.text(label), matching: find.byType(Row))
+            .first)
+        .height;
+
+    final offlineHb = _scripted([
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+    ]);
+    await offlineHb.probeNow();
+    await offlineHb.probeNow();
+    await offlineHb.probeNow();
+    expect(offlineHb.state, ConnectionQuality.offline);
+    await tester.pumpWidget(_shell(offlineHb));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Offline — showing saved data'), findsOneWidget);
+    final offlineHeight = stripRowHeight('Offline — showing saved data');
+    await _unmount(tester);
+
+    final weakHb = _scripted([ProbeOutcome.slow, ProbeOutcome.slow]);
+    await weakHb.probeNow();
+    await weakHb.probeNow();
+    expect(weakHb.state, ConnectionQuality.weak);
+    await tester.pumpWidget(_shell(weakHb));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Weak connection — showing saved data'), findsOneWidget);
+    final weakHeight = stripRowHeight('Weak connection — showing saved data');
+    await _unmount(tester);
+
+    expect(weakHeight, moreOrLessEquals(offlineHeight, epsilon: 0.01),
+        reason: 'weak strip $weakHeight must match offline strip '
+            '$offlineHeight');
+  });
+
   // Regression (founder report, Nov 5 2026): with the banner up, every page
   // showed a dead band of empty space under the strip. The strip consumes
   // the status-bar inset with its own SafeArea; the page below then applied
