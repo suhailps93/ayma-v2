@@ -1065,7 +1065,10 @@ class _CreditHistoryState extends State<_CreditHistory> {
                   label: Text(label),
                   selected: _period == id,
                   onSelected: (_) => _select(id),
-                  visualDensity: VisualDensity.compact,
+                  labelPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                 ),
             ],
           ),
