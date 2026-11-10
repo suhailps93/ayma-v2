@@ -251,6 +251,82 @@ def test_recent_merges_raw_turns_voice_history_with_chat_messages():
     assert r["messages"][-1]["image_path"] == "uploads/u1/p.jpg"
 
 
+def test_recent_uses_each_voice_turns_own_persisted_time():
+    # Founder bug 2026-11-09: six turns of a 9:27-9:40 voice session all
+    # rendered as one shared minute because the whole raw_turns doc carried a
+    # single `updated_at` and every turn was synthesized from it. With per-turn
+    # `created_at` stamped by the voice agent, each turn keeps its own real time.
+    stamps = [
+        _T0 + timedelta(minutes=0),   # 9:27-ish
+        _T0 + timedelta(minutes=3),
+        _T0 + timedelta(minutes=5),
+        _T0 + timedelta(minutes=8),
+        _T0 + timedelta(minutes=11),
+        _T0 + timedelta(minutes=13),  # 9:40-ish
+    ]
+    texts = [
+        ("user", "Hey, how are you?"),
+        ("ayma", "I'm doing great, thanks for asking!"),
+        ("user", "Can you walk me through the app?"),
+        ("ayma", "Take a look, and just say next when you're ready."),
+        ("user", "next"),
+        ("ayma", "Here's the next step."),
+    ]
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [
+                {"role": r, "text": t, "created_at": s.isoformat()}
+                for (r, t), s in zip(texts, stamps)
+             ],
+             # The session doc's single last-write time — must NOT be what the
+             # turns render as anymore.
+             "updated_at": _T0 + timedelta(minutes=13)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    got = [m["created_at"] for m in r["messages"]]
+    # Every turn carries its own distinct real time, not one shared minute.
+    assert got == [s.isoformat() for s in stamps]
+    assert len(set(got)) == 6
+
+
+def test_recent_falls_back_to_session_time_for_legacy_untimed_turns():
+    # A pre-fix raw_turns doc with no per-turn created_at still renders in
+    # intra-session order from the session `updated_at` (old behavior intact).
+    base = _T0 + timedelta(hours=1)
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [
+                {"role": "user", "text": "a"},
+                {"role": "ayma", "text": "b"},
+             ], "updated_at": base},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    got = [datetime.fromisoformat(m["created_at"]) for m in r["messages"]]
+    assert got[0] < got[1] <= base
+
+
+def test_recent_drops_a_leaked_speech_markup_turn():
+    # Founder bug 2026-11-09: a voice turn that was nothing but speech-control
+    # markup ("<no speech>{pause}") must not resurface as a chat bubble on
+    # reload, even for turns persisted before the agent-side strip existed.
+    db = _FakeDB(
+        raw_rows=[
+            {"turns": [
+                {"role": "user", "text": "next"},
+                {"role": "ayma", "text": "<no speech>{pause}"},
+                {"role": "ayma", "text": "Take a look {pause} and say next."},
+             ], "updated_at": _T0 + timedelta(minutes=5)},
+        ],
+    )
+    r = chat_history.recent(db, "u1", limit=40)
+    texts = [m["text"] for m in r["messages"]]
+    assert texts == ["next", "Take a look and say next."]
+    assert "<no speech>" not in "".join(texts)
+    assert "{pause}" not in "".join(texts)
+
+
 def test_append_and_recent_carry_tool_labels_and_subject_image():
     db = _FakeDB()
     chat_history.append(

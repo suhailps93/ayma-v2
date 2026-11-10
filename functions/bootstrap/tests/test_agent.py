@@ -728,6 +728,73 @@ def test_relay_transcripts_strips_a_leaked_tool_artifact_before_relay():
     assert [t.text for t in collected] == [expected]
 
 
+def test_relay_transcripts_drops_a_speech_markup_only_turn():
+    """Founder bug 2026-11-09: an assistant turn that is nothing but
+    speech-control markup ("<no speech>{pause}") leaked into the chat as a
+    rendered bubble. It must neither relay to the client transcript nor land in
+    the raw_turns window — a real step/line carrying an inline directive still
+    delivers its words (and is stamped with its own time)."""
+    import asyncio
+
+    handlers = {}
+    published = []
+
+    class _FakeSession:
+        def on(self, name):
+            def _reg(fn):
+                handlers[name] = fn
+                return fn
+
+            return _reg
+
+    class _FakeLocalParticipant:
+        async def publish_data(self, payload, *, reliable, topic):
+            published.append((topic, json.loads(payload)))
+
+    class _FakeRoom:
+        local_participant = _FakeLocalParticipant()
+
+    class _FakeCtx:
+        room = _FakeRoom()
+
+    def _item(text):
+        class _Item:
+            role = "assistant"
+            text_content = text
+
+        class _ItemEv:
+            item = _Item()
+
+        return _ItemEv()
+
+    class _UserEv:
+        transcript = "next"
+        is_final = True
+
+    collected: list = []
+
+    async def _run():
+        agent.relay_transcripts(_FakeCtx(), _FakeSession(), collector=collected)
+        handlers["user_input_transcribed"](_UserEv())
+        handlers["conversation_item_added"](_item("<no speech>{pause}"))
+        handlers["conversation_item_added"](
+            _item("Take a look {pause} and just say next.")
+        )
+        await asyncio.sleep(0.01)
+
+    asyncio.run(_run())
+
+    # The markup-only turn never reached the transcript relay or the window.
+    agent_texts = [p["text"] for t, p in published if t == "agent_transcript"]
+    assert agent_texts == ["Take a look and just say next."]
+    assert [t.text for t in collected] == [
+        "next",
+        "Take a look and just say next.",
+    ]
+    # Every persisted turn carries its own real per-turn time.
+    assert all(t.created_at for t in collected)
+
+
 # --- "shut up" muting -------------------------------------------------
 
 

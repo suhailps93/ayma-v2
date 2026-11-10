@@ -41,6 +41,9 @@ class _FakeDb:
     def set(self, *a, **k):
         return self.doc.set(*a, **k)
 
+    def get(self, *a, **k):
+        return self.doc.get(*a, **k)
+
 
 def test_persist_writes_one_merged_doc_at_the_session_path():
     db = _FakeDb()
@@ -64,6 +67,77 @@ def test_persist_is_a_noop_for_empty_input():
     persist_raw_turns(db, "uid-1", "sess-1", [])
     persist_raw_turns(db, "", "sess-1", [Turn("user", "x")])
     assert db.doc.written is None
+
+
+def test_persist_writes_per_turn_created_at_when_the_caller_stamps_it():
+    # The voice agent stamps each turn with its own real time (founder bug
+    # 2026-11-09) — it rides through to the raw_turns doc per turn.
+    db = _FakeDb()
+    persist_raw_turns(
+        db,
+        "uid-1",
+        "sess-1",
+        [
+            Turn("user", "hey", created_at="2026-11-09T05:27:00+00:00"),
+            Turn("ayma", "hi", created_at="2026-11-09T05:40:00+00:00"),
+        ],
+    )
+    assert db.doc.written["turns"] == [
+        {"role": "user", "text": "hey",
+         "created_at": "2026-11-09T05:27:00+00:00"},
+        {"role": "ayma", "text": "hi",
+         "created_at": "2026-11-09T05:40:00+00:00"},
+    ]
+
+
+class _ReadableDoc(_FakeDoc):
+    """A raw_turns doc that already holds the agent's stamped turns, so a later
+    timeless client write can read them back and preserve the times."""
+
+    def __init__(self, stored_turns):
+        super().__init__()
+        self._stored = {"turns": stored_turns}
+
+    def get(self):
+        class _Snap:
+            exists = True
+
+            def __init__(self, data):
+                self._data = data
+
+            def to_dict(self):
+                return self._data
+
+        return _Snap(self._stored)
+
+
+class _ReadableDb(_FakeDb):
+    def __init__(self, stored_turns):
+        super().__init__()
+        self.doc = _ReadableDoc(stored_turns)
+
+
+def test_a_timeless_client_write_preserves_the_agents_per_turn_times():
+    # The client's own best-effort /post-turn window carries no per-turn times.
+    # merge=True replaces the whole `turns` array, so without preservation the
+    # agent's real per-turn stamps would be blanked and history would collapse
+    # back onto the single session minute (founder bug 2026-11-09).
+    db = _ReadableDb([
+        {"role": "user", "text": "hey", "created_at": "2026-11-09T05:27:00+00:00"},
+        {"role": "ayma", "text": "hi", "created_at": "2026-11-09T05:40:00+00:00"},
+    ])
+    persist_raw_turns(
+        db,
+        "uid-1",
+        "sess-1",
+        [Turn("user", "hey"), Turn("ayma", "hi")],  # client: no per-turn times
+    )
+    assert db.doc.written["turns"] == [
+        {"role": "user", "text": "hey",
+         "created_at": "2026-11-09T05:27:00+00:00"},
+        {"role": "ayma", "text": "hi",
+         "created_at": "2026-11-09T05:40:00+00:00"},
+    ]
 
 
 # --- persist_and_ingest -------------------------------------------------

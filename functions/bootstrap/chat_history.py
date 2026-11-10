@@ -14,9 +14,13 @@ Two sources, merged by :func:`recent`:
   image vanished from the transcript on reopen).
 * ``users/{uid}/raw_turns/{sessionId}`` — the per-session substrate wiki ingest
   reads: one doc per session holding the full interleaved **voice + text**
-  window (``turns: [{role, text}]``). This is where voice conversations,
-  Ayma's re-engagement check-ins, and any text that predates ``chat_messages``
-  live.
+  window (``turns: [{role, text, created_at?}]``). This is where voice
+  conversations, Ayma's re-engagement check-ins, and any text that predates
+  ``chat_messages`` live. Each turn carries its own ISO-8601 ``created_at`` —
+  stamped by the voice agent as the turn is spoken (§1.7 step 8) — so a reload
+  shows every voice turn's real time; a legacy turn with none falls back to the
+  session doc's ``updated_at`` minus a per-index second (founder bug
+  2026-11-09: a whole session otherwise collapsed onto one minute).
 
 ``recent`` flattens both onto one timeline so the transcript shows everything
 the user has actually said to Ayma, not just post-feature text.
@@ -27,6 +31,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
+
+from transcript import strip_speech_markup
 
 _MAX_TEXT = 8000
 _MAX_PAGE = 100
@@ -221,6 +227,19 @@ def _as_dt(v):
     return v if hasattr(v, "isoformat") else None
 
 
+def _parse_iso(v) -> datetime | None:
+    """Parse a per-turn ISO-8601 ``created_at`` string into a tz-aware
+    datetime, or ``None`` if it is missing/unparseable (the caller then falls
+    back to the session-doc timestamp)."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _norm_role(r: str) -> str:
     return "user" if r == "user" else "ayma"
 
@@ -316,6 +335,15 @@ def _collect(db, uid: str) -> list[dict]:
             if not text:
                 continue
             role = _norm_role(str((t or {}).get("role", "ayma")))
+            if role == "ayma":
+                # Clean any speech-control markup that reached a legacy
+                # persisted turn before the agent-side strip existed — a turn
+                # that was nothing but markup ("<no speech>{pause}") drops out
+                # here instead of resurfacing as a chat bubble on reload
+                # (founder bug 2026-11-09).
+                text = strip_speech_markup(text)
+                if not text:
+                    continue
             stripped = _strip_photo_marker(text)
             if (role, text) in seen or (role, stripped) in seen:
                 continue  # already have it from chat_messages OR an earlier
@@ -355,6 +383,12 @@ def _collect(db, uid: str) -> list[dict]:
                 continue
             if not stripped:
                 continue  # a bare "shared a photo" — the chat_messages row owns it
+            # Each turn's own real time, stamped by the voice agent when it was
+            # spoken (founder bug 2026-11-09). Only legacy turns with no per-turn
+            # time fall back to the session-doc `updated_at` minus a per-index
+            # second — the old behavior that collapsed a whole session onto the
+            # single session minute.
+            per_turn_ts = _parse_iso((t or {}).get("created_at"))
             # Recorded *before* the append below so a second/third copy of the
             # exact same turn — whether later in this doc or in an older
             # session doc processed next (`rt` is newest-`updated_at` first,
@@ -368,7 +402,10 @@ def _collect(db, uid: str) -> list[dict]:
             if len(stripped) >= 500:
                 seen_long.append((role, stripped))
             text = stripped
-            ts = (base - timedelta(seconds=(n - i))) if base else None
+            if per_turn_ts is not None:
+                ts = per_turn_ts
+            else:
+                ts = (base - timedelta(seconds=(n - i))) if base else None
             out.append({
                 "ts": ts,
                 "role": role,
