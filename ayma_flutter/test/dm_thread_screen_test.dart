@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/fresh_data.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/freshness_indicator.dart';
 import 'package:ayma_flutter/widgets/message_timestamp.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -278,6 +279,13 @@ void main() {
       expect(find.text('Things to talk about'), findsOneWidget);
       expect(find.text('Ask about the dog park'), findsOneWidget);
       expect(find.byTooltip('Dismiss tip'), findsNothing);
+      // Jobs pass cluster 15 (defect 6): the chip's (16, 16) padding lands it
+      // at or above the 44pt touch floor.
+      final chip = find.ancestor(
+        of: find.text('Ask about the dog park'),
+        matching: find.byType(InkWell),
+      );
+      expect(tester.getSize(chip).height, greaterThanOrEqualTo(44.0));
       // The first fetch was made with an empty tail.
       expect(dm.assistCalls.first, isEmpty);
     },
@@ -333,6 +341,14 @@ void main() {
         find.text('She just opened up — match her energy.'),
         findsOneWidget,
       );
+      // Jobs pass cluster 15 (defect 9): the coach-tip dismiss renders a full
+      // 48 (no compact density).
+      final tipDismiss = tester.getSize(find.ancestor(
+        of: find.byTooltip('Dismiss tip'),
+        matching: find.byType(IconButton),
+      ));
+      expect(tipDismiss.width, greaterThanOrEqualTo(48.0));
+      expect(tipDismiss.height, greaterThanOrEqualTo(48.0));
 
       // The tip is dismissible and stays gone until a different tip arrives.
       await tester.tap(find.byTooltip('Dismiss tip'));
@@ -486,6 +502,19 @@ void main() {
         findsOneWidget,
       );
       expect(find.byTooltip('Dismiss safety note'), findsOneWidget);
+      // Jobs pass cluster 15: the shield reads in warningText (defect 11, was
+      // 2.01 light), and the dismiss button renders a full 48 (defect 7, no
+      // compact density). No explicit theme → context.ac is AymaTokens.dark.
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.shield_outlined)).color,
+        AymaTokens.dark.warningText,
+      );
+      final dismiss = tester.getSize(find.ancestor(
+        of: find.byTooltip('Dismiss safety note'),
+        matching: find.byType(IconButton),
+      ));
+      expect(dismiss.width, greaterThanOrEqualTo(48.0));
+      expect(dismiss.height, greaterThanOrEqualTo(48.0));
       // The normal coach tip + chips coexist (safety is an additional note).
       expect(find.text('Trust your gut here.'), findsOneWidget);
       expect(find.byTooltip('Dismiss tip'), findsOneWidget);
@@ -962,6 +991,22 @@ void main() {
     expect(find.text('Photo'), findsOneWidget);
     expect(find.text('Camera'), findsOneWidget);
     expect(find.text('File'), findsOneWidget);
+
+    // Jobs pass cluster 15 (defects 1–2): the sheet tiles sit at the share
+    // sheet's 20-start / 24-end inset, and a 24 bottom space closes the sheet.
+    for (final label in ['Photo', 'Camera', 'File']) {
+      final tile = tester.widget<ListTile>(find.widgetWithText(ListTile, label));
+      expect(tile.contentPadding,
+          const EdgeInsetsDirectional.only(start: 20, end: 24));
+    }
+    expect(
+      find.descendant(
+        of: find.byType(SafeArea),
+        matching: find.byWidgetPredicate(
+            (w) => w is SizedBox && w.height == 24 && w.width == null),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -1119,6 +1164,23 @@ void main() {
 
     expect(find.text('Priya Nair'), findsOneWidget);
     expect(find.text('Conversation'), findsNothing);
+
+    // Jobs pass cluster 15: the header avatar initial reads in fgDim (defect
+    // 3) and the online dot in successText (defect 4). No explicit theme →
+    // context.ac is AymaTokens.dark.
+    expect(
+      tester.widget<Text>(find.text('P')).style?.color,
+      AymaTokens.dark.fgDim,
+    );
+    final onlineDot = tester.widgetList<Container>(find.byType(Container)).where(
+      (c) {
+        final d = c.decoration;
+        return d is BoxDecoration &&
+            d.shape == BoxShape.circle &&
+            d.color == AymaTokens.dark.successText;
+      },
+    );
+    expect(onlineDot, isNotEmpty);
   });
 
   testWidgets('tapping the header opens the other person\'s public profile', (
@@ -1242,6 +1304,18 @@ void main() {
       // A time label on each bubble (received + sent).
       expect(find.text(formatMessageTime(d1)), findsOneWidget);
       expect(find.text(formatMessageTime(d2)), findsOneWidget);
+
+      // Jobs pass cluster 15 (defects 12–13): the mine bubble's timestamp is
+      // solid onAccent (no 0.72 alpha) and the incoming one is fgDim (not
+      // fgMute). No explicit theme → context.ac is AymaTokens.dark.
+      expect(
+        tester.widget<Text>(find.text(formatMessageTime(d2))).style?.color,
+        AymaTokens.dark.onAccent,
+      );
+      expect(
+        tester.widget<Text>(find.text(formatMessageTime(d1))).style?.color,
+        AymaTokens.dark.fgDim,
+      );
 
       // A divider chip for each distinct day (the first dated message always
       // gets one; the day change adds the second).

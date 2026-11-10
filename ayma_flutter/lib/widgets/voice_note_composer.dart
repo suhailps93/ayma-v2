@@ -391,7 +391,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: AymaType.sans(
                         size: 13,
-                        color: cancelArmed ? AymaColors.error : ac.fgMute,
+                        color: cancelArmed ? ac.errorText : ac.fgMute,
                       ),
                     ),
                   ),
@@ -410,7 +410,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                     'Slide up to lock',
                     style: AymaType.sans(
                       size: 12,
-                      color: Color.lerp(ac.fgMute, ac.accent, lockProgress),
+                      color: Color.lerp(ac.fgMute, ac.accentText, lockProgress),
                     ),
                   ),
                 ],
@@ -436,7 +436,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: 2),
+                const SizedBox(width: 4),
                 Icon(
                   Icons.chevron_left_rounded,
                   size: 18,
@@ -446,7 +446,7 @@ class VoiceNoteRecordingBar extends StatelessWidget {
                   'Slide to cancel',
                   style: AymaType.sans(
                     size: 13,
-                    color: cancelArmed ? AymaColors.error : ac.fgMute,
+                    color: cancelArmed ? ac.errorText : ac.fgMute,
                   ),
                 ),
               ],

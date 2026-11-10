@@ -294,7 +294,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
     if (rows.isEmpty) {
       return CenteredScroll(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.symmetric(horizontal: 40),
         child: Text(
           'No matches or conversations yet.\nExplore to get started.',
           textAlign: TextAlign.center,
@@ -392,7 +392,7 @@ class _Row {
                   alignment: Alignment.center,
                   child: Text(
                     name.isNotEmpty ? name[0].toUpperCase() : '?',
-                    style: AymaType.sans(size: 16, color: ac.fgMute),
+                    style: AymaType.sans(size: 16, color: ac.fgDim),
                   ),
                 )
               : AymaPhoto(url: photo, displayWidth: 40),
@@ -414,11 +414,11 @@ class _Row {
               padding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: ac.accentSoft,
+                color: ac.accentFaint,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text('Matched',
-                  style: AymaType.mono(size: 9, color: ac.accent)),
+                  style: AymaType.mono(size: 9, color: ac.accentText)),
             ),
           ],
         ],
@@ -445,7 +445,7 @@ class _Row {
                   heightFactor: 1,
                   child: Text(unread > 99 ? '99+' : '$unread',
                       style: AymaType.sans(
-                          size: 12, color: ac.bg, weight: FontWeight.w700)),
+                          size: 12, color: ac.onAccent, weight: FontWeight.w700)),
               ),
             )
           : null,
