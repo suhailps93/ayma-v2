@@ -649,7 +649,7 @@ class AymaTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: t.fg,
-          side: BorderSide(color: t.line),
+          side: BorderSide(color: t.boundary),
           textStyle: AymaType.sans(size: 15, weight: FontWeight.w500),
           minimumSize: const Size.fromHeight(52),
           shape: _pill,
@@ -676,7 +676,7 @@ class AymaTheme {
       chipTheme: ChipThemeData(
         backgroundColor: t.bgElev,
         selectedColor: t.accentSoft,
-        side: BorderSide(color: t.line),
+        side: BorderSide(color: t.boundary),
         shape: const StadiumBorder(),
         labelStyle: AymaType.sans(size: 13, color: t.fg),
         secondaryLabelStyle: AymaType.sans(size: 13, color: t.fg),
@@ -703,6 +703,20 @@ class AymaTheme {
       // Route them through the dedicated track token. The active track keeps
       // the M3 default `primary` (= accent).
       sliderTheme: SliderThemeData(inactiveTrackColor: t.track),
+      // M3 Switch inactive track: the framework default outline is `outline`
+      // (= raw [line], 1.54/1.57 vs bg — a hairline that fails the 3:1 non-text
+      // floor), so an OFF switch is near-invisible. Route the inactive track
+      // outline through [boundary] so the OFF state reads at a glance on bg.
+      // The selected (ON) state is untouched: its outline stays transparent and
+      // its track keeps the M3 default (accent fill, black thumb). Colour only —
+      // switches still write live.
+      switchTheme: SwitchThemeData(
+        trackOutlineColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? Colors.transparent
+              : t.boundary,
+        ),
+      ),
       progressIndicatorTheme:
           ProgressIndicatorThemeData(color: t.accent),
     );
