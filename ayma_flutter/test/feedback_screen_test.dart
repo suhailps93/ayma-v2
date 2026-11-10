@@ -100,4 +100,28 @@ void main() {
     expect(sent!['kind'], 'feature');
     expect(sent!['source'], 'settings_form');
   });
+
+  testWidgets('the Kind SegmentedButton clears the 44 touch floor',
+      (tester) async {
+    tester.view.physicalSize = const Size(1100, 2200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final api = ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient(
+          (req) async => http.Response(jsonEncode({'ok': true}), 200)),
+    );
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: FeedbackScreen(api: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // Defect 4: the minimumSize 44 fix keeps the control at the padded 48
+    // tap-target height — above the 44 absolute floor in both states.
+    final seg = find.byType(SegmentedButton<String>);
+    expect(seg, findsOneWidget);
+    expect(tester.getSize(seg).height, greaterThanOrEqualTo(44.0));
+  });
 }
