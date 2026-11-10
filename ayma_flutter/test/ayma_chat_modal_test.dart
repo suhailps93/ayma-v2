@@ -7,12 +7,33 @@
 // coverage of the same mechanisms against production wiring lives in
 // `global_ayma_launcher_test.dart` (drag-down) and
 // `ask_ayma_overlay_dismiss_test.dart` (tap-outside).
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_chat_modal.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Finder _handle() => find.byKey(const ValueKey('aymaChatModalHandle'));
+
+Future<void> _openThemed(WidgetTester tester, ThemeData theme) async {
+  await tester.pumpWidget(MaterialApp(
+    theme: theme,
+    home: Scaffold(
+      body: Builder(
+        builder: (context) => ElevatedButton(
+          onPressed: () => showAymaChatModal(
+            context,
+            builder: (_) => const Center(child: Text('modal content')),
+          ),
+          child: const Text('open'),
+        ),
+      ),
+    ),
+  ));
+  await tester.tap(find.text('open'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
 
 Future<void> _open(WidgetTester tester) async {
   await tester.pumpWidget(MaterialApp(
@@ -401,4 +422,44 @@ void main() {
     final handleBottom = tester.getBottomLeft(_handle()).dy;
     expect(handleBottom, lessThanOrEqualTo(barRect.top + 1));
   });
+
+  // Jobs pass cluster 20 — defects 13, 14, 15 (radius/color, no behavior).
+  // Themes are built INSIDE each body (never at collection time) so the
+  // google_fonts asset load happens under the test binding.
+  for (final dark in [false, true]) {
+    final label = dark ? 'dark' : 'light';
+    ThemeData makeTheme() => dark ? AymaTheme.dark : AymaTheme.light;
+
+    testWidgets('$label: docked sheet top radius is 28-based, edge + pill '
+        'read boundary (defects 13, 14, 15)', (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await _openThemed(tester, theme);
+
+      final box = tester.widget<DecoratedBox>(
+          find.byKey(const ValueKey('aymaChatModalSheetBox')));
+      final deco = box.decoration as BoxDecoration;
+      final topRadius = (deco.borderRadius as BorderRadius).topLeft.x;
+      final edge = (deco.border as Border).top.color;
+
+      // The edge fades with _dockedness; at the docked snap its alpha equals
+      // dockedness, and the top radius equals 28 * dockedness — so the radius
+      // base is 28 (a 22 base would not match). Edge RGB equals boundary RGB.
+      expect(edge.r, closeTo(ac.boundary.r, 0.001));
+      expect(edge.g, closeTo(ac.boundary.g, 0.001));
+      expect(edge.b, closeTo(ac.boundary.b, 0.001));
+      expect(topRadius, closeTo(28.0 * edge.a, 0.5));
+
+      // Drag pill (36x4, radius 2) reads boundary with no alpha scaling.
+      final pill = tester.widget<Container>(find.descendant(
+        of: _handle(),
+        matching: find.byWidgetPredicate((w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).borderRadius ==
+                BorderRadius.circular(2)),
+      ));
+      expect((pill.decoration as BoxDecoration).color, ac.boundary);
+    });
+  }
 }

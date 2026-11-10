@@ -218,7 +218,7 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       child: _sent ? _sentView(ac) : _draftView(ac),
     );
@@ -227,7 +227,7 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
   Widget _sentView(AymaTokens ac) => Row(
         key: const ValueKey('feedback-sent'),
         children: [
-          Icon(Icons.check_circle, size: 18, color: ac.success),
+          Icon(Icons.check_circle, size: 18, color: ac.successText),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -282,7 +282,10 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
             minLines: 2,
             maxLines: 6,
             maxLength: 4000,
-            decoration: const InputDecoration(labelText: 'Details'),
+            decoration: const InputDecoration(
+              labelText: 'Details',
+              counterText: '',
+            ),
           ),
         ] else ...[
           if (_title.text.trim().isNotEmpty)
@@ -305,7 +308,7 @@ class _FeedbackDraftCardState extends State<FeedbackDraftCard> {
             child: Row(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   child: Image.file(_shot!,
                       width: 56, height: 56, fit: BoxFit.cover),
                 ),
@@ -373,7 +376,7 @@ class _KindChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final bg = isBug ? ac.warning.withValues(alpha: 0.16) : ac.accentFaint;
-    final fg = isBug ? ac.warning : ac.accent;
+    final fg = ac.fg;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(

@@ -227,11 +227,11 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
         decoration: BoxDecoration(
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: ac.lineSoft, width: 0.5),
+          border: Border.all(color: ac.boundary, width: 0.5),
         ),
         child: Row(
           children: [
-            Icon(Icons.check_circle, size: 18, color: ac.success),
+            Icon(Icons.check_circle, size: 18, color: ac.successText),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -248,18 +248,18 @@ class _FeedbackBubbleCardState extends State<FeedbackBubbleCard> {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.feedback_outlined, size: 16, color: ac.accent),
+              Icon(Icons.feedback_outlined, size: 16, color: ac.accentText),
               const SizedBox(width: 8),
               Text(
                 'Feedback',
-                style: AymaType.sans(size: 12, color: ac.accent)
+                style: AymaType.sans(size: 12, color: ac.accentText)
                     .copyWith(fontWeight: FontWeight.w600),
               ),
             ],

@@ -231,4 +231,31 @@ void main() {
     expect(find.text('USAGE SCREEN'), findsOneWidget);
     expect(find.byType(OutOfCreditsBanner), findsNothing);
   });
+
+  // Jobs pass cluster 20 — defect 17 (color only, no behavior).
+  // Themes are built INSIDE each body (never at collection time) so the
+  // google_fonts asset load happens under the test binding.
+  for (final dark in [false, true]) {
+    final label = dark ? 'dark' : 'light';
+    ThemeData makeTheme() => dark ? AymaTheme.dark : AymaTheme.light;
+
+    testWidgets('$label: banner border reads boundary (defect 17)',
+        (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(MaterialApp(
+        theme: theme,
+        home: const Scaffold(body: Center(child: OutOfCreditsBanner())),
+      ));
+      final border = tester
+          .widgetList<Container>(find.descendant(
+              of: find.byType(OutOfCreditsBanner),
+              matching: find.byType(Container)))
+          .map((c) => c.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((d) => d.border is Border)
+          .border as Border;
+      expect(border.top.color, ac.boundary);
+    });
+  }
 }

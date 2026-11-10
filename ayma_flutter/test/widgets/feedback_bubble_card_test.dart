@@ -28,10 +28,19 @@ ApiClient _api(List<Map<String, dynamic>> captured) => ApiClient(
       ),
     );
 
-Widget _wrap(Widget child) => MaterialApp(
-      theme: AymaTheme.light,
+Widget _wrap(Widget child, [ThemeData? theme]) => MaterialApp(
+      theme: theme ?? AymaTheme.light,
       home: Scaffold(body: SingleChildScrollView(child: child)),
     );
+
+Border? _firstBorder(WidgetTester tester, Finder scope) {
+  for (final c in tester.widgetList<Container>(
+      find.descendant(of: scope, matching: find.byType(Container)))) {
+    final d = c.decoration;
+    if (d is BoxDecoration && d.border is Border) return d.border as Border;
+  }
+  return null;
+}
 
 FeedbackBubbleCard _card(
   List<Map<String, dynamic>> captured, {
@@ -284,4 +293,48 @@ void main() {
     expect(captured, hasLength(1));
     expect((captured.single['body'] as Map)['screenshot_paths'], isEmpty);
   });
+
+  // Jobs pass cluster 20 — defects 1, 2, 3, 4 (color only, no behavior).
+  // Themes are built INSIDE each body (never at collection time) so the
+  // google_fonts asset load happens under the test binding.
+  for (final dark in [false, true]) {
+    final label = dark ? 'dark' : 'light';
+    ThemeData makeTheme() => dark ? AymaTheme.dark : AymaTheme.light;
+
+    testWidgets('$label: header label + icon read accentText, form border '
+        'boundary (defects 1, 2)', (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(_wrap(_card([]), theme));
+      final icon =
+          tester.widget<Icon>(find.byIcon(Icons.feedback_outlined));
+      expect(icon.color, ac.accentText);
+      final labelText = tester.widget<Text>(find.text('Feedback'));
+      expect(labelText.style!.color, ac.accentText);
+      final border = _firstBorder(
+          tester, find.byType(FeedbackBubbleCard));
+      expect(border!.top.color, ac.boundary);
+    });
+
+    testWidgets('$label: sent check icon reads successText, sent border '
+        'boundary (defects 3, 4)', (tester) async {
+      final theme = makeTheme();
+      final ac = theme.extension<AymaTokens>()!;
+      await tester.pumpWidget(_wrap(
+        FeedbackBubbleCard(
+          trigger: FeedbackBubbleTrigger.explicit,
+          initiallySent: true,
+          api: _api([]),
+          appVersionOverride: '1.30.0',
+          platformOverride: 'android',
+        ),
+        theme,
+      ));
+      final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+      expect(icon.color, ac.successText);
+      final border = _firstBorder(
+          tester, find.byType(FeedbackBubbleCard));
+      expect(border!.top.color, ac.boundary);
+    });
+  }
 }
