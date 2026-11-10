@@ -363,4 +363,101 @@ void main() {
         lessThan(4.5),
         reason: 'white-on-accentText fails in dark — option (a) closed');
   });
+
+  // -------------------------------------------------------------------------
+  // Jobs token follow-up #2: R5 linkText token, R6 accentText extended to
+  // bgCard (+R9 match scores), R7 pre-run sheet flip. All values derived via
+  // AymaColors.textSafe (no hand-picked shades).
+  // -------------------------------------------------------------------------
+
+  // R5 — linkText: the raw link blue fails the 4.5 text floor on every
+  // surface a MarkdownText link renders on (bg, bgElev, bgCard). The derived
+  // linkText clears >=4.5 (target 4.6) on all three in both themes.
+  test('R5: linkText reads >=4.5:1 on bg, bgElev AND bgCard in both themes',
+      () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.linkText, t.bg), greaterThanOrEqualTo(4.5),
+          reason: 'linkText on bg');
+      expect(_contrastRatio(t.linkText, t.bgElev), greaterThanOrEqualTo(4.5),
+          reason: 'linkText on bgElev');
+      expect(_contrastRatio(t.linkText, t.bgCard), greaterThanOrEqualTo(4.5),
+          reason: 'linkText on bgCard');
+    }
+    // The raw AymaColors.link it is derived from FAILS the floor on all three
+    // surfaces — exactly why the derived token was needed.
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(AymaColors.link, t.bg), lessThan(4.5));
+      expect(_contrastRatio(AymaColors.link, t.bgElev), lessThan(4.5));
+      expect(_contrastRatio(AymaColors.link, t.bgCard), lessThan(4.5));
+    }
+    // Derived, not hand-picked: linkText keeps the link-blue hue.
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      final liveHue = HSLColor.fromColor(AymaColors.link).hue;
+      final textHue = HSLColor.fromColor(t.linkText).hue;
+      expect((liveHue - textHue).abs(), lessThan(1.0),
+          reason: 'linkText hue must track the raw link blue');
+    }
+  });
+
+  // R6 (+R9) — accentText extended to bgCard: clears >=4.5 on bgCard in both
+  // themes for BOTH the default cherry and the founder terracotta, with NO
+  // regression on bg, bgElev or accentFaint-over-bg. The two match-score
+  // sites (matches_screen) route through this token.
+  for (final pick in <(String, Color)>[
+    ('default Cherry Fuchsia', AymaColors.accent),
+    ('founder terracotta', terracotta),
+  ]) {
+    final (label, accent) = pick;
+    test('R6: accentText reads >=4.5:1 on bgCard in both themes AND keeps '
+        'bg/bgElev/accentFaint passing ($label)', () {
+      for (final t in [lightAcc(accent), darkAcc(accent)]) {
+        final faint = Color.alphaBlend(t.accentFaint, t.bg);
+        // The new surface — match scores, dialog TextButton labels.
+        expect(_contrastRatio(t.accentText, t.bgCard), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on bgCard (R6/R9)');
+        // No regression on the existing surfaces.
+        expect(_contrastRatio(t.accentText, t.bg), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on bg (no regression)');
+        expect(_contrastRatio(t.accentText, t.bgElev), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on bgElev (no regression)');
+        expect(_contrastRatio(t.accentText, faint), greaterThanOrEqualTo(4.5),
+            reason: '$label accentText on accentFaint-over-bg (no regression)');
+      }
+    });
+  }
+
+  // R9 — the raw accent (what the match scores used before) FAILS on bgCard,
+  // so routing them through the extended accentText is load-bearing.
+  test('R9: raw accent fails >=4.5:1 on bgCard (why match scores route through '
+      'accentText)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(AymaColors.accent, t.bgCard), lessThan(4.5),
+          reason: 'raw accent on bgCard fails — folds into R6');
+    }
+  });
+
+  // R7 — pre-run sheet flip (bgElev -> bgCard): the swapped text tokens and
+  // the border token all read on the new bgCard fill in both themes.
+  test('R7: fgDim reads >=4.5:1 on bgCard (guidance/skipped-note swap) while '
+      'fgMute stays below the floor (the guard that forced the swap)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.fgDim, t.bgCard), greaterThanOrEqualTo(4.5),
+          reason: 'fgDim on bgCard (the replacement)');
+      // fgMute on bgCard is the measured 4.30 failure the swap works around.
+      expect(_contrastRatio(t.fgMute, t.bgCard), lessThan(4.5),
+          reason: 'fgMute on bgCard below floor — why fgDim was needed');
+    }
+  });
+
+  test('R7: pre-run group border reads — lineSoft fails on bgCard so the '
+      'border routes through the boundary token (>=3:1 non-text floor)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      // The old lineSoft border does NOT read on the flipped bgCard fill.
+      expect(_contrastRatio(t.lineSoft, t.bgCard), lessThan(3.0),
+          reason: 'lineSoft on bgCard below the 3:1 non-text floor');
+      // The boundary token the border now uses clears the 3:1 floor.
+      expect(_contrastRatio(t.boundary, t.bgCard), greaterThanOrEqualTo(3.0),
+          reason: 'boundary on bgCard reads (the fix)');
+    }
+  });
 }

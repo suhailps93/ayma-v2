@@ -763,9 +763,9 @@ class _AxisGroup extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: ac.bgElev,
+        color: ac.bgCard,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ac.lineSoft),
+        border: Border.all(color: ac.boundary),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -795,7 +795,7 @@ class _AxisGroup extends StatelessWidget {
                 ? '$guidance  ·  ${selected.length} selected'
                     '${selected.length >= maxSel ? ' (max)' : ''}'
                 : guidance,
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgDim),
           ),
           const SizedBox(height: 8),
           if (!hasPhotos)
@@ -841,7 +841,7 @@ class _AxisGroup extends StatelessWidget {
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 "Skipped — I won't run this section.",
-                style: AymaType.sans(size: 11.5, color: ac.fgMute),
+                style: AymaType.sans(size: 11.5, color: ac.fgDim),
               ),
             ),
         ],
