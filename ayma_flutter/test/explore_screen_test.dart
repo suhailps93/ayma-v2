@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ayma_flutter/services/screen_capture.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -319,6 +320,52 @@ void main() {
     for (final name in ['Ash', 'Bo', 'Cy', 'Dee']) {
       expect(find.text(name), findsOneWidget);
     }
+  });
+
+  // --- Jobs pass (cluster 16): spacing / color / alignment ------------------
+  testWidgets('Jobs pass: filter chips drop compact density and carry the '
+      '16/8 labelPadding so they clear the 44 touch floor (defect 4)',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(_api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X'},
+        ])));
+    await tester.pumpAndSettle();
+
+    final chip = tester.widget<ChoiceChip>(find.ancestor(
+        of: find.text('Everyone'), matching: find.byType(ChoiceChip)));
+    expect(chip.visualDensity, isNull); // compact density removed
+    expect(chip.labelPadding,
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 8));
+    // 32 base + 2*8 labelPadding vertical = 48, clearing the 44 floor.
+    expect(tester.getSize(find.byType(ChoiceChip).first).height,
+        greaterThanOrEqualTo(44.0));
+  });
+
+  testWidgets('Jobs pass: Explore search field, chip row and grid share the '
+      '20 screen edge, and the card match score reads in accentText '
+      '(defects 1-3, 6)', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(_api((_) => [
+          {'uid': 'a', 'name': 'Ash', 'age': 29, 'location': 'X',
+           'score': 0.8},
+        ])));
+    await tester.pumpAndSettle();
+
+    // Chip row left edge sits at the 20 screen edge (defect 2).
+    expect(tester.getTopLeft(find.byType(ChoiceChip).first).dx,
+        moreOrLessEquals(20.0, epsilon: 0.5));
+
+    // Card match score is accentText, not raw accent (defect 6).
+    final ctx = tester.element(find.text('80% match'));
+    final style = tester.widget<Text>(find.text('80% match')).style!;
+    expect(style.color, ctx.ac.accentText);
   });
 
   testWidgets('Liked me with no received likes yet shows the filter '

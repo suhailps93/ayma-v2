@@ -85,4 +85,34 @@ void main() {
 
     expect(find.text('Ayma thinks this is you'), findsOneWidget);
   });
+
+  // --- Jobs pass (cluster 16): detail-sheet source label color (defect 12) ---
+  testWidgets('PhotoDetailSheet web/deleted source label reads in '
+      'errorTextCard, not raw error', (tester) async {
+    const photo = AiNotePhoto(
+      id: 'p1',
+      url: 'https://example.invalid/photo.png',
+      source: 'web',
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: PhotoDetailSheet(
+          photo: photo,
+          onHide: () async {},
+          onPublish: () async {},
+          onChat: () {},
+        ),
+      ),
+    ));
+    await tester.pump();
+
+    final labelFinder = find.text('AI only — Ayma found this online');
+    expect(labelFinder, findsOneWidget);
+    final ctx = tester.element(labelFinder);
+    final style = tester.widget<Text>(labelFinder).style!;
+    expect(style.color, ctx.ac.errorTextCard);
+    expect(style.color, isNot(ctx.ac.error)); // the card-safe token, not raw
+  });
 }

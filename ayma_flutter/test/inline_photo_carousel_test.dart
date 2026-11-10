@@ -272,6 +272,18 @@ void main() {
       expect(find.byKey(const ValueKey('inlinePhotoAddTile')), findsOneWidget);
     });
 
+    // Jobs pass (cluster 16, defect 11): the small primary-badge star on the
+    // editable strip renders white (6.19 on the black-0.62 disc), not raw
+    // accent (1.53 over a light photo).
+    testWidgets('the primary-badge star on the strip renders white',
+        (tester) async {
+      await pumpScreen(tester, ['a', 'b']);
+      final badge = find.byWidgetPredicate((w) =>
+          w is Icon && w.icon == Icons.star_rounded && w.size == 12);
+      expect(badge, findsOneWidget);
+      expect(tester.widget<Icon>(badge).color, Colors.white);
+    });
+
     testWidgets('the last public photo cannot be removed', (tester) async {
       final svc = _FakePhotoService([_photo('only')]);
       final c = await pumpScreen(tester, [], svc: svc);
