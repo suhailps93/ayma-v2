@@ -104,7 +104,12 @@ from tool_labels import GUIDED_TOUR_TOOLS as _GUIDED_TOUR_TOOLS  # noqa: E402
 from tool_labels import NAV_CHIP_TOOLS as _NAV_CLAIM_TOOLS  # noqa: E402
 from tool_labels import tool_label as _tool_label  # noqa: E402
 from tool_labels import working_label as _working_label  # noqa: E402
-from transcript import ROLE_AYMA, ROLE_USER, Turn  # noqa: E402
+from transcript import (  # noqa: E402
+    ROLE_AYMA,
+    ROLE_USER,
+    Turn,
+    strip_speech_markup,
+)
 from practice_core import PracticePersistQueue  # noqa: E402
 
 logger = logging.getLogger("ayma.agent")
@@ -1241,6 +1246,16 @@ _LEADING_GLUED_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_]{17,}(?=[\s]|$)")
 _LEADING_STRUCTURED_ARTIFACT_RE = re.compile(r"^([^.!?\n]{1,120}?):(?=[A-Z])")
 
 
+def _now_iso() -> str:
+    """UTC wall-clock of this instant as an ISO-8601 string — the per-turn
+    timestamp stamped on each finalized voice turn (§1.7 step 8) so a history
+    reload shows each turn's own real time, not the session's last-write minute
+    (founder bug 2026-11-09)."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _strip_leaked_tool_artifact(text: str) -> str:
     """Defensive filter for a leaked tool-call artifact seen at the very start
     of Gemini Live's own ``output_transcription`` — the audio track it
@@ -1402,7 +1417,9 @@ def relay_transcripts(
             # pending tour narration — reset the latch so it can't leak forward.
             tour_gate.pending = False
         if collector is not None and ev.is_final and ev.transcript.strip():
-            collector.append(Turn(ROLE_USER, ev.transcript.strip()))
+            collector.append(
+                Turn(ROLE_USER, ev.transcript.strip(), created_at=_now_iso())
+            )
 
     @session.on("conversation_item_added")
     def _on_item(ev: ConversationItemAddedEvent) -> None:
@@ -1418,9 +1435,17 @@ def relay_transcripts(
             # never persists (founder/Scout, 2026-11-03).
             tour_gate.pending = False
             return
+        # Strip inline speech-control markup ("<no speech>{pause}", "{laugh}")
+        # the model emits for the synthesizer — it is never a chat message
+        # (founder bug 2026-11-09). A turn that was nothing but markup becomes
+        # empty here and is dropped from both the relay and raw_turns; a real
+        # line that merely contained a directive keeps its words.
+        text = strip_speech_markup(text)
+        if not text:
+            return
         _publish_transcript(ctx, TOPIC_AGENT_TRANSCRIPT, text, True)
-        if collector is not None and text:
-            collector.append(Turn(ROLE_AYMA, text))
+        if collector is not None:
+            collector.append(Turn(ROLE_AYMA, text, created_at=_now_iso()))
 
 
 def relay_agent_state(ctx: JobContext, session: AgentSession) -> None:

@@ -14,9 +14,13 @@ Two sources, merged by :func:`recent`:
   image vanished from the transcript on reopen).
 * ``users/{uid}/raw_turns/{sessionId}`` — the per-session substrate wiki ingest
   reads: one doc per session holding the full interleaved **voice + text**
-  window (``turns: [{role, text}]``). This is where voice conversations,
-  Ayma's re-engagement check-ins, and any text that predates ``chat_messages``
-  live.
+  window (``turns: [{role, text, created_at?}]``). This is where voice
+  conversations, Ayma's re-engagement check-ins, and any text that predates
+  ``chat_messages`` live. Each turn carries its own ISO-8601 ``created_at`` —
+  stamped by the voice agent as the turn is spoken (§1.7 step 8) — so a reload
+  shows every voice turn's real time; a legacy turn with none falls back to the
+  session doc's ``updated_at`` minus a per-index second (founder bug
+  2026-11-09: a whole session otherwise collapsed onto one minute).
 
 ``recent`` flattens both onto one timeline so the transcript shows everything
 the user has actually said to Ayma, not just post-feature text.
@@ -27,6 +31,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
+
+from transcript import strip_speech_markup
 
 _MAX_TEXT = 8000
 _MAX_PAGE = 100
@@ -221,8 +227,41 @@ def _as_dt(v):
     return v if hasattr(v, "isoformat") else None
 
 
+def _parse_iso(v) -> datetime | None:
+    """Parse a per-turn ISO-8601 ``created_at`` string into a tz-aware
+    datetime, or ``None`` if it is missing/unparseable (the caller then falls
+    back to the session-doc timestamp)."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _norm_role(r: str) -> str:
     return "user" if r == "user" else "ayma"
+
+
+def _ts_is_better(this_ts, this_real: bool, cur_ts, cur_real: bool) -> bool:
+    """Whether a duplicate occurrence's time should replace the kept row's.
+
+    A turn's true time is immutable once it exists: a real per-turn
+    ``created_at`` always beats a session-synthesized one, and within the same
+    kind the EARLIER time wins. This is what stops a re-synced copy of an older
+    session — persisted tonight into a fresh ``raw_turns`` doc with tonight's
+    ``updated_at`` and no per-turn time — from overwriting the turn's original
+    time (founder addendum 2026-11-09: an older guided-tour session re-stamped
+    9:40 PM the night it synced back into history)."""
+    if this_ts is None:
+        return False
+    if this_real and not cur_real:
+        return True
+    if cur_real and not this_real:
+        return False
+    # Same kind (both real or both synthesized): the earliest occurrence wins.
+    return cur_ts is None or this_ts < cur_ts
 
 
 def _collect(db, uid: str) -> list[dict]:
@@ -231,6 +270,39 @@ def _collect(db, uid: str) -> list[dict]:
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     seen_long: list[tuple[str, str]] = []
+    # The kept row per (role, text) — so a duplicate occurrence of a turn can
+    # upgrade the kept row's timestamp to the turn's true (earliest / real) time
+    # instead of being silently dropped. `kept_long` is the same for the
+    # prefix-matched long-turn case. Rows from `chat_messages` are locked (they
+    # own the authoritative send time); raw_turns rows may be upgraded.
+    kept: dict[tuple[str, str], dict] = {}
+    kept_long: list[tuple[str, str, dict]] = []
+
+    def _register(role: str, keys: list[str], row: dict, *, locked: bool) -> None:
+        row["_locked"] = locked
+        for key in keys:
+            kept[(role, key)] = row
+            if len(key) >= 500:
+                kept_long.append((role, key, row))
+
+    def _upgrade(role: str, keys: list[str], this_ts, this_real: bool) -> None:
+        row = None
+        for key in keys:
+            row = kept.get((role, key))
+            if row is not None:
+                break
+        if row is None:
+            for r, s, cand in kept_long:
+                if r == role and any(
+                    s.startswith(k) or k.startswith(s) for k in keys
+                ):
+                    row = cand
+                    break
+        if row is None or row.get("_locked"):
+            return
+        if _ts_is_better(this_ts, this_real, row.get("ts"), bool(row.get("_real"))):
+            row["ts"] = this_ts
+            row["_real"] = this_real
 
     # chat_messages first — they own the real per-turn timestamp + image path.
     try:
@@ -265,7 +337,7 @@ def _collect(db, uid: str) -> list[dict]:
             seen_long.append((role, cleaned_text))
         if len(stripped_text) >= 500:
             seen_long.append((role, stripped_text))
-        out.append({
+        row = {
             "ts": ts,
             "role": role,
             "text": text[:_MAX_TEXT],
@@ -281,7 +353,12 @@ def _collect(db, uid: str) -> list[dict]:
             "shared_card_name": str(d.get("shared_card_name", "")),
             "shared_card_photo": str(d.get("shared_card_photo", "")),
             "shared_card_ref_id": str(d.get("shared_card_ref_id", "")),
-        })
+            # chat_messages carry the authoritative per-turn send time.
+            "_real": ts is not None,
+        }
+        out.append(row)
+        # Locked: a raw_turns duplicate never moves a chat_messages turn's time.
+        _register(role, [cleaned_text, stripped_text], row, locked=True)
 
     # raw_turns — the interleaved voice+text window per session. One doc holds
     # the whole session; `updated_at` is the session's last write, so give each
@@ -316,26 +393,43 @@ def _collect(db, uid: str) -> list[dict]:
             if not text:
                 continue
             role = _norm_role(str((t or {}).get("role", "ayma")))
+            if role == "ayma":
+                # Clean any speech-control markup that reached a legacy
+                # persisted turn before the agent-side strip existed — a turn
+                # that was nothing but markup ("<no speech>{pause}") drops out
+                # here instead of resurfacing as a chat bubble on reload
+                # (founder bug 2026-11-09).
+                text = strip_speech_markup(text)
+                if not text:
+                    continue
             stripped = _strip_photo_marker(text)
+            # This turn's true time, computed up front so a duplicate occurrence
+            # can UPGRADE (never downgrade) the kept row instead of being
+            # silently dropped: its own per-turn `created_at` if stored — real,
+            # and immutable across any re-sync — else the session doc's
+            # `updated_at` minus a per-index second (the legacy fallback that
+            # collapsed a whole session onto one minute). This is what stops a
+            # re-synced copy of an older session (persisted tonight into a fresh
+            # raw_turns doc with tonight's `updated_at`, no per-turn time) from
+            # overwriting the turn's original time (founder addendum 2026-11-09).
+            per_turn_ts = _parse_iso((t or {}).get("created_at"))
+            this_real = per_turn_ts is not None
+            this_ts = per_turn_ts if this_real else (
+                (base - timedelta(seconds=(n - i))) if base else None
+            )
+            keys = [text, stripped]
             if (role, text) in seen or (role, stripped) in seen:
-                continue  # already have it from chat_messages OR an earlier
-                # raw_turns doc/position in *this* pass (see below) — a real,
-                # confirmed production shape (founder's account,
-                # iWhWjiWhEpU7iyu9B9vy7GlT0PD2, 2026-09-26): a session's
-                # persisted `turns` array can itself hold the same exact
-                # (role, text) two or three times over — e.g. a Gemini Live
-                # session restart mid-call replaying its whole running chat
-                # context into the new connection, or two independent
-                # writers (the client's own on-stop persist and the voice
-                # agent's shutdown persist) racing on the same doc. Every
-                # prior version of this loop only checked `seen` against
-                # `chat_messages` and never added a raw_turns hit to it, so
-                # each occurrence surfaced as its own transcript row on every
-                # reload — and because that reloaded, still-duplicated
-                # window is exactly what the client resends as `recent_turns`
-                # on its next `/bootstrap`/`/chat` call, the duplication
-                # re-entered `raw_turns` and compounded release over release
-                # instead of ever self-correcting.
+                # Already kept from chat_messages OR an earlier raw_turns copy.
+                # Don't echo a second row — a session's `turns` array can hold
+                # the same (role, text) several times (a Gemini Live restart
+                # replaying context, or the client's on-stop persist racing the
+                # agent's shutdown persist on one doc), and the reloaded,
+                # still-duplicated window is what the client resends as
+                # `recent_turns`, so echoing compounds release over release.
+                # But let a copy carrying the real (or earlier) time correct the
+                # kept row's timestamp so a newer timeless re-sync can't win.
+                _upgrade(role, keys, this_ts, this_real)
+                continue
             # Long turn clamped to TurnModel cap (4000) or client budget:
             # chat_messages stores up to _MAX_TEXT (8000), while raw_turns
             # stores recent_turns clamped to ~4000 (clampRecentTurns /
@@ -347,35 +441,35 @@ def _collect(db, uid: str) -> list[dict]:
                 r == role and (s.startswith(text) or text.startswith(s))
                 for r, s in seen_long
             ):
+                _upgrade(role, keys, this_ts, this_real)
                 continue
             if len(stripped) >= 500 and any(
                 r == role and (s.startswith(stripped) or stripped.startswith(s))
                 for r, s in seen_long
             ):
+                _upgrade(role, keys, this_ts, this_real)
                 continue
             if not stripped:
                 continue  # a bare "shared a photo" — the chat_messages row owns it
-            # Recorded *before* the append below so a second/third copy of the
-            # exact same turn — whether later in this doc or in an older
-            # session doc processed next (`rt` is newest-`updated_at` first,
-            # so the freshest copy always wins) — is dropped instead of
-            # echoed back into the transcript and, transitively, into the
-            # next session's seeded history.
             seen.add((role, text))
             seen.add((role, stripped))
             if len(text) >= 500:
                 seen_long.append((role, text))
             if len(stripped) >= 500:
                 seen_long.append((role, stripped))
-            text = stripped
-            ts = (base - timedelta(seconds=(n - i))) if base else None
-            out.append({
-                "ts": ts,
+            row = {
+                "ts": this_ts,
                 "role": role,
-                "text": text[:_MAX_TEXT],
+                "text": stripped[:_MAX_TEXT],
                 "image_path": "",
-            })
+                "_real": this_real,
+            }
+            out.append(row)
+            _register(role, [text, stripped], row, locked=False)
 
+    for row in out:
+        row.pop("_real", None)
+        row.pop("_locked", None)
     return out
 
 
