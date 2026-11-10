@@ -24,6 +24,20 @@ void main() {
     expect(text, contains('Tap any sentence'));
   });
 
+  testWidgets('scroll view top inset is the 20 standard (jobs defect 7)',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: const ReleaseNotesScreen(),
+    ));
+    await tester.pumpAndSettle();
+
+    final scroll = tester.widget<SingleChildScrollView>(
+      find.byType(SingleChildScrollView),
+    );
+    expect(scroll.padding, const EdgeInsets.fromLTRB(20, 20, 20, 40));
+  });
+
   test('kReleaseNotes is newest-first and covers earlier versions', () {
     // kReleaseNotesVersion must always match the heading that actually leads
     // kReleaseNotes, not a literal copied in by hand — a hardcoded version

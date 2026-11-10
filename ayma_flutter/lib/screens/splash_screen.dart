@@ -14,6 +14,7 @@ import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
 import '../services/deep_link_queue.dart';
 import '../services/report_cache.dart';
+import '../theme.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import 'biometric_consent_screen.dart';
@@ -597,7 +598,7 @@ class SplashLoading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CenteredScroll(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: AymaWingLoader(
         size: 96,
         lines: AymaLoaderLines.startup,
@@ -621,13 +622,13 @@ class SplashErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final ac = context.ac;
     return CenteredScroll(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.cloud_off_outlined, size: 48, color: scheme.outline),
+          Icon(Icons.cloud_off_outlined, size: 48, color: ac.fgDim),
           const SizedBox(height: 16),
           Text(
             message,
