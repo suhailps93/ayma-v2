@@ -97,7 +97,7 @@ void main() {
   });
 
   testWidgets(
-    'reply-card UI: opening chat from explore shows quoted reply card naming the real subject in the thread and sends whole page context',
+    'reply-card UI: opening chat from explore shows quoted reply card naming the real subject in the thread and sends the page reference',
     (tester) async {
       final capture = _CaptureClient();
       final voice = _TestVoice();
@@ -132,14 +132,16 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('composerSendButton')));
       await tester.pumpAndSettle();
 
-      // Check request carries whole page context
+      // Check request carries the page reference (slug/route/note) — the
+      // whole-page `screen_detail` snapshot is no longer sent (founder
+      // 2026-11-09: reference, not content).
       expect(capture.requests, hasLength(1));
       final sent1 = capture.requests.first;
       expect(sent1['message'], 'what can I do here?');
       expect(sent1['screen'], 'explore');
       expect(sent1['screen_note'], 'hiking in boulder');
       expect(sent1['screen_route'], '/explore');
-      expect(sent1['screen_detail'], '3 people nearby');
+      expect(sent1.containsKey('screen_detail'), isFalse);
 
       // In the thread: quoted reply card appears above the user message naming real subject
       expect(find.byKey(const ValueKey('quotedReplyCard')), findsOneWidget);

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/services/chat_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -506,5 +507,87 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(api.runCompleted, isTrue);
+  });
+
+  // R7 (token follow-up #2) — the axis-group card is flipped from bgElev (==
+  // sheet bg, border-only) to a true bgCard fill, now that R6 makes accentText
+  // read on bgCard. The group text drops from fgMute (fails 4.30 on bgCard) to
+  // fgDim (7.81), and the border moves from the invisible lineSoft to the
+  // boundary token (3:1 non-text floor). _pumpSheet uses a bare MaterialApp, so
+  // `context.ac` resolves to AymaTokens.dark.
+  testWidgets('R7: axis-group fill is bgCard with a boundary-token border '
+      '(not the old bgElev fill / invisible lineSoft)', (tester) async {
+    final observer = _PushCountObserver();
+    await _pumpSheet(tester, _FakeApi(_eligWith(face: 2, body: 1)), observer);
+
+    final groups = tester
+        .widgetList<Container>(find.byType(Container))
+        .where((c) {
+          final d = c.decoration;
+          return d is BoxDecoration && d.color == AymaTokens.dark.bgCard;
+        })
+        .toList();
+    // Both axis groups (Face + Body) carry the bgCard fill.
+    expect(groups.length, greaterThanOrEqualTo(2),
+        reason: 'axis groups flipped to bgCard fill');
+    // No axis group keeps the old bgElev fill with the sheet-matching border.
+    final border = (groups.first.decoration as BoxDecoration).border as Border;
+    expect(border.top.color, AymaTokens.dark.boundary,
+        reason: 'group border routed to the readable boundary token');
+    expect(border.top.color, isNot(AymaTokens.dark.lineSoft),
+        reason: 'the invisible lineSoft border is gone');
+  });
+
+  testWidgets('R7: per-axis guidance renders in fgDim (not fgMute) on the '
+      'bgCard group', (tester) async {
+    final observer = _PushCountObserver();
+    await _pumpSheet(tester, _FakeApi(_eligWith(face: 1, body: 1)), observer);
+    final guidance =
+        tester.widget<Text>(find.textContaining('Clear photos of your face.'));
+    expect(guidance.style?.color, AymaTokens.dark.fgDim,
+        reason: 'guidance swapped fgMute -> fgDim for bgCard legibility');
+  });
+
+  testWidgets('R7: skipped-note renders in fgDim (not fgMute) on the bgCard '
+      'group', (tester) async {
+    final observer = _PushCountObserver();
+    // Face has photos so it can be skipped; body empty to isolate the Skip.
+    await _pumpSheet(tester, _FakeApi(_eligWith(face: 2, body: 0)), observer);
+    await tester.tap(find.text('Skip').first);
+    await tester.pump();
+    final note =
+        tester.widget<Text>(find.text("Skipped — I won't run this section."));
+    expect(note.style?.color, AymaTokens.dark.fgDim,
+        reason: 'skipped-note swapped fgMute -> fgDim');
+  });
+
+  testWidgets('R7: Skip/Include label routes through the theme accentText '
+      '(reads on bgCard after R6)', (tester) async {
+    final observer = _PushCountObserver();
+    // Pump the sheet under a theme whose textButtonTheme foreground is
+    // accentText (as the app wires it), so the Skip label resolves to the
+    // card-safe accent rather than the bare Material default.
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData(
+        extensions: [AymaTokens.dark],
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+              foregroundColor: AymaTokens.dark.accentText),
+        ),
+      ),
+      navigatorObservers: [observer],
+      home: Scaffold(
+        body: AppearancePreRunSheet(api: _FakeApi(_eligWith(face: 1, body: 0))),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    RichText? label;
+    for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+      if ((rt.text as TextSpan).toPlainText() == 'Skip') label = rt;
+    }
+    expect(label, isNotNull, reason: 'Skip button label rendered');
+    expect((label!.text as TextSpan).style?.color, AymaTokens.dark.accentText,
+        reason: 'Skip/Include label is theme accentText');
   });
 }

@@ -348,14 +348,15 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
   bool get _bgIsLight => bg.computeLuminance() > 0.5;
 
   /// The live [accent] darkened (light theme) / lightened (dark theme) until it
-  /// reads ≥4.5:1 as TEXT on every surface it is drawn on — [bg], [bgElev], and
-  /// an [accentFaint] fill over [bg]. Every accent-coloured *label* routes
-  /// through this, while accent *icons* keep [accent] itself (they only need
-  /// the 3:1 icon floor). Derived from whatever accent the user picked — never
-  /// a hardcoded colour — so any pick stays legible (see [AymaColors.textSafe]).
+  /// reads ≥4.5:1 as TEXT on every surface it is drawn on — [bg], [bgElev], a
+  /// [bgCard] surface (match-score labels, dialog TextButton labels), and an
+  /// [accentFaint] fill over [bg]. Every accent-coloured *label* routes through
+  /// this, while accent *icons* keep [accent] itself (they only need the 3:1
+  /// icon floor). Derived from whatever accent the user picked — never a
+  /// hardcoded colour — so any pick stays legible (see [AymaColors.textSafe]).
   Color get accentText => AymaColors.textSafe(
         accent,
-        [bg, bgElev, Color.alphaBlend(accentFaint, bg)],
+        [bg, bgElev, Color.alphaBlend(accentFaint, bg), bgCard],
         bgIsLight: _bgIsLight,
       );
 
@@ -391,6 +392,17 @@ class AymaTokens extends ThemeExtension<AymaTokens> {
       AymaColors.textSafe(success, [bg], bgIsLight: _bgIsLight);
   Color get warningText =>
       AymaColors.textSafe(warning, [bg], bgIsLight: _bgIsLight);
+
+  /// Text-safe hyperlink colour — the raw [AymaColors.link] blue shifted per
+  /// theme (darkened on light, lightened on dark) until it clears the 4.5:1
+  /// text floor on every surface a [MarkdownText] link renders on: [bg],
+  /// [bgElev] AND [bgCard]. The raw [AymaColors.link] #3A7BD5 fails that floor
+  /// on all three (bg 4.43/3.98, bgElev 4.15/3.71, bgCard 3.86/3.43), so the
+  /// MarkdownText default link routes through this. Derived via
+  /// [AymaColors.textSafe], never hand-picked.
+  Color get linkText =>
+      AymaColors.textSafe(AymaColors.link, [bg, bgElev, bgCard],
+          bgIsLight: _bgIsLight);
 
   /// Card-safe error text — [error] shifted per theme until it clears the
   /// 4.5:1 text floor on [bgCard] AND [bgElev] (and, being stronger than

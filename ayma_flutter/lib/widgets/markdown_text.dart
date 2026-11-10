@@ -24,7 +24,7 @@ class MarkdownText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final link = linkColor ?? AymaColors.link;
+    final link = linkColor ?? context.ac.linkText;
     final blocks = _blocks(data.trim());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,7 +105,7 @@ class MarkdownText extends StatelessWidget {
           children: [
             for (final item in b.lines)
               Padding(
-                padding: const EdgeInsets.only(bottom: 3),
+                padding: const EdgeInsets.only(bottom: 4),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

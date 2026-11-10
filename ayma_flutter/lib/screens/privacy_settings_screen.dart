@@ -193,6 +193,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       appBar: AppBar(
           leading: const AymaBackButton(), title: const Text('Privacy')),
       body: ListView(
+        padding: const EdgeInsets.only(bottom: 20),
         children: [
           const SizedBox(height: 8),
           StreamBuilder<bool>(
@@ -201,6 +202,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               final paused = snap.data ?? false;
               return SwitchListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                secondary: Icon(Icons.pause_circle_outlined, color: ac.fgDim),
                 title: Text('Pause matching',
                     style: AymaType.sans(size: 15, color: ac.fg)),
                 subtitle: Text(
@@ -216,6 +218,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             stream: _profiles.watchAiAvatar(),
             builder: (context, snap) => SwitchListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              secondary: Icon(Icons.smart_toy_outlined, color: ac.fgDim),
               key: const Key('settings_ai_avatar'),
               title: Text('AI Avatar',
                   style: AymaType.sans(size: 15, color: ac.fg)),
@@ -234,8 +237,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           if (_verified == true)
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              leading: const Icon(Icons.verified_outlined,
-                  color: AymaColors.success),
+              leading: Icon(Icons.verified_outlined,
+                  color: ac.successText),
               title: Text('Face verified',
                   style: AymaType.sans(size: 15, color: ac.fg)),
               subtitle: Text(
@@ -246,7 +249,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           else if (_verified == false)
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              leading: Icon(Icons.gpp_maybe_outlined, color: ac.fgMute),
+              leading: Icon(Icons.gpp_maybe_outlined, color: ac.fgDim),
               title: Text('Verify your face',
                   style: AymaType.sans(size: 15, color: ac.fg)),
               subtitle: Text(
@@ -257,14 +260,14 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               // Selfie capture + POST /verification/selfie in flight.
               trailing: _verifying
                   ? const AymaWingLoader(size: 18, showLabel: false)
-                  : const Icon(Icons.chevron_right),
+                  : Icon(Icons.chevron_right, color: ac.fgMute),
               onTap: _verifying ? null : _verifyFace,
             ),
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const Key('settings_biometric_consent'),
             leading: Icon(Icons.face_retouching_natural_outlined,
-                color: ac.fgMute),
+                color: ac.fgDim),
             title: Text('Face matching consent',
                 style: AymaType.sans(size: 15, color: ac.fg)),
             subtitle: Text(
@@ -279,7 +282,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const Key('settings_terms'),
-            leading: Icon(Icons.description_outlined, color: ac.fgMute),
+            leading: Icon(Icons.description_outlined, color: ac.fgDim),
             title: Text('Terms of Service',
                 style: AymaType.sans(size: 15, color: ac.fg)),
             subtitle: Text(
@@ -292,7 +295,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
             key: const Key('settings_privacy_policy'),
-            leading: Icon(Icons.privacy_tip_outlined, color: ac.fgMute),
+            leading: Icon(Icons.privacy_tip_outlined, color: ac.fgDim),
             title: Text('Privacy Policy',
                 style: AymaType.sans(size: 15, color: ac.fg)),
             subtitle: Text(
@@ -305,8 +308,9 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           Divider(color: ac.lineSoft),
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            leading: Icon(Icons.delete_sweep_outlined, color: ac.error),
             title: Text('Wipe what Ayma has learned',
-                style: AymaType.sans(size: 15, color: AymaColors.error)),
+                style: AymaType.sans(size: 15, color: ac.errorText)),
             subtitle: Text('Clears your wiki + history; keeps your account.',
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             // Wiki/history wipe in flight — trailing slot, wings only.

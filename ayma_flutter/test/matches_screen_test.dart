@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:ayma_flutter/screens/matches_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -242,10 +243,12 @@ void main() {
     expect(find.textContaining('No new matches yet'), findsOneWidget);
   });
 
-  // Jobs pass cluster 15: the list-card score label stays raw accent — it is
-  // routed (R9) to the token owner, NOT recoloured in this cluster. Colour
-  // assertions pump without a theme, so `context.ac` is `AymaTokens.dark`.
-  testWidgets('list score label stays raw accent (R9 routed, unchanged)',
+  // R9 (token follow-up #2): the list-card score label was raw accent (cluster
+  // 15 left it for the token owner to route). It is now routed to the extended
+  // accentText so it clears the 4.5 text floor on the bgCard card — it is no
+  // longer the raw accent. Colour assertions pump without a theme, so
+  // `context.ac` is `AymaTokens.dark`.
+  testWidgets('list score label is routed to accentText (R9), not raw accent',
       (tester) async {
     final svc = _FakeMatchService(const [_m]);
     await tester.pumpWidget(
@@ -253,7 +256,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     final score = tester.widget<Text>(find.text('82%'));
-    expect(score.style?.color, AymaTokens.dark.accent);
+    expect(score.style?.color, AymaTokens.dark.accentText);
+    expect(score.style?.color, isNot(AymaTokens.dark.accent),
+        reason: 'R9 recoloured the raw accent to the card-safe accentText');
   });
 
   // Defect 25: the error text uses `errorText`, not raw error.
@@ -293,4 +298,93 @@ void main() {
     expect(find.textContaining('Since you both want a calm home life'), findsWidgets);
     expect(find.text('Robin'), findsWidgets);
   });
+
+  // R9 (folds into R6) — both match-score labels sit on a bgCard card and now
+  // route through the extended accentText so they clear the 4.5 text floor on
+  // bgCard. The AymaTokens extension is injected directly (the full AymaTheme's
+  // serif textTheme would try to fetch a web font in tests).
+  for (final theme in <(String, AymaTokens)>[
+    ('light', AymaTokens.light),
+    ('dark', AymaTokens.dark),
+  ]) {
+    final (name, tokens) = theme;
+
+    testWidgets('R9: list match-score (mono 12) uses accentText and reads on '
+        'bgCard ($name)', (tester) async {
+      final svc = _FakeMatchService(const [_m]);
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(extensions: [tokens]),
+        home: MatchesScreen(matchService: svc, api: _fakeApi()),
+      ));
+      await tester.pumpAndSettle();
+      final score = tester.widget<Text>(find.text('82%'));
+      expect(score.style?.color, tokens.accentText,
+          reason: 'list score routes through accentText');
+      expect(_contrastRatio(score.style!.color!, tokens.bgCard),
+          greaterThanOrEqualTo(4.5),
+          reason: 'list score reads on the bgCard card');
+    });
+
+    testWidgets('R9: detail match-score (mono 14) uses accentText and reads on '
+        'bgCard ($name)', (tester) async {
+      final svc = _FakeMatchService(const [], byId: {'a__me': _m});
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(extensions: [tokens]),
+        home: MatchDetailScreen(matchId: 'a__me', service: svc, api: _fakeApi()),
+      ));
+      await tester.pumpAndSettle();
+      final score = tester.widget<Text>(find.text('82% match'));
+      expect(score.style?.color, tokens.accentText,
+          reason: 'detail score routes through accentText');
+      expect(_contrastRatio(score.style!.color!, tokens.bgCard),
+          greaterThanOrEqualTo(4.5),
+          reason: 'detail score reads on the bgCard card');
+    });
+
+    // R6 — a dialog TextButton label routes through the theme's accentText
+    // foreground (as the app's textButtonTheme wires it) and, after R6, reads
+    // on the dialog's bgCard-level surface. This proves the theme-level fix
+    // covers dialog actions (consent / web-search dialogs) with no call-site
+    // change.
+    testWidgets('R6: dialog TextButton label uses accentText and reads on the '
+        'bgCard dialog surface ($name)', (tester) async {
+      final theme = ThemeData(
+        extensions: [tokens],
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: tokens.accentText),
+        ),
+      );
+      await tester.pumpWidget(MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          backgroundColor: tokens.bgCard,
+          body: Center(
+            child: TextButton(onPressed: () {}, child: const Text('Continue')),
+          ),
+        ),
+      ));
+      await tester.pump();
+      // The rendered label color resolves to accentText via the button theme.
+      RichText? label;
+      for (final rt in tester.widgetList<RichText>(find.byType(RichText))) {
+        if ((rt.text as TextSpan).toPlainText() == 'Continue') label = rt;
+      }
+      expect(label, isNotNull);
+      final color = (label!.text as TextSpan).style?.color;
+      expect(color, tokens.accentText,
+          reason: 'dialog TextButton label is accentText');
+      expect(_contrastRatio(color!, tokens.bgCard), greaterThanOrEqualTo(4.5),
+          reason: 'dialog action label reads on bgCard (R6)');
+    });
+  }
+}
+
+/// WCAG contrast ratio for the widget assertions above (mirrors the pure-ratio
+/// helper in color_audit_test.dart).
+double _contrastRatio(Color a, Color b) {
+  final l1 = a.computeLuminance();
+  final l2 = b.computeLuminance();
+  final lighter = math.max(l1, l2);
+  final darker = math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
 }
