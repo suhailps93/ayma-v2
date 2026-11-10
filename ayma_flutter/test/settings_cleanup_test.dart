@@ -62,6 +62,16 @@ List<String?> _tileTitles(WidgetTester tester) => tester
     .map((t) => t.title is Text ? (t.title as Text).data : null)
     .toList();
 
+// Cluster 17 helpers: theme-resolved tokens + per-element geometry/colour.
+AymaTokens _ac(WidgetTester tester, Finder anchor) =>
+    (tester.element(anchor) as BuildContext).ac;
+
+Color? _iconColor(WidgetTester tester, IconData data) =>
+    tester.widget<Icon>(find.byIcon(data)).color;
+
+double _titleLeft(WidgetTester tester, String title) =>
+    tester.getTopLeft(find.text(title)).dx;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -334,5 +344,125 @@ void main() {
     ]);
     expect(find.byType(PrivacySettingsScreen), findsOneWidget);
     expect(find.textContaining('Opening the'), findsNothing);
+  });
+
+  // ---- Jobs pass cluster 17: spacing / colour / alignment ----
+
+  testWidgets(
+      'cluster 17 — Privacy switches carry fgDim secondary icons, the four '
+      'plain leadings read fgDim, and every title shares the x=60 left edge '
+      '(defects 1, 6) with the ListView breathing at the bottom (defect 10)',
+      (tester) async {
+    await pumpRouted(tester);
+    await tester.tap(find.text('Privacy'));
+    await tester.pumpAndSettle();
+
+    final ac = _ac(tester, find.text('Pause matching'));
+
+    // Defect 1 — both switch rows now have a leading (secondary) icon, fgDim.
+    expect(_iconColor(tester, Icons.pause_circle_outlined), ac.fgDim);
+    expect(_iconColor(tester, Icons.smart_toy_outlined), ac.fgDim);
+
+    // Defect 6 — the four plain leadings read fgDim, not fgMute.
+    expect(_iconColor(tester, Icons.gpp_maybe_outlined), ac.fgDim);
+    expect(_iconColor(tester, Icons.face_retouching_natural_outlined), ac.fgDim);
+    expect(_iconColor(tester, Icons.description_outlined), ac.fgDim);
+    expect(_iconColor(tester, Icons.privacy_tip_outlined), ac.fgDim);
+
+    // Defects 1, 2 + the audited icon rows: one shared title left edge at 60.
+    for (final title in const [
+      'Pause matching',
+      'AI Avatar',
+      'Verify your face',
+      'Face matching consent',
+      'Terms of Service',
+      'Privacy Policy',
+      'Wipe what Ayma has learned',
+      'Delete account',
+    ]) {
+      expect(_titleLeft(tester, title), moreOrLessEquals(60, epsilon: 0.5),
+          reason: title);
+    }
+
+    // Defect 10 — the Privacy ListView pads its bottom 20.
+    expect(tester.widget<ListView>(find.byType(ListView)).padding,
+        const EdgeInsets.only(bottom: 20));
+  });
+
+  testWidgets(
+      'cluster 17 — Wipe row: delete_sweep leading in raw error, title in '
+      'errorText; Delete leading stays raw error; verify chevron is fgMute '
+      '(defects 2, 4, 5)', (tester) async {
+    await pumpRouted(tester);
+    await tester.tap(find.text('Privacy'));
+    await tester.pumpAndSettle();
+
+    final ac = _ac(tester, find.text('Wipe what Ayma has learned'));
+
+    // Defect 2 — wipe leading icon = delete_sweep in raw error.
+    expect(_iconColor(tester, Icons.delete_sweep_outlined), ac.error);
+    // Defect 4 — wipe TITLE reads errorText (not raw error).
+    expect(
+        tester.widget<Text>(find.text('Wipe what Ayma has learned')).style?.color,
+        ac.errorText);
+    // Defect 4 guard — the Delete leading ICON stays raw error.
+    expect(_iconColor(tester, Icons.delete_outline), ac.error);
+
+    // Defect 5 — the Verify-your-face chevron is explicit fgMute.
+    final verifyChevron = find.descendant(
+      of: find.widgetWithText(ListTile, 'Verify your face'),
+      matching: find.byIcon(Icons.chevron_right),
+    );
+    expect(tester.widget<Icon>(verifyChevron).color, ac.fgMute);
+  });
+
+  testWidgets('cluster 17 — the verified icon reads successText (defect 3)',
+      (tester) async {
+    await pumpRouted(tester, api: _api((_) {}, verified: true));
+    await tester.tap(find.text('Privacy'));
+    await tester.pumpAndSettle();
+
+    final ac = _ac(tester, find.text('Face verified'));
+    expect(_iconColor(tester, Icons.verified_outlined), ac.successText);
+  });
+
+  testWidgets(
+      'cluster 17 — Appearance: accent icon fgDim, radios shrinkWrap with '
+      'titles at x=60, ListView bottom padding 20 (defects 7, 8, 9)',
+      (tester) async {
+    await pumpRouted(tester);
+    await tester.tap(find.text('Appearance'));
+    await tester.pumpAndSettle();
+
+    final ac = _ac(tester, find.text('Accent Color'));
+
+    // Defect 7 — the Accent Color leading icon is fgDim, not accent.
+    expect(_iconColor(tester, Icons.palette_outlined), ac.fgDim);
+
+    // Defect 8 — the three radio rows shrink the tap target and zero the
+    // title gap, so their titles land on the shared x=60 edge.
+    final radios = tester
+        .widgetList<RadioListTile<ThemeMode>>(
+            find.byType(RadioListTile<ThemeMode>))
+        .toList();
+    expect(radios.length, 3);
+    for (final r in radios) {
+      expect(r.materialTapTargetSize, MaterialTapTargetSize.shrinkWrap);
+      expect(r.horizontalTitleGap, 0);
+    }
+    for (final title in const [
+      'Match system',
+      'Light',
+      'Dark',
+      'Accent Color',
+      'How to use Ayma',
+    ]) {
+      expect(_titleLeft(tester, title), moreOrLessEquals(60, epsilon: 0.5),
+          reason: title);
+    }
+
+    // Defect 9 — the Appearance ListView pads its bottom 20.
+    expect(tester.widget<ListView>(find.byType(ListView)).padding,
+        const EdgeInsets.only(bottom: 20));
   });
 }

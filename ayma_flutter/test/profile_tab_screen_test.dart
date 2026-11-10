@@ -359,4 +359,46 @@ void main() {
 
     expect(find.text("You're all caught up ✓"), findsOneWidget);
   });
+
+  // ---- Jobs pass cluster 17: You-tab icon language + card interior ----
+
+  testWidgets(
+      'cluster 17 — the four row icons are the outlined variants and the '
+      'CreditPill keeps its own toll_rounded glyph (defect 11)', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api(creditsRemaining: 5)));
+    await tester.pumpAndSettle();
+
+    // Outlined row icons now.
+    expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.travel_explore_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.toll_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.logout_outlined), findsOneWidget);
+
+    // The filled/solid variants are gone from the row icons…
+    expect(find.byIcon(Icons.tune), findsNothing);
+    expect(find.byIcon(Icons.travel_explore), findsNothing);
+    expect(find.byIcon(Icons.logout), findsNothing);
+
+    // …but the CreditPill keeps its own toll_rounded glyph untouched.
+    expect(find.byIcon(Icons.toll_rounded), findsOneWidget);
+  });
+
+  testWidgets(
+      'cluster 17 — _Item rows pad content symmetric 16 so the chevron sits '
+      '16 from the card edge (defect 12)', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(_api()));
+    await tester.pumpAndSettle();
+
+    final tile = tester
+        .widget<ListTile>(find.widgetWithText(ListTile, 'Profile details'));
+    expect(tile.contentPadding, const EdgeInsets.symmetric(horizontal: 16));
+  });
 }

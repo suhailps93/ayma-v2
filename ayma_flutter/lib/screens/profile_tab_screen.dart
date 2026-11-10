@@ -88,14 +88,14 @@ class ProfileTabScreen extends StatelessWidget {
           ),
           _Item(
             anchorId: TourAnchors.profileDetailsRow,
-            icon: Icons.tune,
+            icon: Icons.tune_outlined,
             label: 'Profile details',
             hint: 'Name, birthdate, who you want to meet',
             onTap: () => context.push(ProfileSettingsScreen.path),
           ),
           _Item(
             anchorId: TourAnchors.profileWebResearchRow,
-            icon: Icons.travel_explore,
+            icon: Icons.travel_explore_outlined,
             label: 'Search the web about me',
             hint: 'Your latest web-research report, or run a new one',
             onTap: () => _openWebResearch(context),
@@ -131,7 +131,7 @@ class ProfileTabScreen extends StatelessWidget {
         rows: [
           _Item(
             anchorId: TourAnchors.profilePlanRow,
-            icon: Icons.toll_rounded,
+            icon: Icons.toll_outlined,
             label: 'Plan',
             hint: 'Your plan, credits left and where they went',
             trailingBefore: _CreditsBalance(apiClient: apiClient),
@@ -155,7 +155,7 @@ class ProfileTabScreen extends StatelessWidget {
             onTap: () => context.push(FeedbackScreen.path),
           ),
           _Item(
-            icon: Icons.logout,
+            icon: Icons.logout_outlined,
             label: 'Sign out',
             onTap: () async {
               await PushService().clearToken();
@@ -267,6 +267,7 @@ class _Item extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     final tile = ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       leading: Icon(icon, color: ac.fgDim, size: 20),
       title: Text(label, style: AymaType.sans(size: 15, color: ac.fg)),
       subtitle: hint == null
