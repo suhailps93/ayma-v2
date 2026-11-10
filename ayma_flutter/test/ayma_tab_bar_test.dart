@@ -103,6 +103,21 @@ void main() {
     },
   );
 
+  testWidgets(
+    'the Ayma orb is centered on the bar (center x == bar width / 2)',
+    (tester) async {
+      await tester.pumpWidget(host(index: -1));
+      await tester.pump();
+
+      // The width algebra (spaceAround over five children, the orb its own
+      // width) puts the orb's center at exactly bar width / 2 for any width;
+      // assert it, never "fix" the alignment (brief V1).
+      final barWidth = tester.getSize(find.byType(AymaTabBar)).width;
+      final orbCenter = tester.getCenter(find.byTooltip('Ayma')).dx;
+      expect(orbCenter, moreOrLessEquals(barWidth / 2, epsilon: 0.5));
+    },
+  );
+
   testWidgets('tapping each tab reports its own index', (tester) async {
     final taps = <int>[];
     await tester.pumpWidget(host(index: -1, onSelected: taps.add));

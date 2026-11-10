@@ -46,6 +46,35 @@ void main() {
     }
   });
 
+  testWidgets('renders at least the theme-minimum 44 tall and still taps',
+      (tester) async {
+    // The app theme sets TextButton minimumSize Size(0, 44) (token-followup,
+    // cluster 12 R2). Assert the rendered height clears the 44 touch floor —
+    // do NOT assume the raw M3 default (40). (M3's padded tap target may
+    // render it at 48; either way it must clear 44.) Hosted in an
+    // unconstrained body so the toolbar height can't cap it.
+    var tapped = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AymaTheme.light,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: AskAymaAction(onPressed: () => tapped = true),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final height = tester.getSize(find.byType(TextButton)).height;
+    expect(height, greaterThanOrEqualTo(44.0),
+        reason: 'Ask-Ayma action must clear the 44 touch floor; was $height');
+
+    await tester.tap(find.byType(AskAymaAction));
+    expect(tapped, isTrue, reason: 'a tap still opens the scoped turn');
+  });
+
   testWidgets('a null onPressed disables the button', (tester) async {
     await tester.pumpWidget(host(AymaTheme.dark, const AskAymaAction(onPressed: null)));
 

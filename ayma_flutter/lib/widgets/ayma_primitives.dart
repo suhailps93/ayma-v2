@@ -112,7 +112,7 @@ class AymaScreenHeader extends StatelessWidget {
     this.subtitle,
     this.action,
     this.titleSize = 36,
-    this.padding = const EdgeInsets.fromLTRB(20, 12, 12, 12),
+    this.padding = const EdgeInsets.fromLTRB(20, 12, 20, 12),
     this.automaticallyImplyBack = false,
     this.leading,
   });
@@ -166,7 +166,7 @@ class AymaScreenHeader extends StatelessWidget {
               children: [
                 if (eyebrow != null) ...[
                   Eyebrow(eyebrow!),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                 ],
                 Text(title, style: AymaType.serif(size: titleSize, color: ac.fg)),
                 if (subtitle != null) ...[
@@ -214,7 +214,7 @@ class CreditPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final c = color ?? (dim ? ac.fgMute : ac.accent);
+    final c = color ?? (dim ? ac.fgMute : ac.accentText);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -223,47 +223,6 @@ class CreditPill extends StatelessWidget {
         Text('$prefix$amount',
             style: AymaType.mono(size: 11, color: c).copyWith(letterSpacing: 0.5)),
       ],
-    );
-  }
-}
-
-/// A 38px circular ghost button — the design's standard trailing affordance in
-/// a screen header (notifications, settings, overflow).
-class GhostCircleButton extends StatelessWidget {
-  const GhostCircleButton({
-    super.key,
-    required this.icon,
-    required this.onPressed,
-    this.tooltip,
-    this.badgeChild,
-  });
-
-  final IconData icon;
-  final VoidCallback onPressed;
-  final String? tooltip;
-
-  /// When set, replaces the bare icon (e.g. a [Badge]-wrapped icon).
-  final Widget? badgeChild;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Material(
-      color: ac.bgElev,
-      shape: CircleBorder(side: BorderSide(color: ac.lineSoft, width: 0.5)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        child: Tooltip(
-          message: tooltip ?? '',
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: badgeChild ??
-                Icon(icon, size: 17, color: ac.fgDim),
-          ),
-        ),
-      ),
     );
   }
 }
