@@ -324,6 +324,13 @@ void main() {
       await tester.pump();
       expect(note.cancelArmed, isTrue);
       expect(find.text('Release to cancel'), findsOneWidget);
+      // Jobs pass cluster 15 (defect 29): the armed cancel text reads in
+      // errorText (was raw error, 4.16 light). The harness uses
+      // AymaTheme.light, so context.ac is AymaTokens.light.
+      expect(
+        tester.widget<Text>(find.text('Release to cancel')).style?.color,
+        AymaTokens.light.errorText,
+      );
       await gesture.up();
       await tester.pump();
       expect(engine.cancels, 1);
@@ -413,6 +420,15 @@ void main() {
         find.byType(VoiceNoteLockBubble),
       );
       expect(bubble.progress, closeTo(0.5, 0.02));
+      // Jobs pass cluster 15 (defect 30): the slide-up hint lerps toward
+      // accentText, not raw accent (which failed from p=0.75). The label's
+      // colour matches the fgMute -> accentText lerp at the live progress.
+      // Harness theme is light, so context.ac is AymaTokens.light.
+      expect(
+        tester.widget<Text>(find.text('Slide up to lock')).style?.color,
+        Color.lerp(AymaTokens.light.fgMute, AymaTokens.light.accentText,
+            note.lockProgress),
+      );
       await gesture.up();
       await tester.pump();
       expect(engine.sends, 1);

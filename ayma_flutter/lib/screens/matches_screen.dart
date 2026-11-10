@@ -53,7 +53,7 @@ class _MatchesScreenState extends State<MatchesScreen>
             return CenteredScroll(
               padding: const EdgeInsets.all(24),
               child: Text('Could not load matches (${snap.error}).',
-                  style: AymaType.sans(size: 14, color: AymaColors.error)),
+                  style: AymaType.sans(size: 14, color: ac.errorText)),
             );
           }
           if (!snap.hasData) {
@@ -75,7 +75,7 @@ class _MatchesScreenState extends State<MatchesScreen>
             );
           }
           return ListView.separated(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, i) => FadeSlideIn(
@@ -302,7 +302,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
                         style: AymaType.mono(
                             size: 14, weight: FontWeight.w600, color: ac.accent)),
                     if (m.myExplanation.isNotEmpty) ...[
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       Text(m.myExplanation,
                           style: AymaType.sans(
                               size: 14, color: ac.fgDim, height: 1.4)),
@@ -319,7 +319,7 @@ class _MatchDetailScreenState extends State<MatchDetailScreen> {
               SafeArea(
                 top: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                   child: _done != null
                       ? Text(_done!,
                           textAlign: TextAlign.center,

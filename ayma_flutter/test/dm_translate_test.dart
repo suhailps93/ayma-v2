@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/dm_thread_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/fresh_data.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -135,6 +136,13 @@ void main() {
       // The original is shown, with a Translate button under the bubble.
       expect(find.text('¿Cómo estás?'), findsOneWidget);
       expect(find.text('Translate'), findsOneWidget);
+      // Jobs pass cluster 15 (defect 19): the Translate label reads in
+      // accentText (was raw accent, 3.83 light). No explicit theme →
+      // context.ac is AymaTokens.dark.
+      expect(
+        tester.widget<Text>(find.text('Translate')).style?.color,
+        AymaTokens.dark.accentText,
+      );
       // Same-script detection ran exactly once, quietly, in the background.
       expect(dm.translateCalls, hasLength(1));
       expect(dm.translateCalls.single.text, '¿Cómo estás?');

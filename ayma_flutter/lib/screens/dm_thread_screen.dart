@@ -518,20 +518,27 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.photo_library_outlined),
               title: const Text('Photo'),
               onTap: () => Navigator.pop(ctx, 'gallery'),
             ),
             ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.photo_camera_outlined),
               title: const Text('Camera'),
               onTap: () => Navigator.pop(ctx, 'camera'),
             ),
             ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.attach_file),
               title: const Text('File'),
               onTap: () => Navigator.pop(ctx, 'file'),
             ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
@@ -1050,7 +1057,7 @@ class _Header extends StatelessWidget {
                         alignment: Alignment.center,
                         child: Text(
                           name.isNotEmpty ? name[0].toUpperCase() : '?',
-                          style: AymaType.sans(size: 14, color: ac.fgMute),
+                          style: AymaType.sans(size: 14, color: ac.fgDim),
                         ),
                       )
                     : AymaPhoto(url: photo, displayWidth: 32),
@@ -1064,7 +1071,7 @@ class _Header extends StatelessWidget {
                   width: 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: ac.success,
+                    color: ac.successText,
                     shape: BoxShape.circle,
                     border: Border.all(color: ac.bg, width: 2),
                   ),
@@ -1110,7 +1117,7 @@ class _PendingAttachment extends StatelessWidget {
         : 'file';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+      padding: const EdgeInsets.fromLTRB(20, 8, 4, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
@@ -1204,7 +1211,7 @@ class _SuggestionBar extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
-                    vertical: 12,
+                    vertical: 16,
                   ),
                   decoration: BoxDecoration(
                     color: ac.bgCard,
@@ -1251,7 +1258,7 @@ class _SafetyNote extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
         decoration: BoxDecoration(
           color: tint,
           borderRadius: BorderRadius.circular(14),
@@ -1265,7 +1272,7 @@ class _SafetyNote extends StatelessWidget {
               child: Icon(
                 Icons.shield_outlined,
                 size: 18,
-                color: ac.warning,
+                color: ac.warningText,
               ),
             ),
             const SizedBox(width: 12),
@@ -1296,7 +1303,6 @@ class _SafetyNote extends StatelessWidget {
               iconSize: 15,
               icon: const Icon(Icons.close),
               color: ac.fgMute,
-              visualDensity: VisualDensity.compact,
               tooltip: 'Dismiss safety note',
             ),
           ],
@@ -1320,7 +1326,7 @@ class _CoachTip extends StatelessWidget {
     final ac = context.ac;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+      padding: const EdgeInsets.fromLTRB(20, 8, 4, 8),
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: ac.lineSoft, width: 0.5)),
       ),
@@ -1344,7 +1350,6 @@ class _CoachTip extends StatelessWidget {
             iconSize: 15,
             icon: const Icon(Icons.close),
             color: ac.fgMute,
-            visualDensity: VisualDensity.compact,
             tooltip: 'Dismiss tip',
           ),
         ],
@@ -1561,15 +1566,15 @@ class _Bubble extends StatelessWidget {
               Padding(
                 padding: EdgeInsets.only(
                   right: tight ? 4 : 0,
-                  bottom: tight ? 2 : 0,
+                  bottom: tight ? 4 : 0,
                 ),
                 child: Text(
                   timeStr,
                   style: AymaType.sans(
                     size: 10.5,
                     color: (mine && !message.moderated)
-                        ? ac.onAccent.withValues(alpha: 0.72)
-                        : ac.fgMute,
+                        ? ac.onAccent
+                        : ac.fgDim,
                   ),
                 ),
               ),
@@ -1690,8 +1695,8 @@ class _Bubble extends StatelessWidget {
                         style: AymaType.sans(
                           size: 12,
                           color: mine && !message.moderated
-                              ? ac.onAccent.withValues(alpha: 0.7)
-                              : ac.fgMute,
+                              ? ac.onAccent
+                              : ac.fgDim,
                         ),
                       ),
                   ],
@@ -1852,7 +1857,7 @@ class _TranslatableBubbleState extends State<_TranslatableBubble> {
           const SizedBox(height: 4),
           Text(
             from.isEmpty ? 'translated' : 'translated from $from',
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgDim),
           ),
         ],
       );
@@ -1874,7 +1879,7 @@ class _TranslatableBubbleState extends State<_TranslatableBubble> {
               const SizedBox(height: 4),
               Text(
                 timeStr,
-                style: AymaType.sans(size: 10.5, color: ac.fgMute),
+                style: AymaType.sans(size: 10.5, color: ac.fgDim),
               ),
             ],
           );
@@ -1928,14 +1933,14 @@ class _TranslatableBubbleState extends State<_TranslatableBubble> {
               children: [
                 if (_loading) ...[
                   const AymaWingLoader(size: 12, showLabel: false),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                 ],
                 Text(
                   label,
                   style: AymaType.sans(
                     size: 13,
                     weight: FontWeight.w600,
-                    color: ac.accent,
+                    color: ac.accentText,
                   ),
                 ),
               ],
