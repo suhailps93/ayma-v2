@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/overflow_guards.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -220,6 +222,41 @@ void main() {
     expect(find.text('screen:shell'), findsOneWidget);
     expect(find.byType(SplashErrorView), findsNothing);
     expect(api.calls, 3);
+  });
+
+  // --- Jobs pass (cluster 11) spacing/color assertions ---
+
+  testWidgets('splash loading state sits at the 20 screen edge (jobs defect 1)',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: SplashLoading(reconnecting: false),
+    ));
+    await tester.pump();
+    final scroll = tester.widget<CenteredScroll>(find.byType(CenteredScroll));
+    expect(scroll.padding, const EdgeInsets.all(20));
+  });
+
+  testWidgets('splash error state sits at the 20 screen edge (jobs defect 2)',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: SplashErrorView(message: 'Could not connect', onRetry: () {}),
+    ));
+    await tester.pump();
+    final scroll = tester.widget<CenteredScroll>(find.byType(CenteredScroll));
+    expect(scroll.padding, const EdgeInsets.all(20));
+  });
+
+  testWidgets('splash error icon is drawn in fgDim, not the faint line token '
+      '(jobs defect 3)', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
+      home: SplashErrorView(message: 'Could not connect', onRetry: () {}),
+    ));
+    await tester.pump();
+    final icon = tester.widget<Icon>(
+      find.byIcon(Icons.cloud_off_outlined),
+    );
+    expect(icon.color, AymaColors.darkFgDim);
   });
 }
 

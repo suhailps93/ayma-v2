@@ -125,4 +125,20 @@ void main() {
     await _pumpPrimer(t, p, []);
     expect(find.text('Not now'), findsNothing);
   });
+
+  testWidgets('primer: Not now TextButton clears the 44 touch floor '
+      '(jobs defect 8)', (t) async {
+    final p = _FakePerm(PushPermissionState.notAsked);
+    await _pumpPrimer(t, p, []);
+
+    final size = t.getSize(
+      find.ancestor(
+        of: find.text('Not now'),
+        matching: find.byType(TextButton),
+      ),
+    );
+    // Job floor is 44; M3 pads the tap target to 48.
+    expect(size.height, greaterThanOrEqualTo(44));
+    expect(size.height, 48);
+  });
 }
