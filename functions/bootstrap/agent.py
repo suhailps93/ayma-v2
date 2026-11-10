@@ -2004,8 +2004,23 @@ class _CommandClaimGate:
                 app_control_queue.watch_late_ack(db, uid, cmd_id, _on_late_ack)
             )
             self._late_tasks.append(task)
+            # The watcher self-terminates within its 90s window (ack lands,
+            # command superseded, or timeout). Drop its reference the moment
+            # it finishes, so across a long call this list holds only the
+            # still-running watchers instead of growing one dead reference
+            # per ack-gated command (the gate lives for the whole call).
+            task.add_done_callback(self._drop_late_task)
         except Exception:  # noqa: BLE001 - background watcher must never break gate
             logger.exception("arming late ack watch failed")
+
+    def _drop_late_task(self, task: "asyncio.Task") -> None:
+        """Done-callback for an armed late-ack watcher: remove the finished
+        task from ``_late_tasks``. Guarded so a task already gone (never
+        appended, or removed twice) can never raise."""
+        try:
+            self._late_tasks.remove(task)
+        except ValueError:
+            pass
 
     def note_silence(self) -> None:
         """A reconnect was queued this turn: latch the suppression WITHOUT

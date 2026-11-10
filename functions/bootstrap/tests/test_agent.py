@@ -2436,6 +2436,92 @@ def test_claim_gate_session_gone_is_quiet_not_an_error(caplog):
     assert errors == []
 
 
+def test_claim_gate_prunes_completed_late_ack_watchers(monkeypatch):
+    """Follow-on to the late-ack watcher (fleet/ack-timeout-false-failure):
+    the gate arms one background watcher per unconfirmed ack-gated command and
+    tracks it in ``_late_tasks``, but nothing removed a finished watcher — so
+    across a long call the list grew without bound, retaining a reference to
+    every COMPLETED watcher task. The done-callback at the arm site now drops
+    each task the instant it finishes, so the list holds only still-running
+    watchers. Before the fix this asserts 0-remaining FAILS (all stay); after,
+    it passes."""
+    import asyncio
+
+    from skills import app_control, app_control_queue as acq
+
+    # Fast poll so any watcher that somehow isn't superseded still can't stall
+    # the test; every watcher here is superseded, so none reaches its window.
+    monkeypatch.setattr(app_control, "_ACK_POLL_SECONDS", 0.001)
+
+    class _Sess:
+        def say(self, _text):
+            pass
+
+        def generate_reply(self, instructions=None, **_k):
+            pass
+
+    class _Snap:
+        exists = False
+
+        def to_dict(self):
+            return None
+
+    class _Doc:
+        def collection(self, _name):
+            return _Col()
+
+        def get(self):
+            return _Snap()
+
+        def set(self, *_a, **_k):
+            pass
+
+    class _Col:
+        def document(self, _name):
+            return _Doc()
+
+    class _Db:
+        def collection(self, _name):
+            return _Col()
+
+    uid = "leak-uid"
+    acq._LAST_QUEUED.pop(uid, None)
+    db = _Db()
+    gate = agent._CommandClaimGate(_Sess(), db=db, uid=uid)
+
+    async def _scenario():
+        n = 25
+        for _ in range(n):
+            # Each fresh queue supersedes the prior command, so the previously
+            # armed watcher returns early on its next check.
+            acq._queue_command(
+                db, uid, {"action": "navigate", "screen": "explore"}
+            )
+            gate._arm_late_ack_watch(name="open_screen", label="Explore")
+        # Nothing has awaited yet, so all watchers are still pending here.
+        assert len(gate._late_tasks) == n
+        # Supersede the final armed watcher too, then let every watcher run,
+        # return, and fire its done-callback.
+        acq._queue_command(
+            db, uid, {"action": "navigate", "screen": "matches"}
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+        await asyncio.sleep(0.02)
+        for _ in range(20):
+            await asyncio.sleep(0)
+        return list(gate._late_tasks)
+
+    try:
+        remaining = asyncio.run(_scenario())
+    finally:
+        acq._LAST_QUEUED.pop(uid, None)
+
+    assert all(t.done() for t in remaining)
+    # The leak: without pruning, all 25 completed tasks stay referenced.
+    assert len(remaining) == 0
+
+
 def test_session_gone_error_matching():
     assert agent._session_gone_error(
         RuntimeError("AgentSession isn't running")
