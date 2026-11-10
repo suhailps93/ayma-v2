@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/matches_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/match_service.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,10 +20,12 @@ class _FakeMatchService extends MatchService {
   final Map<String, MatchView> _byId;
   final List<(String, bool)> responded = [];
   int failNextResponds = 0;
+  bool errorStream = false;
 
   @override
-  Stream<List<MatchView>> watchNewMatches() =>
-      Stream.value(_matches);
+  Stream<List<MatchView>> watchNewMatches() => errorStream
+      ? Stream<List<MatchView>>.error(StateError('boom'))
+      : Stream.value(_matches);
 
   @override
   Future<MatchView> fetchMatch(String matchId) async {
@@ -237,6 +240,33 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('No new matches yet'), findsOneWidget);
+  });
+
+  // Jobs pass cluster 15: the list-card score label stays raw accent — it is
+  // routed (R9) to the token owner, NOT recoloured in this cluster. Colour
+  // assertions pump without a theme, so `context.ac` is `AymaTokens.dark`.
+  testWidgets('list score label stays raw accent (R9 routed, unchanged)',
+      (tester) async {
+    final svc = _FakeMatchService(const [_m]);
+    await tester.pumpWidget(
+      MaterialApp(home: MatchesScreen(matchService: svc, api: _fakeApi())),
+    );
+    await tester.pumpAndSettle();
+    final score = tester.widget<Text>(find.text('82%'));
+    expect(score.style?.color, AymaTokens.dark.accent);
+  });
+
+  // Defect 25: the error text uses `errorText`, not raw error.
+  testWidgets('error text uses the errorText token (defect 25)',
+      (tester) async {
+    final svc = _FakeMatchService(const [])..errorStream = true;
+    await tester.pumpWidget(
+      MaterialApp(home: MatchesScreen(matchService: svc, api: _fakeApi())),
+    );
+    await tester.pumpAndSettle();
+    final err =
+        tester.widget<Text>(find.textContaining('Could not load matches'));
+    expect(err.style?.color, AymaTokens.dark.errorText);
   });
 
   testWidgets("the match-request header card (score + a long explanation) lays out without overflow at a small screen, above the profile", (WidgetTester tester) async {
