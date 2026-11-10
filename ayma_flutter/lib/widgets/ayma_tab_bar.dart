@@ -265,7 +265,7 @@ class AymaTabBar extends StatelessWidget {
               horizontal: hPad,
               vertical: _orbVerticalPadding,
             )
-          : EdgeInsets.symmetric(horizontal: hPad, vertical: compact ? 8 : 12),
+          : EdgeInsets.symmetric(horizontal: hPad, vertical: compact ? 10 : 12),
       icon: i == 0
           ? _QuietBadge(
               // The badge shows only while quiet; otherwise this is just
@@ -335,7 +335,7 @@ class AymaTabBar extends StatelessWidget {
                       boxSize: _iconBoxSize,
                       padding: EdgeInsets.symmetric(
                         horizontal: hPad,
-                        vertical: compact ? 8 : 12,
+                        vertical: compact ? 10 : 12,
                       ),
                       icon: NotificationBellButton(
                         compact: true,
