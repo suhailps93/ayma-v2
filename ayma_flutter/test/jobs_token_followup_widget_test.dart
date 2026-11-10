@@ -127,5 +127,79 @@ void main() {
           t.inputDecorationTheme.enabledBorder! as OutlineInputBorder;
       expect(enabled.borderSide.color, ctx.ac.boundary);
     });
+
+    // --- R8: outlinedButtonTheme side routes through boundary and the live
+    // side colour clears 3:1 on bg, bgElev and bgCard (the family default for
+    // all nine OutlinedButtons; none carries a per-button side override).
+    testWidgets(
+        'R8: outlinedButtonTheme side == boundary, >=3:1 on bg/bgElev/bgCard '
+        '($name)', (tester) async {
+      await tester.pumpWidget(host(make(), const SizedBox()));
+      final ctx = tester.element(find.byType(SizedBox));
+      final t = Theme.of(ctx);
+      final side = t.outlinedButtonTheme.style!.side!.resolve({})!;
+      expect(side.color, ctx.ac.boundary, reason: 'side routes through boundary');
+      for (final (label, surface) in [
+        ('bg', ctx.ac.bg),
+        ('bgElev', ctx.ac.bgElev),
+        ('bgCard', ctx.ac.bgCard),
+      ]) {
+        final ratio = AymaColors.contrastRatio(side.color, surface);
+        expect(ratio, greaterThanOrEqualTo(3.0),
+            reason: 'OutlinedButton side vs $label = $ratio');
+      }
+    });
+
+    // --- R9: chipTheme side routes through boundary and clears 3:1 on
+    // bg/bgElev/bgCard (the chip family default; no per-chip override).
+    testWidgets(
+        'R9: chipTheme side == boundary, >=3:1 on bg/bgElev/bgCard ($name)',
+        (tester) async {
+      await tester.pumpWidget(host(make(), const SizedBox()));
+      final ctx = tester.element(find.byType(SizedBox));
+      final side = Theme.of(ctx).chipTheme.side!;
+      expect(side.color, ctx.ac.boundary, reason: 'side routes through boundary');
+      for (final (label, surface) in [
+        ('bg', ctx.ac.bg),
+        ('bgElev', ctx.ac.bgElev),
+        ('bgCard', ctx.ac.bgCard),
+      ]) {
+        final ratio = AymaColors.contrastRatio(side.color, surface);
+        expect(ratio, greaterThanOrEqualTo(3.0),
+            reason: 'Chip side vs $label = $ratio');
+      }
+    });
+
+    // --- R9: with the theme applied (standard density, no per-chip override),
+    // the chip family tap target clears the 44 floor (48 target via the padded
+    // tap target). The per-widget plan ChoiceChip density fix is separate.
+    testWidgets('R9: chip family tap target >=44 with the theme ($name)',
+        (tester) async {
+      await tester.pumpWidget(
+          host(make(), ActionChip(label: const Text('X'), onPressed: () {})));
+      await tester.pumpAndSettle();
+      final h = tester.getSize(find.byType(ActionChip)).height;
+      expect(h, greaterThanOrEqualTo(44.0),
+          reason: 'chip tap target height = $h');
+    });
+
+    // --- R12: switchTheme routes the INACTIVE track outline through boundary so
+    // the OFF state clears 3:1 on bg. The ACTIVE (selected) state is untouched:
+    // its outline stays transparent (M3 default), track keeps the accent fill.
+    testWidgets(
+        'R12: switch inactive track outline == boundary, >=3:1 on bg; selected '
+        'untouched ($name)', (tester) async {
+      await tester.pumpWidget(host(make(), const SizedBox()));
+      final ctx = tester.element(find.byType(SizedBox));
+      final outlineProp = Theme.of(ctx).switchTheme.trackOutlineColor!;
+      final inactive = outlineProp.resolve(<WidgetState>{})!;
+      expect(inactive, ctx.ac.boundary, reason: 'inactive outline == boundary');
+      final ratio = AymaColors.contrastRatio(inactive, ctx.ac.bg);
+      expect(ratio, greaterThanOrEqualTo(3.0),
+          reason: 'inactive track outline vs bg = $ratio');
+      final selected = outlineProp.resolve(<WidgetState>{WidgetState.selected});
+      expect(selected, Colors.transparent,
+          reason: 'active state outline untouched (transparent)');
+    });
   }
 }
