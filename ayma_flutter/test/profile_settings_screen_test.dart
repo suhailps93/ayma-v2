@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/profile_settings_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -19,9 +20,13 @@ class _FakeProfileService extends ProfileService {
   final ProfileData? _initial;
   Map<String, dynamic>? lastUpdate;
   int failNextSaves = 0;
+  bool failRead = false;
 
   @override
-  Future<ProfileData?> readProfile() async => _initial;
+  Future<ProfileData?> readProfile() async {
+    if (failRead) throw StateError('profile read refused');
+    return _initial;
+  }
 
   @override
   Future<void> updateStructuredFields({
@@ -299,5 +304,78 @@ void main() {
         isTrue);
     expect(sent.single['distance_pref'], 'anywhere');
     handle.dispose();
+  });
+
+  // --- Jobs pass cluster 18 (fleet/jobs-models-reaudit) ---
+
+  Widget profileHost(ProfileService svc) => MaterialApp(
+        theme: AymaTheme.light,
+        home: ProfileSettingsScreen(profileService: svc),
+      );
+
+  testWidgets('V3: profile load error renders in the errorText token',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final svc = _FakeProfileService(null)..failRead = true;
+    await tester.pumpWidget(profileHost(svc));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(ProfileSettingsScreen)).ac;
+    final errorText =
+        tester.widget<Text>(find.textContaining('profile read refused'));
+    expect(errorText.style?.color, ac.errorText);
+  });
+
+  testWidgets(
+      'V9/V10/V11/V12/V13: list bottom 24, no 32 gap, chip wraps runSpacing 8, '
+      'date text aligns with the TextFields', (tester) async {
+    tester.view.physicalSize = const Size(1200, 3200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final svc = _FakeProfileService(ProfileData(
+      name: 'Sam',
+      firstName: 'Samuel',
+      lastName: 'Vale',
+      phone: '+15551234567',
+      birthdate: DateTime(1996, 5, 4),
+      gender: 'Non-binary',
+      interestedIn: const ['Everyone'],
+      location: 'Berlin',
+    ));
+    await tester.pumpWidget(profileHost(svc));
+    await tester.pumpAndSettle();
+
+    // V9: the form ListView pads bottom 24 (was 32).
+    final list = tester.widget<ListView>(find.byType(ListView).first);
+    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 24));
+
+    // V10: the pre-Save gap is 24 — no SizedBox(height: 32) survives.
+    final thirtyTwos = tester
+        .widgetList<SizedBox>(find.byType(SizedBox))
+        .where((b) => b.height == 32);
+    expect(thirtyTwos, isEmpty);
+
+    // V11/V12: both chip Wraps carry runSpacing 8.
+    final genderWrap = tester.widget<Wrap>(find
+        .ancestor(of: find.byType(ChoiceChip).first, matching: find.byType(Wrap))
+        .first);
+    expect(genderWrap.runSpacing, 8);
+    final interestWrap = tester.widget<Wrap>(find
+        .ancestor(of: find.byType(FilterChip).first, matching: find.byType(Wrap))
+        .first);
+    expect(interestWrap.runSpacing, 8);
+
+    // V13: the date button carries the horizontal-12 padding override so its
+    // text lands at the 12 floor from the button edge (x=32), matching the
+    // dropdowns and TextFields rather than the M3 default 24.
+    final dateButton = tester.widget<OutlinedButton>(find.byType(OutlinedButton));
+    expect(dateButton.style?.padding?.resolve(<WidgetState>{}),
+        const EdgeInsets.symmetric(horizontal: 12));
+    expect(tester.getTopLeft(find.text('1996-05-04')).dx,
+        moreOrLessEquals(32, epsilon: 0.5));
   });
 }

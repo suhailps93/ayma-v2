@@ -308,14 +308,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               ? CenteredScroll(
                   padding: const EdgeInsets.all(24),
                   child: Text(_error!,
-                      style: AymaType.sans(size: 14, color: AymaColors.error)),
+                      style: AymaType.sans(size: 14, color: ac.errorText)),
                 )
               : ListView(
                   // iOS has no keyboard-dismiss key — dragging the form away
                   // is the native escape hatch.
                   keyboardDismissBehavior:
                       ScrollViewKeyboardDismissBehavior.onDrag,
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
                   children: [
                     _label('First name', ac),
                     TextField(
@@ -347,6 +347,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     _label('Date of birth', ac),
                     OutlinedButton(
                       onPressed: _pickBirthdate,
+                      style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12)),
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
@@ -362,6 +364,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     _label('Gender', ac),
                     Wrap(
                       spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final g in _genders)
                           ChoiceChip(
@@ -378,6 +381,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     _label('Interested in', ac),
                     Wrap(
                       spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final opt in _interestOptions)
                           FilterChip(
@@ -413,7 +417,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                             _dirtyDistance = true;
                           }),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 24),
                     FilledButton(
                       onPressed: _canSave ? _save : null,
                       child: Text(_saving ? 'Saving…' : 'Save'),
