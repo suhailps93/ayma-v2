@@ -48,6 +48,10 @@ _NON_TOOL_NAMES = {
     "story", "terms",
     # setting keys / handlers
     "distance_preference", "partner_age_range",
+    # chat-request / context field names (not tools): the pair-briefing
+    # context key the client sends on /chat and the backend binds on
+    # (main.ChatRequest.viewing_profile_uid, api_client.dart).
+    "viewing_profile_uid",
     # exclusion + unavailable keys
     "clear_memory", "delete_account", "purchase", "developer_panel",
     # deny rule keys named in the graph
@@ -86,6 +90,10 @@ def _tool_names() -> set[str]:
     # recall is flag-gated (context_opt) so the declarations above only
     # carry it when the flag is on; it is a real tool either way.
     names.add(skills.recall.SKILL.name)
+    # open_shared_report is surfaced only when a shared report card rides on
+    # the chat request (session_tool_declarations(shared=True)); the baseline
+    # declarations above omit it, but it is a real tool either way.
+    names.add(skills.open_shared.SKILL.name)
     return names
 
 
