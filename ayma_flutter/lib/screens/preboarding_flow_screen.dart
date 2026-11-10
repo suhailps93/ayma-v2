@@ -548,17 +548,21 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                         size: 13,
                         color: AgeGate.isAdult(_birthdate!)
                             ? ac.fgMute
-                            : AymaColors.error,
+                            : ac.errorText,
                       ),
                     )
                   else if (_dobController.text.trim().isNotEmpty)
                     Text("Couldn't read that date — try 03/05/1993 or 1993-03-05.",
                         style: AymaType.sans(size: 13, color: ac.fgMute)),
+                  if (_birthdate != null ||
+                      _dobController.text.trim().isNotEmpty)
+                    const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       onPressed: _pickBirthdate,
-                      icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                      icon: const Icon(Icons.calendar_today_outlined, size: 18),
                       label: const Text('Pick from calendar'),
                     ),
                   ),
@@ -607,6 +611,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     _label('Gender', ac),
                     Wrap(
                       spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final g in _genders)
                           ChoiceChip(
@@ -620,6 +625,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     _label('Interested in', ac),
                     Wrap(
                       spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final option in _interestOptions)
                           FilterChip(
@@ -648,6 +654,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     const SizedBox(height: 8),
                     TextButton.icon(
                       onPressed: _detectingLocation ? null : _useMyLocation,
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero),
                       icon: const Icon(Icons.my_location, size: 18),
                       label: Text(_detectingLocation
                           ? 'Detecting…'
@@ -685,7 +692,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     ],
                     OutlinedButton.icon(
                       onPressed: _pickVerificationSelfie,
-                      icon: const Icon(Icons.camera_alt_outlined),
+                      icon: const Icon(Icons.camera_alt_outlined, size: 18),
                       label: Text(_verificationSelfie == null
                           ? 'Take a selfie'
                           : 'Retake selfie'),
@@ -710,7 +717,7 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
                     ],
                     OutlinedButton.icon(
                       onPressed: _photos.length >= _maxPhotos ? null : _pickPhotos,
-                      icon: const Icon(Icons.photo_library_outlined),
+                      icon: const Icon(Icons.photo_library_outlined, size: 18),
                       label: Text(
                         _photos.isEmpty
                             ? 'Choose photos'
@@ -725,7 +732,8 @@ class _PreboardingFlowScreenState extends State<PreboardingFlowScreen> {
             ),
             SafeArea(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                 child: FilledButton(
                   onPressed: _saving ? null : _save,
                   // Photo uploads + preboarding save in flight — wings only.

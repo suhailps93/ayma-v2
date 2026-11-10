@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/legal/biometric_consent_text.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
+import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -1390,6 +1391,95 @@ void main() {
       await tester.pump();
       expect(biometricChecked(tester), isTrue);
       expect(opened, isEmpty);
+    });
+  });
+
+  // Jobs-pass cluster 19 (fleet/jobs-auth-reaudit): spacing / colour /
+  // alignment only on the sign-in gate.
+  group('jobs-pass geometry (cluster 19)', () {
+    testWidgets('D1: the AYMA-to-tagline gap measures 8', (tester) async {
+      await _pump(tester, _FakeAuth(), accept: false);
+      final gap = tester.getTopLeft(find.text('Your AI matchmaker')).dy -
+          tester.getBottomLeft(find.text('AYMA')).dy;
+      expect(gap, closeTo(8, 0.5));
+    });
+
+    testWidgets('D4: the ScrollView pads bottom 24', (tester) async {
+      await _pump(tester, _FakeAuth(), accept: false);
+      final scroll =
+          tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView));
+      expect((scroll.padding as EdgeInsets).bottom, 24);
+    });
+
+    testWidgets('D5: the Tap-to-mute target measures 48 tall while greeting',
+        (tester) async {
+      tester.view.physicalSize = const Size(1100, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final voice = _FakeVoice();
+      await tester.pumpWidget(MaterialApp(
+        home: SignInScreen(auth: _FakeAuth(), voiceController: voice),
+      ));
+      await tester.pump();
+      // The greeting is live only while the voice session is active.
+      voice.setVoiceActive(true);
+      await tester.pump();
+      expect(find.text('Tap to mute'), findsOneWidget);
+      final box = tester.getSize(find
+          .ancestor(
+              of: find.text('Tap to mute'), matching: find.byType(SizedBox))
+          .first);
+      expect(box.height, 48);
+    });
+
+    testWidgets('D3: the Forgot-password label ends at the field edge',
+        (tester) async {
+      await _openEmail(tester, _FakeAuth());
+      final labelRight = tester.getTopRight(find.text('Forgot password?')).dx;
+      final fieldRight = tester.getTopRight(find.byType(TextField).first).dx;
+      expect(labelRight, closeTo(fieldRight, 0.5));
+    });
+
+    testWidgets('D2: the reset-sent helper reads at size 12', (tester) async {
+      final auth = _FakeAuth();
+      await _openEmail(tester, auth);
+      await tester.enterText(
+          find.widgetWithText(TextField, 'Email'), 'a@b.com');
+      await tester.tap(find.text('Forgot password?'));
+      await tester.pump();
+      final reset = find.textContaining('Check your email');
+      expect(reset, findsOneWidget);
+      expect(tester.widget<Text>(reset).style?.fontSize, 12);
+    });
+
+    testWidgets('D14/D15: critical-consent dialog link Wrap + flush labels',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (ctx) => TextButton(
+              onPressed: () => showSignInCriticalConsent(ctx),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      // D14: the link Wrap carries runSpacing 8.
+      final wrap = find.ancestor(
+          of: find.widgetWithText(TextButton, 'Terms'),
+          matching: find.byType(Wrap));
+      expect(tester.widget<Wrap>(wrap).runSpacing, 8);
+
+      // D15: all three link buttons carry zero leading inset, so their labels
+      // start flush at the bullets' edge (the M3 TextButton padding is gone).
+      for (final label in ['Terms', 'Privacy', 'Face matching']) {
+        final btn = tester.widget<TextButton>(
+            find.widgetWithText(TextButton, label));
+        expect(btn.style?.padding?.resolve({}), EdgeInsets.zero);
+      }
     });
   });
 }

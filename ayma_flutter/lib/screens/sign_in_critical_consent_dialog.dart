@@ -40,17 +40,21 @@ Future<void> showSignInCriticalConsent(BuildContext context) {
             // landscape / keyboard-open windows.
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
                 TextButton(
                   onPressed: () => LegalLinks.openTerms(ctx),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero),
                   child: const Text('Terms'),
                 ),
                 TextButton(
                   onPressed: () => LegalLinks.openPrivacy(ctx),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero),
                   child: const Text('Privacy'),
                 ),
                 TextButton(
                   onPressed: () => ctx.push(BiometricInfoScreen.path),
+                  style: TextButton.styleFrom(padding: EdgeInsets.zero),
                   child: const Text('Face matching'),
                 ),
               ],
