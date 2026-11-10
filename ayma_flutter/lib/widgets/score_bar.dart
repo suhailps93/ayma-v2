@@ -40,7 +40,8 @@ class ScoreBar extends StatelessWidget {
   /// theme accent color.
   final Color? color;
 
-  /// Track (unfilled) color. Defaults to the theme's soft line color.
+  /// Track (unfilled) color. Defaults to the theme's [track] token, derived
+  /// to clear 3:1 against the accent fill (soft line failed that floor).
   final Color? trackColor;
 
   /// When given, computes the fill color from `value`/`max` (banded mode)
@@ -59,7 +60,7 @@ class ScoreBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
       child: Stack(
         children: [
-          Container(height: height, color: trackColor ?? ac.lineSoft),
+          Container(height: height, color: trackColor ?? ac.track),
           FractionallySizedBox(
             widthFactor: frac,
             child: Container(height: height, color: fill),
