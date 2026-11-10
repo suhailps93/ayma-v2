@@ -490,4 +490,44 @@ void main() {
         reason: 'the track token must separate better than lineSoft in light');
 
   });
+
+  // -------------------------------------------------------------------------
+  // Jobs cluster 21 (You + Settings): the new pairs these seven screens
+  // introduce. The token contrasts themselves are the arbiter the per-defect
+  // notes cite; these pin the surfaces this cluster actually renders on.
+  // -------------------------------------------------------------------------
+
+  test('cluster21: accentText reads >=4.5:1 on bgCard in both themes '
+      '(the MCP URL on the instructions card — defect 13)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.accentText, t.bgCard), greaterThanOrEqualTo(4.5),
+          reason: 'accentText on bgCard');
+      // The raw accent it replaces fails as 12pt text on bgCard in BOTH
+      // themes (4.02/3.29) — exactly why the URL routes through accentText.
+      expect(_contrastRatio(t.accent, t.bgCard), lessThan(4.5),
+          reason: 'raw accent on bgCard fails — defect 13 motivation');
+    }
+  });
+
+  test('cluster21: the Delete button black label reads >=4.5:1 on the error '
+      'fill in both themes (delete-account — defect 1 surface, unchanged fill)',
+      () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      expect(_contrastRatio(t.onAccent, AymaColors.error),
+          greaterThanOrEqualTo(4.5),
+          reason: 'black label on error fill');
+    }
+  });
+
+  test('cluster21: the locked tile at full strength (no Opacity) clears the '
+      'text floors on bgElev in both themes (defect 9)', () {
+    for (final t in [AymaTokens.light, AymaTokens.dark]) {
+      // Label is now fgDim (was fg under a 0.55 Opacity, which failed light).
+      expect(_contrastRatio(t.fgDim, t.bgElev), greaterThanOrEqualTo(4.5),
+          reason: 'locked-tile label (fgDim) on bgElev');
+      // The `Locked` mono label + lock icon stay fgMute, now at full strength.
+      expect(_contrastRatio(t.fgMute, t.bgElev), greaterThanOrEqualTo(4.5),
+          reason: 'locked-tile mono + icon (fgMute) on bgElev');
+    }
+  });
 }

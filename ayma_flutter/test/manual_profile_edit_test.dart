@@ -86,6 +86,43 @@ void main() {
     expect(find.text("Phone numbers can't go on your public profile."),
         findsOneWidget);
     expect(find.byType(ManualProfileEditScreen), findsOneWidget);
+
+    // Jobs defect 3: the save error reads in the derived errorText token at
+    // 14pt, not the raw scheme.error (= AymaColors.error, sub-floor on bg).
+    final errFinder =
+        find.text("Phone numbers can't go on your public profile.");
+    final ac = tester.element(errFinder).ac;
+    final errStyle = tester.widget<Text>(errFinder).style!;
+    expect(errStyle.color, ac.errorText);
+    expect(errStyle.color, isNot(AymaColors.error));
+    expect(errStyle.fontSize, 14);
+  });
+
+  testWidgets('the profile-text field shows no framework counter (defect 4)',
+      (tester) async {
+    final api = _api((r) async {
+      if (r.method == 'GET') {
+        return http.Response(
+            jsonEncode({'text': 'x', 'version': 'v1', 'max_chars': 12000}),
+            200,
+            headers: _json);
+      }
+      return http.Response(jsonEncode({'ok': true}), 200, headers: _json);
+    });
+    await tester
+        .pumpWidget(MaterialApp(home: ManualProfileEditScreen(apiClient: api)));
+    await tester.pumpAndSettle();
+
+    // maxLength is set (12000), but counterText:'' suppresses the 0/N counter,
+    // matching the six sibling maxLength fields in the app.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.maxLength, 12000);
+    expect(field.decoration!.counterText, '');
+
+    // No 'N/12000' counter renders, even after typing.
+    await tester.enterText(find.byType(TextField), 'some longer profile text');
+    await tester.pump();
+    expect(find.textContaining('/12000'), findsNothing);
   });
 
   testWidgets('helper text explains own sections; custom section is sent as-is',

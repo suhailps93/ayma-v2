@@ -212,7 +212,7 @@ class _Body extends StatelessWidget {
                   style: AymaType.mono(size: 10, color: ac.fgMute)
                       .copyWith(letterSpacing: 1.4),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(child: Divider(height: 0.5, color: ac.lineSoft)),
               ],
             ),
@@ -301,7 +301,7 @@ class _TunedForLine extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
           decoration: BoxDecoration(
             color: ac.accentFaint,
             borderRadius: BorderRadius.circular(12),
@@ -326,20 +326,22 @@ class _TunedForLine extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            Text('Tuned for: ',
-                style: AymaType.sans(size: 13, color: ac.fgMute)),
-            Text(
-              intentLabel,
-              style: AymaType.sans(
-                  size: 13, weight: FontWeight.w600, color: ac.fg),
-            ),
-            const SizedBox(width: 8),
-            Icon(Icons.tune, size: 14, color: ac.fgMute),
-          ],
+      child: SizedBox(
+        height: 48,
+        child: Center(
+          child: Row(
+            children: [
+              Text('Tuned for: ',
+                  style: AymaType.sans(size: 13, color: ac.fgMute)),
+              Text(
+                intentLabel,
+                style: AymaType.sans(
+                    size: 13, weight: FontWeight.w600, color: ac.fg),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.tune, size: 14, color: ac.fgMute),
+            ],
+          ),
         ),
       ),
     );
@@ -383,7 +385,7 @@ class _SectionTileState extends State<_SectionTile> {
             padding: const EdgeInsets.only(top: 3),
             child: _StatusDot(status: n.status),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               n.label,
@@ -419,7 +421,7 @@ class _SectionTileState extends State<_SectionTile> {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -530,29 +532,26 @@ class _LockedSectionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Opacity(
-      opacity: 0.55,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: ac.bgElev,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: ac.lineSoft, width: 0.5),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.lock_outline, size: 16, color: ac.fgMute),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                section.label,
-                style: AymaType.sans(size: 14, color: ac.fg),
-              ),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: ac.boundary, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.lock_outline, size: 16, color: ac.fgMute),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              section.label,
+              style: AymaType.sans(size: 14, color: ac.fgDim),
             ),
-            Text('Locked', style: AymaType.mono(size: 10, color: ac.fgMute)),
-          ],
-        ),
+          ),
+          Text('Locked', style: AymaType.mono(size: 10, color: ac.fgMute)),
+        ],
       ),
     );
   }
@@ -570,7 +569,7 @@ class _Bar extends StatelessWidget {
       borderRadius: BorderRadius.circular(3),
       child: Stack(
         children: [
-          Container(height: 5, color: ac.lineSoft),
+          Container(height: 5, color: ac.track),
           Positioned.fill(
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,

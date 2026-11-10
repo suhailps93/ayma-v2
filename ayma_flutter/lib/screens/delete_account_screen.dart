@@ -139,7 +139,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(_error!,
-                style: AymaType.sans(size: 13, color: AymaColors.error)),
+                style: AymaType.sans(size: 13, color: ac.errorText)),
           ],
           const SizedBox(height: 20),
           FilledButton(
