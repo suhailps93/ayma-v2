@@ -1027,15 +1027,73 @@ void main() {
     );
     expect(wrap.runSpacing, 8);
     expect(wrap.spacing, 8);
-    // O12 / R9: the chips carry VisualDensity.compact, so the M3 padded tap
-    // target resolves to 40 at render (48 base − 8 for compact), not 48 — the
-    // widget test is the arbiter here. Lifting it to a true 48 is a theme-owner
-    // decision on chipTheme (R9, routed), never a per-chip override, so it is
-    // not forced in this cluster. Assert the chip still renders a real,
+    // O12 / R9: the chips formerly carried VisualDensity.compact (40 at render);
+    // the plan-chip-density merge lifted them to standard density with
+    // labelPadding(16,8), so they now render at 50. The >= 40 assertion below
+    // is retained as a floor: assert the chip still renders a real,
     // non-collapsed tap target at 2.0x text scale.
     expect(
       tester.getSize(find.byKey(const ValueKey('credit-period-7d'))).height,
       greaterThanOrEqualTo(40),
     );
   });
+  testWidgets(
+    'credit-period ChoiceChips render with labelPadding(16,8) and >= 48 touch target',
+    (tester) async {
+      for (final dark in [false, true]) {
+        tester.view.physicalSize = const Size(900, 2600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: dark ? AymaTheme.dark : AymaTheme.light,
+            home: PlanScreen(
+              service: _FakeRc(on: false),
+              api: _api(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        for (final period in ['since_credit', '7d', '30d', 'all']) {
+          final chipFinder = find.byKey(ValueKey('credit-period-$period'));
+          expect(chipFinder, findsOneWidget);
+
+          final chip = tester.widget<ChoiceChip>(chipFinder);
+          expect(
+            chip.labelPadding,
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          );
+          expect(chip.visualDensity, isNull);
+
+          final size = tester.getSize(chipFinder);
+          // With standard density and labelPadding(16,8), the chip body + tap target
+          // lands at 50.0 (>= 48, comfortably clearing the 44 floor, up from 40 compact).
+          expect(size.height, greaterThanOrEqualTo(48.0));
+          expect(size.height, 50.0);
+        }
+      }
+
+      // Also verify at 2.0x text scale that the chip expands properly and >= 48
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AymaTheme.dark,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: PlanScreen(
+            service: _FakeRc(on: false),
+            api: _api(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(const ValueKey('credit-period-7d'))).height,
+        greaterThanOrEqualTo(48.0),
+      );
+    },
+  );
 }
