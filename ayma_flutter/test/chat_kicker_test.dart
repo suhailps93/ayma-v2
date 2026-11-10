@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/plan_screen.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
@@ -73,6 +74,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Noted your feedback'), findsOneWidget);
+    // Defect 16: the tools-kicker label is drawn in accentText (text-safe on
+    // the accentFaint tint), not raw accent. The app router pumps no custom
+    // theme, so context.ac falls back to AymaTokens.dark.
+    final kicker = tester.widget<Text>(find.text('Noted your feedback'));
+    expect(kicker.style?.color, AymaTokens.dark.accentText);
   });
 
   testWidgets(

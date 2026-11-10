@@ -67,7 +67,6 @@ class AymaQuietChip extends StatelessWidget {
                 style: TextButton.styleFrom(
                   foregroundColor: ac.onAccent,
                   backgroundColor: ac.accent,
-                  visualDensity: VisualDensity.compact,
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   shape: const StadiumBorder(),
                 ),

@@ -635,8 +635,16 @@ void _cardHistoryTests() {
     await tester.pumpWidget(_historyApp(api));
     await tester.pumpAndSettle();
 
-    // Scroll toward the older end until the next page is fetched.
-    for (var i = 0; i < 12 && !befores.contains('cursor-older'); i++) {
+    // Scroll toward the older end until the next page is fetched AND the
+    // prepended card is laid out. The second clause keeps flinging past the
+    // fetch so the just-loaded card lands inside the ListView's cacheExtent
+    // regardless of card height (the shared-ref card's exact height is not
+    // what this test pins).
+    for (var i = 0;
+        i < 16 &&
+            (!befores.contains('cursor-older') ||
+                find.text('Web research on Dana').evaluate().isEmpty);
+        i++) {
       await tester.fling(
         find.byType(ListView),
         const Offset(0, 600),

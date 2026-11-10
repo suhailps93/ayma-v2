@@ -2030,7 +2030,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        padding: kComposerBarPadding,
         child: ChatComposer(
           mode: composerMode,
           controller: _composerController,
@@ -3185,7 +3185,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     overflow: TextOverflow.ellipsis,
                                     style: AymaType.mono(
                                       size: 9,
-                                      color: AymaColors.error,
+                                      color: context.ac.errorText,
                                     ).copyWith(letterSpacing: 1.8),
                                   ),
                                 ),
@@ -3201,17 +3201,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                 child: GestureDetector(
                                     onTap: () =>
                                         CallPermissions().openSettings(),
-                                  child: Text(
-                                    'OPEN SETTINGS',
-                                    style:
-                                        AymaType.mono(
-                                          size: 9,
-                                          color: AymaColors.error,
-                                        ).copyWith(
-                                          letterSpacing: 1.8,
-                                            decoration:
-                                                TextDecoration.underline,
-                                        ),
+                                  child: SizedBox(
+                                    height: 44,
+                                    child: Center(
+                                      child: Text(
+                                        'OPEN SETTINGS',
+                                        style:
+                                            AymaType.mono(
+                                              size: 9,
+                                              color: context.ac.errorText,
+                                            ).copyWith(
+                                              letterSpacing: 1.8,
+                                              decoration:
+                                                  TextDecoration.underline,
+                                            ),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -3479,9 +3484,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                           duration:
                                               const Duration(milliseconds: 300),
                                           margin: const EdgeInsets.symmetric(
-                                              vertical: 2),
+                                              vertical: 4),
                                           padding: const EdgeInsets.symmetric(
-                                              horizontal: 6),
+                                              horizontal: 8),
                                           decoration: BoxDecoration(
                                             color: ac.accentFaint,
                                             borderRadius:
@@ -3655,7 +3660,7 @@ class _PhotoChatContext extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
+      padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
       child: Row(
         children: [
           ClipRRect(
@@ -3760,7 +3765,7 @@ class _AskAymaHeader extends StatelessWidget {
     final sheet = AymaChatSheetController.maybeOf(context);
     return Column(
       children: [
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(
@@ -3802,7 +3807,7 @@ class _AskAymaHeader extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                   onTap: () => Navigator.of(context).pop(),
                   child: Padding(
-                    padding: const EdgeInsets.all(6),
+                    padding: const EdgeInsets.all(12),
                     child: Icon(Icons.close, size: 20, color: ac.fgDim),
                   ),
                 ),
@@ -3858,7 +3863,7 @@ class _SelectedQuote extends StatelessWidget {
               color: ac.fgMute,
             ).copyWith(letterSpacing: 1.4),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           // The FULL item text, always — no line cap, no ellipsis (§ D12:
           // a Projects quote cut mid-sentence). This card sizes to the item
           // and holds no scroll of its own; the header region's generous cap
@@ -3890,7 +3895,7 @@ class _QuickChips extends StatelessWidget {
             onTap: () => onPick(s),
             borderRadius: BorderRadius.circular(20),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               decoration: BoxDecoration(
                 color: ac.bgElev,
                 borderRadius: BorderRadius.circular(20),
@@ -4074,7 +4079,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
       final hasReply = turn.replySubject.isNotEmpty;
       final showBubble = turn.text.isNotEmpty || userClip != null || hasReply;
       turnWidget = Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Align(
           alignment: Alignment.centerRight,
           child: ConstrainedBox(
@@ -4097,7 +4102,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                     text: turn.text.isNotEmpty ? turn.text : 'Voice message',
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
+                        horizontal: 16,
                         vertical: 12,
                       ),
                       decoration: BoxDecoration(
@@ -4127,7 +4132,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                           if (userClip != null)
                             Padding(
                               padding: EdgeInsets.only(
-                                bottom: turn.text.isNotEmpty ? 6 : 0,
+                                bottom: turn.text.isNotEmpty ? 8 : 0,
                               ),
                               child: userClip,
                             ),
@@ -4137,14 +4142,14 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                               style: AymaType.message(color: ac.onAccent),
                             ),
                           if (timeStr != null) ...[
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 4),
                             Align(
                               alignment: Alignment.centerRight,
                               child: Text(
                                 timeStr,
                                 style: AymaType.sans(
                                   size: 10.5,
-                                  color: ac.onAccent.withValues(alpha: 0.72),
+                                  color: ac.onAccent,
                                 ),
                               ),
                             ),
@@ -4240,7 +4245,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                           turn.tools.join('  ·  '),
                           style: AymaType.sans(
                             size: 12,
-                            color: ac.accent,
+                            color: ac.accentText,
                           ).copyWith(fontWeight: FontWeight.w600, height: 1.2),
                         ),
                       ),
@@ -4262,11 +4267,12 @@ class _TranscriptLineState extends State<_TranscriptLine> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // A 16px/1.5-line-height first line is ~24px tall; nudge
-                  // the smaller 14px loader down so it sits centered against
-                  // that first line instead of pinned to the row's top.
+                  // The message's first line is 15px at 1.4 line-height = ~21px
+                  // tall; nudge the smaller 14px loader down by (21-14)/2 = 3.5
+                  // ≈ 4 so it sits centered against that first line instead of
+                  // pinned to the row's top.
                   const Padding(
-                    padding: EdgeInsets.only(top: 5),
+                    padding: EdgeInsets.only(top: 4),
                     child: AymaWingLoader(size: 14, showLabel: false),
                   ),
                   const SizedBox(width: 8),
@@ -4288,7 +4294,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                 child: CollapsibleMessageText(
                   displayText,
                   style: AymaType.message(color: ac.fg),
-                  linkColor: ac.accent,
+                  linkColor: ac.accentText,
                 ),
               ),
             if (turn.capped)
@@ -4353,29 +4359,37 @@ class _TranscriptLineState extends State<_TranscriptLine> {
                       InkWell(
                         onTap: _flagged ? null : _thumbsDown,
                         borderRadius: BorderRadius.circular(6),
-                        child: Padding(
-                          padding: const EdgeInsets.all(4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                _flagged
-                                    ? Icons.thumb_down_alt
-                                    : Icons.thumb_down_alt_outlined,
-                                size: 13,
-                                color: _flagged ? ac.accent : ac.fgMute,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _flagged
+                                        ? Icons.thumb_down_alt
+                                        : Icons.thumb_down_alt_outlined,
+                                    size: 13,
+                                    color: _flagged ? ac.accent : ac.fgMute,
+                                  ),
+                                  if (_flagged) ...[
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'noted',
+                                      style: AymaType.mono(
+                                        size: 8,
+                                        color: ac.fgMute,
+                                      ).copyWith(letterSpacing: 1.5),
+                                    ),
+                                  ],
+                                ],
                               ),
-                              if (_flagged) ...[
-                                const SizedBox(width: 4),
-                                Text(
-                                  'noted',
-                                  style: AymaType.mono(
-                                    size: 8,
-                                    color: ac.fgMute,
-                                  ).copyWith(letterSpacing: 1.5),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
@@ -4492,7 +4506,7 @@ class _QueuedBubble extends StatelessWidget {
     final ac = context.ac;
     final width = MediaQuery.of(context).size.width;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Align(
         alignment: Alignment.centerRight,
         child: ConstrainedBox(
@@ -4503,7 +4517,7 @@ class _QueuedBubble extends StatelessWidget {
               if (message.imageUrl.isNotEmpty)
                 Padding(
                   padding:
-                      EdgeInsets.only(bottom: message.message.isEmpty ? 0 : 6),
+                      EdgeInsets.only(bottom: message.message.isEmpty ? 0 : 8),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(14),
                     child: ConstrainedBox(
@@ -4526,7 +4540,7 @@ class _QueuedBubble extends StatelessWidget {
                   opacity: 0.6,
                   child: Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
                       color: ac.accent,
                       borderRadius: const BorderRadius.only(
@@ -4584,15 +4598,15 @@ class _AymaVoiceProgressLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return Padding(
-      padding: const EdgeInsets.only(top: 12, bottom: 10),
+      padding: const EdgeInsets.only(top: 12, bottom: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.only(top: 5),
+            padding: EdgeInsets.only(top: 4),
             child: AymaWingLoader(size: 14, showLabel: false),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               stageLine,
@@ -4722,7 +4736,7 @@ class _SharedRefCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: Container(
         width: onClear != null ? 260 : 240,
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(14),
@@ -4747,7 +4761,7 @@ class _SharedRefCard extends StatelessWidget {
                       ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4759,7 +4773,7 @@ class _SharedRefCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: AymaType.sans(size: 13, color: ac.fg, height: 1.25),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     m.route.isEmpty
                         ? 'SHARED WITH AYMA'
@@ -4780,7 +4794,6 @@ class _SharedRefCard extends StatelessWidget {
                 iconSize: 16,
                 icon: const Icon(Icons.close),
                 color: ac.fgMute,
-                visualDensity: VisualDensity.compact,
                 tooltip: 'Remove attachment',
               ),
             ],
@@ -4820,7 +4833,7 @@ class _QuotedReplyCard extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(8, 6, 10, 6),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: BoxDecoration(
         color: ac.onAccent.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(8),
@@ -4864,7 +4877,7 @@ class _QuotedReplyCard extends StatelessWidget {
                       size: 13,
                       color: ac.onAccent.withValues(alpha: 0.9),
                     ),
-                    const SizedBox(width: 5),
+                    const SizedBox(width: 4),
                     Flexible(
                       child: Text(
                         subject,
@@ -4880,7 +4893,7 @@ class _QuotedReplyCard extends StatelessWidget {
                   ],
                 ),
                 if (snippet.isNotEmpty) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     snippet,
                     maxLines: 2,
@@ -4891,7 +4904,7 @@ class _QuotedReplyCard extends StatelessWidget {
                     ),
                   ),
                 ] else if (imageUrl.isNotEmpty) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     'Photo',
                     maxLines: 1,
@@ -5273,10 +5286,10 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Container(
                     key: const ValueKey('composerReplyPreview'),
-                    padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
                     decoration: BoxDecoration(
                       color: ac.bgElev,
                       borderRadius: BorderRadius.circular(10),
@@ -5299,7 +5312,7 @@ class _Composer extends StatelessWidget {
                           size: 16,
                           color: ac.accent,
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         if (replyingToImageUrl != null ||
                             replyingToImageFile != null) ...[
                           ClipRRect(
@@ -5331,7 +5344,7 @@ class _Composer extends StatelessWidget {
                                 'Replying to ${replyingToSender ?? 'Ayma'}',
                                 style: AymaType.sans(
                                   size: 11,
-                                  color: ac.accent,
+                                  color: ac.accentText,
                                   weight: FontWeight.w600,
                                 ),
                               ),
@@ -5355,7 +5368,6 @@ class _Composer extends StatelessWidget {
                           iconSize: 16,
                           icon: const Icon(Icons.close),
                           color: ac.fgMute,
-                          visualDensity: VisualDensity.compact,
                           tooltip: 'Cancel reply',
                         ),
                       ],
@@ -5367,9 +5379,9 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Container(
-                    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
                     decoration: BoxDecoration(
                       color: ac.bgElev,
                       borderRadius: BorderRadius.circular(10),
@@ -5396,7 +5408,6 @@ class _Composer extends StatelessWidget {
                           iconSize: 16,
                           icon: const Icon(Icons.close),
                           color: ac.fgMute,
-                          visualDensity: VisualDensity.compact,
                           tooltip: 'Remove page context',
                         ),
                       ],
@@ -5408,7 +5419,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 2),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: _SharedRefCard.fromDraft(
                     pendingShared!,
                     key: const ValueKey('stagedSharedChip'),
@@ -5420,7 +5431,7 @@ class _Composer extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8, left: 4),
+                  padding: const EdgeInsets.only(bottom: 8),
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -5441,7 +5452,6 @@ class _Composer extends StatelessWidget {
                           iconSize: 18,
                           icon: const Icon(Icons.cancel),
                           color: ac.fgMute,
-                          visualDensity: VisualDensity.compact,
                         ),
                       ),
                     ],
