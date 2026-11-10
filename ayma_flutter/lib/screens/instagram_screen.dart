@@ -107,10 +107,12 @@ class _InstagramScreenState extends State<InstagramScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             child: const Text('Continue to Instagram'),
           ),
         ],
@@ -148,7 +150,7 @@ class _InstagramScreenState extends State<InstagramScreen> {
             const SizedBox(height: 24),
             if (_error != null)
               Text('Could not load status ($_error).',
-                  style: AymaType.sans(size: 13, color: AymaColors.error))
+                  style: AymaType.sans(size: 13, color: ac.errorText))
             else if (connected == null)
               // Link-status read still in flight.
               const Center(

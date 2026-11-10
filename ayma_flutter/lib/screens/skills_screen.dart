@@ -105,6 +105,7 @@ class _SkillsScreenState extends State<SkillsScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             child: const Text('Cancel'),
           ),
           FilledButton(
@@ -137,7 +138,7 @@ class _SkillsScreenState extends State<SkillsScreen>
         leading: const AymaBackButton(),
         title: const Text('Skills')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
         children: [
           _SkillCard(
             icon: Icons.travel_explore,
@@ -209,7 +210,7 @@ class _CreditsRowState extends State<_CreditsRow> {
       onTap: () => context.push(PlanScreen.path),
       borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 0),
         child: Row(
           children: [
             Icon(Icons.toll_rounded,
@@ -218,11 +219,11 @@ class _CreditsRowState extends State<_CreditsRow> {
             Text(
               n == null ? 'Credits' : '$n credits left',
               style: AymaType.sans(
-                  size: 12, color: n == 0 ? ac.error : ac.fgDim),
+                  size: 12, color: n == 0 ? ac.errorText : ac.fgDim),
             ),
             const Spacer(),
             Text('Upgrade',
-                style: AymaType.mono(size: 11, color: ac.accent)
+                style: AymaType.mono(size: 11, color: ac.accentText)
                     .copyWith(letterSpacing: 0.5)),
             Icon(Icons.chevron_right, size: 16, color: ac.accent),
           ],
@@ -760,7 +761,7 @@ class _AxisGroup extends StatelessWidget {
     final hasPhotos = photos.isNotEmpty;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(16),
@@ -783,6 +784,7 @@ class _AxisGroup extends StatelessWidget {
               if (hasPhotos)
                 TextButton(
                   onPressed: onToggleSkip,
+                  style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
                   child: Text(skipped ? 'Include' : 'Skip'),
                 ),
             ],
@@ -836,7 +838,7 @@ class _AxisGroup extends StatelessWidget {
           ),
           if (skipped && hasPhotos)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.only(top: 8),
               child: Text(
                 "Skipped — I won't run this section.",
                 style: AymaType.sans(size: 11.5, color: ac.fgMute),
@@ -900,8 +902,8 @@ class _PhotoTile extends StatelessWidget {
                   ),
                 ),
               Positioned(
-                top: 3,
-                right: 3,
+                top: 4,
+                right: 4,
                 child: Container(
                   decoration: BoxDecoration(
                     color: isSelected ? ac.accent : ac.bg.withValues(alpha: 0.7),
@@ -951,7 +953,7 @@ class _AddPhotoTile extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(Icons.add_a_photo_outlined, size: 18, color: ac.fgDim),
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               Text('Add', style: AymaType.sans(size: 10, color: ac.fgMute)),
             ],
           ),
@@ -988,7 +990,7 @@ class _UploadingTile extends StatelessWidget {
           children: [
             // Storage photo upload in flight — tile slot, wings only.
             AymaWingLoader(size: 16, showLabel: false, color: ac.fgDim),
-            const SizedBox(height: 5),
+            const SizedBox(height: 4),
             Text('Uploading…', style: AymaType.sans(size: 9, color: ac.fgMute)),
           ],
         ),
@@ -1035,7 +1037,7 @@ class _SkillCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(icon, color: ac.fgDim, size: 22),
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1052,13 +1054,13 @@ class _SkillCard extends StatelessWidget {
                           const SizedBox(height: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
+                                horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
                               color: ac.accent.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text('Uses credits',
-                                style: AymaType.mono(size: 10, color: ac.accent)
+                                style: AymaType.mono(size: 10, color: ac.fgDim)
                                     .copyWith(letterSpacing: 0.5)),
                           ),
                         ],
@@ -1122,7 +1124,7 @@ class _AppearanceReportLinkState extends State<_AppearanceReportLink> {
         InkWell(
           onTap: () => context.push('/appearance/current'),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
                 Icon(Icons.auto_awesome_outlined, size: 15, color: ac.fgMute),
@@ -1186,7 +1188,7 @@ class _WebSearchReportLinkState extends State<_WebSearchReportLink> {
         InkWell(
           onTap: () => context.push('/deep-dive/${Uri.encodeComponent(r.reportId)}'),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
                 Icon(Icons.travel_explore, size: 15, color: ac.fgMute),

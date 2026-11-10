@@ -74,6 +74,44 @@ void main() {
 
     expect(find.textContaining('Could not load status'), findsOneWidget);
   });
+
+  // Defect 11 / V7: the failed-status line uses the bg-safe `errorText` token
+  // (4.83/4.68), not raw `error` (4.24/4.16, fails the 4.5 text floor).
+  testWidgets('the failed-status line uses the contrast-safe errorText token, '
+      'in both themes', (tester) async {
+    for (final theme in [AymaTheme.light, AymaTheme.dark]) {
+      await tester.pumpWidget(MaterialApp(
+        theme: theme,
+        home: InstagramScreen(service: _ErrorInstagram()),
+      ));
+      await tester.pumpAndSettle();
+
+      final line = find.textContaining('Could not load status');
+      expect(line, findsOneWidget);
+      final ctx = tester.element(line);
+      expect(tester.widget<Text>(line).style?.color, ctx.ac.errorText);
+    }
+  });
+
+  // Defect 10 / V6: every consent-dialog TextButton clears the 44 tap floor.
+  testWidgets('the consent dialog TextButtons clear the 44 tap floor',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: InstagramScreen(service: _FakeInstagram()),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect Instagram'));
+    await tester.pumpAndSettle();
+
+    for (final label in ['Cancel', 'Continue to Instagram']) {
+      final btn = find.widgetWithText(TextButton, label);
+      expect(btn, findsOneWidget);
+      // M3 padded tap target renders the 44-floor TextButtons at 48; assert >=44.
+      expect(tester.getSize(btn).height, greaterThanOrEqualTo(44.0));
+    }
+  });
 }
 
 class _ErrorInstagram extends InstagramService {

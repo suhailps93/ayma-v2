@@ -83,7 +83,7 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: _failed
@@ -127,7 +127,7 @@ class _InviteFriendsScreenState extends State<InviteFriendsScreen> {
           textAlign: TextAlign.center,
           style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
         ),
-        const SizedBox(height: 28),
+        const SizedBox(height: 24),
         Container(
           decoration: BoxDecoration(
             color: ac.bgElev,
