@@ -39,14 +39,59 @@ def persist_raw_turns(
         .collection("raw_turns")
         .document(session_id)
     )
+    entries: list[dict] = [{"role": t.role, "text": t.text} for t in turns]
+    for entry, turn in zip(entries, turns):
+        if getattr(turn, "created_at", None):
+            entry["created_at"] = turn.created_at
+    # A ``raw_turns`` doc holds the whole session as one ``turns`` array;
+    # ``set(merge=True)`` replaces that array wholesale on every write. The
+    # voice agent stamps each turn with its own ``created_at`` as it is spoken,
+    # but the client's own best-effort ``/post-turn`` / ``/chat`` window carries
+    # no per-turn times — so if the client's write lands last it would blank the
+    # agent's stamps and collapse the whole session back onto the single
+    # ``updated_at`` minute on reload (founder bug 2026-11-09). When this write
+    # carries no per-turn times, carry forward any already stored, matched by
+    # (role, text), so the agent's real per-turn times survive.
+    if not any("created_at" in e for e in entries):
+        prior = _stored_turn_times(doc)
+        if prior:
+            used: dict[tuple[str, str], int] = {}
+            for entry in entries:
+                key = (entry["role"], entry["text"])
+                times = prior.get(key)
+                if times:
+                    idx = used.get(key, 0)
+                    if idx < len(times):
+                        entry["created_at"] = times[idx]
+                        used[key] = idx + 1
     payload = {
-        "turns": [{"role": t.role, "text": t.text} for t in turns],
+        "turns": entries,
         "turn_count": len(turns),
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
     if voice_provider:
         payload["voice_provider"] = voice_provider
     doc.set(payload, merge=True)
+
+
+def _stored_turn_times(doc) -> dict[tuple[str, str], list[str]]:
+    """The per-turn ``created_at`` values already stored on ``doc``, keyed by
+    ``(role, text)`` (a list per key so repeated identical turns keep order).
+    Best-effort — a read failure just means no times to preserve."""
+    try:
+        snap = doc.get()
+    except Exception:  # noqa: BLE001 - never fail a persist over a read
+        return {}
+    if not getattr(snap, "exists", False):
+        return {}
+    out: dict[tuple[str, str], list[str]] = {}
+    for turn in (snap.to_dict() or {}).get("turns") or []:
+        created = turn.get("created_at")
+        if not created:
+            continue
+        key = (str(turn.get("role", "")), str(turn.get("text", "")))
+        out.setdefault(key, []).append(str(created))
+    return out
 
 
 async def persist_and_ingest(
