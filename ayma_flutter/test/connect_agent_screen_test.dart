@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ayma_flutter/screens/connect_agent_screen.dart';
 import 'package:ayma_flutter/services/mcp_connect_service.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +59,28 @@ void main() {
     // The real endpoint, derived from the API base — not hardcoded.
     expect(find.textContaining('/mcp'), findsWidgets);
     expect(find.text('Learn more'), findsOneWidget);
+
+    // Jobs defect 13: the MCP URL text reads in the derived accentText token
+    // (passes 4.5 on bgCard), not the raw accent (4.02/3.29, sub-floor).
+    final urlFinder = find.byType(SelectableText);
+    final ac = tester.element(urlFinder.first).ac;
+    expect(tester.widget<SelectableText>(urlFinder.first).style!.color,
+        ac.accentText);
+
+    // Jobs defect 16: the URL row indents 34 (22 circle + 12 gap) under the
+    // step text, and its top inset is 8 (defect 15), not the old 32/6.
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Padding &&
+          w.padding == const EdgeInsets.only(left: 34, top: 8, bottom: 4)),
+      findsOneWidget,
+    );
+
+    // Jobs defect 17: the Learn-more TextButton strips the M3 inset so its
+    // label joins the card's 16 content edge.
+    final learnMore =
+        tester.widget<TextButton>(find.widgetWithText(TextButton, 'Learn more'));
+    expect(learnMore.style!.padding!.resolve({}), EdgeInsets.zero);
   });
 
   testWidgets('shows the "what your agent can do" capabilities section',
@@ -205,6 +228,16 @@ void main() {
 
     // Disconnect refreshes the list in place too.
     await reveal(find.text('Disconnect'));
+    // Jobs defect 18: the Disconnect TextButton strips the M3 inset so its
+    // label joins the list's 20 edge.
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Disconnect'))
+          .style!
+          .padding!
+          .resolve({}),
+      EdgeInsets.zero,
+    );
     await tester.tap(find.text('Disconnect'));
     await tester.pumpAndSettle();
     await reveal(find.text('No agents are connected.'));

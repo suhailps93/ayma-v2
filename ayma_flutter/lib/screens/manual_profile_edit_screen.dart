@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_wing_loader.dart';
 
@@ -81,7 +82,7 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     final doc = _doc;
-    final scheme = Theme.of(context).colorScheme;
+    final ac = context.ac;
     return Scaffold(
       appBar: AppBar(
         leading: const AymaBackButton(),
@@ -137,14 +138,14 @@ class _ManualProfileEditScreenState extends State<ManualProfileEditScreen> {
                           textAlignVertical: TextAlignVertical.top,
                           keyboardType: TextInputType.multiline,
                           decoration: const InputDecoration(
-                              border: OutlineInputBorder()),
+                              border: OutlineInputBorder(), counterText: ''),
                         ),
                       ),
                       if (_error != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: Text(_error!,
-                              style: TextStyle(color: scheme.error)),
+                              style: AymaType.sans(size: 14, color: ac.errorText)),
                         ),
                     ],
                   ),

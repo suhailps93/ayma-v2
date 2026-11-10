@@ -104,7 +104,6 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
           Slider(
             key: const Key('accentSaturation'),
             activeColor: ac.fg,
-            inactiveColor: ac.lineSoft,
             value: _color.saturation,
             label: '${(_color.saturation * 100).round()}%',
             onChanged: (v) => _adjust(_color.withSaturation(v)),
@@ -114,7 +113,6 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
           Slider(
             key: const Key('accentBrightness'),
             activeColor: ac.fg,
-            inactiveColor: ac.lineSoft,
             value: _color.value,
             label: '${(_color.value * 100).round()}%',
             onChanged: (v) => _adjust(_color.withValue(v)),
@@ -122,6 +120,7 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
           ),
           Wrap(
             spacing: 12,
+            runSpacing: 8,
             children: [
               for (final entry in const {
                 'Black': 0.0,
