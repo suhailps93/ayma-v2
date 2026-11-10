@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../env.dart';
 import '../services/mcp_connect_service.dart';
+import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -319,7 +320,7 @@ class _PendingCard extends StatelessWidget {
             Text(pending.clientId, style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text('wants permission to:', style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -438,7 +439,7 @@ class _Capability extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(body, style: theme.textTheme.bodySmall),
               ],
             ),
@@ -465,7 +466,7 @@ class _GuardrailsNote extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.shield_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               'Every action runs the same checks you do — 18+, moderation and '
@@ -513,7 +514,7 @@ class _InstructionsCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.only(left: 32, top: 6, bottom: 4),
+              padding: const EdgeInsets.only(left: 34, top: 8, bottom: 4),
               child: _UrlRow(url: mcpUrl, onCopy: onCopyUrl),
             ),
             _Step(
@@ -542,6 +543,7 @@ class _InstructionsCard extends StatelessWidget {
               alignment: AlignmentDirectional.centerStart,
               child: TextButton(
                 onPressed: onLearnMore,
+                style: TextButton.styleFrom(padding: EdgeInsets.zero),
                 child: const Text('Learn more'),
               ),
             ),
@@ -586,7 +588,7 @@ class _Step extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(child: child),
         ],
       ),
@@ -605,6 +607,7 @@ class _UrlRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final ac = context.ac;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -613,7 +616,7 @@ class _UrlRow extends StatelessWidget {
             url,
             style: theme.textTheme.bodySmall?.copyWith(
               fontFamily: 'monospace',
-              color: theme.colorScheme.primary,
+              color: ac.accentText,
             ),
           ),
         ),
@@ -644,7 +647,7 @@ class _DisabledNote extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.info_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               "Agent connections aren't switched on yet. You can enter a code, "
@@ -690,9 +693,9 @@ class _HelpSheet extends StatelessWidget {
             'Add Ayma as an MCP server in your assistant:',
             style: theme.textTheme.bodyMedium,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           _UrlRow(url: mcpUrl, onCopy: onCopyUrl),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Text(
             'Your assistant starts a one-time sign-in and shows you a short '
             'code. You type that code on this screen and tap Review — Ayma '
@@ -744,13 +747,14 @@ class _ConnectionTile extends StatelessWidget {
           Text(connection.clientId, style: theme.textTheme.titleSmall),
           if (scopeText.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 2),
+              padding: const EdgeInsets.only(top: 4),
               child: Text(scopeText, style: theme.textTheme.bodySmall),
             ),
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: TextButton(
               onPressed: busy ? null : onRevoke,
+              style: TextButton.styleFrom(padding: EdgeInsets.zero),
               child: const Text('Disconnect'),
             ),
           ),

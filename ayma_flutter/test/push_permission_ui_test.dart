@@ -2,6 +2,7 @@ import 'package:ayma_flutter/screens/notification_prefs_screen.dart';
 import 'package:ayma_flutter/screens/push_primer_dialog.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
 import 'package:ayma_flutter/services/push_permission.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,6 +36,16 @@ class _FakeSvc extends NotificationService {
   Future<Map<String, bool>> readPrefs() async => {};
 }
 
+class _ErrSvc extends NotificationService {
+  _ErrSvc() : super(auth: MockFirebaseAuth());
+
+  @override
+  Future<Map<String, bool>> readPrefs() async => throw Exception('boom');
+
+  @override
+  Stream<Map<String, bool>> watchPrefs() => const Stream.empty();
+}
+
 Future<void> _pumpPrefs(WidgetTester t, _FakePerm p, List<int> synced) async {
   await t.pumpWidget(MaterialApp(
     home: NotificationPrefsScreen(
@@ -61,6 +72,24 @@ Future<void> _pumpPrimer(WidgetTester t, _FakePerm p, List<int> synced) async {
 }
 
 void main() {
+  testWidgets('load error reads in the errorText token (defect 2)', (t) async {
+    await t.pumpWidget(MaterialApp(
+      home: NotificationPrefsScreen(
+        service: _ErrSvc(),
+        permission: _FakePerm(PushPermissionState.granted),
+        onGranted: () async {},
+      ),
+    ));
+    await t.pumpAndSettle();
+
+    final errFinder = find.textContaining('Could not load');
+    expect(errFinder, findsOneWidget);
+    final ac = t.element(errFinder).ac;
+    final style = t.widget<Text>(errFinder).style!;
+    expect(style.color, ac.errorText);
+    expect(style.color, isNot(AymaColors.error));
+  });
+
   testWidgets('granted shows On, manage link, and syncs token', (t) async {
     final synced = <int>[];
     await _pumpPrefs(t, _FakePerm(PushPermissionState.granted), synced);

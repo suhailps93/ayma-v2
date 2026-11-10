@@ -123,6 +123,13 @@ void main() {
     expect(find.byType(DeleteAccountScreen), findsOneWidget);
     expect(h.pushCleared, 0);
     expect(h.auth.currentUser, isNotNull);
+
+    // Jobs defect 1: the error text reads in the derived errorText token
+    // (4.5+ on bg), not the raw AymaColors.error (4.24/4.16, sub-floor).
+    final errFinder = find.textContaining("Couldn't delete your account");
+    final ac = tester.element(errFinder).ac;
+    expect(tester.widget<Text>(errFinder).style!.color, ac.errorText);
+    expect(tester.widget<Text>(errFinder).style!.color, isNot(AymaColors.error));
   });
 
   testWidgets('an expired sign-in (401) asks the user to sign in again',

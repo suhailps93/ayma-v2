@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/complete_profile_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/completeness_ring.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -168,6 +169,24 @@ void main() {
 
     expect(find.byType(CompletenessRing), findsOneWidget);
     expect(find.text('Your profile is 62% complete'), findsOneWidget);
+
+    final ac = tester.element(find.text('Identity & basics')).ac;
+    // Jobs defect 7: the section-tile border reads in the boundary token
+    // (3.33/3.52 on bgElev), not the hairline lineSoft (1.17/1.24).
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).border ==
+              Border.all(color: ac.boundary, width: 0.5)),
+      findsWidgets,
+    );
+    // Jobs defect 10: the progress-bar track reads in the track token (accent
+    // fill vs track clears 3:1), not lineSoft (2.88 light, sub-floor).
+    expect(
+      find.byWidgetPredicate((w) => w is Container && w.color == ac.track),
+      findsWidgets,
+    );
   });
 
   testWidgets('!intentSet: shows the intent CTA and hides branch sections',
@@ -186,6 +205,16 @@ void main() {
     expect(find.text('Goals & timelines'), findsNothing);
     // the "Tuned for:" quiet line is only for a set intent
     expect(find.text('Tuned for: '), findsNothing);
+
+    // Jobs defect 5: the not-set intent card is the only way to start the
+    // intent conversation — its tap target must clear the 48 floor.
+    final cardHeight = tester
+        .getSize(find.ancestor(
+          of: find.text('Ayma is still figuring out what you want'),
+          matching: find.byType(InkWell),
+        ))
+        .height;
+    expect(cardHeight, greaterThanOrEqualTo(48));
   });
 
   testWidgets('the intent CTA pushes a discuss_topic kickoff and navigates',
@@ -219,6 +248,16 @@ void main() {
     expect(find.text('Casual'), findsOneWidget);
     expect(
         find.text('Ayma is still figuring out what you want'), findsNothing);
+
+    // Jobs defect 6: the intent-set row is the only way to revisit intent —
+    // its tap target is a 48 box with the content centred.
+    final rowHeight = tester
+        .getSize(find.ancestor(
+          of: find.text('Tuned for: '),
+          matching: find.byType(InkWell),
+        ))
+        .height;
+    expect(rowHeight, 48);
   });
 
   testWidgets('a locked section is dimmed, lock-marked and non-expandable',
@@ -233,6 +272,31 @@ void main() {
     expect(find.text('UNLOCKS AS YOU GO'), findsOneWidget);
     expect(find.text('Personality & temperament'), findsOneWidget);
     expect(find.byIcon(Icons.lock_outline), findsWidgets);
+
+    final ac = tester.element(find.text('Personality & temperament')).ac;
+    // Jobs defect 9: the locked tile is no longer wrapped in Opacity(0.55)
+    // (which failed the text floors in light); the label routes through fgDim
+    // and the `Locked` mono + lock icon stay fgMute at full strength.
+    expect(
+      find.ancestor(
+        of: find.text('Personality & temperament'),
+        matching: find.byType(Opacity),
+      ),
+      findsNothing,
+    );
+    expect(
+      tester.widget<Text>(find.text('Personality & temperament')).style!.color,
+      ac.fgDim,
+    );
+    // Jobs defect 8: the locked-tile border reads in the boundary token too.
+    expect(
+      find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration as BoxDecoration).border ==
+              Border.all(color: ac.boundary, width: 0.5)),
+      findsWidgets,
+    );
 
     // tapping a locked section reveals nothing
     await tester.tap(find.text('Personality & temperament'));

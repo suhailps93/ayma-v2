@@ -116,4 +116,28 @@ void main() {
       expect(profiles.serverWrites.last, c.color);
     },
   );
+
+  testWidgets(
+    'sliders drop the inactiveColor override (theme track) and keep active fg '
+    '(defect 11); the accent Wrap carries runSpacing 8 (defect 12)',
+    (tester) async {
+      final c = AccentColorController(profileService: _FakeProfiles());
+      await tester.pumpWidget(host(c));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final ac = tester.element(find.byType(AccentColorScreen)).ac;
+      for (final key in const ['accentSaturation', 'accentBrightness']) {
+        final slider = tester.widget<Slider>(find.byKey(Key(key)));
+        // No per-screen override: the theme's sliderTheme.inactiveTrackColor
+        // (= ac.track) supplies the inactive track.
+        expect(slider.inactiveColor, isNull);
+        // The neutral active track is deliberate on the accent-picking screen.
+        expect(slider.activeColor, ac.fg);
+      }
+
+      final wrap = tester.widget<Wrap>(find.byType(Wrap));
+      expect(wrap.runSpacing, 8);
+      expect(wrap.spacing, 12);
+    },
+  );
 }

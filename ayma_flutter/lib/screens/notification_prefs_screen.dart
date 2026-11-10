@@ -207,7 +207,7 @@ class _NotificationPrefsScreenState extends State<NotificationPrefsScreen>
           ? CenteredScroll(
               padding: const EdgeInsets.all(24),
               child: Text('Could not load ($_error).',
-                  style: AymaType.sans(size: 14, color: AymaColors.error)),
+                  style: AymaType.sans(size: 14, color: ac.errorText)),
             )
           : _prefs == null
               // The notification_prefs read still in flight.
