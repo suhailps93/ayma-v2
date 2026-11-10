@@ -86,7 +86,7 @@ class FreshnessIndicator extends StatelessWidget {
                   style: TextButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    foregroundColor: ac.error,
+                    foregroundColor: ac.errorTextCard,
                   ),
                   child: const Text('Retry'),
                 ),

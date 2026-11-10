@@ -31,6 +31,7 @@ Future<void> showPushPrimer(
       ),
       actions: [
         TextButton(
+          style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
           onPressed: () => Navigator.of(ctx).pop(false),
           child: const Text('Not now'),
         ),

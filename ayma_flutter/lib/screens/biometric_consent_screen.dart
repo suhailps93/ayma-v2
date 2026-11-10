@@ -34,7 +34,7 @@ class _BiometricConsentScreenState extends State<BiometricConsentScreen> {
       child: Scaffold(
         body: SafeArea(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
             children: [
               BiometricConsentPanel(
                 api: _api,

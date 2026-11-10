@@ -22,7 +22,7 @@ class ReleaseNotesScreen extends StatelessWidget {
         title: const Text("What's new")),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
           child: MarkdownText(
             kReleaseNotes.trim(),
             style: AymaType.sans(size: 14, color: ac.fg, height: 1.55),

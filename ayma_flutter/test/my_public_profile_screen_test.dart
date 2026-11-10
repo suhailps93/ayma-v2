@@ -13,6 +13,7 @@ import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart'
     show ProfileBody, ProfilePhotoHeader;
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -274,6 +275,7 @@ void main() {
         ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
 
     await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.dark,
       home: MyPublicProfileScreen(myUid: 'u1', apiClient: api),
     ));
     await tester.pumpAndSettle();
@@ -282,9 +284,9 @@ void main() {
     expect(banner.padding,
         const EdgeInsetsDirectional.only(start: 20, top: 2));
 
-    final review =
-        tester.widget<TextButton>(find.widgetWithText(TextButton, 'Review'));
+    // Local Size(0,44) override removed (T3); the app theme now renders Review
+    // at 48 (padded tap target), clearing the 44 floor.
     expect(
-        review.style!.minimumSize!.resolve(const <WidgetState>{})!.height, 44);
+        tester.getSize(find.widgetWithText(TextButton, 'Review')).height, 48);
   });
 }

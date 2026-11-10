@@ -33,10 +33,12 @@ Future<String?> promptForOAuthCode(BuildContext context) {
       ),
       actions: [
         TextButton(
+          style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
           onPressed: () => Navigator.pop(ctx),
           child: const Text('Cancel'),
         ),
         TextButton(
+          style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
           onPressed: () =>
               Navigator.pop(ctx, extractOAuthCode(controller.text)),
           child: const Text('Connect'),

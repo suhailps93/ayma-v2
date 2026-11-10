@@ -854,7 +854,10 @@ void main() {
     final privateColor = colorOf('page:identity:sent:1');
     final aiOnlyColor = colorOf('page:identity:sent:2');
 
-    expect(aiOnlyColor, AymaColors.error);
+    // ai_only renders in the card/bg-safe errorText token (T4) — still a
+    // legible red, no longer the raw error that failed the 4.5 text floor.
+    // No theme is set on this pump, so context.ac falls back to AymaTokens.dark.
+    expect(aiOnlyColor, AymaTokens.dark.errorText);
     expect(privateColor, isNot(publicColor));
     expect(privateColor, isNot(aiOnlyColor));
     expect(aiOnlyColor, isNot(publicColor));

@@ -36,7 +36,7 @@ class CompletenessRing extends StatelessWidget {
       child: CustomPaint(
         painter: _RingPainter(
           pct: clamped / 100.0,
-          track: ac.lineSoft,
+          track: ac.track,
           fill: ac.accent,
           stroke: stroke,
         ),

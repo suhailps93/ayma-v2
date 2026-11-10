@@ -85,7 +85,7 @@ class ChatBubble extends StatelessWidget {
                           'Flagged for review',
                           style: AymaType.sans(
                             size: 11,
-                            color: ac.error,
+                            color: ac.errorTextCard,
                             weight: FontWeight.w600,
                           ),
                         ),

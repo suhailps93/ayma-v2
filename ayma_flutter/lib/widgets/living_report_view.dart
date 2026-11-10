@@ -945,7 +945,7 @@ class _Sentence extends StatelessWidget {
     // server-side before this text ever reached the client.
     final toned = switch (block.tone) {
       'private' => style.copyWith(color: ac.fgMute),
-      'ai_only' => style.copyWith(color: ac.error),
+      'ai_only' => style.copyWith(color: ac.errorText),
       _ => style,
     };
     return GestureDetector(

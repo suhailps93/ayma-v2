@@ -60,7 +60,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
         // text instead of overflowing.
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.all(20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -74,7 +74,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
                   'your story — comes back exactly as it was.',
                   style: AymaType.sans(size: 15, color: ac.fgDim, height: 1.5),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 24),
                 FilledButton(
                   onPressed: _working ? null : _recover,
                   child: Text(_working ? 'Recovering…' : 'Recover my account'),
@@ -83,7 +83,7 @@ class _RecoveryScreenState extends State<RecoveryScreen> {
                   const SizedBox(height: 16),
                   Text(_error!,
                       style:
-                          AymaType.sans(size: 13, color: AymaColors.error)),
+                          AymaType.sans(size: 13, color: ac.errorText)),
                 ],
               ],
             ),

@@ -96,11 +96,13 @@ class _BiometricConsentSettingsScreenState
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('Cancel'),
           ),
           TextButton(
             key: const Key('biometric_withdraw_confirm'),
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Withdraw and delete'),
           ),
@@ -137,7 +139,7 @@ class _BiometricConsentSettingsScreenState
         title: const Text(kBiometricConsentTitle),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 40),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
         children: [
           if (status != null && status.consented)
             Text(
@@ -161,7 +163,7 @@ class _BiometricConsentSettingsScreenState
             const SizedBox(height: 12),
             Text(
               _error!,
-              style: AymaType.sans(size: 13, color: AymaColors.error),
+              style: AymaType.sans(size: 13, color: ac.errorText),
             ),
           ],
           const SizedBox(height: 20),
@@ -177,6 +179,7 @@ class _BiometricConsentSettingsScreenState
           const SizedBox(height: 8),
           TextButton(
             key: const Key('biometric_sign_out'),
+            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
             onPressed: _working ? null : _signOut,
             child: const Text('Sign out instead'),
           ),
