@@ -578,10 +578,26 @@ void main() {
         tester.widget<Text>(find.textContaining('Could not load voices'));
     expect(errorText.style?.color, ac.errorText);
 
+    // Retry affordance at the same left edge as the error text (defect 5: zero
+    // inset). Measure the Retry BUTTON — the box whose `padding: EdgeInsets.zero`
+    // we control — not the label glyph: the label sits centred inside the
+    // TextButton's 48px min-interactive tap target, so the label's own left is
+    // offset by (buttonWidth − glyphWidth)/2, a value that moves with font
+    // metrics (5.25px once the real fonts bundled in batch 2421 load). The
+    // button's left edge is font-independent and is the real guarantee.
     final errorLeft =
         tester.getTopLeft(find.textContaining('Could not load voices')).dx;
-    final retryLeft = tester.getTopLeft(find.text('Retry')).dx;
-    expect(retryLeft, moreOrLessEquals(errorLeft, epsilon: 0.5));
+    final retryButton = find.ancestor(
+        of: find.text('Retry'), matching: find.byType(TextButton));
+    expect(tester.getTopLeft(retryButton).dx,
+        moreOrLessEquals(errorLeft, epsilon: 0.5));
+
+    // And `padding: EdgeInsets.zero` adds no asymmetric left indent: the label
+    // is centred within the button (left inset == right inset), font-robustly.
+    final buttonRect = tester.getRect(retryButton);
+    final labelRect = tester.getRect(find.text('Retry'));
+    expect(labelRect.left - buttonRect.left,
+        moreOrLessEquals(buttonRect.right - labelRect.right, epsilon: 0.5));
   });
 }
 
