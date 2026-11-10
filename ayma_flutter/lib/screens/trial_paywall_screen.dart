@@ -131,7 +131,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
             ),
           ],
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
             children: [
               Text(
                 'Unlock all of Ayma Pro for ${offer.label}, free.',
@@ -150,7 +150,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
           ),
           footer: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
               child: Column(
                 children: [
                   SizedBox(
@@ -164,7 +164,7 @@ class _TrialPaywallScreenState extends State<TrialPaywallScreen> {
                       child: const Text('Continue'),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Text(
                     "You won't be charged until $chargeDate. Cancel anytime "
                     'up to 24 hrs before your trial ends.',
@@ -250,7 +250,7 @@ class _Step extends StatelessWidget {
                       color: ac.fg,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(body, style: AymaType.sans(size: 14, color: ac.fgMute)),
                 ],
               ),

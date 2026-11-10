@@ -601,6 +601,9 @@ class _PlanScreenState extends State<PlanScreen> {
                               children: [
                                 TextButton(
                                   key: const ValueKey('restore-purchases'),
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                  ),
                                   onPressed: _busy || !_rc.enabled
                                       ? null
                                       : () => _run(
@@ -613,6 +616,9 @@ class _PlanScreenState extends State<PlanScreen> {
                                 ),
                                 TextButton(
                                   key: const ValueKey('manage-in-store'),
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                  ),
                                   onPressed: () => _manage(shown.status),
                                   child: const Text('Manage in store'),
                                 ),
@@ -690,7 +696,7 @@ class _Hero extends StatelessWidget {
           key: const ValueKey('plan-name'),
           style: AymaType.mono(
             size: 11,
-            color: ac.accent,
+            color: ac.accentText,
           ).copyWith(letterSpacing: 2),
         ),
         const SizedBox(height: 8),
@@ -796,7 +802,7 @@ class _PlanSelector extends StatelessWidget {
       decoration: BoxDecoration(
         color: ac.bgElev,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.lineSoft, width: 0.5),
+        border: Border.all(color: ac.boundary, width: 0.5),
       ),
       child: Row(
         children: [
@@ -820,7 +826,7 @@ class _PlanSelector extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: p.productId == selected
-                            ? ac.line
+                            ? ac.boundary
                             : Colors.transparent,
                         width: 0.5,
                       ),
@@ -846,7 +852,7 @@ class _PlanSelector extends StatelessWidget {
                             size: 8.5,
                             color: p.productId == current
                                 ? ac.fgDim
-                                : ac.accent,
+                                : ac.accentText,
                           ).copyWith(letterSpacing: 1.2),
                         ),
                       ],
@@ -886,7 +892,7 @@ class _PlanDetail extends StatelessWidget {
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isCurrent ? ac.line : ac.lineSoft,
+            color: ac.boundary,
             width: isCurrent ? 1 : 0.5,
           ),
         ),
@@ -1057,7 +1063,7 @@ class _CreditHistoryState extends State<_CreditHistory> {
         else ...[
           Wrap(
             spacing: 8,
-            runSpacing: 4,
+            runSpacing: 8,
             children: [
               for (final (id, label) in _creditPeriods)
                 ChoiceChip(
