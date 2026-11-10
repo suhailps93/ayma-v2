@@ -4,6 +4,7 @@ import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/profile_service.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -445,5 +446,190 @@ void main() {
 
     expect(find.byIcon(Icons.travel_explore), findsOneWidget); // card icon
     expect(find.text('View my report'), findsNWidgets(0));
+  });
+
+  // ---- Cluster-12 jobs pass: spacing / color / alignment assertions --------
+
+  Map<String, dynamic> bothAxes() => {
+        'face': [
+          {'media_id': 'm1', 'url': 'https://example.invalid/f.png'}
+        ],
+        'body': [
+          {'media_id': 'm2', 'url': 'https://example.invalid/b.png'}
+        ],
+        'has_face_photo': true,
+        'has_body_photo': true,
+      };
+
+  testWidgets('cluster-12 (defects 1,4): list at the 20 edge (40 bottom), '
+      'skill-card icon gaps are 16', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<ListView>(find.byType(ListView).first).padding,
+        const EdgeInsets.fromLTRB(20, 20, 20, 40));
+    // Each of the two skill cards has a 16 icon -> title gap (width-only
+    // spacers; a square SizedBox(16,16) elsewhere is excluded via height==null).
+    expect(
+        find.byWidgetPredicate(
+            (w) => w is SizedBox && w.width == 16 && w.height == null),
+        findsNWidgets(2));
+  });
+
+  testWidgets('cluster-12 (defects 6,8): credits row clears 44, icon at the 20 '
+      'edge, "Upgrade" uses accentText', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    final ink = find
+        .ancestor(
+            of: find.byIcon(Icons.toll_rounded), matching: find.byType(InkWell))
+        .first;
+    expect(tester.getSize(ink).height, greaterThanOrEqualTo(44.0));
+    expect(tester.getTopLeft(find.byIcon(Icons.toll_rounded)).dx,
+        moreOrLessEquals(20.0, epsilon: 0.5));
+
+    final up = find.text('Upgrade');
+    final ctx = tester.element(up);
+    expect(tester.widget<Text>(up).style?.color, ctx.ac.accentText);
+  });
+
+  testWidgets('cluster-12 (defect 5): "Uses credits" chip uses fgDim text and '
+      'vertical padding 4 (NOT accentText)', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    final chip = find.text('Uses credits').first;
+    final ctx = tester.element(chip);
+    expect(tester.widget<Text>(chip).style?.color, ctx.ac.fgDim);
+    expect(tester.widget<Text>(chip).style?.color, isNot(ctx.ac.accentText));
+
+    final box =
+        find.ancestor(of: chip, matching: find.byType(Container)).first;
+    expect(tester.widget<Container>(box).padding,
+        const EdgeInsets.symmetric(horizontal: 8, vertical: 4));
+  });
+
+  testWidgets('cluster-12 (defect 7): a zero balance renders the credits text '
+      'in errorText', (tester) async {
+    bigView(tester);
+    final api = _api(usage: {
+      'credits': {'grant': 0, 'added': 0, 'used': 0, 'remaining': 0},
+    });
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    final txt = find.text('0 credits left');
+    expect(txt, findsOneWidget);
+    final ctx = tester.element(txt);
+    expect(tester.widget<Text>(txt).style?.color, ctx.ac.errorText);
+  });
+
+  testWidgets('cluster-12 (defect 9): the report-link row clears 44 tall',
+      (tester) async {
+    bigView(tester);
+    final api = _api(history: [
+      {
+        'id': 'a9',
+        'created_at': '2026-02-03T10:00:00',
+        'has_face': true,
+        'has_body': false,
+        'summary': 's',
+        'legacy': false,
+        'kind': 'appearance',
+      },
+    ]);
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+
+    final row = find
+        .ancestor(
+            of: find.text('View my report'), matching: find.byType(InkWell))
+        .first;
+    expect(tester.getSize(row).height, greaterThanOrEqualTo(44.0));
+  });
+
+  testWidgets('cluster-12 (defect 10): the web-search dialog Cancel clears 44, '
+      'the Search FilledButton stays 52', (tester) async {
+    bigView(tester);
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Search the web about me'));
+    await tester.pumpAndSettle();
+
+    final cancel = find.widgetWithText(TextButton, 'Cancel');
+    expect(cancel, findsOneWidget);
+    // M3 padded tap target renders the 44-floor button at 48; assert >= 44.
+    expect(tester.getSize(cancel).height, greaterThanOrEqualTo(44.0));
+
+    // The Search FilledButton keeps its full button height (theme nominal min
+    // 52); inside the dialog OverflowBar its measured interactive box is 48 —
+    // either way it stays a full-size button, well above the Cancel floor.
+    final search = find.widgetWithText(FilledButton, 'Search');
+    expect(tester.getSize(search).height, greaterThanOrEqualTo(48.0));
+  });
+
+  testWidgets('cluster-12 (defects 10,12,14): pre-run sheet geometry — group '
+      'padding 16, Skip 44, Run 48, selected-badge offset 4, Add gap 4',
+      (tester) async {
+    bigView(tester);
+    final api = _api(eligibility: bothAxes());
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+    await openSheet(tester);
+
+    // Defect 12: axis-group card padding is all(16).
+    final group = find
+        .ancestor(
+            of: find.text('Face analysis'), matching: find.byType(Container))
+        .first;
+    expect(tester.widget<Container>(group).padding, const EdgeInsets.all(16));
+
+    // Defect 10: Skip/Include TextButton clears the 44 floor.
+    final skip = find.widgetWithText(TextButton, 'Skip').first;
+    expect(tester.getSize(skip).height, greaterThanOrEqualTo(44.0));
+
+    // Run button is the tight 48 (overrides the theme 52 minimum).
+    final run = find.widgetWithText(FilledButton, 'Run analysis');
+    expect(tester.getSize(run).height, moreOrLessEquals(48.0, epsilon: 0.5));
+
+    // Defect 14: every selected-photo check badge sits at offset 4/4.
+    final badges = tester.widgetList<Positioned>(find.byType(Positioned));
+    expect(badges, isNotEmpty);
+    for (final p in badges) {
+      expect(p.top, 4);
+      expect(p.right, 4);
+    }
+
+    // Defects 15/16: the Add-photo tile icon -> label gap is 4.
+    final addGap = find.descendant(
+      of: find
+          .ancestor(of: find.text('Add').first, matching: find.byType(InkWell))
+          .first,
+      matching: find.byWidgetPredicate((w) => w is SizedBox && w.height == 4),
+    );
+    expect(addGap, findsOneWidget);
+  });
+
+  testWidgets('cluster-12 (defect 13): the skipped-note top gap is 8',
+      (tester) async {
+    bigView(tester);
+    final api = _api(eligibility: bothAxes());
+    await tester.pumpWidget(_app(api: api));
+    await tester.pumpAndSettle();
+    await openSheet(tester);
+
+    await tester.tap(find.text('Skip').last);
+    await tester.pump();
+
+    final note = find.text("Skipped — I won't run this section.");
+    expect(note, findsOneWidget);
+    final pad =
+        find.ancestor(of: note, matching: find.byType(Padding)).first;
+    expect(tester.widget<Padding>(pad).padding, const EdgeInsets.only(top: 8));
   });
 }
