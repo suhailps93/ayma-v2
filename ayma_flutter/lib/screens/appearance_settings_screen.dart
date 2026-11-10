@@ -36,6 +36,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
       appBar: AppBar(
           leading: const AymaBackButton(), title: const Text('Appearance')),
       body: ListView(
+        padding: const EdgeInsets.only(bottom: 20),
         children: [
           const SizedBox(height: 8),
           AnimatedBuilder(
@@ -49,6 +50,9 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
                     RadioListTile<ThemeMode>(
                       contentPadding:
                           const EdgeInsets.symmetric(horizontal: 20),
+                      materialTapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap,
+                      horizontalTitleGap: 0,
                       value: mode,
                       title: Text(_label(mode),
                           style: AymaType.sans(size: 15, color: ac.fg)),
@@ -59,7 +63,7 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
           ),
           ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            leading: Icon(Icons.palette_outlined, color: ac.accent),
+            leading: Icon(Icons.palette_outlined, color: ac.fgDim),
             title: Text('Accent Color',
                 style: AymaType.sans(size: 15, color: ac.fg)),
             subtitle: Text('Cherry Fuchsia by default — pick your own.',
