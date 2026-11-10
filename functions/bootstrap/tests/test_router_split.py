@@ -17,12 +17,15 @@ def _app_route_map():
     routes = {}
     for r in main.app.routes:
         if isinstance(r, Route):
-            for m in r.methods:
+            # ``Route.methods`` is None for method-less routes such as the
+            # ``/mcp`` bare-ASGI mount (mcp_server._BareMountASGI); those carry
+            # no HTTP method and simply contribute nothing to the map.
+            for m in r.methods or ():
                 routes[(m, r.path)] = r.endpoint
         elif hasattr(r, "original_router"):
             for sub_r in r.original_router.routes:
                 if isinstance(sub_r, Route):
-                    for m in sub_r.methods:
+                    for m in sub_r.methods or ():
                         routes[(m, sub_r.path)] = sub_r.endpoint
     return routes
 
