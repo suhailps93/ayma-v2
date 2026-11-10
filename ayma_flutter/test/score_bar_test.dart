@@ -23,7 +23,9 @@ void main() {
     final track = containers[0];
     final fill = containers[1];
 
-    expect(track.color, AymaTheme.light.extension<AymaTokens>()!.lineSoft);
+    // R11: the default track is the [track] token (derived to clear 3:1
+    // against the accent fill), not [lineSoft] which measured only 2.88:1.
+    expect(track.color, AymaTheme.light.extension<AymaTokens>()!.track);
     expect(fill.color, AymaTheme.light.extension<AymaTokens>()!.accent);
 
     final widthFactor =
