@@ -149,6 +149,52 @@ void main() {
     expect(find.text('Gemini'), findsOneWidget);
     expect(find.text('Meta Muse Spark'), findsNothing);
   });
+
+  // --- Jobs pass cluster 18 (fleet/jobs-models-reaudit) ---
+
+  testWidgets('V13: brain dropdown border is the boundary token', (tester) async {
+    await tester.pumpWidget(_host(BrainSelectorControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(BrainSelectorControl)).ac;
+    final container = tester.widget<Container>(find
+        .ancestor(
+            of: find.byKey(const ValueKey('brain-dropdown')),
+            matching: find.byType(Container))
+        .first);
+    final border = (container.decoration as BoxDecoration).border as Border;
+    expect(border.top.color, ac.boundary);
+  });
+
+  testWidgets('V6/V7: picker info button is 48x48 and the label tracks at 2',
+      (tester) async {
+    await tester.pumpWidget(_host(BrainSelectorControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    final iconButton = tester.widget<IconButton>(find.descendant(
+        of: find.byType(BrainSelectorControl), matching: find.byType(IconButton)));
+    expect(iconButton.constraints,
+        const BoxConstraints(minWidth: 48, minHeight: 48));
+
+    final label = tester.widget<Text>(find.text('BRAIN'));
+    expect(label.style?.letterSpacing, 2);
+  });
+
+  testWidgets('V1/V4: load error uses errorText and Retry shares the left edge',
+      (tester) async {
+    final api = _ColdBrainApi(failCall: (_) => true);
+    await tester.pumpWidget(_host(BrainSelectorControl(api: api)));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(BrainSelectorControl)).ac;
+    final errorText = tester.widget<Text>(find.textContaining('Could not load brains'));
+    expect(errorText.style?.color, ac.errorText);
+
+    // Retry label at the same left edge as the error text (defect 4: zero inset).
+    final errorLeft = tester.getTopLeft(find.textContaining('Could not load brains')).dx;
+    final retryLeft = tester.getTopLeft(find.text('Retry')).dx;
+    expect(retryLeft, moreOrLessEquals(errorLeft, epsilon: 0.5));
+  });
 }
 
 /// An [ApiClient] controlling `/brain/preference` at the LOGICAL call level, so

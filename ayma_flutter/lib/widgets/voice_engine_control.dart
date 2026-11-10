@@ -105,9 +105,6 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
       widget.previewPlayer ?? JustAudioPreviewPlayer();
   String? _previewingVoiceId;
   bool _previewBusy = false;
-  // Voice fallback notice (Part B): true when the shown voice is a
-  // supported default the control (or the server) substituted for a saved
-  // voice the selected model does not support — never silent.
 
   /// True once the catalog load's first attempt has failed and a cold-start
   /// backoff retry is pending/in flight: the loader swaps its line to
@@ -558,10 +555,14 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
         children: [
           Text(
             'Could not load voices ($_error).',
-            style: AymaType.sans(size: 13, color: AymaColors.error),
+            style: AymaType.sans(size: 13, color: ac.errorText),
           ),
           const SizedBox(height: 8),
-          TextButton(onPressed: _load, child: const Text('Retry')),
+          TextButton(
+            onPressed: _load,
+            style: TextButton.styleFrom(padding: EdgeInsets.zero),
+            child: const Text('Retry'),
+          ),
         ],
       );
     }
@@ -611,7 +612,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             widget.controller?._changed();
           },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         if (sel.mode == 'realtime')
           ..._realtimeControls(ac, cat, sel)
         else
@@ -882,11 +883,11 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
             hintStyle: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: ac.lineSoft),
+              borderSide: BorderSide(color: ac.boundary),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: ac.lineSoft),
+              borderSide: BorderSide(color: ac.boundary),
             ),
           ),
         ),
@@ -936,7 +937,7 @@ class _VoiceEngineControlState extends State<VoiceEngineControl> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        border: Border.all(color: ac.lineSoft),
+        border: Border.all(color: ac.boundary),
         borderRadius: BorderRadius.circular(8),
       ),
       child: DropdownButton<T>(

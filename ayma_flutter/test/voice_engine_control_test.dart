@@ -508,6 +508,81 @@ void main() {
     expect(_posted, hasLength(1));
     expect(voice.notifyCalls, 0);
   });
+
+  // --- Jobs pass cluster 18 (fleet/jobs-models-reaudit) ---
+
+  testWidgets('V13: voice dropdown border is the boundary token', (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(VoiceEngineControl)).ac;
+    final container = tester.widget<Container>(find
+        .ancestor(
+            of: find.byKey(const ValueKey('voice-dropdown')),
+            matching: find.byType(Container))
+        .first);
+    final border = (container.decoration as BoxDecoration).border as Border;
+    expect(border.top.color, ac.boundary);
+  });
+
+  testWidgets('V14: accent field border and enabledBorder are the boundary token',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(VoiceEngineControl)).ac;
+    final field =
+        tester.widget<TextField>(find.byKey(const ValueKey('voice-accent-field')));
+    final deco = field.decoration!;
+    expect((deco.border as OutlineInputBorder).borderSide.color, ac.boundary);
+    expect((deco.enabledBorder as OutlineInputBorder).borderSide.color, ac.boundary);
+  });
+
+  testWidgets('V6/V7: picker info button is 48x48 and the MODE label tracks at 2',
+      (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    final iconButton = tester.widget<IconButton>(find
+        .descendant(
+            of: find.byType(VoiceEngineControl), matching: find.byType(IconButton))
+        .first);
+    expect(iconButton.constraints,
+        const BoxConstraints(minWidth: 48, minHeight: 48));
+
+    final label = tester.widget<Text>(find.text('MODE'));
+    expect(label.style?.letterSpacing, 2);
+  });
+
+  testWidgets('V8: the MODE-to-next-group gap flipped 16 -> 12', (tester) async {
+    await tester.pumpWidget(_host(VoiceEngineControl(api: _api())));
+    await tester.pumpAndSettle();
+
+    // Before the fix two SizedBox(height: 16) existed: the MODE-to-next gap
+    // (defect 8) and the standalone save gap (audited clean). After defect 8
+    // the save gap is the only 16 box; the MODE gap joins the 12 family.
+    final sixteens = tester
+        .widgetList<SizedBox>(find.byType(SizedBox))
+        .where((b) => b.height == 16);
+    expect(sixteens, hasLength(1));
+  });
+
+  testWidgets('V2/V5: load error uses errorText and Retry shares the left edge',
+      (tester) async {
+    final api = _ColdVoiceApi(failCall: (_) => true);
+    await tester.pumpWidget(_host(VoiceEngineControl(api: api)));
+    await tester.pumpAndSettle();
+
+    final ac = tester.element(find.byType(VoiceEngineControl)).ac;
+    final errorText =
+        tester.widget<Text>(find.textContaining('Could not load voices'));
+    expect(errorText.style?.color, ac.errorText);
+
+    final errorLeft =
+        tester.getTopLeft(find.textContaining('Could not load voices')).dx;
+    final retryLeft = tester.getTopLeft(find.text('Retry')).dx;
+    expect(retryLeft, moreOrLessEquals(errorLeft, epsilon: 0.5));
+  });
 }
 
 /// An [ApiClient] that controls `/voice/engines` at the LOGICAL call level, so
