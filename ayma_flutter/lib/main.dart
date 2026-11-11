@@ -17,6 +17,7 @@ import 'services/auth_service.dart';
 import 'services/auth_session_state.dart';
 import 'services/deep_link_queue.dart';
 import 'services/install_referrer_service.dart';
+import 'services/location_service.dart';
 import 'services/push_service.dart';
 import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
@@ -69,6 +70,11 @@ Future<void> main() async {
   final push = PushService();
   setupAuthDeepLinkDrain();
   unawaited(InstallReferrerService.instance.checkInstallReferrer());
+  // Ask for OS location permission at start, the same way the app asks for
+  // notification permission (push.syncToken on auth). Granting it here does
+  // NOT enable "Date moments" — the Privacy toggle is the opt-in; this only
+  // means the prompt is behind us when a user turns the feature on.
+  unawaited(const LocationService().ensurePermission());
 
   String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {

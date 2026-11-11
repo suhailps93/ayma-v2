@@ -1346,6 +1346,24 @@ Detection and translation happen in one model call; the model also returns a `co
 - **Outgoing:** none — what the user types is sent exactly as typed (founder, 2026-11-08: the "Translate what I send" toggle, its banner, and its confirm sheet were removed).
 - **Graceful everywhere:** a failed/unavailable translation degrades to the original with no error-blocking.
 
+### 6.13 Plan a date + the date step-in ("date moments") — payment-free (staging Nov 2026)
+
+Either person in a human-to-human DM thread can plan a concrete date; both approve it; and, for a user who opts in, Ayma quietly steps in when they arrive at the place. No payment is involved (this is the payment-free line, distinct from the PayPal plan-a-date build).
+
+**Plan a date (card, `date_plan.py`).** In a DM thread, `+ → Plan a date` opens a form: a place **name**, an **address**, optional **lat/lng**, and an optional time (date+time picker). The place must be **locatable** — a name plus an address or coordinates. `POST /dm/{thread}/date-plan/propose` posts an Ayma card message (`type: date_plan`, `dm_schema.MESSAGE_DATE_PLAN`) carrying a `date_plan` map the state machine updates **in place** on the card doc (so the thread stream the clients already watch carries every change):
+
+```
+proposed -> partially_approved -> both_approved
+```
+
+Each person approves for themselves (`.../approve`); "Suggest a change" (`.../suggest`) revises any supplied field, bumps `revision`, and **resets `approvals` to none** (back to `proposed`). `both_approved` is the terminal approved state the step-in reads. No model-provider call is made — planning is the proposer's own input. Endpoints are `require_adult_uid` + participant-checked; the card renders inside the existing `/dm/:threadId` route (`date_plan_card.dart`); the "plan a date" action is registered as the `date_moments` setting's sibling via the DM route (no new route). Fields are deliberately payment-free: no `payments`, `total_cents`, `reservation`, or PayPal anything.
+
+**The date step-in (`date_moments.py`).** Opt-in, **default-OFF** toggle "Date moments" in Settings › Privacy (`date_moments_enabled` on `profile/main`; Ayma can also flip it via the `date_moments` app-registry setting → `date_moments_on/off` commands). Enabling it from the toggle requires location permission; if denied, it stays off and nothing breaks. OS location permission is also requested **at app start**, mirroring the notification-permission ask (`LocationService.ensurePermission()` in `main.dart`) — this does **not** enable the feature, it only gets the prompt out of the way.
+
+Arrival is a pragmatic **foreground** check (`DateMomentsMonitor`, no background service): when the DM thread shows a `both_approved`, not-yet-fired plan **with coordinates**, and the user has opted in, the client reads the device location once, and if it is within **~150 m** of the anchor it calls `POST /dm/{thread}/date-plan/{msg}/moment`. **No location is ever sent to the server, and no location trail is stored** — the only record is `moment_fired` on the plan. The server enforces `both_approved`, the **±90 min** time window, and the **once-only** guard (`moment_fired` set before posting), then posts **one** message, **private to the arriving user** (`private_to` on the message doc; clients hide a `private_to` message that is not theirs). The message contains: (a) the plan recap, (b) the other person's **existing** latest date-sim summary for the pair (`users/{uid}/date_sims`, `verdict.summary` — reused, never regenerated, **no new inference**), and (c) a simple **templated** opener. (The full opt-in location log is a separate second piece; not built here.)
+
+**Geocoding seam (stubbed).** Converting a free-text address to coordinates is **not** wired to any paid geocoding API. The proposer optionally enters lat/lng directly; without coordinates the plan still works, only the arrival step-in is inert (it needs an anchor to match against).
+
 ---
 
 ## 7. Notifications & Push
