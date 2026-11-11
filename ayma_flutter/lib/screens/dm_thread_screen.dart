@@ -15,8 +15,11 @@ import '../services/async_voice_recorder.dart';
 import '../services/dm_voice_engine.dart';
 import '../services/voice_note_controller.dart';
 import '../services/chat_inbox.dart';
+import '../services/date_moments_monitor.dart';
+import '../services/date_plan.dart';
 import '../services/dm_service.dart';
 import '../services/fresh_data.dart';
+import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_photo.dart';
@@ -24,6 +27,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/date_plan_card.dart';
 import '../widgets/chat_composer.dart'
     show kChatListBottomInset, kComposerBarPadding;
 import '../widgets/freshness_indicator.dart';
@@ -84,6 +88,12 @@ class DmThreadScreen extends StatefulWidget {
 class _DmThreadScreenState extends State<DmThreadScreen>
     with ScreenContextReasserter<DmThreadScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
+  late final DateMomentsMonitor _dateMoments =
+      DateMomentsMonitor(fire: _dm.fireDateMoment, profiles: ProfileService());
+
+  /// Card message ids a step-in fire has already been attempted for this
+  /// session, so a rebuild never re-checks the same card in a tight loop.
+  final Set<String> _dateMomentChecked = <String>{};
   late final ApiClient _api = widget.apiClient ?? ApiClient();
   late final ImagePicker _picker = widget.picker ?? ImagePicker();
   final _composer = TextEditingController();
@@ -520,6 +530,14 @@ class _DmThreadScreenState extends State<DmThreadScreen>
             ListTile(
               contentPadding:
                   const EdgeInsetsDirectional.only(start: 20, end: 24),
+              leading: const Icon(Icons.event_available_outlined),
+              title: const Text('Plan a date'),
+              subtitle: const Text('Ayma posts a plan you both approve'),
+              onTap: () => Navigator.pop(ctx, 'date_plan'),
+            ),
+            ListTile(
+              contentPadding:
+                  const EdgeInsetsDirectional.only(start: 20, end: 24),
               leading: const Icon(Icons.photo_library_outlined),
               title: const Text('Photo'),
               onTap: () => Navigator.pop(ctx, 'gallery'),
@@ -546,6 +564,8 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     if (choice == null || !mounted) return;
     try {
       switch (choice) {
+        case 'date_plan':
+          await _proposeDatePlan();
         case 'gallery':
           await _pickImage(ImageSource.gallery);
         case 'camera':
@@ -558,6 +578,79 @@ class _DmThreadScreenState extends State<DmThreadScreen>
         AymaToast.show(context, "Couldn't attach that ($e).",
             kind: AymaToastKind.error);
       }
+    }
+  }
+
+  /// Run a date-card action and surface a plain failure message.
+  Future<void> _runDatePlanAction(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(context, "That didn't go through — please try again.",
+            kind: AymaToastKind.error);
+      }
+    }
+  }
+
+  /// Open the propose form; on submit, post the date card in the thread.
+  Future<void> _proposeDatePlan() async {
+    final result = await showModalBottomSheet<_DatePlanFormResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => const _DatePlanForm(),
+    );
+    if (result == null || !mounted) return;
+    await _runDatePlanAction(() => _dm.proposeDatePlan(
+          widget.threadId,
+          placeName: result.placeName,
+          address: result.address,
+          lat: result.lat,
+          lng: result.lng,
+          timeLabel: result.timeLabel,
+          startsAt: result.startsAt,
+        ));
+  }
+
+  /// Open the propose form prefilled from [plan] as a change; on submit,
+  /// revise the plan (which resets approvals).
+  Future<void> _suggestDatePlanChange(String messageId, DatePlan plan) async {
+    final result = await showModalBottomSheet<_DatePlanFormResult>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _DatePlanForm(initial: plan),
+    );
+    if (result == null || !mounted) return;
+    await _runDatePlanAction(() => _dm.suggestDatePlanChange(
+          widget.threadId,
+          messageId,
+          placeName: result.placeName,
+          address: result.address,
+          lat: result.lat,
+          lng: result.lng,
+          timeLabel: result.timeLabel,
+          startsAt: result.startsAt,
+          note: result.note,
+        ));
+  }
+
+  /// For the newest approved, not-fired date plan in view, run the arrival
+  /// check once per session. The monitor short-circuits unless the user has
+  /// opted in and is at the place; the backend owns the time window and the
+  /// once-only guard.
+  void _maybeFireDateMoment(List<DmMessage> msgs) {
+    for (final m in msgs) {
+      final plan = m.datePlan;
+      if (plan == null || !plan.bothApproved || plan.momentFired) continue;
+      if (!plan.hasCoords) continue;
+      if (_dateMomentChecked.contains(m.id)) continue;
+      _dateMomentChecked.add(m.id);
+      unawaited(_dateMoments.maybeFire(
+        threadId: widget.threadId,
+        messageId: m.id,
+        plan: plan,
+        otherName: _headerName,
+      ));
     }
   }
 
@@ -711,7 +804,12 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                 final msgs = [
                   ...merged,
                   ..._visibleLocalVoice(merged),
-                ];
+                  // A date step-in message is private to the user it was
+                  // posted for; never render someone else's.
+                ].where((m) => !m.hiddenFrom(me)).toList();
+                // When an approved, not-yet-fired date plan is in view, check
+                // (opt-in + at the place) whether to fire the step-in once.
+                _maybeFireDateMoment(msgs);
                 _oldestId = msgs.isEmpty ? null : msgs.first.id;
                 _tailFull = tail.length >= _historyPageSize;
                 _markReadIfIncoming(msgs);
@@ -796,6 +894,16 @@ class _DmThreadScreenState extends State<DmThreadScreen>
                                 final bubble = _Bubble(
                                   message: m,
                                   mine: mine,
+                                  myUid: me,
+                                  otherUid: _safeOtherUid(),
+                                  otherName: _headerName,
+                                  onDateApprove: () => _runDatePlanAction(
+                                      () => _dm.approveDatePlan(
+                                          widget.threadId, m.id)),
+                                  onDateSuggest: m.datePlan == null
+                                      ? null
+                                      : () => _suggestDatePlanChange(
+                                          m.id, m.datePlan!),
                                   voicePlayer: _clipPlayer,
                                   nowPlaying: _nowPlaying,
                                   localVoiceFile: _localVoiceFiles[m.id],
@@ -1461,9 +1569,21 @@ class _Bubble extends StatelessWidget {
     this.nowPlaying,
     this.localVoiceFile,
     this.voiceUrlResolver,
+    this.myUid = '',
+    this.otherUid = '',
+    this.otherName = 'Them',
+    this.onDateApprove,
+    this.onDateSuggest,
   });
   final DmMessage message;
   final bool mine;
+
+  /// Date-plan card wiring (date_plan messages only).
+  final String myUid;
+  final String otherUid;
+  final String otherName;
+  final VoidCallback? onDateApprove;
+  final VoidCallback? onDateSuggest;
 
   /// Voice-note playback wiring (voice messages only): the shared player,
   /// the app-wide now-playing key, this bubble's local file while its
@@ -1518,6 +1638,16 @@ class _Bubble extends StatelessWidget {
         urlResolver: voiceUrlResolver,
         iconColor: _ink(ac),
         captionColor: _ink(ac),
+      );
+    } else if (message.isDatePlan) {
+      tight = true;
+      content = DatePlanCard(
+        plan: message.datePlan!,
+        myUid: myUid,
+        otherUid: otherUid,
+        otherName: otherName,
+        onApprove: onDateApprove,
+        onSuggest: onDateSuggest,
       );
     } else if (message.isSharedReport && report != null) {
       tight = true;
@@ -1968,4 +2098,231 @@ String _fmtBytes(int bytes) {
   if (bytes < 1024) return '$bytes B';
   if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB';
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+/// The result of the plan-a-date form: a locatable place + an optional time.
+class _DatePlanFormResult {
+  const _DatePlanFormResult({
+    required this.placeName,
+    required this.address,
+    required this.lat,
+    required this.lng,
+    required this.timeLabel,
+    required this.startsAt,
+    this.note = '',
+  });
+  final String placeName;
+  final String address;
+  final double? lat;
+  final double? lng;
+  final String timeLabel;
+  final String startsAt;
+  final String note;
+}
+
+/// The propose / suggest-a-change form. The place must be locatable: a name
+/// plus an address or a lat/lng pair. Used both to propose a new plan and,
+/// prefilled from [initial], to suggest a change (which resets approvals).
+class _DatePlanForm extends StatefulWidget {
+  const _DatePlanForm({this.initial});
+
+  final DatePlan? initial;
+
+  @override
+  State<_DatePlanForm> createState() => _DatePlanFormState();
+}
+
+class _DatePlanFormState extends State<_DatePlanForm> {
+  late final TextEditingController _place =
+      TextEditingController(text: widget.initial?.placeName ?? '');
+  late final TextEditingController _address =
+      TextEditingController(text: widget.initial?.address ?? '');
+  late final TextEditingController _lat = TextEditingController(
+      text: widget.initial?.lat?.toString() ?? '');
+  late final TextEditingController _lng = TextEditingController(
+      text: widget.initial?.lng?.toString() ?? '');
+  final TextEditingController _note = TextEditingController();
+  DateTime? _when;
+  String _error = '';
+
+  @override
+  void dispose() {
+    _place.dispose();
+    _address.dispose();
+    _lat.dispose();
+    _lng.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickWhen() async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _when ?? now,
+      firstDate: now.subtract(const Duration(days: 1)),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_when ?? now),
+    );
+    if (time == null || !mounted) return;
+    setState(() => _when = DateTime(
+        date.year, date.month, date.day, time.hour, time.minute));
+  }
+
+  static const _weekdays = [
+    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+  ];
+  static const _months = [
+    '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep',
+    'Oct', 'Nov', 'Dec'
+  ];
+
+  String _label(DateTime dt) {
+    final h12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final ampm = dt.hour < 12 ? 'AM' : 'PM';
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '${_weekdays[dt.weekday - 1]}, ${_months[dt.month]} ${dt.day} '
+        'at $h12:$mm $ampm';
+  }
+
+  void _submit() {
+    final name = _place.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Add a place name.');
+      return;
+    }
+    final address = _address.text.trim();
+    final lat = double.tryParse(_lat.text.trim());
+    final lng = double.tryParse(_lng.text.trim());
+    final hasCoords = lat != null && lng != null;
+    if (address.isEmpty && !hasCoords) {
+      setState(() => _error =
+          'Add an address (or exact coordinates) so the place is locatable.');
+      return;
+    }
+    Navigator.of(context).pop(_DatePlanFormResult(
+      placeName: name,
+      address: address,
+      lat: lat,
+      lng: lng,
+      timeLabel: _when == null ? '' : _label(_when!),
+      startsAt: _when == null ? '' : _when!.toUtc().toIso8601String(),
+      note: _note.text.trim(),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final isSuggest = widget.initial != null;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(isSuggest ? 'Suggest a change' : 'Plan a date',
+                style: AymaType.sans(
+                    size: 18, color: ac.fg, weight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text(
+              isSuggest
+                  ? 'Revise the plan. Both of you approve again afterward.'
+                  : 'Pick a real place so Ayma can find it. You both approve it.',
+              style: AymaType.sans(size: 13, color: ac.fgMute),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _place,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Place name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _address,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _lat,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        signed: true, decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Latitude (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _lng,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        signed: true, decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Longitude (optional)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Coordinates let Ayma know when you arrive. Without them, the '
+              'plan still works — just no arrival step-in.',
+              style: AymaType.sans(size: 11, color: ac.fgMute),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _pickWhen,
+              icon: const Icon(Icons.schedule),
+              label: Text(_when == null ? 'Pick a time (optional)'
+                  : _label(_when!)),
+            ),
+            if (isSuggest) ...[
+              const SizedBox(height: 10),
+              TextField(
+                controller: _note,
+                decoration: const InputDecoration(
+                  labelText: 'Note (optional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+            if (_error.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(_error,
+                  style: AymaType.sans(size: 12, color: ac.errorText)),
+            ],
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _submit,
+              child: Text(isSuggest ? 'Send to Ayma' : 'Post the plan'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

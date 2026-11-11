@@ -1386,6 +1386,64 @@ class ApiClient {
     return DmTranslation.fromJson(decoded);
   }
 
+  /// `POST /dm/{threadId}/date-plan/propose` — propose a concrete place +
+  /// time; the backend posts the date card in the thread (plan-a-date).
+  Future<Map<String, dynamic>> datePlanPropose(
+    String threadId, {
+    required String placeName,
+    String address = '',
+    double? lat,
+    double? lng,
+    String timeLabel = '',
+    String startsAt = '',
+  }) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/propose', {
+        'place_name': placeName,
+        'address': address,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        'time_label': timeLabel,
+        'starts_at': startsAt,
+      });
+
+  /// `POST /dm/{threadId}/date-plan/{messageId}/approve` — approve the date
+  /// card for myself. The second approval moves the plan to both_approved.
+  Future<Map<String, dynamic>> datePlanApprove(
+          String threadId, String messageId) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/approve',
+          const {});
+
+  /// `POST /dm/{threadId}/date-plan/{messageId}/suggest` — reply to the card
+  /// with a revised place/time; Ayma revises the plan and approvals reset.
+  Future<Map<String, dynamic>> datePlanSuggest(
+    String threadId,
+    String messageId, {
+    String? placeName,
+    String? address,
+    double? lat,
+    double? lng,
+    String? timeLabel,
+    String? startsAt,
+    String note = '',
+  }) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/suggest', {
+        if (placeName != null) 'place_name': placeName,
+        if (address != null) 'address': address,
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (timeLabel != null) 'time_label': timeLabel,
+        if (startsAt != null) 'starts_at': startsAt,
+        'note': note,
+      });
+
+  /// `POST /dm/{threadId}/date-plan/{messageId}/moment` — the device has
+  /// arrived at an approved plan's place near its time; the backend fires the
+  /// step-in once (no location is sent, and no location trail is stored).
+  Future<Map<String, dynamic>> datePlanMoment(
+          String threadId, String messageId, String otherName) =>
+      _sendJson('POST', '/dm/$threadId/date-plan/$messageId/moment',
+          {'other_name': otherName});
+
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});

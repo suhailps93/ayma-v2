@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'api_client.dart';
+import 'date_plan.dart';
 import 'fresh_data.dart';
 
 class DmThread {
@@ -37,6 +38,8 @@ class DmMessage {
     this.size = 0,
     this.moderated = false,
     this.reportShare,
+    this.datePlan,
+    this.privateTo = '',
   });
   final String id;
   final String senderUid;
@@ -59,7 +62,21 @@ class DmMessage {
   /// public card image.
   final DmReportShare? reportShare;
 
+  /// `date_plan` only — the plan Ayma posted on this card.
+  final DatePlan? datePlan;
+
+  /// When set, this message is private to one uid (the arriving user's date
+  /// step-in): other viewers must not render it.
+  final String privateTo;
+
   bool get isSharedReport => type == 'shared_report' && reportShare != null;
+
+  bool get isDatePlan => type == 'date_plan' && datePlan != null;
+
+  /// True when [viewerUid] should NOT see this message (someone else's
+  /// private step-in message in the shared thread).
+  bool hiddenFrom(String viewerUid) =>
+      privateTo.isNotEmpty && privateTo != viewerUid;
 
   bool get hasImage => type == 'image' && attachmentUrl.isNotEmpty;
   bool get hasGif => type == 'gif' && attachmentUrl.isNotEmpty;
@@ -79,6 +96,8 @@ class DmMessage {
         size: (m['size'] as num?)?.toInt() ?? 0,
         moderated: m['moderated'] as bool? ?? false,
         reportShare: DmReportShare.tryParse(m['report_share']),
+        datePlan: DatePlan.tryParse(m['date_plan']),
+        privateTo: m['private_to'] as String? ?? '',
       );
 }
 
@@ -393,6 +412,58 @@ class DmService {
         .toList()
         .reversed
         .toList();
+  }
+
+  /// Propose a date (place + time); the backend posts the card in the thread.
+  Future<Map<String, dynamic>> proposeDatePlan(
+    String threadId, {
+    required String placeName,
+    String address = '',
+    double? lat,
+    double? lng,
+    String timeLabel = '',
+    String startsAt = '',
+  }) =>
+      _api.datePlanPropose(threadId,
+          placeName: placeName,
+          address: address,
+          lat: lat,
+          lng: lng,
+          timeLabel: timeLabel,
+          startsAt: startsAt);
+
+  /// Approve the date card [messageId] for me.
+  Future<Map<String, dynamic>> approveDatePlan(
+          String threadId, String messageId) =>
+      _api.datePlanApprove(threadId, messageId);
+
+  /// Reply to the date card with a revised place/time; approvals reset.
+  Future<Map<String, dynamic>> suggestDatePlanChange(
+    String threadId,
+    String messageId, {
+    String? placeName,
+    String? address,
+    double? lat,
+    double? lng,
+    String? timeLabel,
+    String? startsAt,
+    String note = '',
+  }) =>
+      _api.datePlanSuggest(threadId, messageId,
+          placeName: placeName,
+          address: address,
+          lat: lat,
+          lng: lng,
+          timeLabel: timeLabel,
+          startsAt: startsAt,
+          note: note);
+
+  /// Report arrival at an approved plan's place; the backend fires the date
+  /// step-in once. Returns whether a step-in message was posted.
+  Future<bool> fireDateMoment(
+      String threadId, String messageId, String otherName) async {
+    final r = await _api.datePlanMoment(threadId, messageId, otherName);
+    return r['fired'] == true;
   }
 
   Future<void> sendText(String threadId, String text) =>

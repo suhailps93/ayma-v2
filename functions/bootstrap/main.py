@@ -4525,6 +4525,134 @@ async def dm_send(
     return {"ok": True, "message_id": msg_id, "thread_id": thread_id}
 
 
+# --- Plan a date (payment-free) + the date-moment step-in ------------------
+
+def _date_plan_participants(thread_id: str, uid: str) -> tuple[str, str]:
+    """The two uids of the thread, or raise 400/403."""
+    try:
+        a, b = uids_from_pair_key(thread_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if uid not in (a, b):
+        raise HTTPException(status_code=403, detail="Not your thread.")
+    return a, b
+
+
+class DatePlanProposeRequest(BaseModel):
+    place_name: str = Field(min_length=1, max_length=120)
+    address: str = Field(default="", max_length=240)
+    lat: float | None = None
+    lng: float | None = None
+    time_label: str = Field(default="", max_length=120)
+    starts_at: str = Field(default="", max_length=40)
+
+
+class DatePlanSuggestRequest(BaseModel):
+    place_name: str | None = Field(default=None, max_length=120)
+    address: str | None = Field(default=None, max_length=240)
+    lat: float | None = None
+    lng: float | None = None
+    time_label: str | None = Field(default=None, max_length=120)
+    starts_at: str | None = Field(default=None, max_length=40)
+    note: str = Field(default="", max_length=500)
+
+
+class DatePlanMomentRequest(BaseModel):
+    other_name: str = Field(default="", max_length=120)
+
+
+@app.post("/dm/{thread_id}/date-plan/propose")
+async def date_plan_propose(
+    thread_id: str, req: DatePlanProposeRequest,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Propose a concrete place + time; posts the date card in the thread."""
+    a, b = _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+
+    def _post() -> tuple[str, dict]:
+        plan = date_plan_mod.propose_plan(
+            place_name=req.place_name, address=req.address,
+            lat=req.lat, lng=req.lng, time_label=req.time_label,
+            starts_at=req.starts_at, proposer_uid=uid)
+        mid = date_plan_mod.post_date_plan_message(
+            get_db(), thread_id, sorted((a, b)), plan)
+        return mid, plan
+
+    try:
+        mid, plan = await asyncio.to_thread(_post)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message_id": mid, "date_plan": plan}
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/approve")
+async def date_plan_approve(
+    thread_id: str, message_id: str,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """One person approves the date card for themselves. The second
+    approval moves the plan to ``both_approved``."""
+    _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+
+    try:
+        plan = await asyncio.to_thread(
+            date_plan_mod.approve, get_db(), thread_id, message_id, uid)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "date_plan": plan}
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/suggest")
+async def date_plan_suggest(
+    thread_id: str, message_id: str, req: DatePlanSuggestRequest,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Reply-to-card change: Ayma revises the plan and approvals reset."""
+    _date_plan_participants(thread_id, uid)
+    import date_plan as date_plan_mod
+
+    try:
+        plan = await asyncio.to_thread(
+            date_plan_mod.suggest_change, get_db(), thread_id, message_id,
+            uid, req.place_name, req.address, req.lat, req.lng,
+            req.time_label, req.starts_at, req.note)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "date_plan": plan}
+
+
+@app.post("/dm/{thread_id}/date-plan/{message_id}/moment")
+async def date_plan_moment(
+    thread_id: str, message_id: str, req: DatePlanMomentRequest,
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """The arriving user's device reports it is at an approved plan's place
+    near the plan time. Fires the step-in message once; the server enforces
+    both-approved + the time window + the once-only guard. The client does
+    not send any location, and no location trail is stored."""
+    _date_plan_participants(thread_id, uid)
+    import date_moments
+
+    try:
+        result = await asyncio.to_thread(
+            date_moments.fire_moment, get_db(), thread_id, message_id, uid,
+            req.other_name)
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail="Not your date plan.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "fired": result is not None, "moment": result or {}}
+
+
 async def _notify_new_dm(
     thread_id: str, sender: str, recipient: str, mtype: str, body: str
 ) -> None:

@@ -221,6 +221,15 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.messagesTab,
   ),
   TourFeature(
+    featureId: 'plan_a_date',
+    headline: 'Plan a date together',
+    subtitle: 'In a chat, tap + then Plan a date — pick a place and time, you '
+        'both approve it, and Ayma can quietly recap the plan when you arrive '
+        '(turn on Date moments in Privacy).',
+    icon: Icons.event_available_outlined,
+    anchorId: TourAnchors.messagesTab,
+  ),
+  TourFeature(
     featureId: 'connect_agent',
     headline: 'Bring your own agent',
     subtitle: 'Connect an AI agent to talk to Ayma for you — set it up in Settings.',
