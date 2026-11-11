@@ -204,6 +204,30 @@ class ProfileService {
     );
   }
 
+  /// Whether "Date moments" is on: Ayma may use my location around an
+  /// approved date to step in with a recap. Default OFF (opt-in).
+  Stream<bool> watchDateMoments() => _profileDoc
+      .snapshots()
+      .map((s) => s.data()?['date_moments_enabled'] == true);
+
+  /// The last-known value of [watchDateMoments], read once (no stream).
+  Future<bool> dateMomentsEnabled() async {
+    final snap = await _profileDoc.get();
+    return snap.data()?['date_moments_enabled'] == true;
+  }
+
+  /// Opt in or out of "Date moments". Enabling is gated on location
+  /// permission by the caller; the flag alone is inert without it.
+  Future<void> setDateMoments(bool enabled) {
+    return _profileDoc.set(
+      {
+        'date_moments_enabled': enabled,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   /// Sets `ayma_voice_name` (§13.3). Takes effect from the next voice session.
   Future<void> setVoicePreference(String presetName) {
     return awaitServerAck(_profileDoc.set(

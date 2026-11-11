@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
 import '../services/legal_links.dart';
+import '../services/location_service.dart';
 import '../services/profile_service.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
@@ -51,6 +52,10 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _pausedSaving = false;
 
   bool _resetting = false;
+
+  /// True while the date-moments write (and any permission prompt) runs.
+  bool _dateMomentsSaving = false;
+  final LocationService _location = const LocationService();
 
   @override
   void initState() {
@@ -126,6 +131,40 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
       }
     } finally {
       if (mounted) setState(() => _verifying = false);
+    }
+  }
+
+  /// Date-moments toggle (opt-in, default off). Enabling requires location
+  /// permission: if it is denied the toggle stays off and we say why, so
+  /// nothing breaks. Turning it off never touches permission.
+  Future<void> _setDateMoments(bool value) async {
+    if (_dateMomentsSaving) return;
+    setState(() => _dateMomentsSaving = true);
+    try {
+      if (value) {
+        final granted = await _location.ensurePermission();
+        if (!granted) {
+          if (mounted) {
+            AymaToast.show(
+              context,
+              'Date moments needs location permission. Allow location, then '
+              'turn it on again.',
+              kind: AymaToastKind.warning,
+            );
+          }
+          return; // stays off — the stream-driven switch reconciles
+        }
+      }
+      await _profiles.setDateMoments(value);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Could not save ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _setDateMoments(value)));
+      }
+    } finally {
+      if (mounted) setState(() => _dateMomentsSaving = false);
     }
   }
 
@@ -231,6 +270,25 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               ),
               value: snap.data ?? true,
               onChanged: (v) => _profiles.setAiAvatar(v),
+            ),
+          ),
+          StreamBuilder<bool>(
+            stream: _profiles.watchDateMoments(),
+            builder: (context, snap) => SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              secondary: Icon(Icons.location_on_outlined, color: ac.fgDim),
+              key: const Key('settings_date_moments'),
+              title: Text('Date moments',
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              subtitle: Text(
+                'Let Ayma use my location around a planned date. When you '
+                'arrive at an approved date, she quietly recaps the plan and '
+                'what she knows — just for you. Off by default; needs location '
+                'permission.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              value: snap.data ?? false,
+              onChanged: _dateMomentsSaving ? null : _setDateMoments,
             ),
           ),
           Divider(color: ac.lineSoft),

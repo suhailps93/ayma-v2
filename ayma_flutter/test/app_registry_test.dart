@@ -71,7 +71,7 @@ void main() {
   test('every client-held setting value executes in the app', () {
     // Pause/resume and accent need Firebase-backed services; their dispatch
     // is covered in app_command_service_test.dart.
-    const coveredElsewhere = {'pause_matching', 'accent_color'};
+    const coveredElsewhere = {'pause_matching', 'accent_color', 'date_moments'};
     for (final s in _list('settings').where((s) =>
         s['handler'] == 'client' && !coveredElsewhere.contains(s['key']))) {
       final command = s['client_command'];

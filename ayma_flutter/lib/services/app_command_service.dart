@@ -1721,6 +1721,12 @@ class AppCommandService {
       case 'resume_matching':
         _profiles.setPaused(false).catchError((_) {});
         return true;
+      case 'date_moments_on':
+        _profiles.setDateMoments(true).catchError((_) {});
+        return true;
+      case 'date_moments_off':
+        _profiles.setDateMoments(false).catchError((_) {});
+        return true;
       case 'sign_out':
         _afterAck = _signOut;
         return true;
