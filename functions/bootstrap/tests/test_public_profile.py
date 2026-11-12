@@ -479,6 +479,28 @@ def test_build_labels_a_practice_persona_by_uid_prefix(monkeypatch):
     assert v["ai_generated"] is True
 
 
+def test_build_labels_a_demo_fixture_account_without_the_field(monkeypatch):
+    """A known demo/judge fixture account (e.g. Sofia = ``demo-test2``) is
+    labelled from its uid even when its profile doc is MISSING the explicit
+    ``ai_generated`` field — the re-seed / missed-backfill case this fallback
+    hardens against."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "demo-test2", "profile", "main")] = {"name": "Sofia"}
+    v = pp.build(db, "me", "demo-test2")
+    assert v["ai_generated"] is True
+
+
+def test_build_labels_a_demo_edge_account_by_uid_prefix(monkeypatch):
+    """A ``demo-edge-*`` corner-case fixture account is labelled from its uid
+    prefix even with no explicit ``ai_generated`` field."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "demo-edge-001", "profile", "main")] = {"name": "Edge"}
+    v = pp.build(db, "me", "demo-edge-001")
+    assert v["ai_generated"] is True
+
+
 def test_build_never_labels_a_real_user(monkeypatch):
     """A real user (ordinary uid, no marker — e.g. the founder or Dillu) is
     NEVER flagged. This is the critical guarantee: a real person mislabelled as
@@ -487,6 +509,17 @@ def test_build_never_labels_a_real_user(monkeypatch):
     _setup(monkeypatch, db)
     db.docs[("users", "her", "profile", "main")] = {"name": "Dillu"}
     v = pp.build(db, "me", "her")
+    assert v["ai_generated"] is False
+
+
+def test_build_never_labels_a_normal_uid_without_the_field(monkeypatch):
+    """An ordinary uid with no ``ai_generated`` field resolves to False — the
+    fallback only ever adds labels for the reserved demo/practice uids, never a
+    real account that happens to lack the field."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "u-regular-7", "profile", "main")] = {"name": "Alex"}
+    v = pp.build(db, "me", "u-regular-7")
     assert v["ai_generated"] is False
 
 

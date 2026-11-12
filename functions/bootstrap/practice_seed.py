@@ -31,6 +31,24 @@ def is_practice_persona(uid: str) -> bool:
     return str(uid or "").startswith(DEMO_PRACTICE_UID_PREFIX)
 
 
+# The known hackathon demo/judge fixture accounts (docs/DEMO_ACCOUNTS.md): the
+# curated ``demo-test1/2/3`` personas (Daniel / Sofia / Priya) and the
+# ``demo-edge-*`` corner-case accounts. All AI-generated, never real people.
+DEMO_FIXTURE_UIDS = frozenset({"demo-test1", "demo-test2", "demo-test3"})
+DEMO_EDGE_UID_PREFIX = "demo-edge-"
+
+
+def is_demo_fixture_account(uid: str) -> bool:
+    """``True`` for a known AI-generated demo/judge fixture account — the
+    curated ``demo-test1/2/3`` personas and any ``demo-edge-*`` account. These
+    are seeded, non-real profiles that must always carry the "AI-generated
+    profile" label even when their profile doc is missing the explicit
+    ``ai_generated`` field (e.g. after a re-seed that predates the flag, or a
+    profile that was never backfilled). A real user matches neither."""
+    u = str(uid or "")
+    return u in DEMO_FIXTURE_UIDS or u.startswith(DEMO_EDGE_UID_PREFIX)
+
+
 # Each entry: the public, viewer-visible profile; the wiki pages (mixed
 # visibility, with one public body hiding a {{private}} span); and `secrets`,
 # the exact needle strings the extraction test asserts never leak.
