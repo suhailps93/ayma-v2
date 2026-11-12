@@ -124,6 +124,33 @@ class _MessagesScreenState extends State<MessagesScreen> {
   final Map<String, MiniProfile> _mini = {};
   bool _fetchingMini = false;
 
+  /// Threads already delivery-marked in this session, keyed by thread id +
+  /// newest-message stamp, so a re-emitted list does not re-write while a
+  /// stamp is still landing.
+  final Set<String> _deliveredMarked = {};
+
+  /// Read receipts, receiving side: when the conversations list syncs from
+  /// the server (never from cache — nothing has reached this device until
+  /// the server confirms it) and a thread holds messages from them newer
+  /// than my delivery watermark, stamp the watermark. Their bubbles flip to
+  /// two ticks without my opening the thread.
+  void _markDeliveredIfSynced(FreshData<List<DmThread>>? fresh) {
+    if (fresh == null || fresh.isFromCache) return;
+    final threads = fresh.data;
+    if (threads == null) return;
+    for (final t in threads) {
+      final last = t.lastMessageAt;
+      if (t.unread == 0 || last == null) continue;
+      final mine = t.myLastDeliveredAt;
+      if (mine != null && !last.isAfter(mine)) continue;
+      final key = '${t.threadId}@${last.microsecondsSinceEpoch}';
+      if (!_deliveredMarked.add(key)) continue;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _dm.markThreadDelivered(t.threadId);
+      });
+    }
+  }
+
   void _ensureMini(Set<String> uids) {
     final missing = uids.where((u) => u.isNotEmpty && !_mini.containsKey(u))
         .toList();
@@ -153,6 +180,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
               stream: _matches.watchMutualMatchesFresh(),
               builder: (context, matchSnap) {
                 final threadFresh = threadSnap.data;
+                _markDeliveredIfSynced(threadFresh);
                 final matchFresh = matchSnap.data;
                 final waiting = threadFresh == null && matchFresh == null;
                 final freshness = (threadFresh != null && matchFresh != null)
