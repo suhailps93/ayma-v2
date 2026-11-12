@@ -1233,7 +1233,8 @@ DM access is **not** gated by like/mutual status — only a block prevents messa
 
 ### 6.6 DM data model
 
-- `dm_threads/{threadId}` (top-level, keyed by sorted pair of uids) — `participants`, `created_at`, `last_message_at`, per-user `last_read_at`.
+- `dm_threads/{threadId}` (top-level, keyed by sorted pair of uids) — `participants`, `created_at`, `last_message_at`, per-user `last_read_at`, per-user `last_delivered_at`.
+  - **Read receipts (WhatsApp model).** `last_delivered_at` is a per-participant delivery watermark beside `last_read_at`. The recipient's client stamps its own entry when it syncs the thread from the **server** (opening the thread or the conversations list — never from cache); read reuses `last_read_at`. The sender derives each message's tick from its `created_at` versus the other side's watermarks (read checked first, so the state never regresses) and renders one tick (sent), two ticks (delivered), or two blue ticks (read, `AymaColors.readTick`) beside the time label, live over the thread-doc listener. `firestore.rules` lets a participant touch only its own entry in each map; `dm_ops.ensure_thread` initializes `last_delivered_at` empty — the server never writes it.
 - `dm_threads/{threadId}/messages/{messageId}` — `sender_uid`, `type`, `body`, `created_at`.
   - `type` is one of `text` / `photo` / `voice` / `shared_profile` / `image` / `gif` / `file` / `shared_report` (`dm_schema.MESSAGE_TYPES`).
   - For `text`, `body` is the message; for `photo`/`voice`, a Storage ref; for `shared_profile`, the shared uid.
