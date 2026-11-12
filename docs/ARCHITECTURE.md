@@ -182,7 +182,7 @@ reroute to work around an empty response.
   tool description lists every destination as `key (label)` (not bare keys) so the model maps the user's words
   — "appearance report" → `my_appearance` — deterministically rather than guessing. The registry's
   `report_actions` (e.g. `rerun_appearance` → the `run_appearance_report` tool, `rerun_web_research` → the
-  `rerun_web_research` tool)
+  `rerun_web_research` tool, `rerun_match_report` → the `rerun_match_report` tool)
   turn "re-run / regenerate my report" into the tool that actually re-runs it. When a re-run phrase is instead
   routed to `open_screen` or `app_action` (probabilistic Meta tool-selection), those tools now *run the report
   themselves* via `_run_report_action` and return its real `[appearance:<id>]`/`[deep_dive:<id>]` card marker —
@@ -201,6 +201,16 @@ reroute to work around an empty response.
   (b) `skills._bounded` now wraps EVERY voice tool in an `asyncio.wait_for` (the voice counterpart to the text loop's
   `_TOOL_TIMEOUT_SECONDS`), returning an honest "took too long" result — never a silent hang — kept above the guided
   tour's 110s tap-wait and below the Flutter client's 180s tool-guard.
+  `rerun_match_report` (`skills/rerun_match_report.py`) is the same for the **match report** screen's "Recalculate"
+  button: it takes the other person's name, QUEUES the identical forced recalculation (`main._match_job(uid, other)` —
+  the exact background task `POST /check-compatibility` adds on `force`), opens the refreshed report, and returns at
+  once with the `[match:<id>]` card marker; the refreshed card is delivered to chat + a push when the score finishes.
+  It exists because the conversational "refresh my match report" had no trigger and did nothing (founder feedback
+  `CpR0f2fjG5UBOsxDay12`). It is **self-only**: `uid` is always the authenticated caller, so it only ever recalculates
+  that caller's own pair with the named person — never a third party's report. A rerun refreshes an EXISTING report; an
+  unscored pair points at the person's profile (where a first match is run) instead of silently scoring from scratch.
+  The deterministic `open_screen`/`app_action` paths read the "with X" partner from the user's own phrasing (after
+  "with"/"for"); a bare "show my match report" carries no re-run verb, so it stays an open (`open_match_report`).
 - *Conversations / DM navigation (`skills/app_control.py`)*: `list_conversations` reads the signed-in user's own
   `dm_threads` (scoped by `participants array_contains uid`, excluding `hidden_for` self) and returns each thread's
   other-person name, recency and unread flag, most-recent first — never message bodies (privacy-safe; `read_dm_thread`
