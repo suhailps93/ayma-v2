@@ -93,20 +93,42 @@ pixel_serial() {
 }
 
 # --- "What's different" bullets from git log PREV..NEW ---------------------- #
-# feat/fix/ui/perf/feature -> one founder-language bullet each; everything else
-# -> one grouped "internal fixes" bullet. Merge commits skipped (their branch
-# commits carry the real change).
-CONVENTIONAL_RE='^(feat|feature|fix|ui|perf)(\(([^)]+)\))?!?: *(.*)$'
+# feat/fix/ui/perf/feature -> one founder-language bullet each (type+scope
+# stripped, scope kept as a readable prefix). Jobs-pass UI-program commits and
+# versionCode bumps are user-visible too -> each gets its own named bullet
+# (they used to fall into the generic "internal" count and be repaired by hand).
+# Everything else -> one grouped "internal fixes" bullet. Merge commits are
+# skipped (their branch commits carry the real change). Prints markdown bullets.
 whats_different() {
-  local range="$1" internal=0 subj scope rest
+  local range="$1" internal=0 subj scope rest newver note
+  # Regexes held in variables (not inline in [[ =~ ]]): the inline unquoted
+  # alternation form fails to parse on bash >= 5.2 ("unexpected token )").
+  local re_feat='^(feat|feature|fix|ui|perf)(\(([^)]+)\))?!?:\ *(.*)$'
+  local re_jobs='[Jj]obs [PpWw]'
+  local re_bump='^Bump versionCode [0-9]+ to ([0-9]+)( \((.*)\))?$'
   while IFS= read -r subj; do
     [[ -z "$subj" ]] && continue
-    if [[ "$subj" =~ $CONVENTIONAL_RE ]]; then
+    if [[ "$subj" =~ $re_feat ]]; then
       scope="${BASH_REMATCH[3]}"; rest="${BASH_REMATCH[4]}"
       if [[ -n "$scope" ]]; then
+        # capitalise the scope as a plain label
         printf -- '- **%s:** %s\n' "$(echo "$scope" | sed 's/[-_]/ /g; s/\b\(.\)/\u\1/')" "$rest"
       else
         printf -- '- %s\n' "$(echo "$rest" | sed 's/\b\(.\)/\u\1/')"
+      fi
+    elif [[ "$subj" =~ $re_jobs ]]; then
+      # Jobs-pass UI-program commit (e.g. "Jobs pass cluster 20: ..." /
+      # "Jobs Wave 3 ..." / "cluster 19 (...): Jobs pass — ..."): user-visible.
+      # Keep the subject's own wording; strip a trailing "(fleet/...)" branch ref
+      # and capitalise the first letter only (never title-case the sentence).
+      printf -- '- %s\n' "$(echo "$subj" | sed 's/ *(fleet\/[^)]*)//; s/^\(.\)/\u\1/')"
+    elif [[ "$subj" =~ $re_bump ]]; then
+      # versionCode bump: the installed build advanced — user-visible.
+      newver="${BASH_REMATCH[1]}"; note="${BASH_REMATCH[3]}"
+      if [[ -n "$note" ]]; then
+        printf -- '- **Build:** versionCode %s — %s\n' "$newver" "$note"
+      else
+        printf -- '- **Build:** versionCode %s\n' "$newver"
       fi
     else
       internal=$((internal + 1))
