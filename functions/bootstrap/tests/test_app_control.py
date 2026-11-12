@@ -1146,6 +1146,161 @@ def test_rerun_web_research_queues_the_self_refresh(monkeypatch):
         assert captured["jobs"][0]["target"] == "", tool
 
 
+def _patch_match_job(monkeypatch):
+    """Make a match-report re-run runnable in-process: stub the credit check
+    and capture the forced recalculation ``rerun_match_report`` queues (the
+    SAME ``main._match_job`` the Recalculate button triggers), without ever
+    running the real scorer. Returns the list of ``(uid, other)`` recalc calls."""
+    import main
+    import token_ledger
+
+    monkeypatch.setattr(token_ledger, "check", lambda uid: None)
+    calls: list[tuple[str, str]] = []
+
+    async def _fake_job(uid, other, **kw):
+        calls.append((uid, other))
+
+    monkeypatch.setattr(main, "_match_job", _fake_job)
+    return calls
+
+
+def _seed_scored_pair(db):
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")
+    db.store[("matches", "me__u-jordan")] = {"score": 80}
+
+
+def test_rerun_match_report_recalculates_and_opens(monkeypatch):
+    # Founder feedback CpR0f2fjG5UBOsxDay12: "refresh my match report" had no
+    # conversational trigger. The skill must QUEUE the same force recalculation
+    # the Recalculate button triggers (main._match_job) AND open the report.
+    from skills import rerun_match_report as rmr
+
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    _seed_scored_pair(db)
+
+    async def _drive():
+        out = await rmr.SKILL.bind(db, "me")(name="Jordan")
+        await asyncio.sleep(0)  # let the detached recalc task start
+        return out
+
+    out = _run(_drive())
+    assert "[match:me__u-jordan]" in out
+    assert "recalculating your match report" in out.lower()
+    # The forced recalc was queued for THIS caller's own pair.
+    assert calls == [("me", "u-jordan")]
+    # And the refreshed report was opened (the open path, same as the button's).
+    assert db.store[_PENDING]["path"] == "/match/me__u-jordan"
+
+
+def test_open_screen_and_app_action_rerun_match_report_recalculate(monkeypatch):
+    # The same re-run routed through the deterministic app-driving paths
+    # (open_screen / app_action) must RUN the recalc, reading the "with X"
+    # partner from the user's own phrasing — not open the stale report.
+    for tool in ("_bind_open_screen", "_bind_app_action"):
+        calls = _patch_match_job(monkeypatch)
+        db = _acking_db()
+        _seed_scored_pair(db)
+
+        async def _drive():
+            out = await getattr(app_control, tool)(db, "me")(
+                "recalculate my match report with Jordan"
+            )
+            await asyncio.sleep(0)
+            return out
+
+        out = _run(_drive())
+        assert "[match:me__u-jordan]" in out, tool
+        assert calls == [("me", "u-jordan")], tool
+        assert db.store[_PENDING]["path"] == "/match/me__u-jordan", tool
+
+
+def test_bare_match_report_ask_opens_without_rerunning(monkeypatch):
+    # A plain "show my match report with X" (no re-run verb) must OPEN the
+    # existing report and NEVER recalculate: it doesn't match find_report_action
+    # (so the deterministic rerun branch is never taken), and open_match_report
+    # queues a navigate, not a recalc.
+    assert app_registry.find_report_action("show my match report with Jordan") is None
+    assert app_registry.find_report_action("open my match report") is None
+
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    _seed_scored_pair(db)
+    out = _run(app_control._bind_open_match_report(db, "me")("Jordan"))
+    assert out.startswith("navigated: screen=match_report")
+    assert calls == []  # opening never re-runs
+
+
+def test_rerun_match_report_is_self_only_never_a_third_party(monkeypatch):
+    # Self-only guard: the recalc is ALWAYS for the authenticated caller's own
+    # pair with the named person — main._match_job's first arg is this caller,
+    # never a third party. There is no way to re-run a report between two others.
+    from skills import rerun_match_report as rmr
+
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    _seed_scored_pair(db)
+    # A second member exists, but naming them can still only recalc ME x them.
+    db.seed_user("u-alex", "Alex Stone")
+
+    async def _drive(name):
+        out = await rmr.SKILL.bind(db, "me")(name=name)
+        await asyncio.sleep(0)
+        return out
+
+    _run(_drive("Jordan"))
+    assert calls == [("me", "u-jordan")]
+    assert all(c[0] == "me" for c in calls)  # caller is always a party
+
+
+def test_rerun_match_report_no_report_yet_does_not_recalc(monkeypatch):
+    # A re-run only refreshes an EXISTING report; with no scored pair there is
+    # nothing to re-run, so it points at the profile and queues no recalc.
+    from skills import rerun_match_report as rmr
+
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    db.seed_user("me", "Me")
+    db.seed_user("u-jordan", "Jordan Lee")  # no matches doc
+
+    out = _run(rmr.SKILL.bind(db, "me")(name="Jordan"))
+    assert "no match report" in out.lower()
+    assert calls == []
+    assert _PENDING not in db.store  # no navigate, no recalc
+
+
+def test_rerun_match_report_needs_a_name(monkeypatch):
+    # No partner named → ask who, never guess, never recalc.
+    from skills import rerun_match_report as rmr
+
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    _seed_scored_pair(db)
+    out = _run(rmr.SKILL.bind(db, "me")(name=""))
+    assert "who" in out.lower()
+    assert calls == []
+
+
+def test_rerun_match_report_skill_is_registered_and_triggers(monkeypatch):
+    # The chat/voice tool set must carry rerun_match_report, and calling it must
+    # queue the real recalc (main._match_job) for the caller's own pair.
+    calls = _patch_match_job(monkeypatch)
+    db = _acking_db()
+    _seed_scored_pair(db)
+
+    async def _drive():
+        fns = skills.make_session_tool_fns(db, "me")
+        assert "rerun_match_report" in fns
+        out = await fns["rerun_match_report"](name="Jordan")
+        await asyncio.sleep(0)
+        return out
+
+    out = _run(_drive())
+    assert "[match:me__u-jordan]" in out
+    assert calls == [("me", "u-jordan")]
+
+
 def test_run_appearance_report_skill_is_registered_and_triggers(monkeypatch):
     # The chat/voice tool set must carry run_appearance_report, and calling it
     # must actually drive appearance.run_appearance (the server re-run).

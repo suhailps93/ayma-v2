@@ -240,8 +240,9 @@ def _bind_app_action(db, uid: str) -> Callable[..., str]:
             if report:
                 # A re-run request routed here instead of to the tool: run it
                 # ourselves (don't deflect) so the user gets the refreshed
-                # report, not a pointer.
-                return await _run_report_action(db, uid, report)
+                # report, not a pointer. The raw phrasing carries a match
+                # report's "with X" partner.
+                return await _run_report_action(db, uid, report, action.strip())
             act = app_registry.find_account_action(a)
             if act and act["handler"] == "navigate_only":
                 return await _navigate_only(db, uid, act["destination"], act["say"])

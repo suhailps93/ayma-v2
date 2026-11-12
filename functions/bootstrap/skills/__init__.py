@@ -63,6 +63,7 @@ from . import (
     record_feedback,
     remember,
     report_bug,
+    rerun_match_report,
     rerun_web_research,
     web_search,
     run_appearance_report,
@@ -126,6 +127,13 @@ _REGISTRY: list[Skill] = [
     # the SAME background refresh and returns at once, so it never blocks/hangs the
     # turn the way an inline `deep_dive` self-lookup did (founder bug 2026-11-03).
     rerun_web_research.SKILL,
+    # Re-run / refresh the user's OWN match (compatibility) report with a
+    # person — the chat/voice counterpart to the match report screen's
+    # "Recalculate" button. Queues the SAME background recalculation and opens
+    # the report, so "refresh my match report with X" actually re-runs instead
+    # of doing nothing (founder feedback CpR0f2fjG5UBOsxDay12). Self-only: it
+    # always recalculates the caller's own pair with the named person.
+    rerun_match_report.SKILL,
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,

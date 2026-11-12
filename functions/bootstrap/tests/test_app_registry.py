@@ -233,6 +233,25 @@ def test_rerun_appearance_resolves_to_the_run_tool():
         assert a and a["key"] == "rerun_appearance" and a["via"] == "run_appearance_report", words
 
 
+def test_rerun_match_report_resolves_to_the_run_tool():
+    # A re-run of the match report must WIN over a plain open: every re-run
+    # phrasing resolves to the rerun_match_report action (which the app-driving
+    # path runs), exactly as the appearance re-run wins over opening it.
+    for words in ("rerun my match report", "refresh my match report with Jordan",
+                  "recalculate the match report", "regenerate my compatibility report",
+                  "redo my match report", "update my match report"):
+        a = app_registry.find_report_action(words)
+        assert a and a["key"] == "rerun_match_report" and a["via"] == "rerun_match_report", words
+
+
+def test_bare_match_report_ask_is_an_open_not_a_rerun():
+    # A plain "open / show my match report" carries no re-run verb, so it must
+    # NOT match a report action — it stays an open (open_match_report).
+    for words in ("open my match report", "show my match report with Jordan",
+                  "my match report", "match report with Jordan"):
+        assert app_registry.find_report_action(words) is None, words
+
+
 def test_story_edit_actions_resolve_uniquely_and_name_a_real_tool():
     import skills
 

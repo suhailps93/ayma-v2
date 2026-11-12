@@ -201,6 +201,7 @@ CONTEXT_DEEP_DIVE = "deep_dive"
 CONTEXT_PHOTO_EDIT = "photo_edit"
 CONTEXT_IMAGE_GEN = "image_gen"
 CONTEXT_CORRECTION = "correction"
+CONTEXT_MATCH = "match"
 CONTEXT_CHAT = "chat"
 
 _CONTEXT_ACTIONS: dict[str, str] = {
@@ -211,6 +212,7 @@ _CONTEXT_ACTIONS: dict[str, str] = {
     CONTEXT_PHOTO_EDIT: "generate an edited photo",
     CONTEXT_IMAGE_GEN: "generate an image",
     CONTEXT_CORRECTION: "make that change",
+    CONTEXT_MATCH: "recalculate your match report",
     CONTEXT_CHAT: "keep chatting",
 }
 

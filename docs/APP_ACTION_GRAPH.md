@@ -45,6 +45,7 @@ entries and commands** — see "Keeping this graph alive" at the end.
    `edit_profile_section`, `edit_story_entry` / `remove_story_entry`,
    `edit_photo` / `delete_photo` / `update_photo_note`,
    `run_appearance_report`, `deep_dive` / `rerun_web_research`,
+   `rerun_match_report`,
    `correct_*` / `remove_*` report-item tools, `next_questions` /
    `record_answer`, `submit_feedback` / `record_feedback`, `report_bug`,
    `generate_image`, the guided-tour family, and `play_voice_clip`
@@ -224,6 +225,7 @@ undone.)
 | Score / summary sections, "You vs them" rows | Read the report | COVERED — the pair briefing (`viewing_profile_uid`) carries the score/grounding; a shared report card pulls the full report by reference (`open_shared_report`); on voice the live `current_screen` mirror. (The pinned-chat page snapshot no longer rides inline — §5.6a, 2026-11-09.) |
 | Message / open thread entry | Go to the DM | COVERED `open_message_thread` |
 | Practice / sim entries | Launch practice or sim | COVERED `open_practice_date` / `open_date_sim` |
+| Recalculate (force re-score) | Re-run the match report | COVERED `rerun_match_report` — queues the SAME `main._match_job` force recalc the button does, opens the refreshed report, self-only (the caller's own pair with the named person) |
 | Accept / Pass (request) | Decide the request | `UI` |
 | Retry | Reload | `UI` |
 
