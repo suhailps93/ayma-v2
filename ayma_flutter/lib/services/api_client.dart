@@ -3691,10 +3691,19 @@ class PublicProfile {
     this.isOnline = false,
     this.photosThumb = const [],
     this.photosMedium = const [],
+    this.aiGenerated = false,
   });
 
   final String uid;
   final String name;
+
+  /// True ONLY for an AI-generated persona (sim / demo / seed), set by the
+  /// server from an explicit `ai_generated` marker on the profile record (plus
+  /// the reserved `demo_practice_` uid prefix). Drives the plain-words
+  /// "AI-generated profile" label in the profile header. A real user's payload
+  /// never carries it, and an absent/unknown value resolves to false (no
+  /// label) — a real person is never mislabelled.
+  final bool aiGenerated;
   final int? age;
   final String location;
 
@@ -3784,6 +3793,7 @@ class PublicProfile {
           as Map<String, dynamic>?,
     ),
     isOnline: m['online'] == true,
+    aiGenerated: m['ai_generated'] == true,
   );
 }
 

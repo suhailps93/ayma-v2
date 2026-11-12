@@ -23,6 +23,7 @@ from explore import _score_for
 from matching import _age
 from matching_schema import MATCHES_COLLECTION, block_id
 from pair_key import sorted_pair_key
+from practice_seed import is_practice_persona
 
 logger = logging.getLogger("ayma.public_profile")
 
@@ -214,6 +215,9 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
             "deleted": True,
             "self": False,
             "blocked": False,
+            # A tombstone is never an AI-generated persona (no label on a
+            # deleted-user placeholder).
+            "ai_generated": False,
             "name": "Deleted user",
             "age": None,
             "location": "",
@@ -292,6 +296,13 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "uid": other_uid,
         "self": is_self,
         "blocked": blocked,
+        # True ONLY for AI-generated personas (sim / demo / seed): the explicit
+        # ``ai_generated`` marker set at creation (practice_seed), backstopped by
+        # the reserved ``demo_practice_`` uid prefix. A real user has neither, so
+        # the "AI-generated profile" label never appears on a real person; an
+        # absent/unknown marker resolves to False (no label).
+        "ai_generated": bool(prof.get("ai_generated"))
+        or is_practice_persona(other_uid),
         "name": name,
         "age": _age(prof.get("birthdate")),
         "gender": str(prof.get("gender") or ""),

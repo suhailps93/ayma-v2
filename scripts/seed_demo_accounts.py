@@ -222,6 +222,10 @@ def write_profile_and_questionnaire(db, persona: dict, qz: dict, location: str) 
     qz["partner_age_min"] = persona["partner_age_min"]
     qz["partner_age_max"] = persona["partner_age_max"]
     profile = {
+        # Seeded demo persona, not a real person: the explicit marker that drives
+        # the "AI-generated profile" label (public_profile.build serves it on the
+        # payload). Never set on a real user's profile write.
+        "ai_generated": True,
         "name": persona["name"],
         "first_name": persona["first_name"],
         "last_name": persona["last_name"],
