@@ -228,6 +228,50 @@ class ProfileService {
     );
   }
 
+  /// The MASTER location switch. ON (not killed) unless explicitly turned off;
+  /// off means the app uses NO GPS at all — no log, no patterns, no arrival
+  /// checks, no proactive messages. The top-level kill switch (§4.3a).
+  Stream<bool> watchLocationMaster() => _profileDoc
+      .snapshots()
+      .map((s) => s.data()?['location_master_enabled'] != false);
+
+  Future<bool> locationMasterOn() async {
+    final snap = await _profileDoc.get();
+    return snap.data()?['location_master_enabled'] != false;
+  }
+
+  Future<void> setLocationMaster(bool enabled) {
+    return _profileDoc.set(
+      {
+        'location_master_enabled': enabled,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  /// The BACKGROUND location switch. ON unless explicitly turned off; off
+  /// means no checks while the app is closed (foreground-only), master
+  /// permitting (§4.3a).
+  Stream<bool> watchLocationBackground() => _profileDoc
+      .snapshots()
+      .map((s) => s.data()?['location_background_enabled'] != false);
+
+  Future<bool> locationBackgroundOn() async {
+    final snap = await _profileDoc.get();
+    return snap.data()?['location_background_enabled'] != false;
+  }
+
+  Future<void> setLocationBackground(bool enabled) {
+    return _profileDoc.set(
+      {
+        'location_background_enabled': enabled,
+        'updated_at': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
   /// Whether the opt-in location log is on: Ayma may store where I go and
   /// learn patterns from it. Default OFF (opt-in). Granting OS location
   /// permission does NOT enable this — the toggle is the opt-in.

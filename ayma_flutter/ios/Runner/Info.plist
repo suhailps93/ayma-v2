@@ -54,15 +54,16 @@
 	     greeting on the sign-in screen). -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ayma uses the microphone so you can talk with her by voice, including during voice calls.</string>
-	<!-- geolocator + geocoding: one-shot lookup during onboarding to pre-fill the
-	     user's city. The app never tracks location in the background. -->
+	<!-- geolocator + geocoding: a one-shot lookup during onboarding to pre-fill
+	     the user's city, plus — only when you turn on Date moments or the
+	     location log in Privacy — occasional location use. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Ayma uses your location once to detect your city, so it can fill in your profile and match you with people nearby. It is never tracked in the background.</string>
-	<!-- geolocator references the "always" authorization API even though Ayma
-	     only ever does a one-shot foreground lookup; Apple (ITMS-90683) requires
-	     this key whenever that API is referenced, so the string is kept honest. -->
+	<string>Ayma uses your location to detect your city for your profile and nearby matches, and — only if you turn on Date moments or the location log — to recap a planned date when you arrive and to learn your place routines.</string>
+	<!-- "Always" authorization backs the opt-in background geofence (the date
+	     step-in) and the opt-in location log, when the user enables them in
+	     Privacy. Off by default and governed by the master location switch. -->
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Ayma uses your location once to detect your city, so it can fill in your profile and match you with people nearby. It never tracks or uses your location in the background.</string>
+	<string>With Date moments or the location log turned on, Ayma uses your location in the background to recap a planned date when you arrive and to learn your place routines. It is off by default, and you can turn location off entirely in Privacy.</string>
 	<!-- image_picker: taking a new profile photo with the camera. -->
 	<key>NSCameraUsageDescription</key>
 	<string>Ayma uses the camera so you can take photos to use as your profile pictures or share in chats.</string>
@@ -82,6 +83,8 @@
 	<array>
 		<string>audio</string>
 		<string>remote-notification</string>
+		<!-- Opt-in background geofence (date step-in) + opt-in location log. -->
+		<string>location</string>
 	</array>
 
 	<!-- ===================== Google Sign-In callback ===================== -->

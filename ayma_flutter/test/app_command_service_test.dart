@@ -23,10 +23,28 @@ class _FakeProfileService extends ProfileService {
         );
 
   final List<bool> pausedCalls = [];
+  final List<bool> logCalls = [];
+  final List<bool> masterCalls = [];
+  final List<bool> backgroundCalls = [];
 
   @override
   Future<void> setPaused(bool paused) async {
     pausedCalls.add(paused);
+  }
+
+  @override
+  Future<void> setLocationLog(bool enabled) async {
+    logCalls.add(enabled);
+  }
+
+  @override
+  Future<void> setLocationMaster(bool enabled) async {
+    masterCalls.add(enabled);
+  }
+
+  @override
+  Future<void> setLocationBackground(bool enabled) async {
+    backgroundCalls.add(enabled);
   }
 }
 
@@ -525,6 +543,25 @@ void main() {
     svc.handleCommand({'action': 'app_action', 'name': 'pause_matching'});
     svc.handleCommand({'action': 'app_action', 'name': 'resume_matching'});
     expect(profiles.pausedCalls, [true, false]);
+  });
+
+  test('app_action dispatches the location switches to ProfileService', () {
+    final profiles = _FakeProfileService();
+    final svc = AppCommandService(profileService: profiles);
+    for (final name in [
+      'location_log_on',
+      'location_log_off',
+      'location_master_on',
+      'location_master_off',
+      'location_background_on',
+      'location_background_off',
+    ]) {
+      expect(svc.handleCommand({'action': 'app_action', 'name': name}), isTrue,
+          reason: name);
+    }
+    expect(profiles.logCalls, [true, false]);
+    expect(profiles.masterCalls, [true, false]);
+    expect(profiles.backgroundCalls, [true, false]);
   });
 
   test('unknown screen / action / empty uid are ignored and report false',

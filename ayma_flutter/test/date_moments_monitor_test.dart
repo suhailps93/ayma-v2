@@ -5,10 +5,14 @@ import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeProfiles extends ProfileService {
-  _FakeProfiles(this._enabled);
+  // ignore: prefer_initializing_formals  (named params can't be private)
+  _FakeProfiles(this._enabled, {bool masterOn = true}) : _masterOn = masterOn;
   final bool _enabled;
+  final bool _masterOn;
   @override
   Future<bool> dateMomentsEnabled() async => _enabled;
+  @override
+  Future<bool> locationMasterOn() async => _masterOn;
 }
 
 class _FakeLocation extends LocationService {
@@ -50,10 +54,11 @@ Future<bool> _run({
   required ({double lat, double lng})? here,
   DatePlan? plan,
   required _FakeFire fire,
+  bool masterOn = true,
 }) {
   final monitor = DateMomentsMonitor(
     fire: fire.call,
-    profiles: _FakeProfiles(enabled),
+    profiles: _FakeProfiles(enabled, masterOn: masterOn),
     location: _FakeLocation(here),
   );
   return monitor.maybeFire(
@@ -126,6 +131,17 @@ void main() {
     final fire = _FakeFire();
     final fired =
         await _run(enabled: true, here: (lat: 37.5, lng: -121.8863), fire: fire);
+    expect(fired, isFalse);
+    expect(fire.fired, 0);
+  });
+
+  test('master location off overrides the feature opt-in', () async {
+    final fire = _FakeFire();
+    final fired = await _run(
+        enabled: true,
+        masterOn: false,
+        here: (lat: 37.3382, lng: -121.8863),
+        fire: fire);
     expect(fired, isFalse);
     expect(fire.fired, 0);
   });

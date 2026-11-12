@@ -1,6 +1,12 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-11-08. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-12. Update this file whenever an item changes; commit and push to main.
+
+## LOCATION-DATE-MOMENTS PIECE 2 (fleet/location-date-moments, stacked on PIECE 1 `9d29217e`) — DONE on branch, pushed; DO NOT MERGE (hourly sweep owns it)
+- Built (founder-ordered Nov 12): Google Places wiring (`places_client.py`, fail-closed); opt-in stored **location log** + deterministic **named routines** (`location_log.py`) surfaced in Settings › Privacy; **background** arrival geofence (`background_location_service.dart` + `active_date_plans` index) replacing the foreground-only check; **proactive outreach** on a learned routine — in-app chat + push, **template-composed (no model call)**, opt-in + frequency-capped (`proactive.py`); **truthful-location** context for the chat brain (`current_location_context`, LiveKit-routed, opted-in only); **master + background kill switches** that provably halt collection (ARCHITECTURE §4.3a/§6.13a). Consent copy DRAFT: `docs/legal/location-log-consent-DRAFT.md` (founder review, NOT live).
+- **BLOCKER / ship-time:** `GOOGLE_PLACES_API_KEY` secret not yet provisioned — feature runs fail-closed (coords-only, "unknown" kind) until it lands. Play Data-safety + App Store privacy labels need the precise/background/stored-location entry updated at ship time (founder reviews; see the consent DRAFT).
+- **Follow-ups (not built):** true OS region-monitoring (battery) vs the current background-stream+geofence; richer proactive fact-slotting (e.g. a dog's name) in Ayma's generated voice — would run via the existing LiveKit chat gateway, never a direct provider.
+
 Rules for working with the founder: see AGENTS.md "Operating handbook" and docs/AGENT_HANDOFF.md.
 Ask the founder ONE short question at a time. While a question is pending, do not send agent status; hold results here.
 
