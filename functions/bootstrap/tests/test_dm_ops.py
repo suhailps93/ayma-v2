@@ -33,6 +33,9 @@ class _DocRef:
         cur.update(data)
         self.store.docs[self.key] = cur
 
+    def delete(self):
+        self.store.docs.pop(self.key, None)
+
     def collection(self, name):
         return _CollRef(self.store, self.key + (name,))
 

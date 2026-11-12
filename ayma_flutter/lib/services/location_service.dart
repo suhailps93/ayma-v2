@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:geocoding/geocoding.dart' as gc;
 import 'package:geolocator/geolocator.dart';
 
@@ -82,6 +84,80 @@ class LocationService {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Whether "Always" (background) location is already granted — the
+  /// authorization the always-on arrival geofence + location log need. `false`
+  /// for while-in-use or denied.
+  Future<bool> hasBackgroundPermission() async {
+    try {
+      return await Geolocator.checkPermission() == LocationPermission.always;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Request "Always" (background) location permission, escalating from
+  /// while-in-use if needed. Returns whether it ends up granted. Never throws.
+  /// Granting here does NOT enable any feature — the Privacy toggles are the
+  /// opt-in; this only unlocks the background stream once a toggle is on.
+  Future<bool> ensureBackgroundPermission() async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      // Android grants while-in-use first; a second request escalates to
+      // always (or routes the user to settings). iOS prompts for "Always"
+      // directly off the always-and-when-in-use description.
+      if (permission == LocationPermission.whileInUse) {
+        permission = await Geolocator.requestPermission();
+      }
+      return permission == LocationPermission.always;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// An always-on background position stream for the arrival geofence and the
+  /// opt-in location log. On Android it runs a foreground service (required
+  /// for background location from API 26+); on iOS it allows background
+  /// updates. Only start this when a Privacy toggle is on AND
+  /// [hasBackgroundPermission] is true — the caller owns that gate.
+  Stream<({double lat, double lng})> backgroundPositionStream({
+    int distanceFilterMeters = 50,
+  }) {
+    final LocationSettings settings;
+    if (Platform.isAndroid) {
+      settings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilterMeters,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'Ayma',
+          notificationText:
+              'Watching for your planned date so Ayma can step in.',
+          notificationChannelName: 'Date moments',
+          enableWakeLock: true,
+          setOngoing: false,
+        ),
+      );
+    } else if (Platform.isIOS) {
+      settings = AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilterMeters,
+        allowBackgroundLocationUpdates: true,
+        pauseLocationUpdatesAutomatically: false,
+        showBackgroundLocationIndicator: true,
+        activityType: ActivityType.other,
+      );
+    } else {
+      settings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilterMeters,
+      );
+    }
+    return Geolocator.getPositionStream(locationSettings: settings)
+        .map((p) => (lat: p.latitude, lng: p.longitude));
   }
 
   /// Metres between two lat/lng points (Haversine via Geolocator).

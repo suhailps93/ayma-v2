@@ -38,6 +38,8 @@ class DateMomentsMonitor {
     required String otherName,
   }) async {
     if (!plan.bothApproved || plan.momentFired || !plan.hasCoords) return false;
+    // Master location kill switch overrides the feature opt-in (§4.3a).
+    if (!await _profiles.locationMasterOn()) return false;
     if (!await _profiles.dateMomentsEnabled()) return false;
     final here = await location.currentLatLng();
     if (here == null) return false;

@@ -1444,6 +1444,28 @@ class ApiClient {
       _sendJson('POST', '/dm/$threadId/date-plan/$messageId/moment',
           {'other_name': otherName});
 
+  /// `POST /location/log` — store one visit for the opt-in location log. The
+  /// server re-checks the opt-in; a logged visit's place kind is resolved by
+  /// Google Places (fail-closed to "unknown"). Returns whether it was stored.
+  Future<bool> logLocation(double lat, double lng) async {
+    final m = await _sendJson(
+        'POST', '/location/log', {'lat': lat, 'lng': lng});
+    return m['logged'] == true;
+  }
+
+  /// `GET /location/patterns` — the patterns Ayma has learned from the
+  /// location log (deterministic, derived live). Empty when the log is off or
+  /// has too little to learn from.
+  Future<List<LocationPattern>> locationPatterns() async {
+    final m = await _getJson('/location/patterns');
+    final raw = m['patterns'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => LocationPattern.fromMap(e.cast<String, dynamic>()))
+        .toList();
+  }
+
   /// `POST /wiki/reset` — wipe what Ayma has learned (`wiki_pages` /
   /// `raw_turns` / `pending_questions`); account, profile and auth stay (§14.2).
   Future<void> resetWiki() => _postJsonOk('/wiki/reset', const {});
@@ -6660,4 +6682,25 @@ class ApiException implements Exception {
   @override
   String toString() =>
       'ApiException($message${statusCode != null ? ', status $statusCode' : ''})';
+}
+
+/// One pattern Ayma has learned from the opt-in location log (deterministic;
+/// `GET /location/patterns`). The [label] is the user-facing phrase, e.g.
+/// "Sunday hikes" or "late-weeknight bars".
+class LocationPattern {
+  const LocationPattern({
+    required this.label,
+    required this.placeKind,
+    required this.count,
+  });
+
+  final String label;
+  final String placeKind;
+  final int count;
+
+  factory LocationPattern.fromMap(Map<String, dynamic> m) => LocationPattern(
+        label: (m['label'] as String?) ?? '',
+        placeKind: (m['place_kind'] as String?) ?? '',
+        count: (m['count'] as num?)?.toInt() ?? 0,
+      );
 }

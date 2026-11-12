@@ -15,6 +15,13 @@
     <!-- Location auto-detect during preboarding (Step 35). -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- Always-on background location for the date step-in geofence + the
+         opt-in location log (location-date-moments PIECE 2). Entirely behind
+         the Privacy toggles + a granted "Always" permission; the master switch
+         halts it. The foreground-service (location type) keeps the geofence
+         alive while the app is closed, from Android 14 (API 34). -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
 
     <!-- Saving a chat image or the report card to the gallery on Android 9
          and below only —

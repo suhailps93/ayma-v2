@@ -81,6 +81,13 @@ class TourAnchors {
   /// The "Accent Color" row inside Settings.
   static const settingsAccentRow = 'settings_accent_row';
 
+  /// The "Location log" opt-in switch inside Settings › Privacy.
+  static const settingsLocationLogRow = 'settings_location_log_row';
+
+  /// The "What Ayma has learned from your places" routines view inside
+  /// Settings › Privacy.
+  static const settingsLearnedPlacesRow = 'settings_learned_places_row';
+
   /// The action rail on another member's profile — the page explainer's
   /// items (§11.2c). Attached with [TourAnchorScope], since one profile can be
   /// pushed on top of another.

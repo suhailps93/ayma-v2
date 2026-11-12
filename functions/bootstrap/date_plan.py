@@ -48,11 +48,14 @@ def propose_plan(
     time_label: str = "",
     starts_at: str = "",
     proposer_uid: str = "",
+    place_kind: str = "",
 ) -> dict:
     """Build a fresh proposed plan from the proposer's own place and time.
 
     The place must be locatable: a non-empty name plus either an address
-    or a latitude/longitude pair. Raises ``ValueError`` otherwise.
+    or a latitude/longitude pair. Raises ``ValueError`` otherwise. The
+    ``place_kind`` (cafe, bar, park, …) is filled by the Places lookup when
+    available and is advisory - it never gates the plan.
     """
     name = (place_name or "").strip()
     if not name:
@@ -68,6 +71,7 @@ def propose_plan(
         "status": STATUS_PROPOSED,
         "proposer_uid": str(proposer_uid or ""),
         "place_name": name,
+        "place_kind": str(place_kind or "").strip(),
         "address": addr,
         "lat": latf,
         "lng": lngf,
@@ -147,6 +151,44 @@ def _participants_or_raise(info: dict, uid: str) -> list[str]:
     return parts
 
 
+# --- Active-plan index (for the background arrival geofence) ----------------
+# A tiny per-user pointer at users/{uid}/active_date_plans/{thread_id} so the
+# client's always-on arrival geofence can find a both-approved plan's place
+# WITHOUT opening (or scanning) every DM thread. Written for both participants
+# when a plan reaches both_approved; cleared when it changes or the step-in
+# fires. Holds only what the geofence needs - never a location trail.
+ACTIVE_DATE_PLANS = "active_date_plans"
+
+
+def _active_ref(db, uid: str, thread_id: str):
+    return (db.collection("users").document(uid)
+            .collection(ACTIVE_DATE_PLANS).document(thread_id))
+
+
+def write_active_pointers(db, thread_id: str, message_id: str,
+                          parts: list[str], plan: dict) -> None:
+    """Record the both-approved plan's geofence anchor for each participant."""
+    pointer = {
+        "thread_id": thread_id,
+        "message_id": message_id,
+        "place_name": str(plan.get("place_name", "")),
+        "place_kind": str(plan.get("place_kind", "") or ""),
+        "lat": _coord(plan.get("lat")),
+        "lng": _coord(plan.get("lng")),
+        "starts_at": str(plan.get("starts_at", "")),
+        "revision": int(plan.get("revision", 1)),
+    }
+    for uid in parts:
+        _active_ref(db, uid, thread_id).set(pointer)
+
+
+def clear_active_pointers(db, thread_id: str, parts: list[str]) -> None:
+    """Remove the active-plan pointer for each participant (plan changed,
+    fired, or no longer both-approved)."""
+    for uid in parts:
+        _active_ref(db, uid, thread_id).delete()
+
+
 # --- State machine ---------------------------------------------------------
 
 def approve(db, thread_id: str, message_id: str, uid: str) -> dict:
@@ -166,6 +208,10 @@ def approve(db, thread_id: str, message_id: str, uid: str) -> dict:
     elif len(approved) == 1:
         plan["status"] = STATUS_PARTIALLY_APPROVED
     _save_plan(ref, plan)
+    if plan["status"] == STATUS_BOTH_APPROVED:
+        # Index the approved plan so each person's background geofence can
+        # find its place without opening the thread.
+        write_active_pointers(db, thread_id, message_id, parts, plan)
     return plan
 
 
@@ -187,7 +233,7 @@ def suggest_change(
     change; the rest carry over. A plan whose step-in has already fired
     can no longer change."""
     ref, info = load_plan(db, thread_id, message_id)
-    _participants_or_raise(info, uid)
+    parts = _participants_or_raise(info, uid)
     plan = info["plan"]
     if plan.get("moment_fired"):
         raise ValueError("That date has already started.")
@@ -215,4 +261,7 @@ def suggest_change(
     history.append({"from": uid, "note": (note or "").strip()})
     fresh["suggestions"] = history
     _save_plan(ref, fresh)
+    # A revised plan is no longer approved: drop it from the arrival index
+    # until both approve again.
+    clear_active_pointers(db, thread_id, parts)
     return fresh

@@ -17,6 +17,7 @@ import 'services/auth_service.dart';
 import 'services/auth_session_state.dart';
 import 'services/deep_link_queue.dart';
 import 'services/install_referrer_service.dart';
+import 'services/background_location_service.dart';
 import 'services/location_service.dart';
 import 'services/push_service.dart';
 import 'services/revenuecat_service.dart';
@@ -90,6 +91,8 @@ Future<void> main() async {
       lastKnownUid = null;
       AuthSessionState.instance.clear();
       AuthService.instance.notifyAuthSessionRestored(null);
+      // Stop the always-on location watcher when no one is signed in.
+      unawaited(BackgroundLocationService.instance.stop());
     } else {
       // A different account signed in while one was already active: tear the
       // previous account's nav stack and singletons down before binding the
@@ -103,6 +106,11 @@ Future<void> main() async {
       AuthService.instance.notifyAuthSessionRestored(user);
       unawaited(RevenueCatService.instance.logIn(user.uid));
       unawaited(push.syncToken());
+      // (Re)start the always-on location watcher for this account. It only
+      // acquires GPS once a Privacy toggle is on AND background permission is
+      // granted — otherwise it just watches the (default-off) toggles.
+      unawaited(BackgroundLocationService.instance.stop().then(
+          (_) => BackgroundLocationService.instance.start()));
       unawaited(DeepLinkQueue.instance.drainPostAuth(
         user.uid,
         navigate: (path) => navigateToRoute(path),

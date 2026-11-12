@@ -42,6 +42,9 @@ class _Doc:
         cur.update(data)
         self.store.docs[self.key] = cur
 
+    def delete(self):
+        self.store.docs.pop(self.key, None)
+
     def collection(self, name):
         return _Coll(self.store, self.key + (name,))
 
@@ -134,6 +137,17 @@ def test_fires_once_for_approved_in_window():
     plan = db.docs[("dm_threads", "a__b", "messages", mid)]["date_plan"]
     assert plan["moment_fired"] is True
     assert date_moments.fire_moment(db, "a__b", mid, "a", "Sofia", AT_TIME) is None
+
+
+def test_fire_clears_active_pointer():
+    db = FakeDb()
+    mid = _approved_card(db)
+    # Both-approved wrote the arrival pointer for each person.
+    assert db.docs.get(("users", "a", "active_date_plans", "a__b")) is not None
+    date_moments.fire_moment(db, "a__b", mid, "a", "Sofia", AT_TIME)
+    # Firing drops it so the background geofence stops watching.
+    assert db.docs.get(("users", "a", "active_date_plans", "a__b")) is None
+    assert db.docs.get(("users", "b", "active_date_plans", "a__b")) is None
 
 
 def test_does_not_fire_when_not_approved():
