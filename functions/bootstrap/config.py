@@ -330,6 +330,17 @@ class Config:
     the only image model id NOT in the Gemini family. LOCKED to
     ``grok-imagine-image-2.0``. ``IMAGE_GEN_XAI_MODEL``."""
 
+    places_api_key: str
+    """Google Places API key for the location-date-moments feature
+    (``places_client.py``): resolving a typed/picked place to real
+    coordinates + a place kind for a date plan, and classifying a logged
+    visit's point into a place kind (cafe, bar, park, gym, …). A plain maps
+    lookup, NOT an LLM call, so this is outside the LiveKit inference rule.
+    Empty = the Places client FAILS CLOSED: it returns no details and the
+    feature degrades to coords-only / "unknown place kind"; it never crashes
+    and never falls back to another provider. Provide via the
+    ``GOOGLE_PLACES_API_KEY`` secret; default "" (ship-time provisioning)."""
+
     gemini_chat_thinking_level: str
     """Thinking effort for **text chat** replies (``generate_reply``) — chat is
     conversational, not a reasoning task, so ``low`` keeps replies fast and the
@@ -1315,6 +1326,7 @@ def _load() -> Config:
         image_gen_xai_model=os.getenv(
             "IMAGE_GEN_XAI_MODEL", "grok-imagine-image-2.0"
         ),
+        places_api_key=os.getenv("GOOGLE_PLACES_API_KEY", ""),
         gemini_chat_thinking_level=os.getenv(
             "GEMINI_CHAT_THINKING_LEVEL", "low"
         ),

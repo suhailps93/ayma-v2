@@ -103,3 +103,31 @@ def test_suggestion_overrides_only_given_fields():
     assert revised["place_name"] == "Sakura Sushi"  # carried over
     assert revised["time_label"] == "Friday at 9:00 PM"
     assert revised["approvals"] == {}
+
+
+def _active(db, uid):
+    return db.docs.get(("users", uid, "active_date_plans", "a__b"))
+
+
+def test_both_approved_writes_active_pointer_for_each_person():
+    db = FakeDb()
+    mid, _ = _card(db)
+    date_plan.approve(db, "a__b", mid, "a")
+    assert _active(db, "a") is None  # not yet both-approved
+    date_plan.approve(db, "a__b", mid, "b")
+    for uid in ("a", "b"):
+        ptr = _active(db, uid)
+        assert ptr is not None
+        assert ptr["message_id"] == mid
+        assert ptr["lat"] == 37.3382 and ptr["lng"] == -121.8863
+        assert ptr["place_name"] == "Sakura Sushi"
+
+
+def test_suggestion_clears_active_pointer():
+    db = FakeDb()
+    mid, _ = _card(db)
+    date_plan.approve(db, "a__b", mid, "a")
+    date_plan.approve(db, "a__b", mid, "b")
+    assert _active(db, "a") is not None
+    date_plan.suggest_change(db, "a__b", mid, "b", time_label="later")
+    assert _active(db, "a") is None and _active(db, "b") is None

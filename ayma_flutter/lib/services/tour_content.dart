@@ -230,6 +230,25 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     anchorId: TourAnchors.messagesTab,
   ),
   TourFeature(
+    featureId: 'location_log',
+    headline: 'Routines Ayma learns',
+    subtitle: 'Turn on the location log in Settings › Privacy and Ayma learns '
+        'your place routines — like your morning walks — and can check you in. '
+        'One master switch turns all location off.',
+    icon: Icons.timeline_outlined,
+    anchorId: TourAnchors.settingsLocationLogRow,
+    tab: 3,
+  ),
+  TourFeature(
+    featureId: 'learned_places',
+    headline: 'What Ayma has learned',
+    subtitle: 'See the place routines Ayma has picked up under Settings › '
+        'Privacy. Wiping what Ayma has learned clears them too.',
+    icon: Icons.insights_outlined,
+    anchorId: TourAnchors.settingsLearnedPlacesRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'connect_agent',
     headline: 'Bring your own agent',
     subtitle: 'Connect an AI agent to talk to Ayma for you — set it up in Settings.',

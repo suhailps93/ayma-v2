@@ -507,6 +507,7 @@ def compose_system_prompt(
     questionnaire_note: str = "",
     current_screen_context: str = "",
     call_state_context: str = "",
+    location_context: str = "",
     db=None,
     lessons_md_override: str | None = None,
     summary_context: str = "",
@@ -658,6 +659,12 @@ def compose_system_prompt(
     # call existed.
     if call_state_context.strip():
         parts.append(call_state_context.strip())
+
+    # Truthful location (founder bug, build 2426): the brain gets the user's
+    # shared location (opted-in only) so "do you have my location?" is answered
+    # honestly — and an explicit "you don't have it" when they haven't shared.
+    if location_context.strip():
+        parts.append(location_context.strip())
 
     if not stable_prefix and wiki_context.strip():
         parts.append(wiki_context.strip())

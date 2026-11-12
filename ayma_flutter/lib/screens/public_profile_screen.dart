@@ -559,6 +559,7 @@ class ProfilePhotoHeader extends StatefulWidget {
     required this.age,
     required this.location,
     this.isOnline = false,
+    this.aiGenerated = false,
     this.blockedMessage,
     this.actions,
     this.editing,
@@ -588,6 +589,12 @@ class ProfilePhotoHeader extends StatefulWidget {
   /// false the status row is just the location, same as before presence
   /// existed.
   final bool isOnline;
+
+  /// True ONLY for an AI-generated persona (sim / demo / seed), from the
+  /// server's `PublicProfile.aiGenerated` flag. Renders the plain-words
+  /// "AI-generated profile" badge above the name, unmissable and at a glance.
+  /// Never set for a real user, so a real person is never labelled.
+  final bool aiGenerated;
 
   /// Shown under the status row, in place of it having any meaning — e.g.
   /// "You've blocked this person." Null shows nothing.
@@ -771,6 +778,33 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Unmissable, plain-words marker that this is an
+                    // AI-generated persona (sim / demo / seed), never a real
+                    // person. Driven ONLY by the server's `aiGenerated` flag;
+                    // a real user never carries it. Text-only pill bounded by
+                    // this header's width, so it wraps rather than overflowing
+                    // at large text scales / narrow widths.
+                    if (widget.aiGenerated) ...[
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.85),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          child: Text(
+                            'AI-generated profile',
+                            style:
+                                AymaType.sans(size: 12, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.baseline,
                       textBaseline: TextBaseline.alphabetic,
@@ -1074,6 +1108,7 @@ class ProfileBody extends StatelessWidget {
               age: p.age,
               location: p.location,
               isOnline: p.isOnline,
+              aiGenerated: p.aiGenerated,
               editing: edit,
             ),
           )
@@ -1086,6 +1121,7 @@ class ProfileBody extends StatelessWidget {
             age: p.age,
             location: p.location,
             isOnline: p.isOnline,
+            aiGenerated: p.aiGenerated,
             blockedMessage: p.blocked ? "You've blocked this person." : null,
           ),
         LivingReportView(

@@ -8,6 +8,7 @@ import '../services/api_client.dart';
 import '../services/legal_links.dart';
 import '../services/location_service.dart';
 import '../services/profile_service.dart';
+import '../services/tour_anchors.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
@@ -55,12 +56,108 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
 
   /// True while the date-moments write (and any permission prompt) runs.
   bool _dateMomentsSaving = false;
+  bool _masterSaving = false;
+  bool _backgroundSaving = false;
+  bool _logSaving = false;
   final LocationService _location = const LocationService();
+
+  /// Learned place routines (null while loading, empty when none).
+  List<LocationPattern>? _patterns;
 
   @override
   void initState() {
     super.initState();
     _loadVerification();
+    _loadPatterns();
+  }
+
+  Future<void> _loadPatterns() async {
+    try {
+      final p = await _api.locationPatterns();
+      if (mounted) setState(() => _patterns = p);
+    } catch (_) {
+      if (mounted) setState(() => _patterns = const []);
+    }
+  }
+
+  /// The master location kill switch. Turning it OFF halts all location use at
+  /// once (no permission prompt needed — it only removes capability).
+  Future<void> _setMaster(bool value) async {
+    if (_masterSaving) return;
+    setState(() => _masterSaving = true);
+    try {
+      await _profiles.setLocationMaster(value);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Could not save ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _setMaster(value)));
+      }
+    } finally {
+      if (mounted) setState(() => _masterSaving = false);
+    }
+  }
+
+  /// Background (closed-app) location. Enabling it needs "Always" permission;
+  /// if that is denied it stays off and we say why.
+  Future<void> _setBackground(bool value) async {
+    if (_backgroundSaving) return;
+    setState(() => _backgroundSaving = true);
+    try {
+      if (value && !await _location.ensureBackgroundPermission()) {
+        if (mounted) {
+          AymaToast.show(
+            context,
+            'Background location needs "Always" location permission. Allow it '
+            'in Settings, then turn this on again.',
+            kind: AymaToastKind.warning,
+          );
+        }
+        return;
+      }
+      await _profiles.setLocationBackground(value);
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Could not save ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _setBackground(value)));
+      }
+    } finally {
+      if (mounted) setState(() => _backgroundSaving = false);
+    }
+  }
+
+  /// The opt-in location log. Enabling needs location permission; if denied it
+  /// stays off. Turning it off never touches permission.
+  Future<void> _setLocationLog(bool value) async {
+    if (_logSaving) return;
+    setState(() => _logSaving = true);
+    try {
+      if (value && !await _location.ensureBackgroundPermission()) {
+        if (mounted) {
+          AymaToast.show(
+            context,
+            'The location log needs location permission. Allow it, then turn '
+            'it on again.',
+            kind: AymaToastKind.warning,
+          );
+        }
+        return;
+      }
+      await _profiles.setLocationLog(value);
+      if (value) _loadPatterns();
+    } catch (e) {
+      if (mounted) {
+        AymaToast.show(context, 'Could not save ($e).',
+            kind: AymaToastKind.error,
+            action: AymaToastAction(
+                label: 'Retry', onPressed: () => _setLocationLog(value)));
+      }
+    } finally {
+      if (mounted) setState(() => _logSaving = false);
+    }
   }
 
   Future<void> _loadVerification() async {
@@ -225,6 +322,139 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
+  /// The Location group: the master kill switch, then (when master is on) the
+  /// background switch, Date moments, the location log, and the learned
+  /// routines. Master off hides the sub-controls and halts collection.
+  Widget _buildLocationGroup(AymaTokens ac) {
+    return StreamBuilder<bool>(
+      stream: _profiles.watchLocationMaster(),
+      builder: (context, masterSnap) {
+        final masterOn = masterSnap.data ?? true;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SwitchListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              secondary: Icon(Icons.location_on_outlined, color: ac.fgDim),
+              key: const Key('settings_location_master'),
+              title: Text('Location',
+                  style: AymaType.sans(size: 15, color: ac.fg)),
+              subtitle: Text(
+                'Master switch. Off means Ayma uses no GPS at all — no log, no '
+                'routines, no date arrival checks, no proactive messages.',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+              ),
+              value: masterOn,
+              onChanged: _masterSaving ? null : _setMaster,
+            ),
+            if (masterOn) ...[
+              StreamBuilder<bool>(
+                stream: _profiles.watchLocationBackground(),
+                builder: (context, snap) => SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                  secondary:
+                      Icon(Icons.my_location_outlined, color: ac.fgDim),
+                  key: const Key('settings_location_background'),
+                  title: Text('Background location',
+                      style: AymaType.sans(size: 15, color: ac.fg)),
+                  subtitle: Text(
+                    'Let Ayma check for your dates and routines while the app '
+                    'is closed. Off means foreground only.',
+                    style:
+                        AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                  ),
+                  value: snap.data ?? true,
+                  onChanged: _backgroundSaving ? null : _setBackground,
+                ),
+              ),
+              StreamBuilder<bool>(
+                stream: _profiles.watchDateMoments(),
+                builder: (context, snap) => SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                  secondary:
+                      Icon(Icons.event_available_outlined, color: ac.fgDim),
+                  key: const Key('settings_date_moments'),
+                  title: Text('Date moments',
+                      style: AymaType.sans(size: 15, color: ac.fg)),
+                  subtitle: Text(
+                    'When you arrive at an approved date, Ayma quietly recaps '
+                    'the plan and what she knows — just for you. Off by '
+                    'default.',
+                    style:
+                        AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                  ),
+                  value: snap.data ?? false,
+                  onChanged: _dateMomentsSaving ? null : _setDateMoments,
+                ),
+              ),
+              StreamBuilder<bool>(
+                stream: _profiles.watchLocationLog(),
+                builder: (context, snap) => SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                  secondary:
+                      Icon(Icons.timeline_outlined, color: ac.fgDim),
+                  key: TourAnchors.keyFor(TourAnchors.settingsLocationLogRow),
+                  title: Text('Location log',
+                      style: AymaType.sans(size: 15, color: ac.fg)),
+                  subtitle: Text(
+                    'Let Ayma learn your place routines (like your morning '
+                    'walks). Off by default; nothing is logged when off.',
+                    style:
+                        AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                  ),
+                  value: snap.data ?? false,
+                  onChanged: _logSaving ? null : _setLocationLog,
+                ),
+              ),
+              _buildLearnedPlaces(ac),
+            ] else
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Text(
+                  'Location is fully off. Turn it on to use Date moments, the '
+                  'location log and learned routines.',
+                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// "What Ayma has learned from your places" — the derived named routines.
+  Widget _buildLearnedPlaces(AymaTokens ac) {
+    final patterns = _patterns;
+    if (patterns == null || patterns.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      key: TourAnchors.keyFor(TourAnchors.settingsLearnedPlacesRow),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('What Ayma has learned from your places',
+              style: AymaType.sans(size: 13, color: ac.fg)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final p in patterns)
+                Chip(
+                  label: Text(p.label,
+                      style: AymaType.sans(size: 12, color: ac.fg)),
+                  backgroundColor: ac.lineSoft,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -272,25 +502,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
               onChanged: (v) => _profiles.setAiAvatar(v),
             ),
           ),
-          StreamBuilder<bool>(
-            stream: _profiles.watchDateMoments(),
-            builder: (context, snap) => SwitchListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              secondary: Icon(Icons.location_on_outlined, color: ac.fgDim),
-              key: const Key('settings_date_moments'),
-              title: Text('Date moments',
-                  style: AymaType.sans(size: 15, color: ac.fg)),
-              subtitle: Text(
-                'Let Ayma use my location around a planned date. When you '
-                'arrive at an approved date, she quietly recaps the plan and '
-                'what she knows — just for you. Off by default; needs location '
-                'permission.',
-                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-              ),
-              value: snap.data ?? false,
-              onChanged: _dateMomentsSaving ? null : _setDateMoments,
-            ),
-          ),
+          _buildLocationGroup(ac),
           Divider(color: ac.lineSoft),
           if (_verified == true)
             ListTile(

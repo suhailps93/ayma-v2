@@ -1727,6 +1727,24 @@ class AppCommandService {
       case 'date_moments_off':
         _profiles.setDateMoments(false).catchError((_) {});
         return true;
+      case 'location_log_on':
+        _profiles.setLocationLog(true).catchError((_) {});
+        return true;
+      case 'location_log_off':
+        _profiles.setLocationLog(false).catchError((_) {});
+        return true;
+      case 'location_master_on':
+        _profiles.setLocationMaster(true).catchError((_) {});
+        return true;
+      case 'location_master_off':
+        _profiles.setLocationMaster(false).catchError((_) {});
+        return true;
+      case 'location_background_on':
+        _profiles.setLocationBackground(true).catchError((_) {});
+        return true;
+      case 'location_background_off':
+        _profiles.setLocationBackground(false).catchError((_) {});
+        return true;
       case 'sign_out':
         _afterAck = _signOut;
         return true;

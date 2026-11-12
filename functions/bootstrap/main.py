@@ -59,6 +59,7 @@ from auth import (  # noqa: E402
     require_uid_and_dev_flag,
 )
 from config import CONFIG, PLAN_TIERS  # noqa: E402
+import location_log as location_log_mod  # noqa: E402
 import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
 import feedback_bubble as feedback_bubble_mod  # noqa: E402
@@ -2028,6 +2029,8 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         call_state_context=_call_state_context(req.call_state),
+        location_context=location_log_mod.current_location_context(
+            get_db(), uid),
         db=get_db(),
         summary_context=summary_text,
         # Phase 1 (cost program 2026-09-26): byte-stable prompt prefix for
@@ -4569,12 +4572,25 @@ async def date_plan_propose(
     """Propose a concrete place + time; posts the date card in the thread."""
     a, b = _date_plan_participants(thread_id, uid)
     import date_plan as date_plan_mod
+    import places_client
 
     def _post() -> tuple[str, dict]:
+        lat, lng, place_kind = req.lat, req.lng, ""
+        # Resolve a typed/picked place to real coords + a place kind via Google
+        # Places. Fails closed: when Places is unconfigured or the lookup
+        # fails, resolve_place returns None and the plan falls back to whatever
+        # coords/address the client already supplied (piece-1 behaviour).
+        if lat is None or lng is None:
+            resolved = places_client.resolve_place(
+                req.place_name or req.address)
+            if resolved:
+                lat = lat if lat is not None else resolved.get("lat")
+                lng = lng if lng is not None else resolved.get("lng")
+                place_kind = str(resolved.get("place_kind") or "")
         plan = date_plan_mod.propose_plan(
             place_name=req.place_name, address=req.address,
-            lat=req.lat, lng=req.lng, time_label=req.time_label,
-            starts_at=req.starts_at, proposer_uid=uid)
+            lat=lat, lng=lng, time_label=req.time_label,
+            starts_at=req.starts_at, proposer_uid=uid, place_kind=place_kind)
         mid = date_plan_mod.post_date_plan_message(
             get_db(), thread_id, sorted((a, b)), plan)
         return mid, plan
@@ -4650,7 +4666,73 @@ async def date_plan_moment(
             status_code=403, detail="Not your date plan.") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is not None:
+        # Proactive: a push alongside the in-thread step-in message, so the
+        # arriving user sees it even with the app closed. Reuses the check-in
+        # push path; deep-links to the date's DM thread. Best-effort.
+        import notifications_triggers
+        await notifications_triggers.notify_checkin(
+            get_db(), uid, str(result.get("body") or ""),
+            deep_link=f"dm_thread/{thread_id}")
     return {"ok": True, "fired": result is not None, "moment": result or {}}
+
+
+# --- Opt-in location log + the patterns Ayma learns ------------------------
+
+class LocationLogRequest(BaseModel):
+    lat: float
+    lng: float
+
+
+@app.post("/location/log")
+async def location_log_add(
+    req: LocationLogRequest, uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Store one visit for the signed-in user — ONLY when they have turned the
+    location log on (the server re-checks the opt-in + master switch; the
+    client toggle alone does not authorise a write). The place kind is resolved
+    via Google Places (fail-closed to "unknown"). If the visit matches a
+    learned routine, Ayma may also reach out proactively (capped) — her message
+    is a deterministic template (no model call). Returns whether it was logged
+    and whether a proactive message fired."""
+    import location_log
+    import places_client
+    import proactive
+
+    def _log_and_proactive() -> tuple[str | None, str | None]:
+        # Classify once, reuse for both the log entry and the routine match.
+        details = places_client.classify_point(req.lat, req.lng)
+        entry_id = location_log.log_visit(
+            get_db(), uid, req.lat, req.lng, classifier=lambda *a: details)
+        if not entry_id:
+            return None, None
+        kind = str((details or {}).get("place_kind") or "unknown")
+        name = str((details or {}).get("place_name") or "")
+        text = proactive.maybe_fire_routine(get_db(), uid, kind, name)
+        return entry_id, text
+
+    entry_id, proactive_text = await asyncio.to_thread(_log_and_proactive)
+    if proactive_text:
+        # Reuse the existing check-in push path (best-effort inside).
+        import notifications_triggers
+        await notifications_triggers.notify_checkin(
+            get_db(), uid, proactive_text)
+    return {"ok": True, "logged": entry_id is not None,
+            "entry_id": entry_id or "", "proactive": bool(proactive_text)}
+
+
+@app.get("/location/patterns")
+async def location_patterns(
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """The patterns Ayma has learned from the user's location log (derived
+    deterministically, live). Powers the "what Ayma has learned" surface; empty
+    when the log is off or has too little to learn from."""
+    import location_log
+
+    patterns = await asyncio.to_thread(
+        location_log.patterns_for, get_db(), uid)
+    return {"ok": True, "patterns": patterns}
 
 
 async def _notify_new_dm(
