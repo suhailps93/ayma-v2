@@ -126,6 +126,8 @@ PERSONA = "persona"  # persona_snapshot.py — the AI-avatar snapshot (doc "avat
 LOCATION_LOG = "location_log"  # location_log.py — opt-in stored visit log
 ACTIVE_DATE_PLANS = "active_date_plans"  # date_plan.py — per-user both-approved
 # plan index the background arrival geofence reads without opening each thread
+PROACTIVE_SENDS = "proactive_sends"  # proactive.py — per-day frequency-cap ledger
+# for routine proactive messages (once per routine/day, capped total/day)
 
 # --- archive manifests (account_ops.py, account_purge.py, knowledge_wipe.py,
 # admin_lookup.py) -----------------------------------------------------------
@@ -163,6 +165,7 @@ ACCOUNT_SUBCOLLECTIONS = (
     PERSONA,
     LOCATION_LOG,
     ACTIVE_DATE_PLANS,
+    PROACTIVE_SENDS,
 )
 # One known two-level nesting: users/{uid}/wiki_pages/{pageId}/versions/{id}
 # (story.py SECTION_VERSIONS). A plain single-level subcollection copy misses

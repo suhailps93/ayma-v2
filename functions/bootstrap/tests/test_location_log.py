@@ -56,6 +56,11 @@ class _Coll:
             doc_id = f"auto{self.store.auto}"
         return _Doc(self.store, self.key + (doc_id,))
 
+    def add(self, data):
+        doc = self.document()
+        doc.set(data)
+        return (None, doc)
+
     def limit(self, n):
         self._limit = n
         return self
@@ -124,20 +129,20 @@ def _mk(kind, dt):
     return {"place_kind": kind, "timestamp": dt}
 
 
-def test_derive_patterns_weekday_and_time_of_week():
+def test_derive_patterns_named_routines():
     # Three Sunday hikes (2026-11 Sundays: 1, 8, 15), morning.
     entries = [
         _mk("trailhead", datetime(2026, 11, d, 9, 0, tzinfo=timezone.utc))
         for d in (1, 8, 15)
     ]
-    # Two late weeknight bars (Tue 10th, Wed 11th at 22:00).
+    # Two late-night bar visits (Tue 10th, Wed 11th at 22:00).
     entries += [
         _mk("bar", datetime(2026, 11, d, 22, 0, tzinfo=timezone.utc))
         for d in (10, 11)
     ]
     labels = [p["label"] for p in location_log.derive_patterns(entries)]
-    assert "Sunday hikes" in labels
-    assert "late-weeknight bars" in labels
+    assert "Sunday hikes" in labels  # weekday routine
+    assert "late-night drinks" in labels  # time-of-day routine
 
 
 def test_derive_patterns_needs_recurrence():
@@ -171,3 +176,72 @@ def test_location_log_is_wiped_and_in_account():
     # patterns with it).
     assert schema.LOCATION_LOG in schema.KNOWLEDGE_SUBCOLLECTIONS
     assert schema.LOCATION_LOG in schema.ACCOUNT_SUBCOLLECTIONS
+
+
+# --- Addendum C: master kill switch actually halts collection ---------------
+
+def test_master_off_blocks_logging_even_when_log_on():
+    db = FakeDb()
+    _enable_log(db, "u1")  # per-feature log on
+    db.document("users/u1/profile/main").set(
+        {"location_master_enabled": False}, merge=True)  # but master killed
+    entry_id = location_log.log_visit(
+        db, "u1", 1.0, 2.0, timestamp=datetime.now(timezone.utc),
+        classifier=lambda *a: {"place_kind": "cafe"})
+    assert entry_id is None  # nothing collected
+
+
+def test_master_off_blocks_patterns():
+    db = FakeDb()
+    _enable_log(db, "u1")
+    for d in (1, 8, 15):
+        location_log.log_visit(
+            db, "u1", 37.0, -121.0,
+            timestamp=datetime(2026, 11, d, 9, 0, tzinfo=timezone.utc),
+            classifier=lambda *a: {"place_kind": "trailhead"})
+    assert location_log.patterns_for(db, "u1")  # on: patterns derive
+    db.document("users/u1/profile/main").set(
+        {"location_master_enabled": False}, merge=True)
+    assert location_log.patterns_for(db, "u1") == []  # master off: nothing
+
+
+def test_master_default_on_but_feature_default_off():
+    data_empty = {}
+    assert location_log.master_on(data_empty) is True  # kill switch defaults on
+    assert location_log.background_on(data_empty) is True
+    # ...but a fresh user still logs nothing (feature opt-in defaults off).
+    db = FakeDb()
+    assert location_log.log_enabled(db, "u1") is False
+
+
+# --- Addendum B: truthful location context ----------------------------------
+
+def test_location_context_opted_out_is_honest():
+    db = FakeDb()
+    ctx = location_log.current_location_context(db, "u1")
+    assert "NOT shared" in ctx and "never guess" in ctx
+
+
+def test_location_context_opted_in_reports_latest():
+    db = FakeDb()
+    _enable_log(db, "u1")
+    location_log.log_visit(
+        db, "u1", 37.0, -121.0,
+        timestamp=datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc),
+        classifier=lambda *a: {"place_name": "Old Cafe", "place_kind": "cafe"})
+    location_log.log_visit(
+        db, "u1", 37.5, -121.5,
+        timestamp=datetime(2026, 11, 15, 9, 0, tzinfo=timezone.utc),
+        classifier=lambda *a: {"place_name": "New Park", "place_kind": "park"})
+    ctx = location_log.current_location_context(db, "u1")
+    assert "New Park" in ctx  # most recent, not the older one
+    assert "Old Cafe" not in ctx
+
+
+def test_location_context_master_off_is_honest():
+    db = FakeDb()
+    _enable_log(db, "u1")
+    db.document("users/u1/profile/main").set(
+        {"location_master_enabled": False}, merge=True)
+    ctx = location_log.current_location_context(db, "u1")
+    assert "NOT shared" in ctx

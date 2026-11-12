@@ -42,22 +42,32 @@ _WEEKDAYS = (
     "Saturday", "Sunday",
 )
 
-# A place kind rendered as the plural activity/place noun used in a pattern
-# label. A kind with no entry here (e.g. "unknown") never forms a pattern.
-_KIND_NOUN = {
-    "cafe": "cafes",
-    "bar": "bars",
+_TOD_ADJECTIVE = {
+    "morning": "morning",
+    "afternoon": "afternoon",
+    "evening": "evening",
+    "late": "late-night",
+}
+
+# A place kind rendered as the activity in a named routine. A kind with no
+# entry here (e.g. "unknown") never forms a routine. The learned routine name
+# is "<time> <activity>" (e.g. "morning walks", "late-night drinks") or
+# "<Weekday> <activity>" (e.g. "Sunday hikes").
+_KIND_ACTIVITY = {
+    "cafe": "coffee",
+    "bar": "drinks",
     "restaurant": "dinners",
     "gym": "gym sessions",
     "trailhead": "hikes",
-    "park": "park visits",
-    "beach": "beach trips",
+    "park": "walks",
+    "beach": "beach time",
     "cinema": "movies",
     "museum": "museum visits",
-    "bookstore": "bookstore visits",
+    "bookstore": "bookshop trips",
     "shopping": "shopping trips",
     "venue": "shows",
     "attraction": "outings",
+    "workplace": "work",
 }
 
 
@@ -65,16 +75,36 @@ def _log_ref(db, uid: str):
     return schema.user_doc(db, uid).collection(schema.LOCATION_LOG)
 
 
-def log_enabled(db, uid: str) -> bool:
-    """Whether the user has turned the location log on (the opt-in). A missing
-    profile / field reads as off, so nothing is logged by default."""
+def _profile(db, uid: str) -> dict:
     try:
         snap = db.document(f"users/{uid}/profile/main").get()
-    except Exception:  # noqa: BLE001 - a read blip means "treat as off"
-        logger.warning("location_log: enabled read failed for %s", uid,
+    except Exception:  # noqa: BLE001 - a read blip reads as "most restrictive"
+        logger.warning("location_log: profile read failed for %s", uid,
                        exc_info=False)
-        return False
-    return bool((snap.to_dict() or {}).get("location_log_enabled") is True)
+        return {}
+    return snap.to_dict() or {}
+
+
+def master_on(data: dict) -> bool:
+    """The master location kill switch. ON (not killed) unless EXPLICITLY set
+    false — the switch defaults to "not killed" so a user who never opened the
+    screen still sees the per-feature opt-ins (all default off) govern
+    collection. Master off halts ALL location use."""
+    return data.get("location_master_enabled") is not False
+
+
+def background_on(data: dict) -> bool:
+    """The background/closed-app switch. ON unless explicitly set false; off
+    stops background + closed-app checks (foreground-only), master permitting."""
+    return data.get("location_background_enabled") is not False
+
+
+def log_enabled(db, uid: str) -> bool:
+    """Whether the location log may store a visit: the master switch is on AND
+    the per-feature log opt-in is on. A missing profile / field reads as off, so
+    nothing is logged by default (and master-off halts it regardless)."""
+    data = _profile(db, uid)
+    return master_on(data) and data.get("location_log_enabled") is True
 
 
 def log_visit(
@@ -147,53 +177,57 @@ def _tod_bucket(hour: int) -> str:
     return "late"
 
 
-def _weekpart(weekday: int, tod: str) -> str:
-    if weekday in (5, 6):
-        return "weekend"
-    return "weeknight" if tod in ("evening", "late") else "weekday"
+def _tod_routine_name(tod: str, kind: str) -> str:
+    activity = _KIND_ACTIVITY[kind]
+    if kind == "workplace":
+        return "days at work"  # time-of-day prefix reads oddly for work
+    return f"{_TOD_ADJECTIVE[tod]} {activity}"
+
+
+def _weekday_routine_name(weekday: int, kind: str) -> str:
+    return f"{_WEEKDAYS[weekday]} {_KIND_ACTIVITY[kind]}"
 
 
 def derive_patterns(entries, *, min_count: int = MIN_PATTERN_COUNT) -> list[dict]:
-    """Deterministic place-kind + day/time patterns from log entries.
+    """Deterministic NAMED ROUTINES from log entries (founder 2026-11-12).
 
-    Produces two kinds of pattern, both requiring ``min_count`` recurrences:
-    a weekday pattern (``"Sunday hikes"``) and a time-of-week pattern
-    (``"late-weeknight bars"``). No model call; pure bucketing. Patterns are
-    deduped by label and returned strongest-first (count desc, then label)."""
+    Turns recurring place-kind + time into named routines — a time-of-day
+    routine (``"morning walks"``, ``"late-night drinks"``) and a weekday
+    routine (``"Sunday hikes"``) — each requiring ``min_count`` recurrences.
+    No model call; pure bucketing. Returned strongest-first (count desc, then
+    name), deduped by name. The ``label`` is the routine name the Privacy
+    "what Ayma has learned" surface shows."""
     weekday_counts: Counter = Counter()
     time_counts: Counter = Counter()
     for entry in entries or []:
         data = entry if isinstance(entry, dict) else {}
         kind = str(data.get("place_kind") or "").strip()
-        noun = _KIND_NOUN.get(kind)
-        if not noun:
+        if kind not in _KIND_ACTIVITY:
             continue
         dt = _parse_ts(data.get("timestamp"))
         if dt is None:
             continue
-        weekday = dt.weekday()
-        tod = _tod_bucket(dt.hour)
-        weekday_counts[(weekday, kind)] += 1
-        time_counts[(tod, _weekpart(weekday, tod), kind)] += 1
+        weekday_counts[(dt.weekday(), kind)] += 1
+        time_counts[(_tod_bucket(dt.hour), kind)] += 1
 
     patterns: list[dict] = []
     for (weekday, kind), count in weekday_counts.items():
         if count < min_count:
             continue
         patterns.append({
-            "label": f"{_WEEKDAYS[weekday]} {_KIND_NOUN[kind]}",
+            "label": _weekday_routine_name(weekday, kind),
             "place_kind": kind,
             "count": count,
             "basis": "weekday",
         })
-    for (tod, weekpart, kind), count in time_counts.items():
+    for (tod, kind), count in time_counts.items():
         if count < min_count:
             continue
         patterns.append({
-            "label": f"{tod}-{weekpart} {_KIND_NOUN[kind]}",
+            "label": _tod_routine_name(tod, kind),
             "place_kind": kind,
             "count": count,
-            "basis": "time_of_week",
+            "basis": "time_of_day",
         })
 
     by_label: dict[str, dict] = {}
@@ -207,9 +241,67 @@ def derive_patterns(entries, *, min_count: int = MIN_PATTERN_COUNT) -> list[dict
     return ordered[:MAX_PATTERNS]
 
 
+def _latest_entry(db, uid: str) -> dict | None:
+    """The most recent stored visit (by timestamp), or ``None``. Read-all +
+    max-in-Python so no Firestore composite index / order_by is required."""
+    try:
+        docs = list(_log_ref(db, uid).limit(_DERIVE_LIMIT).stream())
+    except Exception:  # noqa: BLE001
+        return None
+    best, best_ts = None, None
+    for doc in docs:
+        data = doc.to_dict() or {}
+        ts = _parse_ts(data.get("timestamp"))
+        if ts is None:
+            continue
+        if best_ts is None or ts > best_ts:
+            best, best_ts = data, ts
+    return best
+
+
+def current_location_context(db, uid: str) -> str:
+    """A truthful location line for the brain's system context (founder bug,
+    build 2426: Ayma said "no" to "do you have my location?" because the brain
+    never received any location).
+
+    Only opted-in users (master on + log on) get a real reading; everyone else
+    gets an explicit "you do NOT have their location" so Ayma answers honestly
+    and NEVER invents a place. Any model reasoning over this still runs on the
+    existing LiveKit-routed brain — this only adds context text."""
+    data = _profile(db, uid)
+    opted_in = master_on(data) and data.get("location_log_enabled") is True
+    if not opted_in:
+        return (
+            "LOCATION: The user has NOT shared their live location with you "
+            "(location sharing is off or not opted in). If they ask whether "
+            "you know where they are, say honestly that you don't have their "
+            "location — never guess or name a place."
+        )
+    entry = _latest_entry(db, uid)
+    if not entry:
+        return (
+            "LOCATION: The user shares their location with you, but you have "
+            "no reading yet. If they ask, say you don't have a fix right now."
+        )
+    place = str(entry.get("place_name") or "").strip()
+    where = place or (
+        f"near {entry.get('lat')}, {entry.get('lng')}"
+        if entry.get("lat") is not None else "an unknown place"
+    )
+    return (
+        "LOCATION: The user shares their location with you. Their most recent "
+        f"known place is {where}. If they ask whether you have their location "
+        "or where they are, answer truthfully from this. Do NOT invent a more "
+        "specific place than this."
+    )
+
+
 def patterns_for(db, uid: str) -> list[dict]:
-    """The patterns Ayma has learned from ``uid``'s location log, derived live.
-    Empty when the log is off, empty, or on any read failure."""
+    """The named routines Ayma has learned from ``uid``'s location log, derived
+    live. Empty when the master switch is off (derive nothing), the log is off,
+    the log is empty, or on any read failure."""
+    if not master_on(_profile(db, uid)):
+        return []
     try:
         docs = list(_log_ref(db, uid).limit(_DERIVE_LIMIT).stream())
     except Exception:  # noqa: BLE001 - a read blip means no patterns, not a fail

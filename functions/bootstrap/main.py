@@ -59,6 +59,7 @@ from auth import (  # noqa: E402
     require_uid_and_dev_flag,
 )
 from config import CONFIG, PLAN_TIERS  # noqa: E402
+import location_log as location_log_mod  # noqa: E402
 import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
 import feedback_bubble as feedback_bubble_mod  # noqa: E402
@@ -2028,6 +2029,8 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         call_state_context=_call_state_context(req.call_state),
+        location_context=location_log_mod.current_location_context(
+            get_db(), uid),
         db=get_db(),
         summary_context=summary_text,
         # Phase 1 (cost program 2026-09-26): byte-stable prompt prefix for
@@ -4663,6 +4666,14 @@ async def date_plan_moment(
             status_code=403, detail="Not your date plan.") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is not None:
+        # Proactive: a push alongside the in-thread step-in message, so the
+        # arriving user sees it even with the app closed. Reuses the check-in
+        # push path; deep-links to the date's DM thread. Best-effort.
+        import notifications_triggers
+        await notifications_triggers.notify_checkin(
+            get_db(), uid, str(result.get("body") or ""),
+            deep_link=f"dm_thread/{thread_id}")
     return {"ok": True, "fired": result is not None, "moment": result or {}}
 
 
@@ -4678,17 +4689,36 @@ async def location_log_add(
     req: LocationLogRequest, uid: str = Depends(require_adult_uid),
 ) -> dict[str, object]:
     """Store one visit for the signed-in user — ONLY when they have turned the
-    location log on (the server re-checks the opt-in; the client toggle alone
-    does not authorise a write). Returns whether it was logged. The place kind
-    is resolved via Google Places and fails closed to "unknown"."""
+    location log on (the server re-checks the opt-in + master switch; the
+    client toggle alone does not authorise a write). The place kind is resolved
+    via Google Places (fail-closed to "unknown"). If the visit matches a
+    learned routine, Ayma may also reach out proactively (capped) — her message
+    is a deterministic template (no model call). Returns whether it was logged
+    and whether a proactive message fired."""
     import location_log
+    import places_client
+    import proactive
 
-    def _log() -> str | None:
-        return location_log.log_visit(get_db(), uid, req.lat, req.lng)
+    def _log_and_proactive() -> tuple[str | None, str | None]:
+        # Classify once, reuse for both the log entry and the routine match.
+        details = places_client.classify_point(req.lat, req.lng)
+        entry_id = location_log.log_visit(
+            get_db(), uid, req.lat, req.lng, classifier=lambda *a: details)
+        if not entry_id:
+            return None, None
+        kind = str((details or {}).get("place_kind") or "unknown")
+        name = str((details or {}).get("place_name") or "")
+        text = proactive.maybe_fire_routine(get_db(), uid, kind, name)
+        return entry_id, text
 
-    entry_id = await asyncio.to_thread(_log)
+    entry_id, proactive_text = await asyncio.to_thread(_log_and_proactive)
+    if proactive_text:
+        # Reuse the existing check-in push path (best-effort inside).
+        import notifications_triggers
+        await notifications_triggers.notify_checkin(
+            get_db(), uid, proactive_text)
     return {"ok": True, "logged": entry_id is not None,
-            "entry_id": entry_id or ""}
+            "entry_id": entry_id or "", "proactive": bool(proactive_text)}
 
 
 @app.get("/location/patterns")

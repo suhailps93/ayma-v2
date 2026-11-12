@@ -74,6 +74,8 @@ _KIND_BY_TYPE: tuple[tuple[str, str], ...] = (
     ("stadium", "venue"),
     ("concert_hall", "venue"),
     ("performing_arts_theater", "venue"),
+    ("corporate_office", "workplace"),
+    ("office", "workplace"),
 )
 
 # A transport takes (url, payload, api_key) and returns the parsed JSON
