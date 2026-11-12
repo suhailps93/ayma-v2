@@ -103,6 +103,16 @@ workflows:
       - name: Test
         script: flutter test
 
+      - name: Android unit tests (Kotlin, incl. default assistant)
+        script: |
+          set -e
+          # Native Android JVM unit tests (AssistBridge / AssistTextFlattener and
+          # any other src/test Kotlin). The Gradle wrapper is Flutter-managed and
+          # gitignored, so --config-only regenerates it (and local.properties)
+          # without a full build before gradle runs the tests.
+          flutter build apk --config-only --debug
+          (cd android && ./gradlew :app:testDebugUnitTest --console=plain)
+
       - name: Build signed release APK
         script: |
           set -e
@@ -303,6 +313,16 @@ workflows:
 
       - name: Test
         script: flutter test
+
+      - name: Android unit tests (Kotlin, incl. default assistant)
+        script: |
+          set -e
+          # Native Android JVM unit tests (AssistBridge / AssistTextFlattener and
+          # any other src/test Kotlin). The Gradle wrapper is Flutter-managed and
+          # gitignored, so --config-only regenerates it (and local.properties)
+          # without a full build before gradle runs the tests.
+          flutter build apk --config-only --debug
+          (cd android && ./gradlew :app:testDebugUnitTest --console=plain)
 
       - name: Build signed release AAB
         script: |
