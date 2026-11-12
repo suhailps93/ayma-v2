@@ -115,4 +115,6 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("com.android.installreferrer:installreferrer:2.2")
+    // Local JVM unit tests (default-assistant AssistBridge / text flattener).
+    testImplementation("junit:junit:4.13.2")
 }
