@@ -165,6 +165,9 @@ def fire_moment(db, thread_id: str, message_id: str, uid: str,
     # the recap itself is best-effort after that point.
     plan["moment_fired"] = True
     date_plan._save_plan(ref, plan)
+    # The date has started: drop the plan from both people's arrival index so
+    # the background geofence stops watching it.
+    date_plan.clear_active_pointers(db, thread_id, parts)
     summary = latest_sim_summary(db, uid, other)
     body = compose_moment_message(plan, other_name, summary)
     thread_ref = db.collection(

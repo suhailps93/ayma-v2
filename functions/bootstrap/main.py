@@ -4569,12 +4569,25 @@ async def date_plan_propose(
     """Propose a concrete place + time; posts the date card in the thread."""
     a, b = _date_plan_participants(thread_id, uid)
     import date_plan as date_plan_mod
+    import places_client
 
     def _post() -> tuple[str, dict]:
+        lat, lng, place_kind = req.lat, req.lng, ""
+        # Resolve a typed/picked place to real coords + a place kind via Google
+        # Places. Fails closed: when Places is unconfigured or the lookup
+        # fails, resolve_place returns None and the plan falls back to whatever
+        # coords/address the client already supplied (piece-1 behaviour).
+        if lat is None or lng is None:
+            resolved = places_client.resolve_place(
+                req.place_name or req.address)
+            if resolved:
+                lat = lat if lat is not None else resolved.get("lat")
+                lng = lng if lng is not None else resolved.get("lng")
+                place_kind = str(resolved.get("place_kind") or "")
         plan = date_plan_mod.propose_plan(
             place_name=req.place_name, address=req.address,
-            lat=req.lat, lng=req.lng, time_label=req.time_label,
-            starts_at=req.starts_at, proposer_uid=uid)
+            lat=lat, lng=lng, time_label=req.time_label,
+            starts_at=req.starts_at, proposer_uid=uid, place_kind=place_kind)
         mid = date_plan_mod.post_date_plan_message(
             get_db(), thread_id, sorted((a, b)), plan)
         return mid, plan
@@ -4651,6 +4664,45 @@ async def date_plan_moment(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "fired": result is not None, "moment": result or {}}
+
+
+# --- Opt-in location log + the patterns Ayma learns ------------------------
+
+class LocationLogRequest(BaseModel):
+    lat: float
+    lng: float
+
+
+@app.post("/location/log")
+async def location_log_add(
+    req: LocationLogRequest, uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """Store one visit for the signed-in user — ONLY when they have turned the
+    location log on (the server re-checks the opt-in; the client toggle alone
+    does not authorise a write). Returns whether it was logged. The place kind
+    is resolved via Google Places and fails closed to "unknown"."""
+    import location_log
+
+    def _log() -> str | None:
+        return location_log.log_visit(get_db(), uid, req.lat, req.lng)
+
+    entry_id = await asyncio.to_thread(_log)
+    return {"ok": True, "logged": entry_id is not None,
+            "entry_id": entry_id or ""}
+
+
+@app.get("/location/patterns")
+async def location_patterns(
+    uid: str = Depends(require_adult_uid),
+) -> dict[str, object]:
+    """The patterns Ayma has learned from the user's location log (derived
+    deterministically, live). Powers the "what Ayma has learned" surface; empty
+    when the log is off or has too little to learn from."""
+    import location_log
+
+    patterns = await asyncio.to_thread(
+        location_log.patterns_for, get_db(), uid)
+    return {"ok": True, "patterns": patterns}
 
 
 async def _notify_new_dm(
