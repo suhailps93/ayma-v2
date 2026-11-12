@@ -23,7 +23,7 @@ from explore import _score_for
 from matching import _age
 from matching_schema import MATCHES_COLLECTION, block_id
 from pair_key import sorted_pair_key
-from practice_seed import is_practice_persona
+from practice_seed import is_demo_fixture_account, is_practice_persona
 
 logger = logging.getLogger("ayma.public_profile")
 
@@ -298,11 +298,14 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "blocked": blocked,
         # True ONLY for AI-generated personas (sim / demo / seed): the explicit
         # ``ai_generated`` marker set at creation (practice_seed), backstopped by
-        # the reserved ``demo_practice_`` uid prefix. A real user has neither, so
-        # the "AI-generated profile" label never appears on a real person; an
-        # absent/unknown marker resolves to False (no label).
+        # the reserved ``demo_practice_`` uid prefix AND the known demo/judge
+        # fixture accounts (``demo-test1/2/3`` + ``demo-edge-*``) so the label
+        # survives a re-seed or a missed backfill that drops the explicit field.
+        # A real user matches none, so the "AI-generated profile" label never
+        # appears on a real person; an absent/unknown marker resolves to False.
         "ai_generated": bool(prof.get("ai_generated"))
-        or is_practice_persona(other_uid),
+        or is_practice_persona(other_uid)
+        or is_demo_fixture_account(other_uid),
         "name": name,
         "age": _age(prof.get("birthdate")),
         "gender": str(prof.get("gender") or ""),
