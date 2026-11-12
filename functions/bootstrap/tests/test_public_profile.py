@@ -449,3 +449,51 @@ def test_build_populates_variant_fields_with_fallback(monkeypatch):
     assert v["photos"] == ["https://cdn/uploads/her/a.jpg"]
     assert v["photos_thumb"] == ["https://cdn/uploads/her/a__thumb_400.jpg"]
     assert v["photos_medium"] == ["https://cdn/uploads/her/a.jpg"]  # fallback
+
+
+# --- "AI-generated profile" label (payload flag) -------------------------
+# The label must appear ONLY for AI-generated personas (sim / demo / seed) and
+# NEVER for a real user. Absence of a reliable marker resolves to no label.
+
+
+def test_build_labels_an_ai_generated_profile_from_the_explicit_marker(monkeypatch):
+    """A seeded persona carrying the explicit `ai_generated` marker on its
+    profile record is flagged on the payload, regardless of its uid."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "demo_seed_x", "profile", "main")] = {
+        "name": "Nova",
+        "ai_generated": True,
+    }
+    v = pp.build(db, "me", "demo_seed_x")
+    assert v["ai_generated"] is True
+
+
+def test_build_labels_a_practice_persona_by_uid_prefix(monkeypatch):
+    """A practice-date persona (`demo_practice_*`) is flagged via the reserved
+    uid prefix even if the explicit marker were somehow absent."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "demo_practice_maya", "profile", "main")] = {"name": "Maya"}
+    v = pp.build(db, "me", "demo_practice_maya")
+    assert v["ai_generated"] is True
+
+
+def test_build_never_labels_a_real_user(monkeypatch):
+    """A real user (ordinary uid, no marker — e.g. the founder or Dillu) is
+    NEVER flagged. This is the critical guarantee: a real person mislabelled as
+    AI-generated is the worst outcome."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dillu"}
+    v = pp.build(db, "me", "her")
+    assert v["ai_generated"] is False
+
+
+def test_build_deleted_placeholder_is_not_labelled(monkeypatch):
+    """A deleted-user tombstone is not an AI-generated persona."""
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("deleted_users", "her")] = {"at": 1}
+    v = pp.build(db, "me", "her")
+    assert v["ai_generated"] is False

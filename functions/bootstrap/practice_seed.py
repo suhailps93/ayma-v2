@@ -38,6 +38,9 @@ DEMO_PROFILES: list[dict] = [
     {
         "uid": "demo_practice_maya",
         "profile": {
+            # AI-generated demo persona — the explicit marker that drives the
+            # "AI-generated profile" label on the profile header (public_profile.build).
+            "ai_generated": True,
             "name": "Maya",  # PUBLIC display name (first name only) — usable
             "gender": "woman",
             "birthdate": "1995-07-14",
@@ -130,6 +133,7 @@ DEMO_PROFILES: list[dict] = [
     {
         "uid": "demo_practice_leo",
         "profile": {
+            "ai_generated": True,  # AI-generated demo persona (see Maya above)
             "name": "Leo",
             "gender": "man",
             "birthdate": "1990-02-03",
@@ -201,6 +205,7 @@ DEMO_PROFILES: list[dict] = [
     {
         "uid": "demo_practice_aisha",
         "profile": {
+            "ai_generated": True,  # AI-generated demo persona (see Maya above)
             "name": "Aisha",
             "gender": "woman",
             "birthdate": "1998-11-21",
@@ -271,6 +276,7 @@ DEMO_PROFILES: list[dict] = [
     {
         "uid": "demo_practice_noah",
         "profile": {
+            "ai_generated": True,  # AI-generated demo persona (see Maya above)
             "name": "Noah",
             "gender": "man",
             "birthdate": "1993-05-09",
