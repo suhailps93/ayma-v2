@@ -204,17 +204,22 @@ async def _unavailable_reply(db, uid: str, gone: dict) -> str:
     return f"Not available: {gone['say']}"
 
 
-async def _run_report_action(db, uid: str, report: dict) -> str:
+async def _run_report_action(db, uid: str, report: dict, asked: str = "") -> str:
     """Actually (re)run the report a navigation/app_action request named, by
     invoking the same chat/voice tool (``report['via']``) that runs it — then
-    return its real result (the ``[appearance:<id>]`` / ``[deep_dive:<id>]``
-    card marker), not a text pointer telling the user to go use a tool.
+    return its real result (the ``[appearance:<id>]`` / ``[deep_dive:<id>]`` /
+    ``[match:<id>]`` card marker), not a text pointer telling the user to go use
+    a tool.
 
     The app-driving path must DO the re-run, not deflect it (founder bug
     2026-10-28: "rerun the appearance report" either opened the existing report
     or returned "use the run_appearance_report tool", never re-running). The
-    tool is bound here on ``(db, uid)`` alone, so it only ever touches this
-    authenticated user's own report — no attachment, no third party."""
+    self-only reports (appearance, web research) are bound here on ``(db, uid)``
+    alone, so they only ever touch this authenticated user's own report — no
+    attachment, no third party. A match report names the other person, so its
+    partner is read from ``asked`` (the user's own phrasing, after "with"/"for")
+    and the re-run is still SELF-ONLY: ``rerun_match_report`` recalculates the
+    caller's own pair with that person, never a report between two others."""
     via = report.get("via")
     if via == "run_appearance_report":
         from . import run_appearance_report as _report
@@ -228,6 +233,15 @@ async def _run_report_action(db, uid: str, report: dict) -> str:
         # the report screen's "Search again" button does and returns at once,
         # so this path never blocks on an inline search (founder bug 2026-11-03).
         return await _report.SKILL.bind(db, uid)()
+    if via == "rerun_match_report":
+        from . import rerun_match_report as _report
+
+        # A match report is with a specific person — read the partner from the
+        # user's own words (the "with X" tail); an empty partner makes the tool
+        # ask who. Queues the SAME background recalculation the report screen's
+        # "Recalculate" button does and opens the report, returning at once.
+        partner = _launch_partner(asked) or ""
+        return await _report.SKILL.bind(db, uid)(name=partner)
     logger.error("report action %r has no runnable via (%r)", report.get("key"), via)
     return _NOT_APPLIED
 
@@ -283,7 +297,7 @@ def _bind_open_screen(db, uid: str) -> Callable[..., str]:
         # still navigates below.
         report = app_registry.find_report_action(asked)
         if report:
-            return await _run_report_action(db, uid, report)
+            return await _run_report_action(db, uid, report, asked)
         dest = app_registry.find_destination(screen)
         if dest is None:
             gone = app_registry.find_unavailable(asked)

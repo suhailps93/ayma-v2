@@ -58,6 +58,7 @@ TOOL_LABELS = {
     "body_report": "Analysed the photo",
     "analyze_physical_attributes": "Read your photos",
     "run_appearance_report": "Refreshed your appearance report",
+    "rerun_match_report": "Re-ran your match report",
     "generate_image": "Generated an image",
     # Notes & profile
     "add_followup_question": "Noted a follow-up",
@@ -206,6 +207,7 @@ WORKING_LABELS = {
     "body_report": "Analysing the photo…",
     "analyze_physical_attributes": "Reading your photos…",
     "run_appearance_report": "Refreshing your appearance report…",
+    "rerun_match_report": "Re-running your match report…",
     "generate_image": "Generating an image…",
     # Notes & profile
     "add_followup_question": "Making a note…",

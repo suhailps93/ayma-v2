@@ -81,6 +81,10 @@ class TourAnchors {
   /// The "Accent Color" row inside Settings.
   static const settingsAccentRow = 'settings_accent_row';
 
+  /// The "Ayma Assistant" row inside Settings — where you make Ayma your
+  /// device's default digital assistant (Android Assist API).
+  static const settingsAssistantRow = 'settings_assistant_row';
+
   /// The "Location log" opt-in switch inside Settings › Privacy.
   static const settingsLocationLogRow = 'settings_location_log_row';
 

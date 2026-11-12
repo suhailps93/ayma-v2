@@ -296,6 +296,12 @@ abstract final class ChatContextCaps {
   static const screenRoute = 200;
   static const screenPreviousRoute = 200;
   static const screenPreviousLabel = 200;
+  // External-app assistant (Assist API summon) only: the capped on-screen
+  // text/summary. In-app Ayma pages stay reference-only (founder
+  // 2026-11-09); these ride solely for `screen == 'external_app'`, which
+  // has no app-registry reference to describe server-side.
+  static const screenDetail = 2000;
+  static const screenVisible = 2000;
 }
 
 /// Clamp one context string to [cap] characters (no-op when already within).
@@ -412,6 +418,8 @@ Map<String, dynamic> buildChatRequestBody({
   String screenRoute = '',
   String screenPreviousRoute = '',
   String screenPreviousLabel = '',
+  String screenDetail = '',
+  String screenVisible = '',
   bool tourContinuation = false,
   bool includeTourContinuation = true,
   CallStateSnapshot callState = const CallStateSnapshot.none(),
@@ -492,6 +500,19 @@ Map<String, dynamic> buildChatRequestBody({
       // registry (founder 2026-11-09: reference, not content). Voice is
       // unchanged — it keeps the full live capture through the mirror
       // (`POST /voice/context`), not the chat request.
+      //
+      // Exception — the external-app assistant (Assist API summon,
+      // `screen == 'external_app'`): an external app has no app-registry
+      // reference for Ayma to describe server-side, so its capped
+      // on-screen text/summary DOES ride inline here. Emitted only when
+      // non-empty, so every in-app call site stays byte-identical and the
+      // reference-only rule above holds for Ayma's own pages.
+      if (screenDetail.isNotEmpty)
+        'screen_detail':
+            clampChatContext(screenDetail, ChatContextCaps.screenDetail),
+      if (screenVisible.isNotEmpty)
+        'screen_visible':
+            clampChatContext(screenVisible, ChatContextCaps.screenVisible),
       'screen_previous_route': clampChatContext(
           screenPreviousRoute, ChatContextCaps.screenPreviousRoute),
       'screen_previous_label': clampChatContext(
@@ -2881,6 +2902,8 @@ class ApiClient {
     String screenRoute = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
     bool tourContinuation = false,
     CallStateSnapshot callState = const CallStateSnapshot.none(),
@@ -2927,6 +2950,8 @@ class ApiClient {
           screenRoute: screenRoute,
           screenPreviousRoute: screenPreviousRoute,
           screenPreviousLabel: screenPreviousLabel,
+          screenDetail: screenDetail,
+          screenVisible: screenVisible,
         )),
       );
     } on http.ClientException catch (e) {

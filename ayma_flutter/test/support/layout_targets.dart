@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/accent_color_screen.dart';
 import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
+import 'package:ayma_flutter/screens/assistant_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
@@ -261,6 +262,10 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(AppearanceSettingsScreen(controller: ThemeController())),
     PrivacySettingsScreen.path: () =>
         shell(PrivacySettingsScreen(profileService: profiles, api: api)),
+    // The assistant surface in its dormant state (no summon capture,
+    // not the default assistant): the platform channel is absent under
+    // the layout matrix and the service degrades to exactly this.
+    AssistantScreen.path: () => shell(AssistantScreen(api: api)),
     SkillsScreen.path: () =>
         shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),
