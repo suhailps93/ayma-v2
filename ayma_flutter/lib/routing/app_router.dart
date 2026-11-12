@@ -23,6 +23,7 @@ import '../screens/biometric_info_screen.dart';
 import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/appearance_settings_screen.dart';
+import '../screens/assistant_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/complete_profile_screen.dart';
 import '../screens/deep_dive_report_screen.dart';
@@ -499,6 +500,11 @@ final appRouter = GoRouter(
       path: PrivacySettingsScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: PrivacySettingsScreen()),
+    ),
+    GoRoute(
+      path: AssistantScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: AssistantScreen()),
     ),
     GoRoute(
       path: SkillsScreen.path,

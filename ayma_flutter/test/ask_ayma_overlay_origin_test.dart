@@ -95,6 +95,8 @@ class _FakeApi extends ApiClient {
     String screenRoute = '',
     String screenPreviousRoute = '',
     String screenPreviousLabel = '',
+    String screenDetail = '',
+    String screenVisible = '',
     String clientMsgId = '',
     bool tourContinuation = false,
     CallStateSnapshot callState = const CallStateSnapshot.none(),

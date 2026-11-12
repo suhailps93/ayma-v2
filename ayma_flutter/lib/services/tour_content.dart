@@ -255,6 +255,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     icon: Icons.hub_outlined,
   ),
   TourFeature(
+    featureId: 'default_assistant',
+    headline: 'Ayma, anywhere',
+    subtitle: 'Open Settings › Ayma Assistant to make Ayma your default '
+        'assistant — then long-press Home in any app to summon her. '
+        'Summon-only, never stored.',
+    icon: Icons.smart_button_outlined,
+    anchorId: TourAnchors.settingsAssistantRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'notifications',
     headline: 'Never miss a moment',
     subtitle: "The bell nudges you only when there's something worth your "
