@@ -10,6 +10,8 @@ import 'package:ayma_flutter/services/date_sim_service.dart';
 import 'package:ayma_flutter/services/notification_service.dart'
     show deepLinkToRoute;
 import 'package:ayma_flutter/services/profile_service.dart';
+import 'package:ayma_flutter/services/transcript_store.dart';
+import 'package:ayma_flutter/services/voice_session_controller.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:ayma_flutter/theme.dart';
@@ -19,6 +21,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'support/fake_voice_transport.dart';
+
+/// A minimal voice backend so a [VoiceSessionController] can reach `live` in a
+/// test: `/bootstrap` hands back a LiveKit token, everything else is benign.
+ApiClient _voiceApi() => ApiClient(
+  auth: MockFirebaseAuth(signedIn: true),
+  httpClient: MockClient((request) async {
+    if (request.url.path == '/bootstrap') {
+      return http.Response(
+        jsonEncode({
+          'session_mode': 'marketing',
+          'uid': 'u1',
+          'livekit': {
+            'token': 'tok-abc',
+            'url': 'wss://example.livekit.cloud',
+            'room': 'ayma-u1',
+          },
+        }),
+        200,
+      );
+    }
+    return http.Response(jsonEncode({'ok': true}), 200);
+  }),
+);
 
 http.Response _json(Object body, [int status = 200]) => http.Response(
   jsonEncode(body),
@@ -338,6 +365,50 @@ void main() {
     );
     expect(find.byKey(const Key('dateSimRunButton')), findsOneWidget);
   });
+
+  testWidgets(
+    'running a sim ends a live Ayma voice session first, cleanly (no banner)',
+    (tester) async {
+      addTearDown(() => VoiceSessionController.active = null);
+      // A live Ayma voice call, registered as the single active voice session.
+      // Driven on the real event loop (runAsync): the controller's start/stop
+      // use genuine async the widget tester's fake clock can't settle.
+      final transport = FakeVoiceTransport();
+      final voice = VoiceSessionController(
+        transcriptStore: TranscriptStore(),
+        apiClient: _voiceApi(),
+        transportFactory: () => transport,
+      );
+      await tester.runAsync(() async {
+        await voice.start();
+        transport.markAgentReady();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      expect(voice.isActive, isTrue);
+      expect(VoiceSessionController.active, same(voice));
+
+      // Connect a date simulation from the sim screen.
+      final h = _Harness()..release.complete();
+      await tester.pumpWidget(_wrap(h.screen()));
+      await tester.pump();
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('dateSimRunButton')));
+        // Let _run's `await liveVoice.stop()` and the sim POST resolve.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      // The live Ayma voice session ended first — cleanly, no error banner —
+      // and the simulation still connected.
+      expect(voice.isActive, isFalse,
+          reason: 'the Ayma voice call ends when a sim connects');
+      expect(VoiceSessionController.active, isNull);
+      expect(voice.errorMessage, isNull,
+          reason: 'an intentional end shows no error banner');
+      expect(voice.phase, VoiceSessionPhase.idle);
+      expect(h.simId, isNotEmpty, reason: 'the simulation still ran');
+    },
+  );
 
   testWidgets('the message-count stepper increments and decrements', (
     tester,
