@@ -78,7 +78,10 @@ are removed on the same schedule as the rest of your data in "How long we keep
 your data" in the Privacy Policy. The **routines are worked out from the log when
 needed and are not stored separately**, so clearing the log clears them.
 
-**We do not sell your location data, and we do not use it for advertising.**
+**Advertising.** Your location data — the places in your log and the routines
+learned from them — **may be used for advertising**, the same as the other data
+covered by the **Advertising** section of these Terms (for example to help choose
+and measure the ads you see). See that section for your ad choices and controls.
 
 ---
 
@@ -89,7 +92,8 @@ location, only if you choose to provide it**" (under *Your data › What we coll
 and store*) and "**general location if you provided it**" (under *Advertising*).
 They say nothing about precise location, a stored history of places, background
 collection, learned routines, or proactive outreach. Choices I made to fill
-those gaps, for the founder to confirm:
+those gaps. Items 2 and 5 were settled by the founder on the Nov 12 call (see
+those notes); the rest remain for the founder to confirm:
 
 1. **"Precise" location, not "approximate."** The feature logs exact
    coordinates and resolves specific places, so I used **precise location**
@@ -104,9 +108,10 @@ those gaps, for the founder to confirm:
    is a **default-off Settings toggle**, and granting the OS permission turns
    nothing on. I wrote it that way — permission may be asked at start, the log is
    a separate opt-in, nothing is collected until you turn it on — so the Terms
-   match the actual behaviour. If the founder intends a distinct **in-app log
-   opt-in prompt shown at first launch** (beyond the OS permission), the wording
-   should name that prompt instead.
+   match the actual behaviour. **SETTLED (founder decision, Nov 12 call):
+   confirmed — ask at app start, the same way the app asks for notification
+   permission, and NOT a separate first-launch in-app opt-in prompt.** The draft
+   wording already matches this, so no wording change was needed.
 
 3. **Retention stated explicitly.** The existing Terms have no location-specific
    retention line. I took the retention from the consent draft — **log persists
@@ -121,15 +126,16 @@ those gaps, for the founder to confirm:
    messages). I also noted that turning the **OS** location permission off stops
    collection too, since users may reach for that first.
 
-5. **"Not sold / not for advertising" stated for location.** The existing Terms
-   say location *may* feed advertising ("general location if you provided it").
-   To avoid contradicting that, this draft's no-sale/no-ads line is scoped to the
-   **log and routines** (the precise-location feature), leaving the separate
-   coarse-location-for-ads disclosure untouched. **The founder should confirm**
-   whether precise log location must be fully walled off from advertising (the
-   draft assumes yes); if so the Advertising section should say precise log
-   location is never used for ads, the way it already does for face data and
-   Google-account data.
+5. **Advertising use of location — SETTLED (founder decision, Nov 12 call):**
+   precise location is **NOT** walled off from advertising. The draft previously
+   assumed the opposite (a "not used for advertising" line for the log and
+   routines); that line is now flipped to state location data **may be used for
+   advertising**, consistent with the existing *Advertising* section. At ship
+   time, precise/log location is ad-eligible: do **not** add it to the
+   Advertising section's "Never used for advertising" list (which stays face
+   data + connected Google-account data), and the *Advertising* section should
+   name location among the signals it says ads may use (the existing wording
+   already covers "general location if you provided it"; extend it to the log).
 
 6. **Voice and scope.** Kept to the existing Terms' plain-language, second-person
    voice with bold on the load-bearing clauses; no new defined terms. Date
