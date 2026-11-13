@@ -1927,15 +1927,18 @@ async def _prepare_chat(
     deep_dive_target = req.deep_dive_target.strip()
     appearance_finding_id = req.appearance_finding_id.strip()
     match_report_id = req.match_report_id.strip()
-    # A staged Send-to-Ayma share of a report kind carries only this
-    # reference (founder 2026-11-09); the report itself is pulled by the
-    # bound `open_shared_report` tool at generation time. The kind gate
-    # mirrors `skills.open_shared._KIND_TO_REPORT_TYPE` — profile shares
-    # never land here (they resolve through the viewing briefing).
+    # A staged Send-to-Ayma share of a report kind — or a human chat
+    # (`conversation`, founder Nov 2026) — carries only this reference
+    # (founder 2026-11-09); the report / the messages are pulled by the
+    # bound `open_shared_report` tool at generation time. The report kinds
+    # mirror `skills.open_shared._KIND_TO_REPORT_TYPE`; `conversation`
+    # carries the DM thread id in `shared_ref_id` and open_shared reads it
+    # through the same tool. Profile shares never land here (they resolve
+    # through the viewing briefing).
     shared_ctx: dict = {}
-    if req.shared_kind.strip() in ("deep_dive", "appearance", "match", "story") and (
-        req.shared_ref_id.strip() or req.shared_subject_uid.strip()
-    ):
+    if req.shared_kind.strip() in (
+        "deep_dive", "appearance", "match", "story", "conversation"
+    ) and (req.shared_ref_id.strip() or req.shared_subject_uid.strip()):
         shared_ctx = {
             "kind": req.shared_kind.strip(),
             "report_id": req.shared_ref_id.strip(),
@@ -2220,6 +2223,18 @@ def _shared_report_context(kind: str, subject_name: str) -> str:
     from other context (the founder bug this fixes, 2026-11-09: a shared
     web-research card was answered from the previous conversation)."""
     name = (subject_name or "").strip()
+    if kind == "conversation":
+        who = f" with {name}" if name else ""
+        return (
+            f"SHARED CHAT: the user shared their chat{who} with you in this "
+            "conversation — it is the card attached to their message. The "
+            "messages are NOT in this prompt: before you answer anything "
+            "about it, call `open_shared_report` (no arguments) to pull the "
+            "actual messages and base your read on them. If the tool says it "
+            "could not be opened, tell the user plainly that you couldn't "
+            "open the chat they shared — never answer from another "
+            "conversation, another profile, or guesswork instead."
+        )
     if kind == "deep_dive":
         what = f"a web research report{f' on {name}' if name else ''}"
     elif kind == "appearance":

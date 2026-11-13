@@ -1183,6 +1183,45 @@ void main() {
     expect(onlineDot, isNotEmpty);
   });
 
+  testWidgets(
+      '"Share this chat with Ayma" opens the reusable share kit sheet for the '
+      'conversation (Ayma-only, naming the partner)', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final ctrl = StreamController<List<DmMessage>>.broadcast();
+    final dm = _FakeDm(ctrl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DmThreadScreen(
+          threadId: 'a__me',
+          dmService: dm,
+          apiClient: _api({
+            'a': {'name': 'Priya Nair', 'photo': '', 'online': true},
+          }),
+        ),
+      ),
+    );
+    await tester.pump();
+    ctrl.add(const []);
+    await tester.pumpAndSettle();
+
+    // Open the header overflow menu and pick the share item.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Share this chat with Ayma'));
+    await tester.pumpAndSettle();
+
+    // The one share kit sheet opened, as a conversation target: Ayma-only
+    // (no external option), naming the chat partner.
+    expect(find.byKey(const ValueKey('shareSendToAyma')), findsOneWidget);
+    expect(find.text('Send to Ayma'), findsOneWidget);
+    expect(find.text('Send externally'), findsNothing);
+    expect(find.text('Your chat with Priya Nair'), findsOneWidget);
+    expect(find.text('Chat'), findsOneWidget);
+  });
+
   testWidgets('tapping the header opens the other person\'s public profile', (
     tester,
   ) async {

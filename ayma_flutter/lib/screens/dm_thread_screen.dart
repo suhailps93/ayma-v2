@@ -14,7 +14,6 @@ import '../services/async_voice_player.dart';
 import '../services/async_voice_recorder.dart';
 import '../services/dm_voice_engine.dart';
 import '../services/voice_note_controller.dart';
-import '../services/chat_inbox.dart';
 import '../services/date_moments_monitor.dart';
 import '../services/date_plan.dart';
 import '../services/dm_service.dart';
@@ -38,9 +37,10 @@ import '../widgets/shared_report_card.dart';
 import '../widgets/staggered.dart';
 import '../widgets/voice_clip_row.dart';
 import '../widgets/voice_note_composer.dart';
-import 'main_shell_screen.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/screen_capture.dart';
+import '../services/share_kit.dart';
+import '../widgets/ayma_share_sheet.dart';
 import '../utils/dm_language.dart';
 
 /// How many of the newest DM messages Ayma's screen context may include.
@@ -552,18 +552,25 @@ class _DmThreadScreenState extends State<DmThreadScreen>
     }
   }
 
-  void _askAyma() {
-    final name = widget.title == 'Conversation' ? 'them' : widget.title;
-    ChatInbox.instance.push(
-      ChatKickoff.talkAbout(
-        targetUid: _dm.otherUidOf(widget.threadId),
-        label: name,
-        conversation: true,
-        shareKind: 'conversation',
-        refId: widget.threadId,
+  /// "Share this chat with Ayma" — routes through the one reusable share kit
+  /// (`share_kit.dart` / `ayma_share_sheet.dart`), the same share every other
+  /// page uses, as a `conversation` [ShareTarget]: real subject = the chat
+  /// partner, its own thread id, the staged card opens this chat. "Send to
+  /// Ayma" stages the reply-style card above the Ayma composer and waits —
+  /// nothing auto-sends, no canned opener; the context rides by reference
+  /// (the thread id) and Ayma pulls the messages herself (founder, Nov 2026).
+  /// A human chat never leaves the app, so the kit target is Ayma-only and
+  /// the sheet shows only "Send to Ayma".
+  void _shareChatWithAyma() {
+    showAymaShareSheet(
+      context,
+      ShareTargets.conversation(
+        threadId: widget.threadId,
+        otherUid: _safeOtherUid(),
+        otherName: _headerName,
+        otherPhoto: _other?.photo ?? '',
       ),
     );
-    context.go(MainShellScreen.path);
   }
 
   Future<void> _openAttachSheet() async {
@@ -818,7 +825,7 @@ class _DmThreadScreenState extends State<DmThreadScreen>
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'block') _blockAndReport();
-              if (v == 'ask_ayma') _askAyma();
+              if (v == 'ask_ayma') _shareChatWithAyma();
             },
             itemBuilder: (_) => [
               const PopupMenuItem(

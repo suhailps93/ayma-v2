@@ -300,6 +300,14 @@
     "operated_by_ayma": false,
     "reason": "Automatic client behavior driven by the connection heartbeat; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection is too weak or absent for a live call, so the app protects the conversation by offering a voice message instead) — never claim to fix the user's connection."
   },
+  "share_chat_with_ayma": {
+    "_doc": "Share this chat with Ayma (founder, Nov 2026): the DM thread header menu's 'Share this chat with Ayma' routes through the one reusable share kit (ayma_flutter/lib/services/share_kit.dart ShareTargets.conversation + widgets/ayma_share_sheet.dart), the same share every other page uses, as a `conversation` ShareTarget. It is Ayma-only (a human chat never leaves the app), so the sheet shows only 'Send to Ayma', which stages the reply-style card above the Ayma composer and waits — nothing auto-sends, no canned opener (founder Nov 9). The context rides by reference only: the chat turn carries shared_kind=conversation + shared_ref_id=<dm thread id>, the prompt names the shared chat and requires opening it, and the bound open_shared_report tool pulls the actual messages (open_shared.fetch_shared_conversation_text, participant-guarded) — the client never ships message content (founder Nov 9, reference not content). The staged card opens the thread via the already-registered /dm/:threadId route, so this adds no route of its own and — like voice_clip_playback — is a feature block, not a destination.",
+    "key": "share_chat_with_ayma",
+    "label": "Share this chat with Ayma",
+    "aliases": ["share this chat with ayma", "share this conversation with ayma", "send this chat to ayma", "ask ayma about this chat", "what do you think of this conversation", "ayma look at my chat"],
+    "operated_by_ayma": false,
+    "reason": "A user-initiated share from the DM thread header menu, Ayma-consumed: the user taps it, the share kit stages the chat as a reply-style card above the Ayma composer, and Ayma pulls the messages by reference (the thread id) via open_shared_report. Ayma does not trigger the share herself. If asked about it, explain that the menu item hands the chat to Ayma so she can read it and weigh in; the card opens the same chat when tapped."
+  },
   "navigation": {
     "_doc": "Session navigation memory (founder feedback item 15): the app keeps a session-only stack of the pages the user has been on \u2014 their own navigation and Ayma-driven opens alike \u2014 in ayma_flutter/lib/services/navigation_history.dart, capped at 20 entries and never persisted. Ayma's screen context carries the current page and the previous page's spoken label. The one action below unwinds one step per call; a modal/sheet is dismissed first (as the user's own back would), an active tour blocks it, and at the root it answers honestly instead of failing silently or exiting.",
     "actions": ["go_back"],
