@@ -33,7 +33,8 @@ import 'share_service.dart';
 /// `aymaOnly` target, [AymaShare.shareExternally] throws before any link
 /// is composed, any snapshot is created or any system sheet opens — and
 /// the backend has no snapshot builder, route or landing for the kind
-/// either. Your Story (`story`) is the standing Ayma-only kind.
+/// either. Your Story (`story`) and a human chat (`conversation`) are the
+/// Ayma-only kinds.
 enum ShareAudience { public, aymaOnly }
 
 class ShareTarget {
@@ -278,6 +279,40 @@ class ShareTargets {
           photoUrl: imageUrl,
         ),
       );
+
+  /// A human DM conversation — AYMA-ONLY. A chat with another person never
+  /// leaves the app: no external link, snapshot or public route exists for
+  /// this kind, in the kit or on the backend. The card's subject is the chat
+  /// partner, the thumbnail their photo, and tapping it opens the thread
+  /// (`/dm/<threadId>`). "Send to Ayma" stages the reply-style card and
+  /// waits; the context rides by reference only (the thread id in
+  /// [ChatKickoff.refId]) and Ayma pulls the messages herself — the client
+  /// never ships the message content (founder 2026-11-09, reference not
+  /// content).
+  static ShareTarget conversation({
+    required String threadId,
+    required String otherUid,
+    required String otherName,
+    String otherPhoto = '',
+  }) {
+    final name = otherName.trim();
+    return ShareTarget(
+      kind: 'conversation',
+      id: threadId,
+      title: name.isEmpty ? 'Your chat' : 'Your chat with $name',
+      typeLabel: 'Chat',
+      route: '/dm/$threadId',
+      audience: ShareAudience.aymaOnly,
+      thumbnailUrl: otherPhoto,
+      aymaKickoff: () => ChatKickoff.draftAbout(
+        targetUid: otherUid,
+        label: name.isEmpty ? 'them' : name,
+        shareKind: 'conversation',
+        photoUrl: otherPhoto,
+        refId: threadId,
+      ),
+    );
+  }
 
   /// A web research (deep dive) report — public kind, external via the
   /// existing `/s/` snapshot of THIS report id.

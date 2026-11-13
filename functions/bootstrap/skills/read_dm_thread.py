@@ -77,6 +77,44 @@ def _resolve_other_uid(db, uid: str, person: str) -> str | None:
     return best[1] if best else None
 
 
+def render_thread_messages(
+    db, uid: str, thread_id: str, person_label: str
+) -> str | None:
+    """The last :data:`_MAX_MESSAGES` messages of ``thread_id`` rendered from
+    ``uid``'s point of view (``You`` vs ``person_label``), or ``None`` when the
+    thread can't be read. An empty thread returns a short "nothing yet" note.
+    Shared by the ``read_dm_thread`` tool (name-resolved) and the
+    ``open_shared_report`` conversation pull (thread-id by reference)."""
+    try:
+        msgs = list(
+            db.collection("dm_threads")
+            .document(thread_id)
+            .collection("messages")
+            .order_by("created_at")
+            .stream()
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    rows = msgs[-_MAX_MESSAGES:]
+    if not rows:
+        return f"you haven't messaged {person_label} yet"
+
+    lines = []
+    for m in rows:
+        d = m.to_dict() or {}
+        who = "You" if d.get("sender_uid") == uid else person_label
+        mtype = str(d.get("type") or "text")
+        body = str(d.get("body") or "").strip()
+        if mtype == "photo":
+            body = "[photo]"
+        elif mtype == "voice":
+            body = "[voice message]"
+        elif mtype == "shared_profile":
+            body = "[shared a profile]"
+        lines.append(f"{who}: {body}")
+    return "Recent messages:\n" + "\n".join(lines)
+
+
 def _bind(db, uid: str) -> Callable[..., str]:
     def read_dm_thread(person: str = "") -> str:
         other = _resolve_other_uid(db, uid, person)
@@ -86,34 +124,10 @@ def _bind(db, uid: str) -> Callable[..., str]:
                 "name, or they may not be a match yet"
             )
         thread_id = sorted_pair_key(uid, other)
-        try:
-            msgs = list(
-                db.collection("dm_threads")
-                .document(thread_id)
-                .collection("messages")
-                .order_by("created_at")
-                .stream()
-            )
-        except Exception:  # noqa: BLE001
+        text = render_thread_messages(db, uid, thread_id, person)
+        if text is None:
             return "couldn't load that conversation right now"
-        rows = msgs[-_MAX_MESSAGES:]
-        if not rows:
-            return f"you haven't messaged {person} yet"
-
-        lines = []
-        for m in rows:
-            d = m.to_dict() or {}
-            who = "You" if d.get("sender_uid") == uid else person
-            mtype = str(d.get("type") or "text")
-            body = str(d.get("body") or "").strip()
-            if mtype == "photo":
-                body = "[photo]"
-            elif mtype == "voice":
-                body = "[voice message]"
-            elif mtype == "shared_profile":
-                body = "[shared a profile]"
-            lines.append(f"{who}: {body}")
-        return "Recent messages:\n" + "\n".join(lines)
+        return text
 
     return read_dm_thread
 

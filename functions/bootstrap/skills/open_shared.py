@@ -1,4 +1,5 @@
-"""``open_shared_report`` — pull a report the user shared into this chat.
+"""``open_shared_report`` — pull a report (or a human DM chat) the user
+shared into this chat.
 
 Send-to-Ayma used to ship (or, for web research and Appearance, silently
 drop) a shared report's contents with the user's message. The reference
@@ -20,6 +21,12 @@ owner-only report types (Appearance, private Story, match) resolve only
 for their owner / a match participant, and a report the caller may not
 see, or one that no longer exists, comes back as an honest failure the
 model must relay instead of answering from other context.
+
+A ``conversation`` share carries a DM thread id (not a report id) and is
+pulled instead through :func:`fetch_shared_conversation_text`, which reads
+the thread's recent messages — participant-guarded, so a thread the caller
+is not in never resolves — and renders them the same way ``read_dm_thread``
+does.
 
 Text chat only: a staged share card is a composer affordance, and voice
 already has the live screen mirror for the page the user is looking at.
@@ -52,14 +59,14 @@ _MAX_CHARS = 4000
 _DECLARATION = {
     "name": "open_shared_report",
     "description": (
-        "Open the report the user shared with you in this conversation "
-        "(the card in the chat — a web research report, an Appearance "
-        "report, a match report, or their Story). Call this FIRST, before "
-        "answering anything about the shared item: it returns the "
-        "report's actual contents. If it says the report could not be "
-        "opened, tell the user plainly that you couldn't open what they "
-        "shared — never answer about it from other profiles, other "
-        "reports, or earlier conversation instead."
+        "Open the report or chat the user shared with you in this "
+        "conversation (the card in the chat — a web research report, an "
+        "Appearance report, a match report, their Story, or their DM chat "
+        "with another person). Call this FIRST, before answering anything "
+        "about the shared item: it returns the actual contents / messages. "
+        "If it says it could not be opened, tell the user plainly that you "
+        "couldn't open what they shared — never answer about it from other "
+        "profiles, other reports, or earlier conversation instead."
     ),
     "parameters": {"type": "object", "properties": {}},
 }
@@ -69,6 +76,41 @@ _HONEST_FAILURE = (
     "couldn't open what they shared, and do not answer about it from "
     "other context."
 )
+
+_CONVO_HONEST_FAILURE = (
+    "error: I couldn't open that chat — tell the user plainly that you "
+    "couldn't open the conversation they shared, and do not answer about "
+    "it from another conversation or from guesswork."
+)
+
+
+def fetch_shared_conversation_text(
+    db, uid: str, thread_id: str, subject_name: str = ""
+) -> str:
+    """The shared DM thread's recent messages for caller ``uid``, or an honest
+    failure string. The caller must be a participant of the thread (the same
+    rule the DM screen enforces) — a thread id they are not in never resolves.
+    The messages are pulled by reference (the thread id the share carried),
+    never shipped inline (founder 2026-11-09)."""
+    from . import read_dm_thread
+
+    tid = (thread_id or "").strip()
+    if not tid:
+        return _CONVO_HONEST_FAILURE
+    # Access guard: only a participant may read the thread.
+    try:
+        doc = db.collection("dm_threads").document(tid).get()
+        data = (doc.to_dict() if doc.exists else None) or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("open_shared_report: dm thread read failed for %s", tid)
+        return _CONVO_HONEST_FAILURE
+    if uid not in (data.get("participants") or []):
+        return _CONVO_HONEST_FAILURE
+    label = (subject_name or "").strip() or "them"
+    text = read_dm_thread.render_thread_messages(db, uid, tid, label)
+    if text is None:
+        return _CONVO_HONEST_FAILURE
+    return text
 
 
 def _block_text(block: dict) -> str:
@@ -132,11 +174,17 @@ def fetch_shared_report_text(
     kind: str,
     report_id: str,
     subject_uid: str,
+    subject_name: str = "",
     version: str = "",
 ) -> str:
-    """The shared report's text for caller ``uid``, or an honest failure
-    string. The one fetch path — the tool below and the tests both go
+    """The shared report's (or chat's) text for caller ``uid``, or an honest
+    failure string. The one fetch path — the tool below and the tests both go
     through here."""
+    # A human chat (`conversation`) is pulled by its DM thread id, not from
+    # report_hub — the share carried the thread id in ``report_id``.
+    if (kind or "").strip() == "conversation":
+        return fetch_shared_conversation_text(db, uid, report_id, subject_name)
+
     import report_hub
 
     report_type = _KIND_TO_REPORT_TYPE.get((kind or "").strip())
@@ -195,6 +243,7 @@ def _bind(
             kind=kind,
             report_id=report_id,
             subject_uid=subject_uid,
+            subject_name=subject_name,
             version=version,
         )
 
