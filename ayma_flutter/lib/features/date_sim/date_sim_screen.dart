@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
 import '../../services/date_sim_service.dart';
 import '../../services/profile_service.dart';
+import '../../services/voice_session_controller.dart';
 import '../../theme.dart';
 import '../../widgets/ayma_wing_loader.dart';
 import '../../widgets/chat_bubble.dart';
@@ -233,6 +234,17 @@ class _DateSimScreenState extends State<DateSimScreen> {
   /// that makes the backend generate into them: the transcript renders as it
   /// arrives and the UI never depends on the POST response.
   Future<void> _run() async {
+    // A date simulation is not a voice surface, so the single-active-voice
+    // invariant (voice_session_controller.dart §1.3) — which tears a session
+    // down only when a NEW voice surface starts — never fires for it. End any
+    // live Ayma voice call here first, so Ayma doesn't keep talking over the
+    // sim (founder bug: two voices overlapping). stop() is a clean, intentional
+    // end: audio stops, the room is left, session state is cleared, and no
+    // error banner is shown — an intentional end is a clean end.
+    final liveVoice = VoiceSessionController.active;
+    if (liveVoice != null && liveVoice.isActive) {
+      await liveVoice.stop();
+    }
     final simId = _newSimId();
     _stopListening();
     setState(() {
