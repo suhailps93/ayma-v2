@@ -58,6 +58,13 @@ ShareTarget _profileTarget() => ShareTargets.profile(
       photoUrl: 'https://example.com/dillu.jpg',
     );
 
+ShareTarget _conversationTarget() => ShareTargets.conversation(
+      threadId: 't_u1_u2',
+      otherUid: 'u2',
+      otherName: 'Dillu',
+      otherPhoto: 'https://example.com/dillu.jpg',
+    );
+
 /// A host page at '/' (the shell path) with a button that opens the kit
 /// sheet for [target] through the injected [share].
 Widget _sheetHost(ShareTarget target, AymaShare share) {
@@ -194,6 +201,49 @@ void main() {
     expect(captured?.subject, 'Dillu on Ayma');
   });
 
+  testWidgets('conversation sheet is Ayma-only — only Send to Ayma, naming the partner',
+      (tester) async {
+    await tester.pumpWidget(
+        _sheetHost(_conversationTarget(), AymaShare(api: _FakeApi())));
+    await tester.tap(find.text('open sheet'));
+    await tester.pumpAndSettle();
+    expect(find.text('Send to Ayma'), findsOneWidget);
+    // A human chat never leaves the app — no external option, same as Story.
+    expect(find.text('Send externally'), findsNothing);
+    expect(find.text('Your chat with Dillu'), findsOneWidget);
+    expect(find.text('Chat'), findsOneWidget);
+  });
+
+  testWidgets(
+      'conversation Send to Ayma pushes a draft_about by thread reference',
+      (tester) async {
+    await tester.pumpWidget(
+        _sheetHost(_conversationTarget(), AymaShare(api: _FakeApi())));
+    await tester.tap(find.text('open sheet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send to Ayma'));
+    await tester.pumpAndSettle();
+    final k = ChatInbox.instance.take();
+    expect(k?.kind, 'draft_about');
+    expect(k?.shareKind, 'conversation');
+    // By reference: the thread id, never inline message content.
+    expect(k?.refId, 't_u1_u2');
+    expect(k?.targetUid, 'u2');
+    expect(k?.label, 'Dillu');
+    expect(k?.photoUrl, 'https://example.com/dillu.jpg');
+  });
+
+  test('a conversation target refuses any external share outright', () async {
+    final api = _FakeApi();
+    final share = AymaShare(api: api);
+    final target = _conversationTarget();
+    await expectLater(
+      share.shareExternally(_FakeContext(), target),
+      throwsA(isA<ShareKitException>()),
+    );
+    expect(api.linkShareCalls, 0);
+  });
+
   testWidgets('Send to Ayma pushes a draft-about kickoff with the photo',
       (tester) async {
     final api = _FakeApi();
@@ -275,6 +325,11 @@ void main() {
             path: '/appearance/:id',
             builder: (_, state) =>
                 Scaffold(body: Text('APPEARANCE PAGE ${state.pathParameters['id']}')),
+          ),
+          GoRoute(
+            path: '/dm/:id',
+            builder: (_, state) =>
+                Scaffold(body: Text('DM PAGE ${state.pathParameters['id']}')),
           ),
         ],
       );
@@ -417,6 +472,51 @@ void main() {
       await tester.tap(find.text('APPEARANCE REPORT · TAP TO OPEN'));
       await tester.pumpAndSettle();
       expect(find.text('APPEARANCE PAGE u5'), findsOneWidget);
+    });
+
+    testWidgets(
+        'Send to Ayma for a chat stages the chat card; tapping it opens the thread',
+        (tester) async {
+      await pumpChat(
+        tester,
+        kickoff: _conversationTarget().aymaKickoff(),
+        sendStaged: false,
+      );
+      expect(find.byKey(const ValueKey('stagedSharedChip')), findsOneWidget);
+      expect(find.text('Your chat with Dillu'), findsOneWidget);
+      expect(find.text('CHAT · TAP TO OPEN'), findsOneWidget);
+      expect(find.byType(AymaPhoto), findsOneWidget);
+      expect(find.byIcon(Icons.push_pin_outlined), findsNothing);
+
+      // Tapping the staged card opens the DM thread (founder-approved card).
+      await tester.tap(find.text('CHAT · TAP TO OPEN'));
+      await tester.pumpAndSettle();
+      expect(find.text('DM PAGE t_u1_u2'), findsOneWidget);
+    });
+
+    testWidgets(
+        'sending a staged chat carries the reference (thread id), never the messages',
+        (tester) async {
+      final captured = <Map<String, dynamic>>[];
+      await pumpChat(
+        tester,
+        kickoff: _conversationTarget().aymaKickoff(),
+        sendStaged: false,
+        capturedCalls: captured,
+      );
+      // Tap send with no typed opener — no canned message (founder Nov 9).
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+
+      expect(captured, hasLength(1));
+      // The reference rides (Ayma pulls the messages herself with it)…
+      expect(captured.single['shared_kind'], 'conversation');
+      expect(captured.single['shared_ref_id'], 't_u1_u2');
+      // …and the card rides for rendering, by reference too.
+      expect(captured.single['shared_card_kind'], 'conversation');
+      expect(captured.single['shared_card_ref_id'], 't_u1_u2');
+      // Never a canned opener.
+      expect(find.textContaining("Here's my conversation"), findsNothing);
     });
 
     testWidgets(

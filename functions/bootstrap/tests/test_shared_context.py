@@ -176,6 +176,76 @@ def test_tool_match_is_participants_only(monkeypatch):
     assert "ZZZNOTYOURMATCH" not in text
 
 
+_THREAD_ID = "test-uid__zzz-other"
+
+_CONVO_SEED = {
+    ("dm_threads", _THREAD_ID): {"participants": [UID, OTHER]},
+    ("dm_threads", _THREAD_ID, "messages", "m1"): {
+        "sender_uid": OTHER, "body": "ZZZMSGONE hey, how was your week?",
+        "type": "text", "created_at": _RUN1,
+    },
+    ("dm_threads", _THREAD_ID, "messages", "m2"): {
+        "sender_uid": UID, "body": "ZZZMSGTWO busy but good!",
+        "type": "text", "created_at": _RUN2,
+    },
+}
+
+
+def test_tool_returns_the_shared_conversation_by_thread_id(monkeypatch):
+    db = _seeded(monkeypatch, dict(_CONVO_SEED))
+    text = open_shared.fetch_shared_report_text(
+        db, UID, kind="conversation", report_id=_THREAD_ID,
+        subject_uid=OTHER, subject_name="Dillu",
+    )
+    # Both messages, rendered from the caller's point of view (You vs Dillu).
+    assert "ZZZMSGONE" in text
+    assert "ZZZMSGTWO" in text
+    assert "Dillu: ZZZMSGONE" in text
+    assert "You: ZZZMSGTWO" in text
+
+
+def test_tool_conversation_refuses_a_non_participant(monkeypatch):
+    # A thread the caller is not a participant of never resolves — even if
+    # the thread id is passed directly.
+    db = _seeded(monkeypatch, {
+        ("dm_threads", "zzz-a__zzz-b"): {"participants": ["zzz-a", "zzz-b"]},
+        ("dm_threads", "zzz-a__zzz-b", "messages", "m1"): {
+            "sender_uid": "zzz-a", "body": "ZZZNOTYOURS secret",
+            "type": "text", "created_at": _RUN1,
+        },
+    })
+    text = open_shared.fetch_shared_report_text(
+        db, UID, kind="conversation", report_id="zzz-a__zzz-b",
+        subject_uid="zzz-a", subject_name="Someone",
+    )
+    assert text.startswith("error:")
+    assert "ZZZNOTYOURS" not in text
+
+
+def test_chat_turn_with_conversation_reference_binds_the_pull_tool(monkeypatch):
+    seen = _capture_chat(monkeypatch, dict(_CONVO_SEED), {
+        "message": "what do you make of this?",
+        "viewing_profile_uid": OTHER,
+        "shared_kind": "conversation",
+        "shared_ref_id": _THREAD_ID,
+        "shared_subject_uid": OTHER,
+        "shared_subject_name": "Dillu",
+    })
+    # The prompt names the shared chat and requires opening it...
+    assert "SHARED CHAT" in seen["prompt"]
+    assert "chat with Dillu" in seen["prompt"]
+    assert "open_shared_report" in seen["prompt"]
+    # ...but carries the REFERENCE only — never the messages themselves.
+    assert "ZZZMSGONE" not in seen["prompt"]
+    assert "ZZZMSGTWO" not in seen["prompt"]
+    # The tool is declared and bound to this exact thread: calling it (as the
+    # model does before answering) pulls the real messages in.
+    assert "open_shared_report" in seen["names"]
+    pulled = seen["fns"]["open_shared_report"]()
+    assert "ZZZMSGONE" in pulled
+    assert "ZZZMSGTWO" in pulled
+
+
 def test_declaration_only_present_when_shared():
     names = {d["name"] for d in session_tool_declarations()}
     assert "open_shared_report" not in names

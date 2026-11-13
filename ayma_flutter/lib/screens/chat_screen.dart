@@ -963,9 +963,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             'appearance' =>
               "Here's my appearance report. Walk me through it — what "
                   "stands out, and what should I do with it?",
-            'conversation' =>
-              "Here's my conversation with $who. Pull it up and tell me what "
-                  "you make of it — and what I should do next.",
             'match' =>
               "Here's my match report with $who. Walk me through it — what "
                   "stands out, and is this worth pursuing?",
@@ -2260,11 +2257,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (ps.kind == 'match' && ps.refId.isNotEmpty) {
         _matchReportId = ps.refId;
       }
-      // A posted report card leaves its REFERENCE on the session (the
-      // recursive send below — and every later turn — carries it; Ayma
-      // pulls the report herself). Any other card kind clears a previous
-      // reference: it always names the most recently shared report.
-      if (ps.kind == 'deep_dive' || ps.kind == 'appearance') {
+      // A posted report or chat card leaves its REFERENCE on the session
+      // (the recursive send below — and every later turn — carries it; Ayma
+      // pulls the report / the messages herself). Any other card kind clears
+      // a previous reference: it always names the most recently shared one.
+      if (ps.kind == 'deep_dive' ||
+          ps.kind == 'appearance' ||
+          ps.kind == 'conversation') {
         _sharedKind = ps.kind;
         _sharedRefId = ps.refId;
         _sharedSubjectUid = ps.uid;

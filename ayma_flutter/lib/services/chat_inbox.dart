@@ -19,7 +19,6 @@ class ChatKickoff {
     this.attachmentPath = '',
     this.attachmentPaths = const [],
     this.photoSource = '',
-    this.conversation = false,
     this.shareKind = '',
     this.photoUrl = '',
     this.refId = '',
@@ -93,13 +92,11 @@ class ChatKickoff {
           photoSource: useAllPhotos ? 'existing' : 'added');
 
   /// Bring something into the Ayma chat to talk about — it shows as a card and
-  /// Ayma gets it as context. [shareKind] is `profile` / `conversation` /
-  /// `match`; [refId] is the DM thread id or match id (empty for a bare
-  /// profile). [conversation] true also asks Ayma to pull the DM thread.
+  /// Ayma gets it as context. [shareKind] is `profile` / `match`; [refId] is
+  /// the match id (empty for a bare profile).
   factory ChatKickoff.talkAbout({
     required String targetUid,
     String label = '',
-    bool conversation = false,
     String shareKind = 'profile',
     String photoUrl = '',
     String refId = '',
@@ -108,7 +105,6 @@ class ChatKickoff {
       ChatKickoff._('talk_about',
           targetUid: targetUid,
           label: label,
-          conversation: conversation,
           shareKind: shareKind,
           photoUrl: photoUrl,
           refId: refId,
@@ -119,7 +115,8 @@ class ChatKickoff {
   /// types their own question with the target attached as context. Unlike
   /// [talkAbout] (which seeds a message and auto-sends), nothing is sent until
   /// the user hits send. [shareKind] is `profile` / `story` / `deep_dive` /
-  /// `match` / `appearance`; [refId] the report id or match id.
+  /// `match` / `appearance` / `conversation`; [refId] the report id, match id
+  /// or DM thread id (for `conversation`, by reference — Ayma pulls it).
   factory ChatKickoff.draftAbout({
     required String targetUid,
     String label = '',
@@ -184,13 +181,12 @@ class ChatKickoff {
   /// (carried in [refId]).
   String get nodeId => refId;
 
-  /// [talkAbout]: also fold in the DM conversation with this person.
-  final bool conversation;
-
-  /// [talkAbout]: `profile` / `conversation` / `match` — picks the card + seed.
+  /// [talkAbout]: `profile` / `match`; [draftAbout]: also `conversation` /
+  /// `story` / `deep_dive` / `appearance` — picks the card + seed.
   final String shareKind;
 
-  /// [talkAbout]: photo for the card, and the DM thread / match id it opens.
+  /// Photo for the card, and the reference the card opens / Ayma pulls — a
+  /// match id ([talkAbout]) or the report / DM thread id ([draftAbout]).
   final String photoUrl;
   final String refId;
 
