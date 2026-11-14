@@ -28,11 +28,20 @@ class AccentColorController extends ChangeNotifier {
         _profiles = profileService ?? ProfileService();
 
   static const _key = 'accent_color_hex';
+  static const _customKey = 'accent_custom_hex';
 
   final ProfileService _profiles;
 
   Color _color;
   Color get color => _color;
+
+  Color? _customColor;
+  Color? get customColor => _customColor;
+
+  static bool _isPreset(Color c) {
+    final argb = c.toARGB32();
+    return accentPresets.any((p) => p.color.toARGB32() == argb);
+  }
 
   /// Fast-path local hydration from preloaded preferences (zero network).
   void loadFromPrefs(SharedPreferences prefs) {
@@ -41,11 +50,28 @@ class AccentColorController extends ChangeNotifier {
       final local = _parse(raw);
       if (local != null) {
         _color = local;
-        notifyListeners();
       }
+      final rawCustom = prefs.getString(_customKey);
+      final localCustom = _parse(rawCustom);
+      if (localCustom != null) {
+        _customColor = localCustom;
+      } else if (local != null && !_isPreset(local)) {
+        _customColor = local;
+      }
+      notifyListeners();
     } catch (_) {
       // Keep default on read failure
     }
+  }
+
+  /// Saves [color] as the Custom swatch in Appearance settings and persists it locally.
+  Future<void> saveCustomColor(Color color) async {
+    _customColor = color;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_customKey, _toHex(color));
+    } catch (_) {/* best-effort */}
   }
 
   /// Syncs the server-side accent colour if missing from local storage.

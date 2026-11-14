@@ -346,6 +346,7 @@ and also `UI`:
 | Appearance row | Open Appearance | COVERED `open_screen appearance_settings` |
 | Privacy row | Open Privacy | COVERED `open_screen privacy_settings` |
 | Accent Color row (in Appearance) | Open accent picker | COVERED `open_screen accent_color`; setting it is `app_action accent_color` |
+| Pick from camera (in Appearance) | Sample accent colour live with camera | `UI` (live camera preview + sampling ring; camera permission + frame sampling are local); opens via `open_screen camera_color_picker` |
 | Pause matching switch (in Privacy) | Pause/resume matching | COVERED `app_action pause_matching` / `resume_matching` |
 | Notification preferences row | Open notification prefs | COVERED `open_screen notification_settings` |
 | Face verified / Verify your face (in Privacy) | Start face verification | `UI` for entry; the selfie + consent are the user's |
