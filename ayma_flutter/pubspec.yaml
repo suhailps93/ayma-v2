@@ -42,6 +42,7 @@ dependencies:
   sign_in_with_apple: ^7.0.1
   cloud_firestore: ^6.9.0
   firebase_storage: ^13.5.0
+  camera: ^0.11.1
   image_picker: ^1.2.1
   cached_network_image: ^3.4.1
   # Direct dep for DefaultCacheManager (the image viewer's share/download
