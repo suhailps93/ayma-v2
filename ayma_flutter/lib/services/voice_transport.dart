@@ -185,6 +185,25 @@ AudioCaptureOptions captureAudioOptions({
 /// connect failures.
 bool isIceConnectivityFailure(Object error) => error is MediaConnectException;
 
+/// Short route kind for a platform audio-output [label] (the platform
+/// reports things like 'Speakerphone', 'Earpiece', 'Bluetooth...',
+/// 'Wired Headset'), for the `[voice-playback]` route log lines. Pure so
+/// tests can pin the mapping; anything unrecognised is `other`, and a
+/// missing label is `unknown`.
+String audioOutputRouteKind(String? label) {
+  final l = (label ?? '').toLowerCase();
+  if (l.isEmpty) return 'unknown';
+  if (l.contains('bluetooth')) return 'bluetooth';
+  if (l.contains('speaker')) return 'speaker';
+  if (l.contains('earpiece') || l.contains('receiver')) return 'earpiece';
+  if (l.contains('wired') ||
+      l.contains('headset') ||
+      l.contains('headphone')) {
+    return 'wired';
+  }
+  return 'other';
+}
+
 /// Real transport backed by a LiveKit [Room].
 class LiveKitVoiceTransport implements VoiceTransport {
   LiveKitVoiceTransport();
@@ -192,6 +211,12 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Room? _room;
   EventsListener<RoomEvent>? _listener;
   Timer? _levelTimer;
+  StreamSubscription<List<MediaDevice>>? _deviceChangeSub;
+
+  /// Latched when this connection's first remote audio track subscribes —
+  /// the moment agent audio can actually reach the speakers — so the
+  /// `[voice-playback] playback start` line fires once per call.
+  bool _playbackStarted = false;
   final _agentReady = StreamController<bool>.broadcast();
   final _agentSpeaking = StreamController<bool>.broadcast();
   final _transcripts = StreamController<TranscriptSegment>.broadcast();
@@ -247,6 +272,33 @@ class LiveKitVoiceTransport implements VoiceTransport {
     if (!_agentReady.isClosed) _agentReady.add(true);
   }
 
+  /// Playback-side evidence for the "user heard nothing" class of bug
+  /// (founder feedback RFLpFWkaaCuDC0ew1MUT, 2026-11-14): the server proved
+  /// it published audio and the bytes reached the phone, but the app kept
+  /// no record of subscription, mute, or output-route state on the device.
+  /// These `[voice-playback]` lines are that record. Logging only — nothing
+  /// here changes playback, routing, or volume behaviour.
+  void _logPlayback(String message) =>
+      debugPrint('[voice-playback] $message');
+
+  /// Log the current audio output route (selected device plus everything
+  /// the platform offers) at [why] ('connect' / 'device change').
+  /// Best-effort: a platform lookup failure is itself logged, never thrown
+  /// into the call.
+  Future<void> _logAudioRoute(String why) async {
+    try {
+      final outputs = await Hardware.instance.audioOutputs();
+      final selected = Hardware.instance.selectedAudioOutput;
+      _logPlayback('audio route ($why): '
+          'kind=${audioOutputRouteKind(selected?.label)} '
+          'selected=${selected?.label ?? 'none'} '
+          'speakerOn=${AudioManager.instance.isSpeakerOutputPreferred} '
+          'outputs=[${outputs.map((d) => d.label).join(', ')}]');
+    } catch (e) {
+      _logPlayback('audio route ($why): lookup failed: $e');
+    }
+  }
+
   @override
   Stream<TranscriptSegment> get transcripts => _transcripts.stream;
 
@@ -277,6 +329,7 @@ class LiveKitVoiceTransport implements VoiceTransport {
     required String token,
     bool forceRelay = false,
   }) async {
+    _playbackStarted = false;
     debugPrint('[voice] connect -> $url (token ${token.length} chars)'
         '${forceRelay ? ' [ice-relay-retry: TURN relay forced]' : ''}');
     final isDisabled = await DebugCaptureIsolation.readAtConnect();
@@ -308,9 +361,40 @@ class LiveKitVoiceTransport implements VoiceTransport {
       ..on<TrackSubscribedEvent>((e) {
         debugPrint(
             '[voice] track subscribed: ${e.track.kind} from ${e.participant.identity}');
-        // First remote audio track = the agent is in the room and audible.
         if (e.track.kind == TrackType.AUDIO) {
+          _logPlayback('remote audio subscribed: sid=${e.publication.sid} '
+              'from=${e.participant.identity} muted=${e.publication.muted}');
+          if (!_playbackStarted) {
+            _playbackStarted = true;
+            _logPlayback('playback start: first remote audio track live '
+                '(sid=${e.publication.sid})');
+          }
+          // First remote audio track = the agent is in the room and audible.
           _markAgentReady('remote audio from ${e.participant.identity}');
+        }
+      })
+      ..on<TrackUnsubscribedEvent>((e) {
+        if (e.publication.kind == TrackType.AUDIO) {
+          _logPlayback('remote audio unsubscribed: sid=${e.publication.sid} '
+              'from=${e.participant.identity}');
+        }
+      })
+      ..on<TrackSubscriptionExceptionEvent>((e) {
+        _logPlayback('track subscription FAILED: sid=${e.sid} '
+            'reason=${e.reason} participant=${e.participant?.identity}');
+      })
+      ..on<TrackMutedEvent>((e) {
+        if (e.participant is RemoteParticipant &&
+            e.publication.kind == TrackType.AUDIO) {
+          _logPlayback('remote audio muted: sid=${e.publication.sid} '
+              'from=${e.participant.identity}');
+        }
+      })
+      ..on<TrackUnmutedEvent>((e) {
+        if (e.participant is RemoteParticipant &&
+            e.publication.kind == TrackType.AUDIO) {
+          _logPlayback('remote audio unmuted: sid=${e.publication.sid} '
+              'from=${e.participant.identity}');
         }
       })
       ..on<RoomReconnectingEvent>((_) {
@@ -356,12 +440,21 @@ class LiveKitVoiceTransport implements VoiceTransport {
       rethrow;
     }
 
+    unawaited(_logAudioRoute('connect'));
+    _deviceChangeSub ??= Hardware.instance.onDeviceChange.stream
+        .listen((_) => unawaited(_logAudioRoute('device change')));
+
     _startLevelSampling();
 
     // Warm worker: the agent may already be in the room with an audio track
     // published, so no future TrackSubscribedEvent will fire — latch now.
     for (final p in room.remoteParticipants.values) {
       if (p.audioTrackPublications.isNotEmpty) {
+        if (!_playbackStarted) {
+          _playbackStarted = true;
+          _logPlayback('playback start: agent audio already live at '
+              'connect (from=${p.identity})');
+        }
         _markAgentReady('agent already in room: ${p.identity}');
         break;
       }
@@ -482,6 +575,8 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Future<void> disconnect() async {
     _levelTimer?.cancel();
     _levelTimer = null;
+    await _deviceChangeSub?.cancel();
+    _deviceChangeSub = null;
     await _room?.disconnect();
   }
 
@@ -489,6 +584,8 @@ class LiveKitVoiceTransport implements VoiceTransport {
   Future<void> dispose() async {
     _levelTimer?.cancel();
     _levelTimer = null;
+    await _deviceChangeSub?.cancel();
+    _deviceChangeSub = null;
     await _listener?.dispose();
     await _room?.dispose();
     _room = null;
