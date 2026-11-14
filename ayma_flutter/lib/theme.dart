@@ -109,6 +109,14 @@ class AymaColors {
     );
   }
 
+  /// Constructs a [Color] from alpha, red, green, and blue integer values (0-255).
+  ///
+  /// Centralizes runtime color construction in `theme.dart` per
+  /// `color_audit_test.dart` requirements.
+  static Color fromARGB(int a, int r, int g, int b) {
+    return Color.fromARGB(a, r, g, b);
+  }
+
   static const success = Color(0xFF4CAF7D);
   static const error = Color(0xFFCF4B4B);
   static const warning = Color(0xFFD9A441);

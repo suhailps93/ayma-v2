@@ -7,6 +7,7 @@ import '../services/camera_color_sampler.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/overflow_guards.dart';
 
 /// Live circular camera color picker for sampling accent colors.
 ///
@@ -181,128 +182,138 @@ class _CameraColorPickerScreenState extends State<CameraColorPickerScreen> {
         title: const Text('Pick from camera'),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Text(
-                'Point the back camera at any colour to sample it live.',
-                style: AymaType.sans(size: 14, color: ac.fgDim),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 28),
-              // Circular live preview with sampling center ring and swatch next to it
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Circular camera preview
-                  SizedBox(
-                    width: 180,
-                    height: 180,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        ClipOval(
-                          child: SizedBox(
-                            width: 180,
-                            height: 180,
-                            child: _controller != null &&
-                                    _controller!.value.isInitialized
-                                ? FittedBox(
-                                    fit: BoxFit.cover,
-                                    child: SizedBox(
-                                      width: _controller!
-                                              .value.previewSize?.height ??
-                                          180,
-                                      height: _controller!
-                                              .value.previewSize?.width ??
-                                          180,
-                                      child: CameraPreview(_controller!),
-                                    ),
-                                  )
-                                : Container(
-                                    key: const Key('cameraPreviewFallback'),
-                                    color: ac.bgElev,
-                                    alignment: Alignment.center,
-                                    child: Icon(
-                                      Icons.camera_alt_outlined,
-                                      size: 40,
-                                      color: ac.fgMute,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                        // Center sampling ring
-                        IgnorePointer(
-                          child: Container(
-                            key: const Key('samplingCenterRing'),
-                            width: 26,
-                            height: 26,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Colors.black45,
-                                  blurRadius: 4,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  // Swatch and hex value next to the circle
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Picked color',
-                        style: AymaType.sans(
-                            size: 12, soft: true, color: ac.fgMute),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
+        child: ChromeColumn(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  'Point the back camera at any colour to sample it live.',
+                  style: AymaType.sans(size: 14, color: ac.fgDim),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                // Circular live preview with sampling center ring and swatch next to it
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 20,
+                  runSpacing: 16,
+                  children: [
+                    // Circular camera preview
+                    SizedBox(
+                      width: 180,
+                      height: 180,
+                      child: Stack(
+                        alignment: Alignment.center,
                         children: [
-                          Container(
-                            key: const Key('pickedColorSwatch'),
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: _currentColor,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: ac.fg, width: 1.5),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Colors.black12,
-                                  blurRadius: 4,
-                                ),
-                              ],
+                          ClipOval(
+                            child: SizedBox(
+                              width: 180,
+                              height: 180,
+                              child: _controller != null &&
+                                      _controller!.value.isInitialized
+                                  ? FittedBox(
+                                      fit: BoxFit.cover,
+                                      child: SizedBox(
+                                        width: _controller!
+                                                .value.previewSize?.height ??
+                                            180,
+                                        height: _controller!
+                                                .value.previewSize?.width ??
+                                            180,
+                                        child: CameraPreview(_controller!),
+                                      ),
+                                    )
+                                  : Container(
+                                      key: const Key('cameraPreviewFallback'),
+                                      color: ac.bgElev,
+                                      alignment: Alignment.center,
+                                      child: Icon(
+                                        Icons.camera_alt_outlined,
+                                        size: 40,
+                                        color: ac.fgMute,
+                                      ),
+                                    ),
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            CameraColorSampler.toHex(_currentColor),
-                            key: const Key('pickedColorHex'),
-                            style: AymaType.mono(
-                              size: 15,
-                              weight: FontWeight.w600,
-                              color: ac.fg,
+                          // Center sampling ring
+                          IgnorePointer(
+                            child: Container(
+                              key: const Key('samplingCenterRing'),
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border:
+                                    Border.all(color: Colors.white, width: 2),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black45,
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                ],
-              ),
-              const Spacer(),
-              SizedBox(
+                    ),
+                    // Swatch and hex value next to the circle
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Picked color',
+                          style: AymaType.sans(
+                              size: 12, soft: true, color: ac.fgMute),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              key: const Key('pickedColorSwatch'),
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: _currentColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: ac.fg, width: 1.5),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black12,
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              CameraColorSampler.toHex(_currentColor),
+                              key: const Key('pickedColorHex'),
+                              style: AymaType.mono(
+                                size: 15,
+                                weight: FontWeight.w600,
+                                color: ac.fg,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          footer: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   key: const Key('useThisColorButton'),
@@ -310,9 +321,8 @@ class _CameraColorPickerScreenState extends State<CameraColorPickerScreen> {
                   child: const Text('Use this color'),
                 ),
               ),
-              const SizedBox(height: 16),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
