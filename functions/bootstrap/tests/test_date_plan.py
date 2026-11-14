@@ -1,4 +1,6 @@
 """Plan-a-date (payment-free): propose, approve, both-approved, suggest."""
+from datetime import datetime, timezone
+
 import pytest
 
 import date_plan
@@ -7,7 +9,7 @@ from tests.test_dm_ops import FakeDb
 
 PLACE = dict(place_name="Sakura Sushi", address="1 Main St, San Jose",
              lat=37.3382, lng=-121.8863, time_label="Friday at 8:00 PM",
-             starts_at="2026-11-13T20:00:00+00:00")
+             starts_at="2027-11-13T20:00:00+00:00")
 
 
 def _card(db, proposer="a", parts=("a", "b")):
@@ -85,7 +87,7 @@ def test_suggestion_revises_and_resets_approvals():
     revised = date_plan.suggest_change(
         db, "a__b", mid, "b", place_name="Blue Door Coffee",
         address="9 Market St", lat=37.3, lng=-121.9,
-        time_label="Saturday at 2:00 PM", starts_at="2026-11-14T14:00:00+00:00",
+        time_label="Saturday at 2:00 PM", starts_at="2027-11-14T14:00:00+00:00",
         note="can we do coffee instead?")
     assert revised["revision"] == 2
     assert revised["status"] == "proposed"
@@ -99,7 +101,7 @@ def test_suggestion_overrides_only_given_fields():
     mid, _ = _card(db)
     revised = date_plan.suggest_change(
         db, "a__b", mid, "a", time_label="Friday at 9:00 PM",
-        starts_at="2026-11-13T21:00:00+00:00")
+        starts_at="2027-11-13T21:00:00+00:00")
     assert revised["place_name"] == "Sakura Sushi"  # carried over
     assert revised["time_label"] == "Friday at 9:00 PM"
     assert revised["approvals"] == {}
@@ -131,3 +133,35 @@ def test_suggestion_clears_active_pointer():
     assert _active(db, "a") is not None
     date_plan.suggest_change(db, "a__b", mid, "b", time_label="later")
     assert _active(db, "a") is None and _active(db, "b") is None
+
+
+def test_propose_rejects_a_time_already_passed():
+    now = datetime(2026, 11, 14, 22, 30, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="already passed"):
+        date_plan.propose_plan(
+            place_name="Cafe", address="2 Oak Ave",
+            starts_at="2026-11-13T20:00:00+00:00", now=now)
+    # A couple of minutes in the past is within the grace: a plan for
+    # "right now" still goes through.
+    plan = date_plan.propose_plan(
+        place_name="Cafe", address="2 Oak Ave",
+        starts_at="2026-11-14T22:28:00+00:00", now=now)
+    assert plan["status"] == "proposed"
+
+
+def test_propose_ignores_a_missing_or_loose_time():
+    plan = date_plan.propose_plan(place_name="Cafe", address="2 Oak Ave")
+    assert plan["starts_at"] == ""
+    plan = date_plan.propose_plan(
+        place_name="Cafe", address="2 Oak Ave", starts_at="Friday night")
+    assert plan["starts_at"] == "Friday night"
+
+
+def test_suggest_change_rejects_a_time_already_passed():
+    db = FakeDb()
+    mid, _ = _card(db)
+    now = datetime(2026, 11, 14, 22, 30, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="already passed"):
+        date_plan.suggest_change(
+            db, "a__b", mid, "a", starts_at="2026-11-13T21:00:00+00:00",
+            now=now)
