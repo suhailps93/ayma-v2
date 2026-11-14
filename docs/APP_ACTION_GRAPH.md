@@ -45,7 +45,7 @@ entries and commands** — see "Keeping this graph alive" at the end.
    `edit_profile_section`, `edit_story_entry` / `remove_story_entry`,
    `edit_photo` / `delete_photo` / `update_photo_note`,
    `run_appearance_report`, `deep_dive` / `rerun_web_research`,
-   `rerun_match_report`,
+   `rerun_match_report`, `propose_date_plan`,
    `correct_*` / `remove_*` report-item tools, `next_questions` /
    `record_answer`, `submit_feedback` / `record_feedback`, `report_bug`,
    `generate_image`, the guided-tour family, and `play_voice_clip`
@@ -198,6 +198,9 @@ undone.)
 | Mic: hold-to-record voice note, slide cancel/lock, pause/delete/send | Send a voice note to the person | Recording is the user's voice: `AUTO` flow |
 | **Voice note play/pause in a DM bubble** | **Play a voice note in the thread** | **GAP-2 (S)** — playback exists for the user; Ayma's `play_voice_clip` covers the Ayma chat only (the DM bubble resolves its clip URL in per-bubble state, which no registry can see yet) |
 | Attachment button: Photo / Camera / File | Attach media | `UI` for the entry; OS picker is the user's |
+| Attach sheet: "Plan a date" | Propose a place + time; posts the date-plan card in this thread | COVERED `propose_date_plan` — she runs the propose endpoint's own write path, from this thread or from a chat ask naming the person; own thread only — no existing conversation, no card, and she says so |
+| Date-plan card: Approve | Approve the plan for yourself (the second approval locks it in) | `UI` |
+| Date-plan card: "Suggest a change" | Revise the place/time; approvals reset | `UI` |
 | Photo bubble (tap) | Image viewer | `UI` |
 | "Share this chat with Ayma" | Bring the thread into the Ayma chat | `UI` |
 | "Translate" / "Show original" / "Show translation" button under a bubble (only on an incoming message in a different language than the reader's) | Translate that one message in place / back to the original | `UI` |
@@ -570,6 +573,7 @@ client identifier fails.
   `correct_appearance_item`, `clear_appearance_item`, `deep_dive`,
   `rerun_web_research`, `correct_deep_dive_item`,
   `remove_deep_dive_item`.
-* **Messages**: `send_dm_message`, `read_dm_thread`.
+* **Messages**: `send_dm_message`, `read_dm_thread`,
+  `propose_date_plan`.
 * **Feedback & misc**: `submit_feedback`, `record_feedback`,
   `report_bug`, `generate_image`.

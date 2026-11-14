@@ -46,6 +46,16 @@ _IMAGE_CHIP_SUCCESS = {
     "edit_photo": "done — sent the edited photo in the chat",
 }
 
+# Write tools whose chip claims a durable thing now exists in a DM thread.
+# Each skill returns its success line ONLY when the write really landed;
+# every failure path (no thread, unlocatable place, past time) returns a
+# plain explanation instead, so gating the chip on the exact success
+# marker keeps a failed attempt from showing a success chip — the same
+# contract as the image tools above.
+_POSTED_CHIP_SUCCESS = {
+    "propose_date_plan": "done — posted the date plan card",
+}
+
 TOOL_LABELS = {
     # Built-in grounding
     "web_search": "Searched the web",
@@ -59,6 +69,7 @@ TOOL_LABELS = {
     "analyze_physical_attributes": "Read your photos",
     "run_appearance_report": "Refreshed your appearance report",
     "rerun_match_report": "Re-ran your match report",
+    "propose_date_plan": "Posted your date plan card",
     "generate_image": "Generated an image",
     # Notes & profile
     "add_followup_question": "Noted a follow-up",
@@ -172,7 +183,11 @@ def outcome_label(name: str, result: object) -> str | None:
     The image tools (:data:`_IMAGE_CHIP_SUCCESS`) only earn their chip when
     the skill's result is its success line — the image really was generated
     and sent. Any other result returns :data:`NO_CHIP` (founder report
-    2026-11-09)."""
+    2026-11-09).
+
+    The thread-write tools (:data:`_POSTED_CHIP_SUCCESS`) follow the same
+    rule: the chip shows only when the skill's result is its success line —
+    the card really was posted into the thread."""
     if name in _NAV_CHIP_TOOLS:
         if isinstance(result, str) and result.startswith("navigated:"):
             return None
@@ -180,6 +195,12 @@ def outcome_label(name: str, result: object) -> str | None:
     if name in _IMAGE_CHIP_SUCCESS:
         if isinstance(result, str) and result.startswith(
             _IMAGE_CHIP_SUCCESS[name]
+        ):
+            return None
+        return NO_CHIP
+    if name in _POSTED_CHIP_SUCCESS:
+        if isinstance(result, str) and result.startswith(
+            _POSTED_CHIP_SUCCESS[name]
         ):
             return None
         return NO_CHIP
@@ -208,6 +229,7 @@ WORKING_LABELS = {
     "analyze_physical_attributes": "Reading your photos…",
     "run_appearance_report": "Refreshing your appearance report…",
     "rerun_match_report": "Re-running your match report…",
+    "propose_date_plan": "Posting your date plan card…",
     "generate_image": "Generating an image…",
     # Notes & profile
     "add_followup_question": "Making a note…",

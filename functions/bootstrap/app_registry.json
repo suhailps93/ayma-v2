@@ -266,6 +266,14 @@
     "command": "play_voice_clip",
     "client_action": "play_voice_clip"
   },
+  "date_plan_card": {
+    "_doc": "Date-plan card (Plan a date, location piece 1): the DM thread attach sheet's 'Plan a date' button posts a date-plan card (place + time) into the thread via POST /dm/{thread_id}/date-plan/propose, and each person approves it there. Ayma CAN post the same card from a chat/voice ask — the propose_date_plan tool (skills/propose_date_plan.py) runs the endpoint's exact write path (Places resolve, date_plan.propose_plan, date_plan.post_date_plan_message), so a chat-posted card renders identically to a button-posted one. Scoped to a DM thread the caller is already in (the pair is always the caller + the named person): own thread only, never a third party's, and with no existing conversation there is no card — she says so plainly instead of describing a plan that never appears (founder feedback zVnQBIG0HGvSpx8Egwei, 2026-11-14: the brain previously had no date-plan tool at all). Approving a card or suggesting a change stays each person's own tap in the thread (UI). No route of its own — the card lives inside the DM thread — so, like inbox_actions, deliberately not a destination.",
+    "key": "date_plan_card",
+    "label": "Plan a date (post the date-plan card)",
+    "aliases": ["plan a date", "plan our date", "plan a date with", "post a date plan", "date plan card", "set up a date"],
+    "operated_by_ayma": true,
+    "command": "propose_date_plan"
+  },
   "inbox_actions": {
     "_doc": "Inbox bulk actions (ACTION PARITY priority gaps, founder feedback items 9-11, 2026-11-06): the bulk buttons on the Notifications page and the Messages list are Ayma-operable — the tools in skills/app_control_inbox.py queue the client commands below and AppCommandService + InboxActions run the same NotificationService / DmService writes as the buttons, acking with the count that moved. set_notification_filter writes the shared NotificationFilterState the page's filter chips also write, then navigates to the page. Clear all is destructive: Ayma confirms with the user in conversation before calling it (her tool description carries that rule), the same check the button's dialog performs. No route of their own, so — like voice_clip_playback — deliberately not destinations.",
     "key": "inbox_actions",
