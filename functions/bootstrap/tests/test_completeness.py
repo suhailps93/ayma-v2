@@ -523,8 +523,9 @@ def test_intent_unset_returns_only_the_global_core(monkeypatch):
     # the Qloo Taste page) is a branch-`all` section, so it also shows
     # pre-intent, like interests.
     assert section_pts <= {
-        "identity", "personality", "lifestyle", "family", "social_circle",
-        "career", "values", "interests", "taste", "dealbreakers", "sensitive",
+        "identity", "looking_for", "personality", "lifestyle", "family",
+        "social_circle", "career", "values", "interests", "taste",
+        "dealbreakers", "sensitive",
     }
     assert not section_pts & {"goals", "relationships", "finances"}
 

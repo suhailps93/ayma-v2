@@ -185,7 +185,7 @@
     {
       "id": "relocation_radius",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Relocation / travel radius",
       "kind": "enum",
@@ -1198,7 +1198,7 @@
     {
       "id": "partner_age_min",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Youngest partner age",
       "kind": "scale",
@@ -1217,7 +1217,7 @@
     {
       "id": "partner_age_max",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Oldest partner age",
       "kind": "scale",
@@ -1236,7 +1236,7 @@
     {
       "id": "geographic_flexibility",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Geographic flexibility",
       "kind": "enum",

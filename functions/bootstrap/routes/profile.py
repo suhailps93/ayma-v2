@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from auth import require_uid
 import dm_ops
 import profile_bullets
+import profile_graph
 import profile_manual
 from skills import questionnaire as questionnaire_skill
 
@@ -181,6 +182,24 @@ async def profile_bullets_create(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/profile/graph")
+async def profile_graph_mine(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """The caller's person-graph (every section with at least one bullet, each
+    bullet a leaf node carrying its visibility) for the clickable graph view."""
+    return await asyncio.to_thread(profile_graph.get_graph, get_db(), uid)
+
+
+@router.get("/profile/graph/{target_uid}")
+async def profile_graph_other(
+    target_uid: str, uid: str = Depends(require_adult_uid)
+) -> dict[str, object]:
+    """Another member's person-graph — public bullets only (nothing private or
+    Ayma-only), the same shape so one renderer draws both."""
+    return await asyncio.to_thread(
+        profile_graph.public_graph, get_db(), target_uid.strip()
+    )
 
 
 @router.get("/profile/proposals")
