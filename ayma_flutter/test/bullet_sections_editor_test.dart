@@ -264,4 +264,71 @@ void main() {
       expect(find.text('Private'), findsOneWidget);
     });
   });
+
+  // Scout NOTE 221: appending text to an existing bullet must keep it ONE
+  // bullet with its own visibility — the appended fragment is never split off
+  // into a separate (public) bullet. Adding a brand-new bullet still
+  // auto-splits multi-sentence input.
+  group('edit stays one bullet (NOTE 221)', () {
+    Future<_FakeApi> pumpEditor(WidgetTester tester, _FakeApi api) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: BulletSectionsEditor(api: api)),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return api;
+    }
+
+    testWidgets(
+        'appending a sentence to an existing private bullet keeps it one '
+        'private bullet (not split, not public)', (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Original.', visibility: 'private'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.text('Original.'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).first, 'Original. Appended.');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // Saved as exactly ONE bullet, keeping its private tag — the appended
+      // sentence did not become a second (public) bullet.
+      expect(api.saveSnapshots.last, [('Original. Appended.', 'private')]);
+      expect(find.text('Original. Appended.'), findsOneWidget);
+    });
+
+    testWidgets('adding a NEW bullet still auto-splits multi-sentence input',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Existing.', visibility: 'private'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('add_bullet_about_me')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).first, 'One. Two.');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // The new bullet splits into two; the existing bullet is untouched.
+      expect(api.saveSnapshots.last, const [
+        ('Existing.', 'private'),
+        ('One.', 'private'),
+        ('Two.', 'private'),
+      ]);
+    });
+  });
 }

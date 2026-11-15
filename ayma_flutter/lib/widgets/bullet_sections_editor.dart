@@ -187,6 +187,11 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   final _ctrl = TextEditingController();
   final _focus = FocusNode();
   int? _editing;
+  // Whether the open editor is a brand-new bullet (from "+ Add") or an edit of
+  // an existing one. A new bullet auto-splits multi-sentence input into one
+  // bullet per sentence; editing an existing bullet stays a single bullet
+  // (Scout NOTE 221) so appended text is never split off into its own bullet.
+  bool _editingIsNew = false;
   bool _saving = false;
 
   @override
@@ -216,6 +221,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     if (_saving) return;
     setState(() {
       _editing = i;
+      _editingIsNew = false;
       _ctrl.text = _bullets[i].text;
     });
     _focus.requestFocus();
@@ -230,32 +236,46 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
         const StoryBullet(text: '', visibility: 'private'),
       ];
       _editing = _bullets.length - 1;
+      _editingIsNew = true;
       _ctrl.clear();
     });
     _focus.requestFocus();
   }
 
-  /// Folds the open editor's text into `_bullets` — a multi-sentence text
-  /// becomes one bullet per sentence, an emptied text drops the bullet — and
-  /// closes the editor. Pure state mutation: no setState and no save (the
-  /// caller owns both), so a commit and a visibility cycle in the same gesture
-  /// save exactly once. Returns whether anything changed and whether the
-  /// edited bullet still exists at its index afterwards.
+  /// Folds the open editor's text into `_bullets` and closes the editor. A
+  /// brand-new bullet (from "+ Add") auto-splits multi-sentence input into one
+  /// bullet per sentence; editing an existing bullet stays a SINGLE bullet and
+  /// keeps its visibility tag — appended text is never split off into its own
+  /// (public) bullet (Scout NOTE 221). An emptied text drops the bullet. Pure
+  /// state mutation: no setState and no save (the caller owns both), so a
+  /// commit and a visibility cycle in the same gesture save exactly once.
+  /// Returns whether anything changed and whether the edited bullet still
+  /// exists at its index afterwards.
   ({bool changed, bool kept}) _foldOpenEdit() {
     final i = _editing;
     if (i == null || i >= _bullets.length) {
       return (changed: false, kept: true);
     }
     final vis = _bullets[i].visibility;
-    final pieces = splitIntoBullets(_ctrl.text);
-    final unchanged = pieces.length == 1 && pieces.first == _bullets[i].text;
+    final List<StoryBullet> replacement;
+    final bool changed;
+    if (_editingIsNew) {
+      final pieces = splitIntoBullets(_ctrl.text);
+      replacement = [for (final p in pieces) StoryBullet(text: p, visibility: vis)];
+      changed = !(pieces.length == 1 && pieces.first == _bullets[i].text);
+    } else {
+      final text = _ctrl.text.trim();
+      replacement =
+          text.isEmpty ? const [] : [StoryBullet(text: text, visibility: vis)];
+      changed = text != _bullets[i].text;
+    }
     _editing = null;
     _bullets = [
       ..._bullets.sublist(0, i),
-      for (final p in pieces) StoryBullet(text: p, visibility: vis),
+      ...replacement,
       ..._bullets.sublist(i + 1),
     ];
-    return (changed: !unchanged, kept: pieces.isNotEmpty);
+    return (changed: changed, kept: replacement.isNotEmpty);
   }
 
   /// Finishes the open edit (focus loss / submit) and saves if it changed.

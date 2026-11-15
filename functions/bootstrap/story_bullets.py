@@ -131,8 +131,14 @@ def parse_bullets(body: str, page_visibility: str, *, page_id: str = "") -> list
 
 
 def _norm_vis(v) -> str:
+    # Fail closed on privacy: a bullet that arrives without a valid visibility
+    # tag is treated as PRIVATE, never public. Composing an untagged bullet as
+    # public writes it unwrapped, and on a page that carries any private bullet
+    # it then reads back public — an edited fragment silently leaking to the
+    # public profile (Scout NOTE 221). Private is the safe default and matches
+    # this module's private-by-default model.
     v = str(v or "").strip().lower()
-    return v if v in _RANK else VIS_PUBLIC
+    return v if v in _RANK else VIS_PRIVATE
 
 
 def compose_body(bullets: list[dict]) -> dict:

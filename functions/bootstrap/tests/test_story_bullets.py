@@ -97,6 +97,30 @@ def test_compose_empty_is_private_empty_page():
     }
 
 
+def test_compose_untagged_bullet_fails_closed_to_private():
+    # Scout NOTE 221: a bullet that arrives without a valid visibility must be
+    # composed PRIVATE, never public. A public (unwrapped) fragment on a page
+    # that also carries a private bullet reads back public on the next read —
+    # an edited fragment silently leaking to the public profile.
+    for bad in ("", None, "   ", "unknown"):
+        out = sb.compose_body([{"text": "Appended fragment.", "visibility": bad}])
+        assert out["visibility"] == "private", bad
+        assert out["body"] == "{{private}}Appended fragment.{{/private}}", bad
+
+
+def test_untagged_fragment_does_not_leak_public_on_round_trip():
+    # A private bullet plus an untagged appended fragment: after compose + the
+    # next read-time parse, NO bullet comes back public.
+    bullets = [
+        {"text": "Kept private.", "visibility": "private"},
+        {"text": "Appended fragment.", "visibility": ""},
+    ]
+    out = sb.compose_body(bullets)
+    again = sb.parse_bullets(out["body"], out["visibility"])
+    assert "public" not in _vis(again)
+    assert set(_texts(again)) == {"Kept private.", "Appended fragment."}
+
+
 def test_round_trip_public_with_private_and_ai_only():
     body = "First public thought. {{private}}A private one.{{/private}} {{ai_only}}An Ayma note.{{/ai_only}}"
     bullets = sb.parse_bullets(body, "public")
