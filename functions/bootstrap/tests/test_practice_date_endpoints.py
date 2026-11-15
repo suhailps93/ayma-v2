@@ -731,3 +731,109 @@ def test_session_id_size_validation(monkeypatch):
         headers=_auth(monkeypatch, uid=VIEWER),
     )
     assert resp.status_code == 422
+
+
+# ============================================================================ #
+# Item B — practice voice reconnect RESUMES (not restart)
+# ============================================================================ #
+
+
+def test_resume_turns_maps_roles_and_drops_empty():
+    from transcript import ROLE_AYMA, ROLE_USER
+
+    turns = practice_date._resume_turns(
+        {
+            "turns": [
+                {"role": "user", "text": "hey, nice to meet you"},
+                {"role": "match", "text": "likewise! what do you do?"},
+                {"role": "user", "text": "   "},  # blank dropped
+                {"role": "match", "text": ""},     # blank dropped
+                {"role": "user", "text": "I design games"},
+            ]
+        }
+    )
+    assert [(t.role, t.text) for t in turns] == [
+        (ROLE_USER, "hey, nice to meet you"),
+        (ROLE_AYMA, "likewise! what do you do?"),
+        (ROLE_USER, "I design games"),
+    ]
+    # the persona (match) is the speaking agent in this room -> ROLE_AYMA
+    assert turns[1].role == ROLE_AYMA
+    # empty / missing turns -> empty list, never raises
+    assert practice_date._resume_turns({}) == []
+    assert practice_date._resume_turns({"turns": []}) == []
+
+
+def _seed_capture(monkeypatch, *, stored_turns):
+    """Drive /practice/voice/start to the room-seed call and capture the
+    recent_turns + greeting_instructions build_room_seed receives."""
+    captured = {}
+
+    def _fake_build_room_seed(system_prompt, recent_turns, uid, session_id, **kw):
+        captured["recent_turns"] = list(recent_turns)
+        captured["greeting"] = kw.get("greeting_instructions", "")
+        return "{}"
+
+    async def _fake_seed(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.token_ledger, "check", lambda uid: None)
+    monkeypatch.setattr(
+        practice_date, "CONFIG",
+        dataclasses.replace(CONFIG, livekit_url="wss://test"),
+    )
+    monkeypatch.setattr(
+        practice_date, "start_or_resume_session",
+        lambda db, uid, target, **k: "sess-1",
+    )
+    monkeypatch.setattr(
+        practice_date, "_load_session",
+        lambda db, uid, sid: {"turns": stored_turns},
+    )
+    monkeypatch.setattr(
+        practice_date, "mint_access_token", lambda uid, room: "tok"
+    )
+    monkeypatch.setattr(
+        practice_date, "resolve_voice_agent_cloud", lambda db, uid: "livekit"
+    )
+    monkeypatch.setattr(practice_date, "watch_hosted_dispatch", lambda room: None)
+    monkeypatch.setattr(practice_date, "build_room_seed", _fake_build_room_seed)
+    monkeypatch.setattr(practice_date, "seed_room_context", _fake_seed)
+    return captured
+
+
+def test_practice_voice_start_resumes_with_turns_and_reconnect_greeting(monkeypatch):
+    _mock_db(monkeypatch)
+    captured = _seed_capture(
+        monkeypatch,
+        stored_turns=[
+            {"role": "user", "text": "hi there"},
+            {"role": "match", "text": "hey! how's your day going?"},
+        ],
+    )
+    resp = client.post(
+        "/practice/voice/start",
+        json={"other_uid": MAYA},
+        headers=_auth(monkeypatch, uid=VIEWER),
+    )
+    assert resp.status_code == 200
+    # the resumed transcript is seeded into the room (not [])...
+    assert [t.text for t in captured["recent_turns"]] == [
+        "hi there", "hey! how's your day going?",
+    ]
+    # ...and the persona is told it reconnected, not to restart
+    assert "reconnected" in captured["greeting"]
+    assert "reintroduce" in captured["greeting"]
+
+
+def test_practice_voice_start_fresh_session_seeds_no_turns_no_greeting(monkeypatch):
+    _mock_db(monkeypatch)
+    captured = _seed_capture(monkeypatch, stored_turns=[])
+    resp = client.post(
+        "/practice/voice/start",
+        json={"other_uid": MAYA},
+        headers=_auth(monkeypatch, uid=VIEWER),
+    )
+    assert resp.status_code == 200
+    assert captured["recent_turns"] == []
+    assert captured["greeting"] == ""

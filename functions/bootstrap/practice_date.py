@@ -40,6 +40,7 @@ import token_ledger
 from auth import Caller, require_caller, require_uid
 from config import CONFIG
 from db import get_db
+from transcript import ROLE_AYMA, Turn
 from livekit_token import (
     LiveKitConfigError,
     build_room_seed,
@@ -334,6 +335,36 @@ class VoiceStartRequest(BaseModel):
     other_uid: str = Field(..., min_length=1, max_length=128)
 
 
+# Greeting instructions when a dropped practice VOICE call reconnects onto its
+# resumed session (item B): the persona is mid-conversation, so it must NOT
+# restart or reintroduce — just briefly acknowledge the blip and carry on. Only
+# applied when the resumed session already holds turns; a fresh call omits it
+# and the persona answers the incoming call normally.
+_PRACTICE_RECONNECT_GREETING = (
+    "The call briefly dropped and has just reconnected — you are already "
+    "mid-conversation with the caller, not starting a new one. Do NOT "
+    "reintroduce yourself, do NOT greet them as if it's the first time, and do "
+    "NOT restart the conversation. In one short sentence, acknowledge you cut "
+    "out for a moment (e.g. 'sorry, I think you cut out there'), then continue "
+    "naturally from where you left off. Stay fully in character."
+)
+
+
+def _resume_turns(session_data: dict) -> list[Turn]:
+    """The resumed practice session's prior transcript as voice-seed turns: the
+    persona (``ROLE_MATCH``) is the speaking agent in this room, so it maps to
+    ``ROLE_AYMA``; the caller maps to ``ROLE_USER``. Empty for a fresh session,
+    so the room then seeds no history and the persona opens the call normally."""
+    out: list[Turn] = []
+    for t in session_data.get("turns", []) or []:
+        text = str(t.get("text", "")).strip()
+        if not text:
+            continue
+        role = ROLE_AYMA if t.get("role") == ROLE_MATCH else ROLE_USER
+        out.append(Turn(role=role, text=text))
+    return out
+
+
 @router.post("/voice/start", dependencies=[Depends(require_not_underage_uid)])
 async def practice_voice_start(
     req: VoiceStartRequest,
@@ -393,12 +424,25 @@ async def practice_voice_start(
     agent_cloud = resolve_voice_agent_cloud(db, caller.uid)
     if agent_cloud == "cloudrun":
         background.add_task(agent_wake.wake_agent)
+    # Resume the conversation on a reconnect (item B): when start_or_resume_session
+    # returned an already-open session, it holds the transcript so far. Seed those
+    # turns into the room — just like /bootstrap seeds a main call's recent turns —
+    # so the persona continues instead of starting over, and add a one-line
+    # reconnect greeting so it acknowledges the blip and carries on. A fresh
+    # session has no turns, so this seeds [] and no greeting (opens normally).
+    try:
+        resume_turns = _resume_turns(
+            await asyncio.to_thread(_load_session, db, caller.uid, session_id)
+        )
+    except Exception:  # noqa: BLE001 - a read failure just means no resume context
+        resume_turns = []
+    greeting = _PRACTICE_RECONNECT_GREETING if resume_turns else ""
     try:
         await seed_room_context(
             room,
             build_room_seed(
                 compose_persona_prompt(ctx, voice=True, user_name=user_name),
-                [],
+                resume_turns,
                 caller.uid,
                 session_id,
                 practice=True,
@@ -406,6 +450,7 @@ async def practice_voice_start(
                 persona_gender=ctx.gender,
                 target_uid=target_uid,
                 voice_agent_cloud=agent_cloud,
+                greeting_instructions=greeting,
             ),
             agent_name=(
                 CONFIG.agent_name_livekit if agent_cloud == "livekit" else None
