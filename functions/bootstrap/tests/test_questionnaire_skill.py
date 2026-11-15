@@ -515,3 +515,62 @@ def test_next_questions_flags_sensitive_items():
     fns = skills.make_session_tool_fns(db, "u1")
     payload = json.loads(_run(fns["next_questions"]()))
     assert all("sensitive" in q for q in payload["questions"])
+
+
+def test_next_questions_already_known_includes_recorded_tree_answers(monkeypatch):
+    """next_questions returns already_known containing both recorded tree answers
+    and volunteered topics so Ayma never asks about them cold (NOTE 214 Defect C)."""
+    import json
+    import supplemental
+
+    prof = {
+        "relationship_intent": "Long-term",
+        "qz_financial_comingling": "Hybrid Yours, Mine, and Ours model",
+        "qz_spending_philosophy": "Save raises, spend some",
+        "qz_capital_vs_experiential": 7,
+    }
+    db = FakeDb({_PROF: prof})
+    supplemental.record_supplemental(
+        db, "u1", "interests", "Vintage vinyl", "collects records and digs crates"
+    )
+    fns = skills.make_session_tool_fns(db, "u1")
+    payload = json.loads(_run(fns["next_questions"]()))
+    # Covered questions must not be offered in questions
+    open_ids = {q["id"] for q in payload["questions"]}
+    assert "financial_comingling" not in open_ids
+    assert "spending_philosophy" not in open_ids
+    assert "capital_vs_experiential" not in open_ids
+
+    # Both recorded tree answers and supplemental topics must be in already_known
+    known_topics = {k.get("topic"): k.get("value") for k in payload.get("already_known", [])}
+    assert "Money as a couple" in known_topics
+    assert known_topics["Money as a couple"] == "Hybrid Yours, Mine, and Ours model"
+    assert "Lifestyle as income grows" in known_topics
+    assert known_topics["Lifestyle as income grows"] == "Save raises, spend some"
+    assert "Saving vs spending on experience" in known_topics
+    assert known_topics["Saving vs spending on experience"] == "7"
+    assert "Vintage vinyl" in known_topics
+    assert known_topics["Vintage vinyl"] == "collects records and digs crates"
+
+
+def test_questionnaire_note_surfaces_recorded_profile_answers():
+    """main._questionnaire_note surfaces recorded answers from qz_* on profile,
+    directing Ayma never to ask them cold and to reference what is known."""
+    import main
+
+    prof = {
+        "relationship_intent": "Long-term",
+        "qz_financial_comingling": "Hybrid Yours, Mine, and Ours model",
+        "qz_spending_philosophy": "Save raises, spend some",
+    }
+    db = FakeDb({_PROF: prof})
+    import main as m
+    orig_db = m.get_db
+    try:
+        m.get_db = lambda: db
+        note = m._questionnaire_note("u1", "active")
+        assert "Money as a couple (Hybrid Yours, Mine, and Ours model)" in note
+        assert "Lifestyle as income grows (Save raises, spend some)" in note
+        assert "NEVER ask these cold" in note
+    finally:
+        m.get_db = orig_db

@@ -443,9 +443,35 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         return ""
     try:
         snap = schema.profile_doc(get_db(), uid).get()
-        c = (snap.to_dict() or {}).get("completeness") if snap.exists else None
+        prof = (snap.to_dict() or {}) if snap.exists else {}
+        c = prof.get("completeness")
         if not isinstance(c, dict):
+            c = {}
+
+        # Recorded questionnaire answers (from completeness cache or directly from qz_* on profile doc):
+        recorded = [
+            r for r in (c.get("recorded") or [])
+            if isinstance(r, dict) and r.get("topic") and r.get("value")
+        ]
+        if not recorded:
+            import question_tree
+            for k, val in prof.items():
+                if k.startswith("qz_") and val is not None and str(val).strip():
+                    nid = k[3:]
+                    try:
+                        node = question_tree.node(nid)
+                        recorded.append({
+                            "id": nid,
+                            "topic": node.get("label", nid),
+                            "value": str(val).strip(),
+                            "status": "covered",
+                        })
+                    except Exception:
+                        pass
+
+        if not c and not recorded:
             return ""
+
         score = int(c.get("score") or 0)
         # `complete` is the real "nothing left in today's question set" signal
         # — `score` is capped below 100 even at full coverage (there's always
@@ -457,11 +483,19 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         if completeness.is_current(c) and (
             c.get("complete") is True or score >= 95
         ):
-            return (
+            base_complete = (
                 (Path(__file__).parent / "prompts" / "questionnaire_complete.md")
                 .read_text(encoding="utf-8")
                 .strip()
             )
+            if recorded:
+                rec_lines = [f"- {r['topic']}: {r['value']}" for r in recorded]
+                return (
+                    base_complete
+                    + "\n\nAlready recorded on their profile (reference these if relevant, never ask them cold):\n"
+                    + "\n".join(rec_lines)
+                )
+            return base_complete
         lines = [
             f"QUESTIONNAIRE (internal note — {score}% of today's tree is "
             "covered; never say that number, or any 'fuller' / 'more "
@@ -498,6 +532,14 @@ def _questionnaire_note(uid: str, mode: str) -> str:
                     )
                 else:
                     lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+
+        if recorded:
+            rec_summaries = [f"{r['topic']} ({r['value']})" for r in recorded]
+            lines.append(
+                "Already recorded on their profile (NEVER ask these cold; if steered to one of these topics, reference what you know and build on it): "
+                + "; ".join(rec_summaries) + "."
+            )
+
         # Volunteered / off-tree topics already captured — never ask about these
         # again (founder requirement 4).
         volunteered = [

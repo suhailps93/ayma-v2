@@ -1043,3 +1043,33 @@ def test_compute_includes_volunteered_supplemental(monkeypatch):
     res = _run(completeness.compute(db, "u1"))
     topics = {s["topic"] for s in res.get("supplemental", [])}
     assert "Their dog Max" in topics
+
+
+def test_qz_mirror_on_profile_counts_as_covered(monkeypatch):
+    """A qz_* field mirrored on profile/main (e.g. Daniel's qz_financial_comingling)
+    counts as covered without needing a separate questionnaire subcollection doc,
+    and is included in `recorded` so Ayma never re-asks it cold (NOTE 214 Defect C)."""
+    _stub_narrative(monkeypatch, {})
+    prof = {
+        "relationship_intent": "Long-term",
+        "qz_financial_comingling": "Hybrid Yours, Mine, and Ours model",
+        "qz_spending_philosophy": "Save raises, spend some",
+        "qz_capital_vs_experiential": 7,
+    }
+    db = FakeDb({_profile_key(): prof})
+    res = _run(completeness.compute(db, "u1"))
+    # None of these answered nodes may appear in next
+    next_ids = {n["id"] for n in res.get("next", [])}
+    assert "financial_comingling" not in next_ids
+    assert "spending_philosophy" not in next_ids
+    assert "capital_vs_experiential" not in next_ids
+
+    # Every one of them must appear in `recorded` with its value and status
+    recorded_by_id = {r["id"]: r for r in res.get("recorded", [])}
+    assert "financial_comingling" in recorded_by_id
+    assert recorded_by_id["financial_comingling"]["value"] == "Hybrid Yours, Mine, and Ours model"
+    assert recorded_by_id["financial_comingling"]["status"] == "covered"
+    assert "spending_philosophy" in recorded_by_id
+    assert recorded_by_id["spending_philosophy"]["value"] == "Save raises, spend some"
+    assert "capital_vs_experiential" in recorded_by_id
+    assert recorded_by_id["capital_vs_experiential"]["value"] == "7"

@@ -123,3 +123,15 @@ def test_no_user_speech_skips_the_llm_entirely(monkeypatch):
     out = _run(questionnaire_ingest.record_from_turns(db, _UID, "s1", turns))
     assert out == {"answers": 0, "supplemental": 0}
     assert calls == []  # no Gemini call made
+
+
+def test_qz_mirror_on_profile_skips_extraction():
+    """An item already recorded via qz_* on profile/main is not offered as an
+    open candidate for re-extraction (NOTE 214 Defect C)."""
+    prof = {
+        "relationship_intent": "Long-term",
+        "qz_financial_comingling": "Hybrid Yours, Mine, and Ours model",
+    }
+    candidates = questionnaire_ingest._open_candidates({}, prof)
+    cand_ids = {c["id"] for c in candidates}
+    assert "financial_comingling" not in cand_ids
