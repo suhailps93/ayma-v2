@@ -305,7 +305,10 @@ def test_chat_empty_length_retry_still_empty_raises(monkeypatch):
     assert calls == [8192, 16384]  # tried once more, then gave up honestly
 
 
-def test_chat_empty_non_length_does_not_retry_and_raises(monkeypatch):
+def test_chat_empty_non_length_retries_once_then_raises(monkeypatch):
+    # Scout NOTE 214 Defect A: a transient empty stop (no text, no tool call)
+    # used to drop the turn with no retry. It now retries ONCE at the same
+    # budget (not doubled — the budget wasn't the problem) before raising.
     _cfg(monkeypatch, gemini_web_search=False, inference_chat_max_tokens=8192)
     calls = []
 
@@ -318,7 +321,7 @@ def test_chat_empty_non_length_does_not_retry_and_raises(monkeypatch):
     monkeypatch.setattr(token_ledger, "check", lambda uid: None)
     with pytest.raises(RuntimeError):
         asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
-    assert calls == [8192]  # no retry for a non-length empty
+    assert calls == [8192, 8192]  # one retry at the same budget, then gives up
 
 
 def test_chat_non_empty_response_passes_straight_through(monkeypatch):

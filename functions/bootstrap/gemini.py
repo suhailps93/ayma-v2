@@ -112,6 +112,14 @@ async def warmup() -> None:
         logger.warning("inference warmup failed: %s", exc)
 
 
+def _empty_retry_budget(finish_reason: str | None, base: int) -> int:
+    """The max_tokens for the single empty-response retry: doubled for a
+    ``length`` truncation (a thinking model spent the whole budget on reasoning
+    and emitted nothing), the same budget for a transient stop-with-empty
+    content flake (Scout NOTE 214 Defect A)."""
+    return base * 2 if (finish_reason or "").lower() == "length" else base
+
+
 async def _reply_events_inference(
     message: str,
     system_prompt: str | None,
@@ -168,6 +176,31 @@ async def _reply_events_inference(
         uid, feature, response, model=model, session_id=session_id or None,
     )
 
+    # Transient empty first response (Scout NOTE 214 Defect A): the model
+    # intermittently comes back with NO text AND NO tool call (seen as
+    # finish_reason=stop, a few completion tokens). That would drop an entire
+    # valid tool-using turn — the user got the generic "couldn't finish that"
+    # apology and the tool (e.g. propose_date_plan) never ran. Retry the
+    # inference ONCE — same call, still on LiveKit Inference, no loop and no
+    # provider/model change — before proceeding. The retried response flows
+    # through the normal tool-execution + text path below, so a tool call the
+    # flake swallowed is re-issued and runs on the retry.
+    if not response.function_calls and not response.text.strip():
+        usage = response.usage_metadata
+        logger.warning(
+            "chat: empty first inference (finish_reason=%s prompt=%s "
+            "completion=%s) — retrying once on LiveKit Inference",
+            response.finish_reason,
+            getattr(usage, "prompt_token_count", None),
+            getattr(usage, "candidates_token_count", None),
+        )
+        response = await _call(
+            _empty_retry_budget(response.finish_reason, chat_max_tokens)
+        )
+        token_ledger.record(
+            uid, feature, response, model=model, session_id=session_id or None,
+        )
+
     used: list[str] = []
     seen: set[str] = set()
 
@@ -216,6 +249,28 @@ async def _reply_events_inference(
         token_ledger.record(
             uid, feature, response, model=model, session_id=session_id or None,
         )
+        # Retry ONCE on an empty POST-TOOL final response (no loop), still on
+        # LiveKit Inference: a "length" truncation gets a doubled budget (a
+        # thinking model spent it all on reasoning); a transient stop-with-empty
+        # content flake (Scout NOTE 214 Defect A) gets another attempt at the
+        # same budget, so a completed tool call isn't thrown away for want of a
+        # closing sentence.
+        if not response.text.strip():
+            usage = response.usage_metadata
+            logger.warning(
+                "chat: empty post-tool inference (finish_reason=%s prompt=%s "
+                "completion=%s) — retrying once on LiveKit Inference",
+                response.finish_reason,
+                getattr(usage, "prompt_token_count", None),
+                getattr(usage, "candidates_token_count", None),
+            )
+            response = await _call(
+                _empty_retry_budget(response.finish_reason, chat_max_tokens)
+            )
+            token_ledger.record(
+                uid, feature, response, model=model,
+                session_id=session_id or None,
+            )
 
     text = strip_inline_refs(response.text.strip())
     if not text:
@@ -228,24 +283,10 @@ async def _reply_events_inference(
             getattr(usage, "candidates_token_count", None),
             chat_max_tokens,
         )
-        # A thinking model can spend the whole completion budget on reasoning
-        # and emit no visible content; the gateway reports that as a "length"
-        # truncation. Retry ONCE with a larger budget (no loop) before giving
-        # up — stays entirely on LiveKit Inference, no provider reroute.
-        if (response.finish_reason or "").lower() == "length":
-            retry_max_tokens = chat_max_tokens * 2
-            logger.warning(
-                "chat: retrying once on LiveKit Inference with max_tokens=%s "
-                "after length truncation", retry_max_tokens,
-            )
-            response = await _call(retry_max_tokens)
-            token_ledger.record(
-                uid, feature, response, model=model,
-                session_id=session_id or None,
-            )
-            text = strip_inline_refs(response.text.strip())
-        if not text:
-            raise RuntimeError("Gemini returned an empty response.")
+        # One retry already happened at the empty generation point above (the
+        # first response, or the post-tool response) — a reply still empty here
+        # is a genuine dead response, so fail loudly and honestly, no loop.
+        raise RuntimeError("Gemini returned an empty response.")
     yield {"type": "reply", "text": text, "tools_used": used}
 
 
