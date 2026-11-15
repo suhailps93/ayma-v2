@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/bullet_sections_editor.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -8,23 +10,62 @@ class _FakeApi extends ApiClient {
   _FakeApi({required this.sections})
       : super(auth: MockFirebaseAuth(signedIn: true));
 
-  final List<BulletSection> sections;
+  List<BulletSection> sections;
   final List<(String, List<StoryBullet>)> bulletSaves = [];
   final List<(String, List<StoryBullet>)> bulletCreates = [];
+
+  /// Snapshot of each save's (text, visibility) pairs taken at call time, so a
+  /// later in-place mutation of the editor's live list can't rewrite history.
+  final List<List<(String, String)>> saveSnapshots = [];
+
+  /// When set, each save blocks on this until completed — lets a test hold a
+  /// save "in flight" and act on the UI meanwhile.
+  Completer<void>? gate;
+
+  /// After each successful save the editor re-pulls; mirror that by serving the
+  /// latest saved bullets back as the section's content.
+  bool reflectSavesIntoSections = false;
 
   @override
   Future<List<BulletSection>> profileBullets() async => sections;
 
   @override
   Future<void> profileBulletsSave(
-          String pageId, List<StoryBullet> bullets) async =>
-      bulletSaves.add((pageId, bullets));
+      String pageId, List<StoryBullet> bullets) async {
+    bulletSaves.add((pageId, bullets));
+    saveSnapshots.add([for (final b in bullets) (b.text, b.visibility)]);
+    if (gate != null) await gate!.future;
+    if (reflectSavesIntoSections) {
+      sections = [
+        for (final s in sections)
+          if (s.pageId == pageId)
+            BulletSection(
+              pageType: s.pageType,
+              pageId: s.pageId,
+              title: s.title,
+              subtitle: s.subtitle,
+              order: s.order,
+              bullets: List<StoryBullet>.from(bullets),
+            )
+          else
+            s,
+      ];
+    }
+  }
 
   @override
   Future<void> profileBulletsCreate(
           String pageType, List<StoryBullet> bullets) async =>
       bulletCreates.add((pageType, bullets));
 }
+
+BulletSection _aboutMe(List<StoryBullet> bullets) => BulletSection(
+      pageType: 'about_me',
+      pageId: 'about_me',
+      title: 'About Me',
+      order: 1,
+      bullets: bullets,
+    );
 
 void main() {
   testWidgets(
@@ -128,5 +169,99 @@ void main() {
       find.byKey(const ValueKey('bullet_section_family_1')),
       findsOneWidget,
     );
+  });
+
+  // Scout NOTE 219 leg a: the visibility label cycles public <-> private and
+  // persists; it stays live during a save; and a tap while editing both
+  // commits the edit and cycles (it doesn't lose to the focus-loss commit).
+  group('visibility cycle (NOTE 219 leg a)', () {
+    Future<_FakeApi> pumpEditor(WidgetTester tester, _FakeApi api) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: BulletSectionsEditor(api: api)),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return api;
+    }
+
+    testWidgets('a label tap cycles public -> private and persists it',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'I grew up in Lisbon.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      expect(find.text('Public'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pumpAndSettle();
+
+      // Visibly flipped…
+      expect(find.text('Private'), findsOneWidget);
+      expect(find.text('Public'), findsNothing);
+      // …and persisted as private.
+      expect(api.saveSnapshots.last, [('I grew up in Lisbon.', 'private')]);
+    });
+
+    testWidgets('the label is NOT dead during a save', (tester) async {
+      final gate = Completer<void>();
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'A line.', visibility: 'public'),
+          ]),
+        ])..gate = gate,
+      );
+
+      // First tap starts a save that hangs on the gate.
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pump();
+      expect(find.text('Private'), findsOneWidget);
+
+      // Second tap WHILE that save is in flight must still flip the label —
+      // pre-fix it was a dead no-op (`_saving ? null`).
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pump();
+      expect(find.text('Public'), findsOneWidget,
+          reason: 'the chip must stay live during a save');
+
+      // Releasing the save drains the serialised re-save with the latest value.
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(api.saveSnapshots.last, [('A line.', 'public')]);
+    });
+
+    testWidgets('a label tap while editing commits the edit AND cycles',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Original text.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      // Open the editor on the bullet and change its text.
+      await tester.tap(find.text('Original text.'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).first, 'Edited text.');
+      await tester.pump();
+
+      // Tapping the visibility label commits the edit (focus loss) and cycles.
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pumpAndSettle();
+
+      // The edit is kept and the visibility is the cycled value — never the
+      // stale "stayed Public/Private" the race produced.
+      expect(api.saveSnapshots.last, [('Edited text.', 'private')]);
+      expect(find.text('Edited text.'), findsOneWidget);
+      expect(find.text('Private'), findsOneWidget);
+    });
   });
 }
