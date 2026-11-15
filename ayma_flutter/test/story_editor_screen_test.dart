@@ -661,10 +661,16 @@ void main() {
     expect(find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
     expect(find.text('Hobbies'), findsOneWidget);
     expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
-    // Ayma-only bullets are controlled like any other: cycle and delete.
-    expect(find.text('Ayma-only'), findsOneWidget);
-    expect(find.byKey(const ValueKey('delete_career_1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('visibility_career_1')), findsOneWidget);
+    // Ayma-only is NEVER shown in Your Story (founder order, Nov 15 2026): the
+    // seeded ai_only career bullet is filtered out, so only the public bullet
+    // remains (index 0) with its visibility + delete + per-bullet chat controls.
+    expect(find.text('Ayma-only'), findsNothing);
+    expect(find.text('Wants to move into product.'), findsNothing);
+    expect(find.byKey(const ValueKey('delete_career_1')), findsNothing);
+    expect(find.byKey(const ValueKey('visibility_career_0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete_career_0')), findsOneWidget);
+    // Every bullet has an easy way to chat with Ayma about just that point.
+    expect(find.byKey(const ValueKey('chat_career_0')), findsOneWidget);
   });
 
   testWidgets(
@@ -699,9 +705,13 @@ void main() {
 
     expect(api.bulletSaves, hasLength(1));
     expect(api.bulletSaves.single.$1, 'career');
-    expect(api.bulletSaves.single.$2.first.visibility, 'private');
-    // The full list is sent, Ayma-only bullets included.
-    expect(api.bulletSaves.single.$2.last.visibility, 'ai_only');
+    expect(api.bulletSaves.single.$2.first.visibility, 'private'); // public->private
+    // Ayma-only bullets are filtered from the editor and never sent (the
+    // backend preserves them); the save carries only visible bullets.
+    expect(
+      api.bulletSaves.single.$2.map((b) => b.visibility),
+      isNot(contains('ai_only')),
+    );
   });
 
   testWidgets(

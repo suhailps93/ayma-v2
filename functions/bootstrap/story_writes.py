@@ -138,24 +138,6 @@ def create_section(
     }
 
 
-def set_section_ai_only(db, uid: str, page_id: str) -> dict:
-    """Make a whole section Ayma-only — used when every bullet in it is tagged
-    Ayma-only (``ai_only``), which ``save_section`` (public/private only) can't
-    express. Mirrors ``set_visibility`` but for the ai_only state."""
-    ref, data = _require_page(db, uid, page_id)
-    label = _section_title(
-        page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
-    )
-    ref.set(
-        {F_VISIBILITY: VIS_AI_ONLY, F_USER_UPDATED_AT: _server_ts()}, merge=True
-    )
-    return {
-        "head_version_id": _snapshot_section(
-            db, uid, page_id, AUTHOR_USER, f"made {label} Ayma-only"
-        )
-    }
-
-
 def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
     if visibility not in (VIS_PUBLIC, VIS_PRIVATE):
         raise ValueError(visibility)

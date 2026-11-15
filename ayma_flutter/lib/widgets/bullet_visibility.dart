@@ -2,13 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// The three bullet visibilities the story/person-graph API speaks.
-const bulletVisibilities = ['public', 'private', 'ai_only'];
+/// The bullet visibilities the user can set in Your Story. Ayma-only is NOT
+/// here: it is for Ayma alone and never shown in Your Story (founder order,
+/// Nov 15 2026), so the user only ever toggles public <-> private.
+const bulletVisibilities = ['public', 'private'];
 
-/// The visibility a tap on the control moves to (public -> private ->
-/// Ayma-only -> public).
+/// The visibility a tap on the control moves to (public <-> private). A bullet
+/// that somehow still carries 'ai_only' resolves to 'private' on the next tap.
 String nextBulletVisibility(String v) {
   final i = bulletVisibilities.indexOf(v);
+  if (i < 0) return 'private';
   return bulletVisibilities[(i + 1) % bulletVisibilities.length];
 }
 
