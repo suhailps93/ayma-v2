@@ -209,7 +209,7 @@ void main() {
   });
 
   testWidgets(
-      'enabling Location log when permanently denied opens app system settings directly',
+      'enabling Location log when permanently denied shows tell dialog before opening settings',
       (tester) async {
     final profiles = await _profiles(masterOn: true, logOn: false);
     final loc = _FakeLocationService(
@@ -229,8 +229,17 @@ void main() {
     await tester.tap(find.text('Location log'));
     await tester.pumpAndSettle();
 
-    // Cannot be prompted -> triggers openAppSettings without calling requestPermission
+    // Cannot be prompted -> shows tell dialog so user can read why before leaving
     expect(loc.requestCalls, 0);
+    expect(loc.openSettingsCalls, 0);
+    expect(find.textContaining('Location log needs location permission'),
+        findsOneWidget);
+    expect(find.text('Open Settings'), findsOneWidget);
+
+    // Confirm dialog -> opens app settings
+    await tester.tap(find.text('Open Settings'));
+    await tester.pumpAndSettle();
+
     expect(loc.openSettingsCalls, 1);
     expect(await profiles.locationLogEnabled(), isFalse);
     expect(find.textContaining('The location log needs location permission'),
@@ -257,8 +266,13 @@ void main() {
       ),
     );
 
-    // Tap Location log to open settings
+    // Tap Location log to open dialog
     await tester.tap(find.text('Location log'));
+    await tester.pumpAndSettle();
+    expect(loc.openSettingsCalls, 0);
+
+    // Confirm dialog to open settings
+    await tester.tap(find.text('Open Settings'));
     await tester.pumpAndSettle();
     expect(loc.openSettingsCalls, 1);
     expect(await profiles.locationLogEnabled(), isFalse);
@@ -291,6 +305,8 @@ void main() {
     );
 
     await tester.tap(find.text('Location log'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open Settings'));
     await tester.pumpAndSettle();
     expect(loc.openSettingsCalls, 1);
 
@@ -325,7 +341,7 @@ void main() {
     expect(await profiles.locationLogEnabled(), isFalse);
   });
 
-  // --- NOTE 216 Leg f: Date moments must never be a silent no-op ----------
+  // --- NOTE 216 Leg f & NOTE 218: Date moments pending grant & tell -------
 
   testWidgets(
       'enabling Date moments when permission is promptable shows the system popup',
@@ -355,7 +371,7 @@ void main() {
   });
 
   testWidgets(
-      'enabling Date moments when permanently denied routes to settings with feedback (not silent)',
+      'enabling Date moments when permanently denied shows tell dialog before opening settings',
       (tester) async {
     final profiles = await _profiles(masterOn: true);
     final loc = _FakeLocationService(
@@ -374,11 +390,17 @@ void main() {
     await tester.tap(find.text('Date moments'));
     await tester.pumpAndSettle();
 
-    // Cannot be prompted -> opens settings AND tells the user why.
+    // Cannot be prompted -> shows tell dialog so user can read why before redirect
     expect(loc.requestCalls, 0);
-    expect(loc.openSettingsCalls, 1);
+    expect(loc.openSettingsCalls, 0);
     expect(find.textContaining('Date moments needs location permission'),
         findsOneWidget);
+    expect(find.text('Open Settings'), findsOneWidget);
+
+    await tester.tap(find.text('Open Settings'));
+    await tester.pumpAndSettle();
+
+    expect(loc.openSettingsCalls, 1);
     expect(await profiles.dateMomentsEnabled(), isFalse);
   });
 
@@ -411,6 +433,157 @@ void main() {
   });
 
   testWidgets(
+      'denied-forever tell dialog Cancel button dismisses dialog and stays off without opening settings',
+      (tester) async {
+    final profiles = await _profiles(masterOn: true);
+    final loc = _FakeLocationService(
+      checkPermissionResult: LocationPermission.deniedForever,
+    );
+
+    await _pump(
+      tester,
+      PrivacySettingsScreen(
+        profileService: profiles,
+        api: _FakeApi(const []),
+        locationService: loc,
+      ),
+    );
+
+    await tester.tap(find.text('Date moments'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Date moments needs location permission'),
+        findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Date moments needs location permission'),
+        findsNothing);
+    expect(loc.openSettingsCalls, 0);
+    expect(await profiles.dateMomentsEnabled(), isFalse);
+  });
+
+  testWidgets(
+      'Date moments: denied-forever, tap ON, grant in Settings, return auto-applies Date moments ON without second tap',
+      (tester) async {
+    final profiles = await _profiles(masterOn: true);
+    final loc = _FakeLocationService(
+      checkPermissionResult: LocationPermission.deniedForever,
+    );
+
+    await _pump(
+      tester,
+      PrivacySettingsScreen(
+        profileService: profiles,
+        api: _FakeApi(const []),
+        locationService: loc,
+      ),
+    );
+
+    // Tap Date moments ON -> opens tell dialog
+    await tester.tap(find.text('Date moments'));
+    await tester.pumpAndSettle();
+    expect(loc.openSettingsCalls, 0);
+
+    // Tap Open Settings -> settings redirect
+    await tester.tap(find.text('Open Settings'));
+    await tester.pumpAndSettle();
+    expect(loc.openSettingsCalls, 1);
+    expect(await profiles.dateMomentsEnabled(), isFalse);
+
+    // Grant location (while-in-use suffices for Date moments) in Settings and return
+    loc.checkPermissionResult = LocationPermission.whileInUse;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(await profiles.dateMomentsEnabled(), isTrue);
+  });
+
+  testWidgets(
+      'Date moments: denied-forever, tap ON, do NOT grant in Settings, return stays OFF',
+      (tester) async {
+    final profiles = await _profiles(masterOn: true);
+    final loc = _FakeLocationService(
+      checkPermissionResult: LocationPermission.deniedForever,
+    );
+
+    await _pump(
+      tester,
+      PrivacySettingsScreen(
+        profileService: profiles,
+        api: _FakeApi(const []),
+        locationService: loc,
+      ),
+    );
+
+    await tester.tap(find.text('Date moments'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open Settings'));
+    await tester.pumpAndSettle();
+    expect(loc.openSettingsCalls, 1);
+
+    // Return without granting
+    loc.checkPermissionResult = LocationPermission.deniedForever;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(await profiles.dateMomentsEnabled(), isFalse);
+  });
+
+  testWidgets(
+      'Date moments: no pending tap -> resume reconcile changes nothing for Date moments',
+      (tester) async {
+    final profiles = await _profiles(masterOn: true);
+    await profiles.setDateMoments(true);
+    final loc = _FakeLocationService(
+      checkPermissionResult: LocationPermission.deniedForever,
+    );
+
+    await _pump(
+      tester,
+      PrivacySettingsScreen(
+        profileService: profiles,
+        api: _FakeApi(const []),
+        locationService: loc,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // No pending tap: resume reconcile leaves Date moments untouched
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(await profiles.dateMomentsEnabled(), isTrue);
+  });
+
+  testWidgets('turning off Date moments does not touch permission or settings',
+      (tester) async {
+    final profiles = await _profiles(masterOn: true);
+    await profiles.setDateMoments(true);
+    final loc = _FakeLocationService(
+      checkPermissionResult: LocationPermission.whileInUse,
+    );
+
+    await _pump(
+      tester,
+      PrivacySettingsScreen(
+        profileService: profiles,
+        api: _FakeApi(const []),
+        locationService: loc,
+      ),
+    );
+
+    await tester.tap(find.text('Date moments'));
+    await tester.pumpAndSettle();
+
+    expect(await profiles.dateMomentsEnabled(), isFalse);
+    expect(loc.requestCalls, 0);
+    expect(loc.openSettingsCalls, 0);
+  });
+
+  testWidgets(
       'Location log routed to settings tells the user what is happening',
       (tester) async {
     final profiles = await _profiles(masterOn: true, logOn: false);
@@ -430,9 +603,15 @@ void main() {
     await tester.tap(find.text('Location log'));
     await tester.pumpAndSettle();
 
-    expect(loc.openSettingsCalls, 1);
+    // User is shown why settings is opening before redirect
+    expect(loc.openSettingsCalls, 0);
     expect(find.textContaining('Location log needs location permission'),
-        findsOneWidget); // no longer a silent settings open
+        findsOneWidget);
+
+    await tester.tap(find.text('Open Settings'));
+    await tester.pumpAndSettle();
+
+    expect(loc.openSettingsCalls, 1);
   });
 
   testWidgets('turning off Location log does not touch permission or settings',
