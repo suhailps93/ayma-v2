@@ -191,6 +191,12 @@ String storagePathFromImageUrl(String url) {
 class TranscriptStore extends ChangeNotifier {
   TranscriptStore({this._maxTurns = 100});
 
+  /// Test-only: whether anything is still listening. Used by a regression test
+  /// to prove a disposed ChatScreen leaves no leaked listener on the shared
+  /// store (Scout NOTE 218 ANR — a listener leak accumulating over a session).
+  @visibleForTesting
+  bool get hasListenersForTest => hasListeners;
+
   int _maxTurns;
   final List<TranscriptTurn> _turns = [];
 

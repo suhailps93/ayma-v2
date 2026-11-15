@@ -1765,6 +1765,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _store.removeListener(_syncVoiceClips);
     VoiceClipRegistry.instance.clear(this);
     _store.removeListener(_onStoreCapped);
+    // ANR fix (Scout NOTE 218): this listener was added in initState (line
+    // ~609) but never removed here. The store is usually the SHARED
+    // AymaSession.instance.store (every Ask-Ayma sheet / scoped chat injects
+    // it), so each ChatScreen that was opened and closed left a dead
+    // `_scanTurnsForBubble` bound to a disposed State on that long-lived
+    // notifier — accumulating listeners (and retaining the disposed widget
+    // trees) across a session, which is the growing main-thread cost behind
+    // the repeated ANRs. Remove it like every other `_store` listener.
+    _store.removeListener(_scanTurnsForBubble);
     WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
     if (widget.askAymaContext == null) {
