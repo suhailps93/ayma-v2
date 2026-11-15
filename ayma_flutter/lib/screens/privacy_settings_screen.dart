@@ -16,6 +16,12 @@ import '../widgets/ayma_wing_loader.dart';
 import 'biometric_consent_settings_screen.dart';
 import 'delete_account_screen.dart';
 
+/// What asking the OS for location permission from a toggle tap ended in:
+/// granted (enable the feature), sent to the app settings page (the popup
+/// couldn't be shown, so the user was told and taken there), or declined (the
+/// user dismissed the prompt). Never a silent no-op.
+enum _LocationPermOutcome { granted, sentToSettings, declined }
+
 /// Privacy: everything privacy-related under the single Privacy row on
 /// Settings (founder cleanup, 2026-11-07): pause matching (pulled in
 /// from its own top-level section), the AI-avatar opt-out, face
@@ -175,10 +181,77 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
     }
   }
 
-  /// The opt-in location log. Enabling needs location permission.
-  /// If permission is missing, it triggers the system permission popup.
-  /// If permanently denied (or cannot be prompted), it opens system settings.
-  /// Turning it off never touches permission.
+  /// Ask the OS for location permission when a location-dependent toggle is
+  /// turned ON. Shows the system popup when it can be prompted; when it cannot
+  /// (permanently denied, or the "Always"/background grant Android only gives
+  /// from Settings), tells the user and opens the app settings page. Never a
+  /// silent no-op and never a dead end — every denied-state tap gets feedback
+  /// and a path forward (NOTE 216 Legs a & f).
+  ///
+  /// [needsBackground] is true for features that need "Always" location (the
+  /// location log / the arrival geofence); [trackSettingsReturn] arms the
+  /// resume-time reconcile that flips the Location log on once permission comes
+  /// back from Settings. Uses only the (injectable) check/request/openSettings
+  /// seams so it is unit-testable without a device.
+  Future<_LocationPermOutcome> _requestLocationPermission(
+    String feature, {
+    required bool needsBackground,
+    bool trackSettingsReturn = false,
+  }) async {
+    bool isGranted(LocationPermission p) =>
+        p == LocationPermission.always ||
+        (!needsBackground && p == LocationPermission.whileInUse);
+
+    // Already granted? "Always" features ask the background seam directly.
+    if (needsBackground && await _location.hasBackgroundPermission()) {
+      return _LocationPermOutcome.granted;
+    }
+    var perm = await _location.checkPermission();
+    if (isGranted(perm)) return _LocationPermOutcome.granted;
+
+    if (perm == LocationPermission.denied) {
+      // Promptable: show the system location permission popup.
+      perm = await _location.requestPermission();
+      if (needsBackground && perm == LocationPermission.whileInUse) {
+        // Android grants while-in-use first; a second request escalates to
+        // "Always" (or, on newer Android, routes to Settings).
+        perm = await _location.requestPermission();
+      }
+    }
+    if (isGranted(perm)) return _LocationPermOutcome.granted;
+
+    // The popup can't get us there (permanently denied, or background that
+    // Android only grants from Settings): tell the user and open Settings.
+    if (perm == LocationPermission.deniedForever ||
+        (needsBackground && perm == LocationPermission.whileInUse)) {
+      if (trackSettingsReturn) _awaitingSettingsGrant = true;
+      if (mounted) {
+        AymaToast.show(
+          context,
+          '$feature needs location permission. Opening Settings — allow '
+          'location there, then turn it on again.',
+          kind: AymaToastKind.warning,
+        );
+      }
+      await _location.openAppSettings();
+      return _LocationPermOutcome.sentToSettings;
+    }
+
+    // The user dismissed the prompt without permanently denying it.
+    if (mounted) {
+      AymaToast.show(
+        context,
+        "$feature needs location permission. Turn it on again when you're "
+        'ready to allow it.',
+        kind: AymaToastKind.warning,
+      );
+    }
+    return _LocationPermOutcome.declined;
+  }
+
+  /// The opt-in location log. Enabling needs "Always" location permission: it
+  /// shows the system popup when promptable, else opens Settings with a message
+  /// (via [_requestLocationPermission]). Turning it off never touches permission.
   Future<void> _setLocationLog(bool value) async {
     if (_logSaving) return;
     setState(() => _logSaving = true);
@@ -188,40 +261,19 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
         await _profiles.setLocationLog(false);
         return;
       }
-
-      // Check if background permission is already granted.
-      final alreadyGranted = await _location.hasBackgroundPermission();
-      if (alreadyGranted) {
+      final outcome = await _requestLocationPermission(
+        'Location log',
+        needsBackground: true,
+        trackSettingsReturn: true,
+      );
+      if (outcome == _LocationPermOutcome.granted) {
         _awaitingSettingsGrant = false;
         await _profiles.setLocationLog(true);
         _loadPatterns();
-        return;
       }
-
-      // Check whether permission can be prompted.
-      var perm = await _location.checkPermission();
-      if (perm == LocationPermission.denied) {
-        // Can be prompted: trigger the system location permission popup.
-        perm = await _location.requestPermission();
-        if (perm == LocationPermission.whileInUse) {
-          perm = await _location.requestPermission();
-        }
-      }
-
-      if (perm == LocationPermission.always) {
-        _awaitingSettingsGrant = false;
-        await _profiles.setLocationLog(true);
-        _loadPatterns();
-      } else if (perm == LocationPermission.deniedForever ||
-          perm == LocationPermission.whileInUse) {
-        // Permission cannot be prompted (permanently denied or requires settings
-        // for background location): open the app system settings page.
-        _awaitingSettingsGrant = true;
-        await _location.openAppSettings();
-      } else {
-        // User dismissed / denied the prompt (not permanently).
-        _awaitingSettingsGrant = false;
-      }
+      // sentToSettings: _awaitingSettingsGrant is armed; the resume reconcile
+      // flips it on once permission comes back. declined: the user was told;
+      // the stream-driven switch stays off.
     } catch (e) {
       if (mounted) {
         AymaToast.show(context, 'Could not save ($e).',
@@ -306,24 +358,23 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
   }
 
   /// Date-moments toggle (opt-in, default off). Enabling requires location
-  /// permission: if it is denied the toggle stays off and we say why, so
-  /// nothing breaks. Turning it off never touches permission.
+  /// permission: in the denied state it shows the system popup when promptable,
+  /// else opens Settings with a message — the same treatment as the Location
+  /// log, never a silent no-op (NOTE 216 Leg f). Turning it off never touches
+  /// permission.
   Future<void> _setDateMoments(bool value) async {
     if (_dateMomentsSaving) return;
     setState(() => _dateMomentsSaving = true);
     try {
       if (value) {
-        final granted = await _location.ensurePermission();
-        if (!granted) {
-          if (mounted) {
-            AymaToast.show(
-              context,
-              'Date moments needs location permission. Allow location, then '
-              'turn it on again.',
-              kind: AymaToastKind.warning,
-            );
-          }
-          return; // stays off — the stream-driven switch reconciles
+        final outcome = await _requestLocationPermission(
+          'Date moments',
+          needsBackground: false,
+        );
+        if (outcome != _LocationPermOutcome.granted) {
+          // The user already got feedback and a path forward (popup, or a
+          // message + Settings); the stream-driven switch stays off.
+          return;
         }
       }
       await _profiles.setDateMoments(value);
