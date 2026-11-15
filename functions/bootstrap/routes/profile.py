@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from auth import require_uid
 import dm_ops
+import profile_bullets
 import profile_manual
 from skills import questionnaire as questionnaire_skill
 
@@ -120,6 +121,66 @@ async def profile_public_text_save(
         raise HTTPException(
             status_code=status, detail={"code": exc.code, "message": str(exc)}
         ) from exc
+
+
+class BulletIn(BaseModel):
+    text: str = Field(default="", max_length=2000)
+    visibility: Literal["public", "private", "ai_only"] = "public"
+
+
+class BulletsSaveRequest(BaseModel):
+    bullets: list[BulletIn] = Field(default_factory=list, max_length=200)
+
+
+class BulletsCreateRequest(BaseModel):
+    page_type: str = Field(min_length=1, max_length=40)
+    bullets: list[BulletIn] = Field(default_factory=list, max_length=200)
+
+
+@router.get("/profile/bullets")
+async def profile_bullets_get(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Your Story as the section → bullets model: every canonical section (even
+    empty ones, so the editor shows a "+" per section), each existing page split
+    into ``{id, text, visibility}`` bullets at read time."""
+    return await asyncio.to_thread(profile_bullets.get_bullets, get_db(), uid)
+
+
+@router.put("/profile/bullets/{page_id}")
+async def profile_bullets_save(
+    page_id: str, req: BulletsSaveRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Save an edited bullet list for one existing section (composed back into
+    the page body). 404 if the section is gone, 422 if the edit would drop a
+    hidden Ayma-only passage."""
+    bullets = [b.model_dump() for b in req.bullets]
+    try:
+        return await asyncio.to_thread(
+            profile_bullets.save_bullets, get_db(), uid, page_id, bullets
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Section not found.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/profile/bullets")
+async def profile_bullets_create(
+    req: BulletsCreateRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Create a new section from the first bullet(s) a user adds to a
+    previously-empty section (the manual-first path). 422 on an unknown
+    section."""
+    bullets = [b.model_dump() for b in req.bullets]
+    try:
+        return await asyncio.to_thread(
+            profile_bullets.create_bullet_section,
+            get_db(),
+            uid,
+            req.page_type.strip(),
+            bullets,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/profile/proposals")

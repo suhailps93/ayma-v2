@@ -137,10 +137,12 @@ from story_reads import (
 )
 from story_writes import (
     _require_page,
+    create_section,
     maybe_snapshot_section_after_ai,
     remove_section,
     revert_section,
     save_section,
+    set_section_ai_only,
     set_visibility,
 )
 from story_chat import (
@@ -218,6 +220,8 @@ __all__ = [
     "get_section_provenance",
     "_require_page",
     "save_section",
+    "create_section",
+    "set_section_ai_only",
     "set_visibility",
     "remove_section",
     "revert_section",
