@@ -55,3 +55,32 @@ TESTS:
   - New test `test_qz_mirror_on_profile_skips_extraction`: verifies `questionnaire_ingest` skips already-recorded `qz_*` nodes.
 - Full prompt, skills, and matching suites: `test_prompt.py`, `test_skills.py`, `test_match_deterministic.py`: 113/113 passed.
 - `flutter analyze` in `ayma_flutter`: clean — 0 issues found ("No issues found!").
+
+
+## 2026-11-15 03:48 PT — From Antigravity (Engineer) — DONE: Privacy toggles remainder (Scout NOTE 218) — marker PRIVACY-DATEMOMENTS-218
+
+BRANCH: fleet/privacy-datemoments-pending @ 17f7daf2, off staging tip 9b2b43bf. NOT merged (hourly sweep owns merges). Staging only. Worktree: /home/suhailps/workspace/ayma-antigravity-privacy-dm.
+
+ITEM 1 ROOT CAUSE & FIX:
+- Root cause: `_setDateMoments` called `_requestLocationPermission` without `trackSettingsReturn: true`, and `_reconcileLocationPermission` only tracked Location log via `_awaitingSettingsGrant`. A pending Date moments ON was dropped on return from Settings. Furthermore, the toast copy previously instructed "then turn it on again", contradicting auto-apply.
+- Fix:
+  - Replaced single `_awaitingSettingsGrant` with separate `_awaitingLocationLogGrant` and `_awaitingDateMomentsGrant`.
+  - In `_setDateMoments`, armed `trackSettingsReturn: true` on tap ON and cleared pending state on tap OFF. Turning OFF never touches permission.
+  - In `_reconcileLocationPermission`, when `_awaitingDateMomentsGrant` is armed, checks whether location permission was granted (`perm == always || perm == whileInUse || hasBackgroundPermission()`) and auto-applies Date moments ON on resume. If not granted, stays OFF. If no pending tap, resume reconcile leaves Date moments untouched.
+  - Updated toast copy from "allow location there, then turn it on again" to "allow location there to turn it on" for both Location log and Date moments.
+
+ITEM 2 INVESTIGATION & FIX:
+- Investigation: In the existing implementation, `AymaToast.show()` was called immediately before `_location.openAppSettings()`. Because `openAppSettings()` immediately invokes the platform channel intent to launch Android Settings Activity synchronously/in the same frame, the app was backgrounded before the toast could render/fade-in (240ms anim), meaning the user could not read why the redirect was happening before leaving Ayma.
+- Fix: In `_requestLocationPermission`, on the denied-forever path (`deniedForever` or `whileInUse` when `needsBackground` is true), an informative `AlertDialog` is presented with title `"$feature needs location permission"`, content explaining how to allow location in Settings, and actions ("Cancel" and "Open Settings"). The tell is visible and readable before any redirect; `openAppSettings()` is only invoked when the user confirms with "Open Settings". Dismissing/canceling leaves the toggle OFF and stays in the app without opening Settings.
+
+TESTS:
+- `cd ayma_flutter && flutter test test/privacy_location_test.dart`: 20/20 passed (5 new tests + existing 15 updated):
+  - `enabling Location log when permanently denied shows tell dialog before opening settings`
+  - `enabling Date moments when permanently denied shows tell dialog before opening settings`
+  - `denied-forever tell dialog Cancel button dismisses dialog and stays off without opening settings`
+  - `Date moments: denied-forever, tap ON, grant in Settings, return auto-applies Date moments ON without second tap`
+  - `Date moments: denied-forever, tap ON, do NOT grant in Settings, return stays OFF`
+  - `Date moments: no pending tap -> resume reconcile changes nothing for Date moments`
+  - `turning off Date moments does not touch permission or settings`
+- Adjacent settings suites: `test/settings_cleanup_test.dart` and `test/settings_verify_face_test.dart` both 100% green (16/16 passed; total 36/36 passed).
+- `cd ayma_flutter && flutter analyze`: 0 issues found ("No issues found!").
