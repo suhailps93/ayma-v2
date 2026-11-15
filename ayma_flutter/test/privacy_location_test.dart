@@ -180,7 +180,7 @@ void main() {
   });
 
   testWidgets(
-      'enabling Location log when prompt is denied keeps toggle off without dead-end toast',
+      'enabling Location log from never-asked state requests system popup and on first denial stays off with feedback',
       (tester) async {
     final profiles = await _profiles(masterOn: true, logOn: false);
     final loc = _FakeLocationService(
@@ -201,9 +201,16 @@ void main() {
     await tester.tap(find.text('Location log'));
     await tester.pumpAndSettle();
 
+    // From never-asked state, tapping ON must issue the system permission request (not skip to Settings)
     expect(loc.requestCalls, 1);
     expect(loc.openSettingsCalls, 0);
     expect(await profiles.locationLogEnabled(), isFalse);
+    // On first denial, shows visible feedback instead of a silent no-op or dead-end toast
+    expect(
+      find.textContaining(
+          "Location log needs location permission. Turn it on again when you're ready to allow it."),
+      findsOneWidget,
+    );
     expect(find.textContaining('The location log needs location permission'),
         findsNothing);
   });
