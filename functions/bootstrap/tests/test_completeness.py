@@ -555,9 +555,12 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
     assert by_pt["identity"]["core_total"] == len(core_ids)
     # 4 identity core nodes come from preboarding; the rest are open
     assert by_pt["identity"]["core_answered"] == 4
-    assert by_pt["personality"]["unlocked"] is False
+    # User-facing: every section is open (no "unlocks as you go" gate) —
+    # personality is answerable now even with earlier cores unfinished.
+    assert by_pt["personality"]["unlocked"] is True
 
-    # a high-weight node in a locked section is kept out of `next`
+    # ...but Ayma's OWN guided flow still orders itself: a high-weight node in a
+    # section whose earlier cores aren't done is kept out of `next`.
     assert "attachment_style" not in {n["id"] for n in res["next"]}
     # score spans the whole long_term tree; visible_score only the open nodes
     assert 0 < res["score"] < res["visible_score"]
@@ -581,6 +584,47 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
     # the next gated section in the canonical founder order (tree v6) is
     # Dealbreakers, right after About Me — it unlocks once identity core is done.
     assert by_pt2["dealbreakers"]["unlocked"] is True
+
+
+def test_user_sees_every_section_open_including_relationships(monkeypatch):
+    """Founder order (2026-11-15): nothing stays locked — the user may open and
+    answer ANY section in any order, including Relationships — while Ayma's own
+    guided flow still goes in order, and the `relationship_intent` routing node
+    still routes with every section open."""
+    _stub_narrative(monkeypatch, {})
+    prof = {"relationship_intent": "Long-term", **_PREBOARD}
+    db = FakeDb({_profile_key(): dict(prof)})
+    res = _run(completeness.compute(db, "u1"))
+
+    # every user-facing section is open — no "unlocks as you go" gate anywhere,
+    # Relationships included (it is branch-`all`-rooted and shows once intent set).
+    assert res["sections"], "expected sections for an intent-set user"
+    assert all(s["unlocked"] is True for s in res["sections"])
+    assert "relationships" in {s["page_type"] for s in res["sections"]}
+
+    # questionnaire_view agrees: no node is locked out by the section gate. (A
+    # section's deep nodes still reveal only after its own core — that in-section
+    # reveal is unchanged — so a core node is always open.)
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    core_open = [
+        n["unlocked"] for n in view["nodes"]
+        if question_tree.tier(n["id"]) == "core"
+    ]
+    assert core_open and all(core_open)
+
+    # Ayma's OWN flow is still ordered: attachment_style (personality core,
+    # weight 5) is not offered before identity's core is done.
+    assert "attachment_style" not in {n["id"] for n in res["next"]}
+
+    # routing still leads before an intent is picked, with all sections open...
+    db2 = FakeDb({_profile_key(): {}})
+    res2 = _run(completeness.compute(db2, "u1"))
+    assert res2["intent_set"] is False
+    assert res2["next"][0]["id"] == "relationship_intent"
+    # ...and a picked intent still routes the tree to the right branch.
+    db3 = FakeDb({_profile_key(): {"relationship_intent": "Casual", **_PREBOARD}})
+    branch, intent_set, _ = _run(completeness._evaluate(db3, "u1"))
+    assert intent_set is True and branch == "casual"
 
 
 def test_score_is_full_tree_not_just_unlocked(monkeypatch):
@@ -612,11 +656,11 @@ def test_taste_section_is_unlocked_and_offered_early_without_finishing_earlier(
     res = _run(completeness.compute(db, "u1"))
     by_pt = {s["page_type"]: s for s in res["sections"]}
 
-    # promoted: open from the start, highest priority tier, yet earlier
-    # sections' cores are NOT all done (personality stays locked).
+    # promoted: highest priority tier, surfaced early in Ayma's flow. Every
+    # section is open to the user now (no gate), including personality.
     assert by_pt["taste"]["unlocked"] is True
     assert by_pt["taste"]["priority"] == 5
-    assert by_pt["personality"]["unlocked"] is False
+    assert by_pt["personality"]["unlocked"] is True
 
     next_ids = [n["id"] for n in res["next"]]
     assert "taste_music" in next_ids

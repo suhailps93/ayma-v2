@@ -5766,7 +5766,6 @@ class CompletenessSection {
     this.pct = 0,
     this.answered = 0,
     this.total = 0,
-    this.unlocked = true,
     this.coreTotal = 0,
     this.coreAnswered = 0,
     this.priority = 0,
@@ -5777,10 +5776,6 @@ class CompletenessSection {
   final int pct;
   final int answered;
   final int total;
-
-  /// Whether the section is open in the progressive-disclosure flow. Older
-  /// backends omit this — default `true` so every section renders.
-  final bool unlocked;
 
   /// The section's `core` (essential) node counts. `deep` nodes only surface
   /// once `coreAnswered >= coreTotal`.
@@ -5801,7 +5796,6 @@ class CompletenessSection {
         pct: (m['pct'] as num?)?.toInt() ?? 0,
         answered: (m['answered'] as num?)?.toInt() ?? 0,
         total: (m['total'] as num?)?.toInt() ?? 0,
-        unlocked: m['unlocked'] is bool ? m['unlocked'] as bool : true,
         coreTotal: (m['core_total'] as num?)?.toInt() ?? 0,
         coreAnswered: (m['core_answered'] as num?)?.toInt() ?? 0,
         priority: (m['priority'] as num?)?.toInt() ?? 0,
