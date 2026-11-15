@@ -181,6 +181,38 @@ def test_duplicate_bullet_keeps_most_private_tag(monkeypatch):
     assert next(iter(ov.values()))["visibility"] == Visibility.PRIVATE.value
 
 
+def test_migrate_wiki_skips_non_canonical_pages(monkeypatch):
+    # Scout 2449 blocker 4: a health/sensitive page (non-canonical page_type)
+    # is excluded by the live story (profile_bullets skips it); migration must
+    # match — it must not surface under Little Extras.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "health", "page_id": "health",
+             "visibility": "private", "body": "On a GLP-1 for weight loss."},
+            {"page_type": "interests", "page_id": "interests",
+             "visibility": "public", "body": "I love hiking."},
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    texts = [e["answer"] for e in ov.values()]
+    assert any("hiking" in t for t in texts)
+    assert not any("GLP-1" in t for t in texts)  # health page not surfaced
+    assert all(e["section"] in __import__("question_tree").section_meta() for e in ov.values())
+
+
+def test_migrate_questionnaire_skips_meta_sentinels():
+    # Scout 2449 blocker 3 at the source: a "skipped"/"addressed" questionnaire
+    # value is not an answer and must not become a node.
+    docs = {}
+    docs.update(_q("u1", "family_of_origin_narrative", value="skipped", source="stated"))
+    docs.update(_q("u1", "sibling_relationship_narrative", value="Close.", source="stated"))
+    ov = mig.migrate_questionnaire(FakeDb(docs), "u1")
+    assert "sibling_relationship_narrative" in ov
+    assert "family_of_origin_narrative" not in ov
+
+
 def test_migrate_assessment_is_ayma_only_inferred(monkeypatch):
     _patch_story(
         monkeypatch,

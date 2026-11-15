@@ -50,6 +50,10 @@ _PROFILE_DERIVABLE = {
 
 _LITTLE_EXTRAS = "misc"
 
+# questionnaire answer values that are meta / non-answers — not real content
+# (Scout 2449 blocker 3: these leaked through as story bullets).
+_META_SENTINELS = {"skipped", "addressed", "n/a", "none", "prefer not to say", ""}
+
 
 def _emergent_id(prefix: str, *parts: str) -> str:
     h = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:8]
@@ -82,6 +86,8 @@ def migrate_questionnaire(db, uid: str) -> dict[str, dict]:
         value = data.get("value")
         if value is None or value == "":
             continue
+        if isinstance(value, str) and value.strip().lower() in _META_SENTINELS:
+            continue  # skipped/addressed/etc. is not an answer — don't surface it
         src = str(data.get("source") or "stated").lower()
         prov = Provenance.INFERRED if src == "inferred" else Provenance.STATED
         entry: dict[str, Any] = {
@@ -146,8 +152,15 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
         page_id = sec.get("page_id", "")
         if page_id in getattr(story, "REPORT_LINKED_PAGE_IDS", set()):
             continue  # report-linked pages become report-view nodes, not here
-        page_type = sec.get("page_type") or _LITTLE_EXTRAS
-        section = page_type if page_type in question_tree.section_meta() else _LITTLE_EXTRAS
+        page_type = sec.get("page_type") or ""
+        if page_type not in question_tree.section_meta():
+            # The live story only renders canonical sections (profile_bullets
+            # skips the rest — e.g. the health/sensitive page). Match it: a
+            # non-canonical page is NOT story content, so it does not surface
+            # here (Scout 2449 blocker 4). Its content is retained Ayma-only by
+            # migrate_assessment where applicable, never in Your Story/public.
+            continue
+        section = page_type
         vis = sec.get("visibility") or "private"
         bullets = story_bullets.parse_bullets(sec.get("body") or "", vis, page_id=page_id)
         for b in bullets:

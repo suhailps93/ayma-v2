@@ -115,6 +115,34 @@ that switches a consumer deletes the path it replaces in the same change.
   wired into the live completeness endpoint (that is the consumer-switch phase).
 - **Tests:** `tests/test_person_graph_completeness.py` (6) green.
 
+## Pre-switch fixes — Scout batch-2449 verification blockers
+
+The merged foundation verified faithful (202 nodes, idempotent, non-destructive,
+0 bullets missing) but surfaced structured questionnaire answers as bullets for
+the first time, which the live profile/story did not show. Fixed before any
+consumer switch:
+
+1. **Public expansion (blocker 1).** Structured personal facts now default
+   **private** (owner sees them in Your Story, never public). Publishing a
+   questionnaire answer is an explicit per-node decision — **pending a founder
+   public allow-list** (age/gender/location/interested-in/intent/looking-for are
+   the natural candidates). No seed node defaults public until that is approved.
+   Wiki/story prose keeps its own page visibility (parity preserved).
+2. **Rendering (blocker 2).** Dates render as a date (not a raw timestamp),
+   booleans as Yes/No.
+3. **Meta-answers (blocker 3).** `skipped` / `addressed` / `n/a` placeholders are
+   filtered at migration and render — never a bullet.
+4. **Health page (blocker 4).** `migrate_wiki` skips non-canonical page_types,
+   matching the live story (which excludes the health/sensitive page); no story
+   behaviour change for the owner.
+5. **Dedupe (blocker 5).** Done — duplicate-page bullets collapse to one node,
+   more-private tag wins.
+
+Bullet ORDER parity (graph sorts section/level/id vs wiki authoring order) is
+cosmetic per the founder; deferred.
+
+**Re-verification owed on the founder account before the switch.**
+
 ## Phases 5, 6b, 7 — gated on real-account verification (design §9–§10)
 
 The remaining work switches live consumers and **deletes** the old stores. The

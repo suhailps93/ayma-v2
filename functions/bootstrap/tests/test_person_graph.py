@@ -62,13 +62,17 @@ def test_founder_section_moves_applied():
 
 def test_common_sense_default_visibility():
     s = seed()
-    # public section → public default
-    assert s["date_of_birth"].default_visibility is Visibility.PUBLIC
-    # private-default sections
+    # Structured personal facts are NOT public by default — publishing a
+    # questionnaire answer is an explicit per-node decision (Scout 2449 blocker
+    # 1). DOB defaults private (owner sees it in Your Story, never public).
+    assert s["date_of_birth"].default_visibility is Visibility.PRIVATE
     assert s["financial_security_narrative"].default_visibility is Visibility.PRIVATE
     # body facts never default public
     assert s["height"].default_visibility is Visibility.PRIVATE
     assert s["weight"].default_visibility is Visibility.AYMA_ONLY
+    # No seed node is public until the founder approves a public allow-list
+    # (explicit per-node visibility). Pending that, nothing defaults public.
+    assert all(n.default_visibility is not Visibility.PUBLIC for n in s.values())
 
 
 def test_seed_section_visibility_matches_production_wiki_line():
@@ -107,7 +111,7 @@ def test_four_values_promotions_are_level_2():
 def test_merge_seed_only_uses_defaults():
     n = merge_node(seed_node("date_of_birth"), None, "date_of_birth")
     assert n.state is NodeState.NOT_ASKED
-    assert n.visibility is Visibility.PUBLIC
+    assert n.visibility is Visibility.PRIVATE  # structured fact: private by default
     assert n.answer is None
     assert n.emergent is False
 

@@ -57,6 +57,38 @@ def test_story_narrative_is_verbatim_structured_is_labelled():
     assert any(t.startswith("Alcohol") and "Never" in t for t in life)  # labelled
 
 
+def test_structured_values_render_humanised_not_raw():
+    # Scout 2449 blocker 2: DOB rendered as a raw Firestore timestamp and
+    # booleans as "true". Dates show a date; booleans show Yes/No.
+    g = _graph(
+        {
+            "date_of_birth": {"answer": "1993-03-05 20:00:00+00:00", "visibility": "private"},
+            "smoking_vaping": {"answer": True, "visibility": "private"},
+        }
+    )
+    secs = render.story_sections(g)["sections"]
+    ident = _texts(secs, "identity")
+    assert any("1993-03-05" in t and "20:00:00" not in t for t in ident)
+    life = _texts(secs, "lifestyle")
+    assert any(t.endswith(": Yes") for t in life)
+    assert not any("true" in t.lower() for t in life)
+
+
+def test_meta_sentinel_answers_do_not_render():
+    # Scout 2449 blocker 3: "skipped" / "addressed" placeholders are not bullets.
+    g = _graph(
+        {
+            "family_of_origin_narrative": {"answer": "skipped", "visibility": "private"},
+            "childhood_formative_narrative": {"answer": "addressed", "visibility": "private"},
+            "sibling_relationship_narrative": {"answer": "Close with my sister.", "visibility": "private"},
+        }
+    )
+    fam = _texts(render.story_sections(g)["sections"], "family")
+    assert "Close with my sister." in fam
+    assert not any(t.strip().lower() in ("skipped", "addressed") for t in fam)
+    assert not any("skipped" in t.lower() or "addressed" in t.lower() for t in fam)
+
+
 def test_story_includes_children_as_bullets():
     ov = {
         "taste_music": {

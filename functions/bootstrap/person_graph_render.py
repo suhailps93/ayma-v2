@@ -41,20 +41,65 @@ def _story_vis(v: Visibility) -> str:
     return _STORY_VIS[v]
 
 
+# Meta / non-answer sentinels that must never render as a story bullet
+# (Scout 2449 blocker 3: "skipped", "addressed" leaked through as bullets).
+_META_SENTINELS = {"skipped", "addressed", "n/a", "none", "prefer not to say"}
+
+# node ids whose answer is really a date, not prose (they are `narrative` kind
+# in the tree but carry a date value).
+_DATE_NODE_IDS = {"date_of_birth"}
+
+
+def _format_value(node: GraphNode, raw) -> str:
+    """Humanise a structured value: booleans → Yes/No, dates → a plain date,
+    everything else → trimmed text (Scout 2449 blocker 2 — raw timestamps and
+    raw `true` leaked into story/public)."""
+    if isinstance(raw, bool):
+        return "Yes" if raw else "No"
+    if node.answer_type == "bool":
+        s = str(raw).strip().lower()
+        if s in ("true", "yes", "1"):
+            return "Yes"
+        if s in ("false", "no", "0"):
+            return "No"
+    if node.id in _DATE_NODE_IDS or _looks_like_timestamp(raw):
+        return _date_only(raw)
+    if isinstance(raw, (list, tuple)):
+        return ", ".join(str(x) for x in raw if str(x).strip())
+    return str(raw).strip()
+
+
+def _looks_like_timestamp(raw) -> bool:
+    s = str(raw)
+    # "1993-03-05 20:00:00+00:00" / ISO with a time component
+    return len(s) >= 19 and s[:4].isdigit() and s[4:5] == "-" and (" " in s or "T" in s)
+
+
+def _date_only(raw) -> str:
+    s = str(raw).strip()
+    # take the date part before a space or 'T'
+    for sep in (" ", "T"):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+            break
+    return s
+
+
 def _answer_text(node: GraphNode) -> str:
     """A node's answer as display text. Narrative answers are the user's own
-    words; a structured answer is labelled by its prompt."""
+    words; a structured answer is labelled by its prompt. Meta/non-answer
+    sentinels and empty values render nothing."""
     a = node.answer
     if a is None:
         return ""
-    if isinstance(a, (list, tuple)):
-        a = ", ".join(str(x) for x in a if str(x).strip())
-    a = str(a).strip()
-    if not a:
+    if isinstance(a, str) and a.strip().lower() in _META_SENTINELS:
+        return ""  # a skipped/addressed placeholder is not a bullet
+    text = _format_value(node, a)
+    if not text or text.strip().lower() in _META_SENTINELS:
         return ""
-    if node.answer_type == "narrative":
-        return a
-    return f"{node.prompt}: {a}"
+    if node.answer_type == "narrative" and node.id not in _DATE_NODE_IDS:
+        return text
+    return f"{node.prompt}: {text}"
 
 
 def _is_renderable(node: GraphNode) -> bool:
