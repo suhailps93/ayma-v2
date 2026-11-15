@@ -71,6 +71,25 @@ def test_common_sense_default_visibility():
     assert s["weight"].default_visibility is Visibility.AYMA_ONLY
 
 
+def test_seed_section_visibility_matches_production_wiki_line():
+    # The graph's per-section default visibility must equal the established
+    # wiki_schema line, so a migrated/questionnaire-derived bullet inherits the
+    # SAME visibility the equivalent wiki content had — nothing surfaces more
+    # publicly than the product already allowed (Scout 2449 visibility check).
+    import wiki_schema
+
+    secdef = pg._section_default_visibility()
+    for pt in question_tree.ordered_page_types():
+        assert secdef[pt].value == wiki_schema.default_visibility_for(pt), pt
+
+
+def test_sensitive_nodes_never_default_public():
+    s = seed()
+    for nid, n in s.items():
+        if n.sensitive:
+            assert n.default_visibility is not Visibility.PUBLIC, nid
+
+
 def test_four_values_promotions_are_level_2():
     s = seed()
     for nid in (

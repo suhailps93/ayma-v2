@@ -122,9 +122,24 @@ def migrate_profile(db, uid: str) -> dict[str, dict]:
 def migrate_wiki(db, uid: str) -> dict[str, dict]:
     """Every public/private story bullet → an emergent node homed in its
     section, keeping the bullet's visibility. Unknown sections land under Little
-    Extras. Ayma-only passages are left to :func:`migrate_assessment`."""
+    Extras. Ayma-only passages are left to :func:`migrate_assessment`.
+
+    The emergent id is derived from ``(section, normalised text)``, so the same
+    bullet reached through **duplicate wiki pages** (same canonical section,
+    different page_id) collapses to ONE node — the graph's "one home per fact"
+    rule (design §2.4), matching the dedupe the legacy ``get_bullets`` did by
+    text within a canonical page_type. On a collision the **more private**
+    visibility wins (order-independent), so a private copy never becomes
+    public."""
     import story
     import story_bullets
+
+    # publicness order: lower = more public (public < private < ayma_only)
+    _rank = {
+        Visibility.PUBLIC.value: 0,
+        Visibility.PRIVATE.value: 1,
+        Visibility.AYMA_ONLY.value: 2,
+    }
 
     out: dict[str, dict] = {}
     for sec in story.get_story(db, uid).get("sections", []):
@@ -135,11 +150,18 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
         section = page_type if page_type in question_tree.section_meta() else _LITTLE_EXTRAS
         vis = sec.get("visibility") or "private"
         bullets = story_bullets.parse_bullets(sec.get("body") or "", vis, page_id=page_id)
-        for i, b in enumerate(bullets):
+        for b in bullets:
             text = (b.get("text") or "").strip()
             if not text or b.get("visibility") == "ai_only":
                 continue
-            nid = _emergent_id("story", page_id or page_type, str(i), text)
+            # id keyed on section + normalised text → duplicate-page bullets dedupe
+            nid = _emergent_id("story", section, text.casefold())
+            vis = _GRAPH_VIS.get(b.get("visibility"), Visibility.PRIVATE.value)
+            if nid in out:
+                # same fact already homed — keep the more private visibility
+                if _rank[vis] > _rank[out[nid]["visibility"]]:
+                    out[nid]["visibility"] = vis
+                continue
             out[nid] = {
                 "prompt": text,
                 "section": section,
@@ -147,7 +169,7 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
                 "answer": text,
                 "answer_type": "narrative",
                 "state": NodeState.ANSWERED.value,
-                "visibility": _GRAPH_VIS.get(b.get("visibility"), Visibility.PRIVATE.value),
+                "visibility": vis,
                 "provenance": Provenance.IMPORTED.value,
             }
     return out

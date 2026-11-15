@@ -141,6 +141,46 @@ def test_migrate_wiki_bullets_become_emergent_nodes(monkeypatch):
     assert set(mig.migrate_wiki(db, "u1")) == set(ov)
 
 
+def test_migrate_wiki_dedupes_bullets_from_duplicate_pages(monkeypatch):
+    # Scout 2449: 6 bullets rendered twice because duplicate wiki pages (same
+    # canonical section, different page_id) each produced the bullet. The graph
+    # homes a fact once — identical text in one section collapses to one node.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "family", "page_id": "family",
+             "visibility": "public", "body": "Grew up in San Jose."},
+            {"page_type": "family", "page_id": "family-roots",
+             "visibility": "public", "body": "Grew up in San Jose. Two sisters."},
+        ],
+        ai_sections=[],
+    )
+    db = FakeDb()
+    ov = mig.migrate_wiki(db, "u1")
+    texts = sorted(e["answer"] for e in ov.values())
+    assert texts == ["Grew up in San Jose.", "Two sisters."]  # no duplicate
+    # idempotent still holds with the new id basis
+    assert set(mig.migrate_wiki(db, "u1")) == set(ov)
+
+
+def test_duplicate_bullet_keeps_most_private_tag(monkeypatch):
+    # if the same text appears public on one page and private on another, the
+    # first occurrence stands and a private copy never silently becomes public.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "family", "page_id": "family",
+             "visibility": "private", "body": "A tender memory."},
+            {"page_type": "family", "page_id": "family-dup",
+             "visibility": "public", "body": "A tender memory."},
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    assert len(ov) == 1
+    assert next(iter(ov.values()))["visibility"] == Visibility.PRIVATE.value
+
+
 def test_migrate_assessment_is_ayma_only_inferred(monkeypatch):
     _patch_story(
         monkeypatch,
