@@ -11,7 +11,13 @@ snapshots and the public-profile assembly all keep working unchanged.
 * An existing page is split into bullets at read time (``story_bullets``); no
   migration. A section with more than one page has its pages merged into a
   single canonical section entry with all bullets preserved in order.
-* Ayma-only (``ai_only``) spans surface as Ayma-only bullets in the same list.
+* Ayma-only (``ai_only``) bullets are NEVER shown in Your Story — not to the
+  public, not even to the owner (founder order, Nov 15 2026: Ayma-only is for
+  Ayma alone). The editor/view payload carries only public + private bullets:
+  :func:`get_bullets` reads from the ai-only-stripped story view, and
+  :func:`save_bullets` re-attaches the page's existing Ayma-only spans so a
+  user edit of the visible bullets never destroys content Ayma's own tools and
+  context still rely on.
 """
 
 from __future__ import annotations
@@ -21,9 +27,27 @@ import logging
 import question_tree
 import story
 import story_bullets
-from story_common import VIS_AI_ONLY, VIS_PRIVATE, VIS_PUBLIC
+import story_spans
+from story_common import AI_ONLY_CLOSE, AI_ONLY_OPEN, VIS_AI_ONLY, VIS_PRIVATE, VIS_PUBLIC
 
 logger = logging.getLogger("ayma.story")
+
+
+def _preserved_ai_only(db, uid: str, page_id: str) -> str:
+    """The page's current Ayma-only spans, serialised back as
+    ``{{ai_only}}…{{/ai_only}}`` — re-attached on save so editing the visible
+    (public/private) bullets never drops content Ayma keeps for herself.
+    Empty when the page is gone or has no Ayma-only content."""
+    try:
+        _ref, data = story._require_page(db, uid, page_id)
+    except KeyError:
+        return ""
+    body = story._display_body(db, uid, page_id, data)
+    return "".join(
+        AI_ONLY_OPEN + s["text"] + AI_ONLY_CLOSE
+        for s in story_spans.parse_spans(body)
+        if s.get("kind") == VIS_AI_ONLY
+    )
 
 # The sections the bullet editor covers: the canonical story sections only.
 # Ayma's own meta pages (steering/interactions) and the skill report pages
@@ -47,17 +71,22 @@ def get_bullets(db, uid: str) -> dict:
     page_type are merged so each canonical type appears exactly once with all
     bullets preserved."""
     by_pt: dict[str, dict] = {}
-    for s in story.get_ai_notes(db, uid).get("sections", []):
+    # get_story is the ai-only-stripped owner view (public + private only, and
+    # whole ai_only pages excluded), so Ayma-only content never reaches the
+    # client for display (founder order, Nov 15 2026).
+    for s in story.get_story(db, uid).get("sections", []):
         pt = s.get("page_type")
         if pt not in question_tree.section_meta():
             continue  # skill pages, steering/interactions, custom — not here
         vis = s.get("visibility") or VIS_PRIVATE
         cur_page_id = s.get("page_id", "")
-        bullets = story_bullets.parse_bullets(
-            s.get("edit_body") or s.get("body") or "",
-            vis,
-            page_id=cur_page_id,
-        )
+        bullets = [
+            b
+            for b in story_bullets.parse_bullets(
+                s.get("body") or "", vis, page_id=cur_page_id
+            )
+            if b["visibility"] != VIS_AI_ONLY  # defensive: never emit Ayma-only
+        ]
         canonical_id = pt.replace("_", "-")
         if pt not in by_pt:
             shell = _section_shell(pt)
@@ -65,7 +94,7 @@ def get_bullets(db, uid: str) -> dict:
                 {
                     "page_id": cur_page_id,
                     "bullets": list(bullets),
-                    "has_ai_only": any(b["visibility"] == VIS_AI_ONLY for b in bullets),
+                    "has_ai_only": False,  # Ayma-only is never shown in Your Story
                     "empty": not bullets,
                 }
             )
@@ -86,7 +115,6 @@ def get_bullets(db, uid: str) -> dict:
                 if t:
                     seen_texts.add(t)
 
-            cur_sec["has_ai_only"] = any(b["visibility"] == VIS_AI_ONLY for b in cur_sec["bullets"])
             cur_sec["empty"] = not cur_sec["bullets"]
 
     for pt in _CANONICAL:
@@ -98,7 +126,7 @@ def get_bullets(db, uid: str) -> dict:
 
     sections = list(by_pt.values())
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
-    return {"sections": sections, "visibilities": [VIS_PUBLIC, VIS_PRIVATE, VIS_AI_ONLY]}
+    return {"sections": sections, "visibilities": [VIS_PUBLIC, VIS_PRIVATE]}
 
 
 def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
@@ -106,34 +134,36 @@ def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
     save it through the per-section save path (keeps moderation and version
     history). Raises ``KeyError`` if the page is gone.
 
-    ``allow_hidden_changes=True``: unlike the plain-text editor, the bullet
-    editor shows EVERY bullet — including Ayma-only ones — and lets the user
-    change each one's visibility or remove it explicitly. So moving an
-    Ayma-only bullet to private/public (which rewrites its ``{{ai_only}}`` span)
-    is a deliberate, visible edit, not the silent hidden-content loss the
-    default guard protects against. Keeping the guard here trapped a user who
-    tagged their own bullet Ayma-only — they could never change it back."""
-    composed = story_bullets.compose_body(bullets)
-    vis = composed["visibility"]
+    The editor only shows and sends public + private bullets, so the composed
+    body loses any Ayma-only content — which the user must never destroy. The
+    page's existing Ayma-only spans are re-attached before the write, so Ayma's
+    own tools/context keep them while the owner never sees them (founder order,
+    Nov 15 2026). The per-section save guard then confirms nothing hidden was
+    dropped."""
+    visible = [b for b in (bullets or []) if b.get("visibility") != VIS_AI_ONLY]
+    composed = story_bullets.compose_body(visible)
+    vis = composed["visibility"]  # public or private (never ai_only now)
+    body = composed["body"]
+    preserved = _preserved_ai_only(db, uid, page_id)
+    if preserved:
+        body = f"{body} {preserved}".strip() if body else preserved
     story.save_section(
         db,
         uid,
         page_id,
-        composed["body"],
+        body,
         visibility=vis if vis in (VIS_PUBLIC, VIS_PRIVATE) else None,
-        allow_hidden_changes=True,
     )
-    if vis == VIS_AI_ONLY:
-        # an all-Ayma-only section: save_section won't set ai_only, so set it.
-        story.set_section_ai_only(db, uid, page_id)
     return {"page_id": page_id, "visibility": vis}
 
 
 def create_bullet_section(db, uid: str, page_type: str, bullets: list[dict]) -> dict:
     """Create a new section for ``page_type`` from the first bullet(s) the user
-    adds to a previously-empty section."""
+    adds to a previously-empty section (public/private only — the editor never
+    offers Ayma-only)."""
     if page_type not in question_tree.section_meta():
         raise ValueError(f"unknown section: {page_type}")
-    composed = story_bullets.compose_body(bullets)
+    visible = [b for b in (bullets or []) if b.get("visibility") != VIS_AI_ONLY]
+    composed = story_bullets.compose_body(visible)
     res = story.create_section(db, uid, page_type, composed["body"], composed["visibility"])
     return {"page_id": res["page_id"], "visibility": composed["visibility"]}

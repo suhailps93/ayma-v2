@@ -142,7 +142,6 @@ from story_writes import (
     remove_section,
     revert_section,
     save_section,
-    set_section_ai_only,
     set_visibility,
 )
 from story_chat import (
@@ -221,7 +220,6 @@ __all__ = [
     "_require_page",
     "save_section",
     "create_section",
-    "set_section_ai_only",
     "set_visibility",
     "remove_section",
     "revert_section",

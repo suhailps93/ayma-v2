@@ -165,30 +165,31 @@ def test_create_rejects_unknown_section():
         pass
 
 
-def test_user_can_reverse_an_ai_only_bullet_in_the_bullet_editor():
-    # The bullet editor is a full explicit editor: the user sees every bullet
-    # (Ayma-only included) and controls each one. Moving an Ayma-only bullet
-    # back to private/public must work — no cycle trap (the default hidden-span
-    # loss-guard does not apply here).
+def test_ai_only_bullets_are_never_shown_and_preserved_on_save():
+    # Founder order (Nov 15 2026): Ayma-only bullets must NEVER render in Your
+    # Story — not even to the owner — but Ayma keeps them internally. So
+    # get_bullets omits them, and saving the visible (public/private) bullets
+    # preserves the page's Ayma-only content in storage.
     db = FakeDb()
     _page(
         db, "u1", "identity", page_type="identity", visibility="public",
-        ai_body="Public line. {{ai_only}}Was Ayma-only, now surfaced.{{/ai_only}}",
+        ai_body="Public line. {{ai_only}}Ayma's private note.{{/ai_only}}",
     )
-    out = profile_bullets.save_bullets(db, "u1", "identity", [
-        {"text": "Public line.", "visibility": "public"},
-        {"text": "Was Ayma-only, now surfaced.", "visibility": "private"},
+    res = profile_bullets.get_bullets(db, "u1")
+    ident = {s["page_type"]: s for s in res["sections"]}["identity"]
+    # the Ayma-only bullet is filtered out of the display payload
+    assert [b["text"] for b in ident["bullets"]] == ["Public line."]
+    assert all(b["visibility"] != "ai_only" for b in ident["bullets"])
+    assert ident["has_ai_only"] is False
+    assert "ai_only" not in res["visibilities"]
+
+    # editing the visible bullets preserves Ayma's note in storage
+    profile_bullets.save_bullets(db, "u1", "identity", [
+        {"text": "Public line, edited.", "visibility": "public"},
     ])
-    assert out["visibility"] == "public"
     body = _edits(db, "u1", "identity")
-    # it is now a private bullet, no longer an ai_only span
-    assert "{{private}}Was Ayma-only, now surfaced.{{/private}}" in body
-    assert "{{ai_only}}" not in body
-    # and the user may remove it entirely
-    out2 = profile_bullets.save_bullets(db, "u1", "identity", [
-        {"text": "Public line.", "visibility": "public"},
-    ])
-    assert "ai_only" not in _edits(db, "u1", "identity")
+    assert "Public line, edited." in body
+    assert "{{ai_only}}Ayma's private note.{{/ai_only}}" in body  # preserved
 
 
 def test_get_bullets_dedupes_and_merges_duplicate_page_types():
@@ -229,19 +230,21 @@ def test_get_bullets_dedupes_and_merges_duplicate_page_types():
 
     by_pt = {s["page_type"]: s for s in sections}
 
-    # dealbreakers merged: both pages' bullets preserved in sensible order
+    # dealbreakers merged: both pages' visible bullets preserved in order; the
+    # Ayma-only span ("Cannot tolerate dishonesty.") is filtered out entirely
+    # (founder order, Nov 15 2026 — never shown in Your Story).
     db_sec = by_pt["dealbreakers"]
     assert db_sec["page_id"] == "dealbreakers"
     bullet_texts = [b["text"] for b in db_sec["bullets"]]
     assert bullet_texts == [
         "Must want children.",
-        "Cannot tolerate dishonesty.",
         "Must love dogs.",
         "Never smoke.",
     ]
     bullet_vis = [b["visibility"] for b in db_sec["bullets"]]
-    assert bullet_vis == ["private", "ai_only", "public", "private"]
-    assert db_sec["has_ai_only"] is True
+    assert bullet_vis == ["private", "public", "private"]
+    assert "Cannot tolerate dishonesty." not in bullet_texts
+    assert db_sec["has_ai_only"] is False
     assert db_sec["empty"] is False
 
     # family merged: both bullets preserved
