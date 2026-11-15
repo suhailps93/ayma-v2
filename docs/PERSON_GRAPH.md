@@ -104,10 +104,27 @@ that switches a consumer deletes the path it replaces in the same change.
   migrate→write→render and idempotency. Real-account byte-parity against the
   live wiki is Astro's post-merge verification.
 
-## Phases 5–7 — planned (design §10)
+## Phase 6a — completeness tiers ✅ (additive)
+
+- **`person_graph_completeness.py`.** Completeness becomes a game-like tier over
+  the graph (design §6): **Surface → Core → Deep → Uncharted**.
+  `compute_tier(graph)` returns the tier, `matchable` (≥ Core — nobody matches
+  below Core), per-level answered/total/pct against the **fixed seed only**
+  (emergent nodes never enter a denominator, killing the live 81↔86% wobble),
+  and the Uncharted axes (emergent depth + breadth). Additive read; not yet
+  wired into the live completeness endpoint (that is the consumer-switch phase).
+- **Tests:** `tests/test_person_graph_completeness.py` (6) green.
+
+## Phases 5, 6b, 7 — gated on real-account verification (design §9–§10)
+
+The remaining work switches live consumers and **deletes** the old stores. The
+design gates deletion on migration being verified against real accounts first
+("old documents are kept read-only until the graph path is verified, then
+deleted"). That verification is Astro's post-merge job, so these are held until
+the foundation (Phases 1–4) is confirmed against real data:
 
 5. Consumers switch — sims, match report, deterministic scorer, per-user
-   emergent gates; delete old stores.
-6. Guided flow by level; reports-as-views + image nodes; completeness tiers
-   (Surface / Core / Deep / Uncharted).
+   emergent gates; **delete old stores**.
+6b. Guided flow by level (completeness/Ayma order read levels, delete the old
+    core/deep gate); reports-as-views + image nodes.
 7. Cutover + delete — wiki write path and old report/assessment docs removed.
