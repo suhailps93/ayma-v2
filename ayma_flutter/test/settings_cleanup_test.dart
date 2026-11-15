@@ -40,6 +40,18 @@ class _FakeProfiles extends ProfileService {
   Stream<bool> watchPaused() => Stream.value(paused);
 
   @override
+  Stream<bool> watchLocationMaster() => Stream.value(false);
+
+  @override
+  Stream<bool> watchLocationBackground() => Stream.value(false);
+
+  @override
+  Stream<bool> watchLocationLog() => Stream.value(false);
+
+  @override
+  Stream<bool> watchDateMoments() => Stream.value(false);
+
+  @override
   Future<void> setPaused(bool value) async {
     paused = value;
     pausedWrites.add(value);
@@ -147,6 +159,8 @@ void main() {
         'Privacy',
         'Ayma’s models',
         'Connect an agent (MCP)',
+        'Ayma Assistant',
+        'Default assistant app',
         'How to use Ayma',
       ],
     );
@@ -213,6 +227,7 @@ void main() {
       [
         'Pause matching',
         'AI Avatar',
+        'Location',
         'Verify your face',
         'Face matching consent',
         'Terms of Service',
