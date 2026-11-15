@@ -40,10 +40,32 @@ that switches a consumer deletes the path it replaces in the same change.
 - **Tests:** `tests/test_person_graph.py` (17) + the touched tree/completeness
   assertions. No user-facing change; no Firestore I/O yet.
 
-## Phases 2–7 — planned (design §10)
+## Phase 2 — graph store + the 5 tools + registry ✅
 
-2. Graph store (`users/{uid}/graph`) + the 5 tools (`set_answer`, `set_weight`,
-   `set_visibility`, `add_node`, `query_nodes`) + relationship-type registry.
+- **`person_graph_store.py`.** Owns the per-user overlay document
+  `users/{uid}/graph/main` (only divergences from the seed) and the five write
+  tools (design §8.2), each validated through `person_graph.validate_overlay`
+  at the boundary:
+  - `set_answer` — records an answer, sets state/provenance; a changed answer
+    retires the old one to an Ayma-only **history** record on the same node (§2.5).
+  - `set_weight` — personal weight (relative normalization stays a score-time
+    concern).
+  - `set_visibility` — public / private / ayma_only.
+  - `add_node` — emergent node under a parent (level = parent + 1, homed in the
+    parent's section, private by default); nests under emergent parents too.
+  - `query_nodes` — pulls a subgraph by section / level / state / min_weight /
+    emergent, in section-then-level order, instead of loading the whole person.
+  - `effective(db, uid)` = `seed ⊕ overlay` for the user's stored branch.
+- **Relationship-type registry** (global, `graph_registry/relationship_types`):
+  the five strict types always present; `register_link_type` mints a free-form
+  type once and reuses it (synonym-drift guard, §2.4); strict names can't be
+  redefined.
+- **Tests:** `tests/test_person_graph_store.py` (14) green. Not yet wired into
+  the live LLM tool dispatch — these are the validated primitives the
+  consumer-switch phase binds as tools. No user-facing change.
+
+## Phases 3–7 — planned (design §10)
+
 3. Renders — `render_story`, `render_public_profile`, persona/match-report.
 4. Migration — questionnaire answers / profile fields / wiki / assessment → overlay.
 5. Consumers switch — sims, match report, deterministic scorer, per-user
