@@ -467,9 +467,24 @@ def test_story_public_adapter_only_includes_public_sections(monkeypatch):
     monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
     report, *_ = ra.story_public_blocks(object(), "u1")
     headings = [sec["heading"] for sec in report["sections"]]
+    # Only the public section; the private "Career" section is hidden entirely.
     assert headings == ["Identity"]
-    blocks = _blocks(report)
-    assert "page:career:sent:0" not in blocks
+    assert not any(sec["heading"] == "Career" for sec in report["sections"])
+
+
+def test_story_public_adapter_renders_public_bullets_not_prose(monkeypatch):
+    """Founder bug (Nov 15): the public profile showed the legacy page-body
+    prose (``text`` blocks flowed as a paragraph) instead of the public
+    bullets. Every block the public view emits is now a ``fact`` (bullet)
+    block — never a ``text`` prose block — one per public bullet in order."""
+    monkeypatch.setattr(story, "get_story", lambda db, uid: _STORY_DATA)
+    report, *_ = ra.story_public_blocks(object(), "u1")
+    blocks = [b for sec in report["sections"] for b in sec["blocks"]]
+    assert blocks  # not empty
+    assert all(b["type"] == rb.FACT for b in blocks)
+    assert not any(b["type"] == rb.TEXT for b in blocks)
+    texts = [b["text"] for b in blocks]
+    assert texts == ["I'm a product designer.", "I grew up in Ohio."]
 
 
 # --- no Attributes section on story_public (§ founder 2026-09-21, reversing --
@@ -902,31 +917,69 @@ def _public_profile_db():
     return db
 
 
-def test_public_profile_adapter_matches_public_pages_exactly():
+def test_public_profile_adapter_redacts_the_same_as_the_public_view():
     db = _public_profile_db()
     report, created, updated = ra.public_profile_blocks(db, "her")
     assert report["title"] == "Dana"
     texts = " ".join(
         b["text"] for sec in report["sections"] for b in sec["blocks"]
     )
-    # Visible narrative present; everything /explore/profile redacts absent.
+    # Visible public bullets present; everything /explore/profile redacts
+    # absent (private span, private page, user_hidden page, raw markers).
     assert "Grew up sailing." in texts
     assert "Climbs and cooks." in texts
     for hidden in ("Bad breakup", "hidden thing", "pulled body", "{{"):
         assert hidden not in texts
-    # The exact same bodies, section for section, as the pages payload.
-    pages = ra.public_profile._public_pages(db, "her")
-    assert [p["body"] for p in pages] == [
-        " ".join(b["text"] for b in sec["blocks"]) for sec in report["sections"]
-    ]
 
 
-def test_public_profile_adapter_headings_use_title_then_page_type_label():
+def test_public_profile_adapter_headings_use_the_canonical_section_title():
     db = _public_profile_db()
     report, *_ = ra.public_profile_blocks(db, "her")
-    # `_public_pages` sorts by (page_type, title): identity page has no
-    # title -> the shared page-type label; interests page keeps its title.
-    assert [s["heading"] for s in report["sections"]] == ["Identity", "Interests"]
+    # Headings are the canonical story section titles (the SAME ones the owner
+    # sees in their own story / bullet editor), in section order: the identity
+    # page has no title of its own -> its canonical "About Me"; the interests
+    # page keeps its explicit "Interests".
+    assert [s["heading"] for s in report["sections"]] == ["About Me", "Interests"]
+
+
+def test_public_profile_adapter_renders_public_bullets_not_prose():
+    """The viewer's public-profile view emits ``fact`` (bullet) blocks, one
+    per public bullet — never the legacy page-body prose (``text`` blocks)."""
+    db = _public_profile_db()
+    report, *_ = ra.public_profile_blocks(db, "her")
+    blocks = [b for sec in report["sections"] for b in sec["blocks"]]
+    assert blocks
+    assert all(b["type"] == rb.FACT for b in blocks)
+    assert not any(b["type"] == rb.TEXT for b in blocks)
+
+
+def test_public_profile_adapter_hides_sections_with_no_public_bullet():
+    """A private section (or a public page whose only content is a private /
+    ai_only span) yields no public bullet and is dropped entirely."""
+    from test_public_profile import FakeDb
+
+    db = FakeDb()
+    db.docs[("users", "her", "profile", "main")] = {"name": "Dana"}
+    # Public section with a public bullet -> shown.
+    db.docs[("users", "her", "wiki_pages", "about")] = {
+        "visibility": "public", "page_type": "identity",
+        "ai_body": "Grew up sailing.",
+    }
+    # Entirely private section -> hidden.
+    db.docs[("users", "her", "wiki_pages", "fam")] = {
+        "visibility": "private", "page_type": "family", "ai_body": "Three siblings.",
+    }
+    # Public page whose only content is a private span -> no public bullet ->
+    # hidden (not shown as an empty section).
+    db.docs[("users", "her", "wiki_pages", "work")] = {
+        "visibility": "public", "page_type": "career",
+        "ai_body": "{{private}}Quit my job.{{/private}}",
+    }
+    report, *_ = ra.public_profile_blocks(db, "her")
+    assert [s["heading"] for s in report["sections"]] == ["About Me"]
+    texts = " ".join(b["text"] for sec in report["sections"] for b in sec["blocks"])
+    assert "Three siblings" not in texts
+    assert "Quit my job" not in texts
 
 
 def test_public_profile_adapter_every_block_is_uncorrectable():

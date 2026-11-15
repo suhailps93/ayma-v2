@@ -4,12 +4,14 @@ shape -> the generic block model (``report_blocks.py``). § generic reports.
 Nothing here changes any producer's storage schema — every adapter just reads
 through the producer's own existing read function (``appearance.get_report``,
 ``deep_dive.read_dive``, ``story.get_story`` / ``get_ai_notes``) and reshapes
-the result. The public-story adapter filters ``story.get_story``'s own
-sections down to ``visibility == "public"`` and strips private spans via
-``story.strip_private_spans`` — the same rule ``public_profile._public_pages``
-applies, kept in step with it rather than re-deriving from Firestore directly,
-while still keeping each section's real ``page_id`` (needed for the owner's
-own tap-to-correct on their public preview).
+the result. The two public-profile adapters (``story_public_blocks``, the
+owner's own self-view, and ``public_profile_blocks``, another member's) share
+ONE builder, ``_public_bullet_sections``: the public-tagged BULLETS of each
+story section (``public_profile.public_bullet_sections`` ->
+``story_bullets.parse_bullets`` filtered to ``public``), in section order,
+rendered as read-only ``fact`` blocks — never the legacy page-body prose
+(founder bug, Nov 15). Private/ai_only bullets and sections with no public
+bullet are dropped.
 
 Every ``block_id`` is chosen so ``report_hub.py`` can parse it straight back
 into whatever the owning producer's correction/dispute function needs, with
@@ -31,11 +33,15 @@ NO extra id-lookup table required:
   (owner-only, § founder: replaces the standalone Photo candidates screen),
   resolved straight to :mod:`reverse_image_search`'s own
   ``confirm_candidate``/``reject_candidate``.
-* Story       — ``page:<page_id>`` (the section as a whole) and
+* Story       — the owner's editable views (``story_private`` /
+  ``story_ai_notes``) use ``page:<page_id>`` (the section as a whole) and
   ``page:<page_id>:sent:<n>`` (one sentence within it) — resolved back to a
   passage string by re-splitting that page's current body the same way
   (:func:`report_blocks.split_sentences`), so it stays a faithful substring
   for :func:`story.apply_span_action` / ``edit_passage``-style replacement.
+  The read-only public views (``story_public`` / ``public_profile``) emit
+  ``page:<page_id>:bullet:<n>`` ``fact`` blocks that are ``editable=False``
+  and never a correction target (the owner edits via the bullet editor).
 * Match        — block ids (``score``, ``explanation:sent:<n>``,
   ``dealbreaker:<n>``, ``dim:<key>``/``dim:<key>:rationale``/
   ``dim:<key>:evidence:<n>``, ``shared:<n>``/``tension:<n>``/``missing:<n>``)
@@ -504,21 +510,46 @@ def story_private_blocks(db, uid: str):
     return rb.make_report("Your Story", sections), None, None
 
 
+def _public_bullet_sections(db, uid: str) -> list[dict]:
+    """The public-profile Living Report sections — one ``fact`` (bullet) block
+    per public bullet, in canonical section order, sections with no public
+    bullet dropped. The ONE shared builder for both public views
+    (:func:`story_public_blocks`, the owner's self-view, and
+    :func:`public_profile_blocks`, another member's), so they can never
+    disagree on what a public profile shows. Every block is ``editable=False``:
+    this is a read view of the public profile — the owner edits their story
+    through the bullet editor (``/profile/bullets``), never by tapping a
+    bullet here.
+
+    Public bullets come from :func:`public_profile.public_bullet_sections`
+    (``story_bullets.parse_bullets`` filtered to ``public``), NOT the page
+    body split into prose sentences — so no private/ai_only content and no
+    legacy paragraph prose ever appears."""
+    return [
+        rb.make_section(
+            sec["title"],
+            [
+                rb.fact_block(
+                    f"page:{sec['page_id']}:bullet:{i}", text, editable=False
+                )
+                for i, text in enumerate(sec["bullets"])
+            ],
+        )
+        for sec in public_profile.public_bullet_sections(db, uid)
+    ]
+
+
 def story_public_blocks(db, uid: str):
     """The public-profile Living Report: what a non-owner sees on this
     person's public profile, and — for the owner's own "My public profile"
-    self-view — the exact same content (plus tap-to-correct, gated
-    separately by ``report_hub.resolve_owner``/``correct``, not by anything
-    here). No ``viewer_uid`` parameter: unlike before, this adapter's output
-    no longer depends on who's asking.
+    self-view — the exact same content. No ``viewer_uid`` parameter: this
+    adapter's output doesn't depend on who's asking.
 
-    Story's own public narrative sections only: the same ones
-    ``public_profile._public_pages`` shows (``visibility == "public"``,
-    private spans stripped via ``story.strip_private_spans``), built from
-    ``story.get_story`` instead so each keeps its real ``page_id`` — needed
-    so the owner's own tap-to-correct on their public preview resolves to
-    the real page (a non-owner's correction attempt 403s regardless,
-    before any of this matters — see ``report_hub.py``).
+    Story's own public content, rendered as BULLETS (not the legacy page-body
+    prose, founder bug Nov 15): exactly the ``public``-tagged bullets from each
+    section, in section order, sections with no public bullet hidden — see
+    :func:`_public_bullet_sections` /
+    :func:`public_profile.public_bullet_sections`.
 
     No Attributes section here (§ founder 2026-09-21, reversing part of a
     2026-09-20 change: "The attributes section should be part of the report
@@ -529,19 +560,7 @@ def story_public_blocks(db, uid: str):
     removed — it's repurposed: ``explore._passes_filters`` now consults it
     so a private attribute can't be used to search for/filter someone (§
     founder: "Use it for the heuristic search tho")."""
-    data = story.get_story(db, uid)
-    sections: list[dict] = []
-    for sec in _narrative_pages(data):
-        if sec.get("visibility") != story.VIS_PUBLIC:
-            continue
-        body = story.strip_private_spans(sec.get("body") or "")
-        if not body:
-            continue
-        sections.append(
-            rb.make_section(sec.get("title") or sec.get("page_id"),
-                             _story_section_blocks(sec["page_id"], body))
-        )
-    return rb.make_report("Story", sections), None, None
+    return rb.make_report("Story", _public_bullet_sections(db, uid)), None, None
 
 
 def story_ai_notes_blocks(db, uid: str):
@@ -564,38 +583,18 @@ def story_ai_notes_blocks(db, uid: str):
 # --- Public profile (another member's — the Explore tap-through) -----------
 
 
-# Heading fallbacks for a page with no title of its own — byte-identical to
-# the labels the Flutter side's old bespoke renderer used for the same pages
-# (`public_profile_screen.dart`'s `_Section._labels`), so the converged
-# Living Report shows the exact headings the `/explore/profile` view always
-# showed.
-_PUBLIC_PAGE_LABELS = {
-    "identity": "Identity",
-    "career": "Work & study",
-    "interests": "Interests",
-    "personality": "Personality",
-    "values": "Values",
-    "goals": "Looking ahead",
-    "lifestyle": "Lifestyle",
-    "family": "Family",
-    "relationships": "Relationships",
-    "misc": "More",
-}
-
-
 def public_profile_blocks(db, owner_uid: str):
     """Adapter for ANOTHER member's public profile (`report_type ==
     "public_profile"`, id = the subject's uid) — what a viewer coming from
     an Explore card sees as the profile's narrative content.
 
-    **Redaction parity is the whole point of this adapter.** The pages come
-    from :func:`public_profile._public_pages` — the exact same function
-    ``GET /explore/profile/{uid}`` serves its ``pages`` list with
-    (``visibility == "public"`` only, ``user_hidden`` dropped,
-    ``{{private}}`` spans stripped, empty bodies dropped) — NOT from a
-    re-derived Firestore read, so this report and that payload can never
-    disagree about what's visible. The other gates mirror
-    :func:`public_profile.build` the same way:
+    **Redaction parity is the whole point of this adapter.** The content comes
+    from :func:`public_profile.public_bullet_sections` — the public bullets
+    of each story section (``visibility == "public"`` after clamping, private
+    and ai_only bullets dropped, empty sections dropped), the SAME builder the
+    owner's own self-view (:func:`story_public_blocks`) uses, so a viewer and
+    the owner can never disagree about what the public profile shows. The
+    other gates mirror :func:`public_profile.build` the same way:
 
     * a deleted user (``deleted_users/{uid}`` tombstone) reads as an EMPTY
       report, matching ``build``'s ``"pages": []`` placeholder — the screen
@@ -609,8 +608,8 @@ def public_profile_blocks(db, owner_uid: str):
     Every block is ``editable=False`` and ``report_hub.get_report``
     force-clears ``viewer_can_edit`` for this type regardless of who's
     asking (like ``match``): a viewer never corrects someone ELSE's
-    profile, and the owner edits their own through Your Story /
-    ``story_public``, never through this read."""
+    profile, and the owner edits their own through the bullet editor
+    (``/profile/bullets``), never by tapping a bullet on any public view."""
     owner_uid = (owner_uid or "").strip()
     if not owner_uid:
         return None, None, None
@@ -627,18 +626,7 @@ def public_profile_blocks(db, owner_uid: str):
     name = str(prof.get("name") or "").strip()
     if not name:
         return None, None, None
-    sections = []
-    for i, page in enumerate(public_profile._public_pages(db, owner_uid)):
-        heading = str(page.get("title") or "").strip() or _PUBLIC_PAGE_LABELS.get(
-            str(page.get("page_type") or ""), "More"
-        )
-        blocks = [
-            rb.text_block(f"sec:{i}:sent:{j}", sent, editable=False)
-            for j, sent in enumerate(rb.split_sentences(page.get("body") or ""))
-        ]
-        if blocks:
-            sections.append(rb.make_section(heading, blocks))
-    return rb.make_report(name, sections), None, None
+    return rb.make_report(name, _public_bullet_sections(db, owner_uid)), None, None
 
 
 # --- Match -----------------------------------------------------------------
