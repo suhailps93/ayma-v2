@@ -8,6 +8,7 @@
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
+import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_tab_bar.dart';
@@ -182,5 +183,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(aymaSheet.isExpanded, isTrue);
     expect(voiced, 0);
+  });
+
+  testWidgets(
+      'a disposed ChatScreen leaves NO leaked listener on its (shared) store '
+      '(Scout NOTE 218 ANR: accumulating main-thread cost)',
+      (tester) async {
+    // A sheet/scoped ChatScreen is injected the long-lived shared store, so it
+    // must remove EVERY listener it added when it goes away — otherwise each
+    // opened-then-closed chat leaves a dead listener accruing on that store.
+    final store = TranscriptStore()..seed(const []);
+    expect(store.hasListenersForTest, isFalse); // clean baseline
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: ChatScreen(
+          transcriptStore: store,
+          apiClient: _FakeApi(),
+          askAymaContext: _ctx,
+        ),
+      ),
+    ));
+    await tester.pump();
+    expect(store.hasListenersForTest, isTrue); // the screen is listening
+
+    // Tear the screen down.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pumpAndSettle();
+
+    // Pre-fix `_scanTurnsForBubble` was added in initState but never removed in
+    // dispose, so this stayed true forever. The fix removes it -> store clean.
+    expect(store.hasListenersForTest, isFalse);
   });
 }
