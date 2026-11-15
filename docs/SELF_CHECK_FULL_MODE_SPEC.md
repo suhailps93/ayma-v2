@@ -1,7 +1,10 @@
-# Ayma Self-Check Skill — Full-Mode Specification
+# Ayma Self-Check Skill — Full-Mode Specification (SUPERSEDED)
+
+> [!WARNING]
+> **SUPERSEDED / CLOSED (Nov 8, 2026):** On Nov 8, 2026, the founder closed the decision on full mode: probe-only for paid tools is a closed founder decision. `/self-check --full` with real generations is NOT to be implemented; paid tools are probe-only. This document is kept for historical context only.
 
 > **Branch:** `fleet/self-check-full-spec` (branched off `v2` tip: `23e4ef76`)  
-> **Status:** Specification Document Only (No production code modified)  
+> **Status:** SUPERSEDED — Closed by Founder Decision (Nov 8, 2026)  
 > **Date:** November 2026  
 > **Target Environment:** Ayma v2 Backend (`functions/bootstrap/`) & Flutter Frontend (`ayma_flutter/`)  
 > **Test Counterpart:** `demo-test2` Sofia Marino (seeded demo persona, San Jose)  
