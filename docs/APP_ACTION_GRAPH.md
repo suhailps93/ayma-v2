@@ -314,7 +314,7 @@ Bullet editor (embedded in the story screen, `bullet_sections_editor.dart`, driv
 |---|---|---|
 | "+ Add" under a section | Add one bullet (inline field; several sentences split into separate bullets); saves via `PUT /profile/bullets/{page_id}` or `POST /profile/bullets` for an empty section | `UI`; content edits COVERED by the story-entry tools |
 | Bullet visibility chip (tap) | Cycle Public / Private / Ayma-only | `UI`; `set_passage_privacy` covers the same intent |
-| Bullet delete icon | Remove a bullet (never shown on an Ayma-only bullet, which is locked) | `UI` |
+| Bullet delete icon | Remove any bullet, Ayma-only included | `UI` |
 | "Add your LinkedIn profile" (Career) | `POST /story/linkedin` | COVERED `set_linkedin_profile` |
 
 ### 15a. My person graph (`/profile/graph`) — `person_graph_screen.dart`

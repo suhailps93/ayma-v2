@@ -148,10 +148,6 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   int? _editing;
   bool _saving = false;
 
-  /// An Ayma-only bullet the server already holds: the user can't delete it
-  /// (the server would refuse the edit).
-  bool _locked(StoryBullet b) => b.isAiOnly && b.id.isNotEmpty;
-
   @override
   void initState() {
     super.initState();
@@ -163,7 +159,9 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   @override
   void didUpdateWidget(BulletSectionCard old) {
     super.didUpdateWidget(old);
-    if (_editing == null && !_saving) _bullets = List.of(widget.section.bullets);
+    if (_editing == null && !_saving) {
+      _bullets = List.of(widget.section.bullets);
+    }
   }
 
   @override
@@ -174,7 +172,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   }
 
   void _startEdit(int i) {
-    if (_saving || _locked(_bullets[i])) return;
+    if (_saving) return;
     setState(() {
       _editing = i;
       _ctrl.text = _bullets[i].text;
@@ -186,7 +184,10 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     if (_saving) return;
     unawaited(_commit());
     setState(() {
-      _bullets = [..._bullets, const StoryBullet(text: '', visibility: 'private')];
+      _bullets = [
+        ..._bullets,
+        const StoryBullet(text: '', visibility: 'private'),
+      ];
       _editing = _bullets.length - 1;
       _ctrl.clear();
     });
@@ -224,7 +225,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   }
 
   void _cycle(int i) {
-    if (_saving || _locked(_bullets[i])) return;
+    if (_saving) return;
     setState(() {
       _bullets[i] = StoryBullet(
         text: _bullets[i].text,
@@ -235,7 +236,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   }
 
   void _delete(int i) {
-    if (_saving || _locked(_bullets[i])) return;
+    if (_saving) return;
     setState(() => _bullets.removeAt(i));
     unawaited(_persist());
   }
@@ -255,11 +256,21 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(s.title, style: AymaType.sans(size: 17, weight: FontWeight.w600, color: ac.fg)),
+          Text(
+            s.title,
+            style: AymaType.sans(
+              size: 17,
+              weight: FontWeight.w600,
+              color: ac.fg,
+            ),
+          ),
           if (s.subtitle.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2),
-              child: Text(s.subtitle, style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute)),
+              child: Text(
+                s.subtitle,
+                style: AymaType.sans(size: 12.5, soft: true, color: ac.fgMute),
+              ),
             ),
           const SizedBox(height: 8),
           for (var i = 0; i < _bullets.length; i++) _row(ac, i),
@@ -280,12 +291,11 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
 
   Widget _row(AymaTokens ac, int i) {
     final b = _bullets[i];
-    final locked = _locked(b);
     final color = bulletVisibilityColor(ac, b.visibility);
     final chip = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(locked ? Icons.lock : bulletVisibilityIcon(b.visibility), size: 14, color: color),
+        Icon(bulletVisibilityIcon(b.visibility), size: 14, color: color),
         const SizedBox(width: 4),
         Flexible(
           child: Text(
@@ -329,36 +339,40 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
                   )
                 else
                   InkWell(
-                    onTap: locked ? null : () => _startEdit(i),
-                    child: Text(b.text, style: AymaType.sans(size: 15, color: ac.fg)),
+                    onTap: () => _startEdit(i),
+                    child: Text(
+                      b.text,
+                      style: AymaType.sans(size: 15, color: ac.fg),
+                    ),
                   ),
                 Wrap(
                   crossAxisAlignment: WrapCrossAlignment.center,
                   spacing: 8,
                   children: [
-                    if (locked)
-                      Tooltip(
-                        message: 'Only Ayma sees this. It can’t be deleted.',
-                        child: Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: chip),
-                      )
-                    else
-                      InkWell(
-                        key: ValueKey('visibility_${widget.section.pageType}_$i'),
-                        onTap: _saving ? null : () => _cycle(i),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
-                          child: chip,
+                    InkWell(
+                      key: ValueKey('visibility_${widget.section.pageType}_$i'),
+                      onTap: _saving ? null : () => _cycle(i),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 8,
+                          horizontal: 2,
+                        ),
+                        child: chip,
+                      ),
+                    ),
+                    InkWell(
+                      key: ValueKey('delete_${widget.section.pageType}_$i'),
+                      onTap: _saving ? null : () => _delete(i),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: ac.fgMute,
+                          semanticLabel: 'Delete bullet',
                         ),
                       ),
-                    if (!locked)
-                      InkWell(
-                        key: ValueKey('delete_${widget.section.pageType}_$i'),
-                        onTap: _saving ? null : () => _delete(i),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(Icons.delete_outline, size: 18, color: ac.fgMute, semanticLabel: 'Delete bullet'),
-                        ),
-                      ),
+                    ),
                   ],
                 ),
               ],

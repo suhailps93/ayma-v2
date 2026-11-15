@@ -650,10 +650,10 @@ void main() {
     expect(find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
     expect(find.text('Hobbies'), findsOneWidget);
     expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
-    // The Ayma-only bullet is locked: no visibility cycle, no delete.
+    // Ayma-only bullets are controlled like any other: cycle and delete.
     expect(find.text('Ayma-only'), findsOneWidget);
-    expect(find.byKey(const ValueKey('delete_career_1')), findsNothing);
-    expect(find.byKey(const ValueKey('delete_career_0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete_career_1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('visibility_career_1')), findsOneWidget);
   });
 
   testWidgets(
@@ -689,7 +689,7 @@ void main() {
     expect(api.bulletSaves, hasLength(1));
     expect(api.bulletSaves.single.$1, 'career');
     expect(api.bulletSaves.single.$2.first.visibility, 'private');
-    // The locked Ayma-only bullet is still sent, so the server keeps it.
+    // The full list is sent, Ayma-only bullets included.
     expect(api.bulletSaves.single.$2.last.visibility, 'ai_only');
   });
 
