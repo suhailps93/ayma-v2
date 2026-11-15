@@ -21,6 +21,8 @@ and this feature does not route around it.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from firebase_admin import firestore
 
 import dm_schema
@@ -40,6 +42,43 @@ def _coord(value) -> float | None:
         return None
 
 
+# A proposed time more than this far in the past is rejected: the card must
+# never go out with a time that has already passed (founder report
+# 2026-11-14). The grace covers clock skew and a plan for "right now".
+_PAST_START_GRACE = timedelta(minutes=5)
+
+
+def _parse_starts_at(value: str) -> datetime | None:
+    """An ISO 8601 start time as an aware datetime, or None when absent/unparseable."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _require_future_start(starts_at: str, now: datetime | None = None) -> None:
+    """Reject a proposed start time that has already passed.
+
+    Empty or unparseable values are left alone: the display label
+    (``time_label``) is what the user sees, and a loose label must not
+    break the propose path.
+    """
+    start = _parse_starts_at(starts_at)
+    if start is None:
+        return
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    if start < moment - _PAST_START_GRACE:
+        raise ValueError("That time has already passed. Pick a time in the future.")
+
+
 def propose_plan(
     place_name: str,
     address: str = "",
@@ -49,13 +88,15 @@ def propose_plan(
     starts_at: str = "",
     proposer_uid: str = "",
     place_kind: str = "",
+    now: datetime | None = None,
 ) -> dict:
     """Build a fresh proposed plan from the proposer's own place and time.
 
     The place must be locatable: a non-empty name plus either an address
     or a latitude/longitude pair. Raises ``ValueError`` otherwise. The
     ``place_kind`` (cafe, bar, park, …) is filled by the Places lookup when
-    available and is advisory - it never gates the plan.
+    available and is advisory - it never gates the plan. A ``starts_at``
+    that has already passed is also rejected (5-minute grace).
     """
     name = (place_name or "").strip()
     if not name:
@@ -67,6 +108,7 @@ def propose_plan(
         raise ValueError(
             "A date plan needs an address or coordinates so the place is "
             "locatable.")
+    _require_future_start(starts_at, now)
     return {
         "status": STATUS_PROPOSED,
         "proposer_uid": str(proposer_uid or ""),
@@ -227,6 +269,7 @@ def suggest_change(
     time_label: str | None = None,
     starts_at: str | None = None,
     note: str = "",
+    now: datetime | None = None,
 ) -> dict:
     """A reply-to-card change: revise the plan, bump the revision and
     RESET approvals back to none. Only the fields the suggester supplies
@@ -254,6 +297,7 @@ def suggest_change(
     if not str(fresh.get("address", "")).strip() and not has_coords:
         raise ValueError(
             "The revised plan still needs an address or coordinates.")
+    _require_future_start(str(fresh.get("starts_at", "")), now)
     fresh["approvals"] = {}
     fresh["status"] = STATUS_PROPOSED
     fresh["revision"] = int(plan.get("revision", 1)) + 1
