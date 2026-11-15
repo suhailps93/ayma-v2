@@ -15,11 +15,12 @@ import '../widgets/ayma_wing_loader.dart';
 /// user into an Ayma chat on a chosen topic — Ayma captures the answers herself
 /// in conversation, so there is nothing to submit here.
 ///
-/// Progressive disclosure: until Ayma knows the user's relationship intent only
-/// the universal sections show; branch-specific sections stay hidden. Within the
-/// visible set, sections unlock in priority order as each earlier section's
-/// core questions are covered, and a section's deeper questions only appear once
-/// its core is done.
+/// Until Ayma knows the user's relationship intent only the universal sections
+/// show; branch-specific sections stay hidden. Within the visible set NOTHING is
+/// locked — the user can open and answer any section in any order (founder
+/// order, 2026-11-15). A section's deeper questions still appear only once its
+/// core is done (an in-section reveal, not a lock). Ayma's own guided flow keeps
+/// its priority ordering server-side (``next_questions``).
 class CompleteProfileScreen extends StatefulWidget {
   const CompleteProfileScreen({super.key, this.apiClient});
 
@@ -145,9 +146,6 @@ class _Body extends StatelessWidget {
     final grouped = data.tree.byPageType;
     final intentLabel = _intentLabels[c.intent] ?? 'Long-term';
 
-    final unlocked = c.sections.where((s) => s.unlocked).toList();
-    final locked = c.sections.where((s) => !s.unlocked).toList();
-
     return RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
@@ -168,14 +166,15 @@ class _Body extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 24),
-          if (unlocked.isNotEmpty) ...[
+          if (c.sections.isNotEmpty) ...[
             Text(
               'SECTIONS',
               style: AymaType.mono(size: 10, color: ac.fgMute)
                   .copyWith(letterSpacing: 1.4),
             ),
             const SizedBox(height: 8),
-            for (final s in unlocked)
+            // Nothing is locked: every section is open to answer in any order.
+            for (final s in c.sections)
               _SectionTile(
                 section: s,
                 nodes: grouped[s.pageType] ?? const [],
@@ -202,22 +201,6 @@ class _Body extends StatelessWidget {
                   prompt: n.aymaPrompt,
                 ),
               ),
-          ],
-          if (locked.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  'UNLOCKS AS YOU GO',
-                  style: AymaType.mono(size: 10, color: ac.fgMute)
-                      .copyWith(letterSpacing: 1.4),
-                ),
-                const SizedBox(width: 12),
-                Expanded(child: Divider(height: 0.5, color: ac.lineSoft)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            for (final s in locked) _LockedSectionTile(section: s),
           ],
           const SizedBox(height: 24),
           FilledButton.icon(
@@ -516,41 +499,6 @@ class _SectionTileState extends State<_SectionTile> {
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-/// A section that isn't open yet: dimmed, a lock icon, no progress bar, and not
-/// expandable. Shown at the bottom under the "Unlocks as you go" divider.
-class _LockedSectionTile extends StatelessWidget {
-  const _LockedSectionTile({required this.section});
-
-  final CompletenessSection section;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: ac.boundary, width: 0.5),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.lock_outline, size: 16, color: ac.fgMute),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              section.label,
-              style: AymaType.sans(size: 14, color: ac.fgDim),
-            ),
-          ),
-          Text('Locked', style: AymaType.mono(size: 10, color: ac.fgMute)),
         ],
       ),
     );

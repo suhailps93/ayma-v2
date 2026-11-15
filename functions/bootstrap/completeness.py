@@ -602,7 +602,16 @@ def _fully_covered(evaluated: list[dict]) -> bool:
     return bool(evaluated) and all(e["coverage"] >= 1.0 for e in evaluated)
 
 
-# --- progressive disclosure: intent gate + section/node unlock ---------------
+# --- disclosure: intent gate (user+Ayma) + Ayma's own section/node order -----
+#
+# Two separate things live here, deliberately split (founder order,
+# 2026-11-15):
+#   * the INTENT gate (`_visible`) — branch-specific sections stay hidden for
+#     everyone until the user picks a relationship intent. Unchanged.
+#   * the SEQUENTIAL section/core gate (`_section_gating` -> `meta`) — this now
+#     orders only AYMA's guided flow (`_next` via `_node_unlocked`). The user is
+#     NOT gated by it: every section is open to answer in any order
+#     (`_node_open_to_user`, `_sections` emits `unlocked: True`).
 
 _ROUTING_ID = "relationship_intent"
 
@@ -685,9 +694,11 @@ def _section_gating(
 
 
 def _node_unlocked(node: dict, meta: dict[str, dict]) -> bool:
-    """A node is reachable when its section is unlocked and either the node is
-    ``core`` or its section's core is complete. The routing node is always
-    reachable."""
+    """Reachable in **Ayma's own guided flow**: her sequential section gate is
+    on (the section is unlocked) and either the node is ``core`` or its
+    section's core is complete. The routing node is always reachable. This is
+    *Ayma's* ordering only — it drives :func:`_next` (``next_questions``), NOT
+    what the user may open; see :func:`_node_open_to_user`."""
     if node["id"] == _ROUTING_ID:
         return True
     m = meta.get(node["page_type"])
@@ -696,6 +707,22 @@ def _node_unlocked(node: dict, meta: dict[str, dict]) -> bool:
     return m["unlocked"] and (
         question_tree.tier(node["id"]) == "core" or m["core_ok"]
     )
+
+
+def _node_open_to_user(node: dict, meta: dict[str, dict]) -> bool:
+    """Reachable in the **user-facing** "Complete your profile" view. The
+    sequential section gate is removed — the user may open and answer ANY
+    section in any order (founder order, 2026-11-15) — so a node is open
+    regardless of whether earlier sections' cores are done. A section's deeper
+    detail still reveals only once that section's own core is covered (the
+    within-section progressive reveal is unchanged). The routing node is always
+    reachable. Ayma's guided ordering stays separate in :func:`_node_unlocked`."""
+    if node["id"] == _ROUTING_ID:
+        return True
+    m = meta.get(node["page_type"])
+    if not m:
+        return True
+    return question_tree.tier(node["id"]) == "core" or m["core_ok"]
 
 
 def _sections(
@@ -717,7 +744,10 @@ def _sections(
                 "pct": round(100 * wc / w) if w else 0,
                 "answered": sum(1 for e in grp if e["coverage"] >= 0.7),
                 "total": len(grp),
-                "unlocked": bool(m.get("unlocked", True)),
+                # The user-facing view never locks a section: every section is
+                # open to answer in any order (founder order, 2026-11-15).
+                # Ayma's own flow still orders itself via `_next`/`_node_unlocked`.
+                "unlocked": True,
                 "core_total": int(m.get("core_total", 0)),
                 "core_answered": int(m.get("core_answered", 0)),
                 "priority": max((e["node"]["weight"] for e in grp), default=0),
@@ -931,8 +961,9 @@ async def questionnaire_view(db, uid: str) -> dict:
     """``{intent, intent_set, score, visible_score, nodes: [{...node..., tier,
     status, value, source, unlocked}]}`` for the user's intent tree — backs
     ``GET /questionnaire``. Until the intent is set, ``nodes`` covers only the
-    global core; each node carries an ``unlocked`` flag for progressive
-    disclosure (see :func:`_node_unlocked`)."""
+    global core; each node carries an ``unlocked`` flag — open to the user to
+    answer now (no section gate; a section's deep detail still reveals once its
+    core is covered), see :func:`_node_open_to_user`."""
     branch, intent_set, evaluated = await _evaluate(db, uid)
     visible = _visible(evaluated, intent_set)
     _, meta = _section_gating(visible, branch, intent_set)
@@ -942,7 +973,7 @@ async def questionnaire_view(db, uid: str) -> dict:
             "status": e["status"],
             "value": e["value"],
             "source": e["source"],
-            "unlocked": _node_unlocked(e["node"], meta),
+            "unlocked": _node_open_to_user(e["node"], meta),
         }
         for e in visible
     ]

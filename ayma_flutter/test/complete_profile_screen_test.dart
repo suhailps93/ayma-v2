@@ -47,7 +47,6 @@ Widget _host(ApiClient api) {
 Map<String, dynamic> _section(
   String pageType,
   String label, {
-  required bool unlocked,
   int pct = 0,
   int answered = 0,
   int total = 0,
@@ -61,7 +60,9 @@ Map<String, dynamic> _section(
       'pct': pct,
       'answered': answered,
       'total': total,
-      'unlocked': unlocked,
+      // The backend now always sends `unlocked: true` (nothing is locked for
+      // the user); the client no longer reads it.
+      'unlocked': true,
       'core_total': coreTotal,
       'core_answered': coreAnswered,
       'priority': priority,
@@ -82,17 +83,16 @@ Map<String, dynamic> _completeness({
       'intent_set': intentSet,
       'sections': [
         _section('identity', 'Identity & basics',
-            unlocked: true,
             pct: identityCoreDone ? 80 : 40,
             answered: identityCoreDone ? 2 : 1,
             total: 3,
             coreTotal: 2,
             coreAnswered: identityCoreDone ? 2 : 1),
         _section('personality', 'Personality & temperament',
-            unlocked: false, total: 1, coreTotal: 1),
+            total: 1, coreTotal: 1),
         if (intentSet)
           _section('goals', 'Goals & timelines',
-              unlocked: false, total: 1, coreTotal: 1, priority: 5),
+              total: 1, coreTotal: 1, priority: 5),
       ],
       'next': [
         {
@@ -260,7 +260,7 @@ void main() {
     expect(rowHeight, 48);
   });
 
-  testWidgets('a locked section is dimmed, lock-marked and non-expandable',
+  testWidgets('every section renders open — nothing is locked (founder order)',
       (tester) async {
     sized(tester);
     await tester.pumpWidget(_host(_api(
@@ -269,39 +269,17 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    expect(find.text('UNLOCKS AS YOU GO'), findsOneWidget);
+    // no "unlocks as you go" divider and no locked tiles anywhere
+    expect(find.text('UNLOCKS AS YOU GO'), findsNothing);
+    expect(find.text('Locked'), findsNothing);
+
+    // a section that used to be gated behind earlier cores (Personality) now
+    // renders as an open, expandable tile and reveals its nodes on tap — the
+    // user can open and answer it in any order.
     expect(find.text('Personality & temperament'), findsOneWidget);
-    expect(find.byIcon(Icons.lock_outline), findsWidgets);
-
-    final ac = tester.element(find.text('Personality & temperament')).ac;
-    // Jobs defect 9: the locked tile is no longer wrapped in Opacity(0.55)
-    // (which failed the text floors in light); the label routes through fgDim
-    // and the `Locked` mono + lock icon stay fgMute at full strength.
-    expect(
-      find.ancestor(
-        of: find.text('Personality & temperament'),
-        matching: find.byType(Opacity),
-      ),
-      findsNothing,
-    );
-    expect(
-      tester.widget<Text>(find.text('Personality & temperament')).style!.color,
-      ac.fgDim,
-    );
-    // Jobs defect 8: the locked-tile border reads in the boundary token too.
-    expect(
-      find.byWidgetPredicate((w) =>
-          w is Container &&
-          w.decoration is BoxDecoration &&
-          (w.decoration as BoxDecoration).border ==
-              Border.all(color: ac.boundary, width: 0.5)),
-      findsWidgets,
-    );
-
-    // tapping a locked section reveals nothing
     await tester.tap(find.text('Personality & temperament'));
     await tester.pumpAndSettle();
-    expect(find.text('Attachment style'), findsNothing);
+    expect(find.text('Attachment style'), findsOneWidget);
   });
 
   testWidgets('an unlocked section hides its deep nodes until core is covered',
