@@ -12,6 +12,7 @@ import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
+import '../widgets/bullet_sections_editor.dart';
 import '../widgets/career_timeline_view.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
@@ -270,13 +271,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
 
   String get _uid => widget.myUid ?? _liveUid() ?? '';
 
-  /// Bumped whenever chrome outside the Living Report changes in a way that
-  /// might also affect the report's own content (e.g. an Appearance report
-  /// run updates `physical_attributes`, which the Appearance view's own
-  /// Attributes section reads) — folded into the widget's key so it's
-  /// recreated (and so refetches) rather than silently going stale.
-  int _reportGen = 0;
-
   bool _loading = true;
   String? _error;
   List<StorySection> _sections = const [];
@@ -324,13 +318,11 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       if (loadUid != _loadedForUid) {
         // Switching users (or the very first load): drop any data held for a
         // different account so a previous user's cover stats / photos can
-        // never flash while the new fetch is in flight. Re-key the embedded
-        // narrative report too so it refetches for the current user.
+        // never flash while the new fetch is in flight.
         _sections = const [];
         _photos = const [];
         _webFindingsReport = null;
         _webFindingsLoadedFor = null;
-        _reportGen++;
       }
     });
     try {
@@ -366,7 +358,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     if (!mounted) return;
     setState(() {
       _sections = data.sections;
-      _reportGen++;
     });
   }
 
@@ -584,15 +575,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     final showAppearance =
         appearanceMerge != null && appearanceMerge.visibility != 'ai';
 
+    final editor = BulletSectionsEditor(key: ValueKey('bullets:$_uid'), api: _api);
     if (rows.isEmpty && photos.isEmpty && !showAppearance) {
-      return CenteredScroll(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Text(
-          "Once you and Ayma have talked a little, your story takes "
-              'shape here.',
-          textAlign: TextAlign.center,
-          style: AymaType.sans(size: 15, soft: true, color: ac.fgMute),
-        ),
+      // Nothing to put on a cover yet — just the editor, so a user who has
+      // never talked to Ayma can still fill in every section.
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(24, 4, 24, 48),
+        children: [editor],
       );
     }
 
@@ -633,17 +622,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         // tiers, ad-hoc multi-select and the make-public/make-private/delete
         // quick actions all come from here now, superseding the old
         // per-sentence drag-select -> "Edit with Ayma" mechanism.
-        if (rows.isNotEmpty) ...[
-          LivingReportView(
-            key: ValueKey('story_private:$_reportGen'),
-            reportType: 'story_private',
-            reportId: _uid,
-            apiClient: _api,
-            shrinkWrap: true,
-            showTitle: false,
-          ),
-          _sectionDivider(),
-        ],
+        editor,
+        _sectionDivider(),
         if (showCareer) ...[
           () { num++; return const SizedBox.shrink(); }(),
           _careerSection(num),
@@ -713,14 +693,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         if (t.showTimeline && t.entries.isNotEmpty)
           CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
         else
-          InkWell(
-            onTap: _addLinkedin,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.link, size: 14, color: ac.accent),
-              const SizedBox(width: 6),
-              Text('Add your LinkedIn to help Ayma build your timeline',
-                  style: AymaType.sans(size: 12.5, color: ac.accentText)),
-            ]),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: OutlinedButton.icon(
+              key: const ValueKey('add_linkedin'),
+              onPressed: _addLinkedin,
+              icon: const Icon(Icons.link, size: 18),
+              label: const Text('Add your LinkedIn profile'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(64, 48)),
+            ),
           ),
       ],
     );

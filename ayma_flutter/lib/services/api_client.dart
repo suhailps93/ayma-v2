@@ -1574,6 +1574,42 @@ class ApiClient {
     }).toList();
   }
 
+  /// `GET /profile/bullets` — every canonical section (empty ones included)
+  /// with its bullets, each carrying its own visibility.
+  Future<List<BulletSection>> profileBullets() async {
+    final m = await _getJson('/profile/bullets');
+    return ((m['sections'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => BulletSection.fromMap(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// `PUT /profile/bullets/{pageId}` — replace one section's bullets. The
+  /// server answers 422 if the edit would drop an Ayma-only bullet.
+  Future<void> profileBulletsSave(String pageId, List<StoryBullet> bullets) =>
+      _sendJson('PUT', '/profile/bullets/${Uri.encodeComponent(pageId)}', {
+        'bullets': [for (final b in bullets) b.toBody()],
+      });
+
+  /// `POST /profile/bullets` — the first bullets of a section that has no page
+  /// yet (its `page_id` was empty).
+  Future<void> profileBulletsCreate(
+    String pageType,
+    List<StoryBullet> bullets,
+  ) => _sendJson('POST', '/profile/bullets', {
+    'page_type': pageType,
+    'bullets': [for (final b in bullets) b.toBody()],
+  });
+
+  /// `GET /profile/graph` (mine) or `GET /profile/graph/{uid}` (another
+  /// member's, public bullets only).
+  Future<PersonGraph> profileGraph({String? uid}) async {
+    final m = await _getJson(
+      uid == null ? '/profile/graph' : '/profile/graph/${Uri.encodeComponent(uid)}',
+    );
+    return PersonGraph.fromMap(m);
+  }
+
   /// `GET /profile/public-text` — the public profile as one plain text (each
   /// section under a `## Title` heading) for the manual editor.
   Future<ProfileTextDoc> profilePublicText() async {
@@ -6521,6 +6557,123 @@ class ProfileProposal {
   final String pageId;
   final String title;
   final List<ProfileChange> changes;
+}
+
+/// One bullet of a story section. [visibility] is `public`, `private` or
+/// `ai_only` (Ayma-only — never deletable by the user).
+class StoryBullet {
+  const StoryBullet({this.id = '', required this.text, required this.visibility});
+
+  final String id;
+  final String text;
+  final String visibility;
+
+  bool get isAiOnly => visibility == 'ai_only';
+
+  factory StoryBullet.fromMap(Map<String, dynamic> m) => StoryBullet(
+    id: m['id'] as String? ?? '',
+    text: m['text'] as String? ?? '',
+    visibility: m['visibility'] as String? ?? 'private',
+  );
+
+  Map<String, dynamic> toBody() => {'text': text, 'visibility': visibility};
+}
+
+/// One canonical section from `GET /profile/bullets`; [pageId] is empty and
+/// [empty] true for a section the user has no page for yet.
+class BulletSection {
+  const BulletSection({
+    required this.pageType,
+    required this.title,
+    this.subtitle = '',
+    this.order = 0,
+    this.pageId = '',
+    this.bullets = const [],
+  });
+
+  final String pageType;
+  final String title;
+  final String subtitle;
+  final int order;
+  final String pageId;
+  final List<StoryBullet> bullets;
+
+  bool get empty => bullets.isEmpty;
+
+  factory BulletSection.fromMap(Map<String, dynamic> m) => BulletSection(
+    pageType: m['page_type'] as String? ?? '',
+    title: m['title'] as String? ?? '',
+    subtitle: m['subtitle'] as String? ?? '',
+    order: (m['order'] as num?)?.toInt() ?? 0,
+    pageId: m['page_id'] as String? ?? '',
+    bullets: ((m['bullets'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => StoryBullet.fromMap(e.cast<String, dynamic>()))
+        .toList(),
+  );
+}
+
+/// A node of the person graph: `person`, `section` or `bullet`.
+class GraphNode {
+  const GraphNode({
+    required this.id,
+    required this.kind,
+    this.label = '',
+    this.text = '',
+    this.visibility = '',
+    this.pageType = '',
+    this.subtitle = '',
+  });
+
+  final String id;
+  final String kind;
+  final String label;
+  final String subtitle;
+  final String text;
+  final String visibility;
+  final String pageType;
+
+  factory GraphNode.fromMap(Map<String, dynamic> m) => GraphNode(
+    id: m['id'] as String? ?? '',
+    kind: m['kind'] as String? ?? '',
+    label: m['label'] as String? ?? '',
+    text: m['text'] as String? ?? '',
+    visibility: m['visibility'] as String? ?? '',
+    pageType: m['page_type'] as String? ?? '',
+    subtitle: m['subtitle'] as String? ?? '',
+  );
+}
+
+/// `GET /profile/graph` — person at the centre, sections around it, bullets
+/// as leaves; [edges] are `(from, to)` id pairs.
+class PersonGraph {
+  const PersonGraph({
+    required this.centerId,
+    required this.centerLabel,
+    required this.nodes,
+    required this.edges,
+  });
+
+  final String centerId;
+  final String centerLabel;
+  final List<GraphNode> nodes;
+  final List<(String, String)> edges;
+
+  factory PersonGraph.fromMap(Map<String, dynamic> m) {
+    final center = (m['center'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return PersonGraph(
+      centerId: center['id'] as String? ?? '',
+      centerLabel: center['label'] as String? ?? '',
+      nodes: ((m['nodes'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => GraphNode.fromMap(e.cast<String, dynamic>()))
+          .toList(),
+      edges: [
+        for (final e in ((m['edges'] as List?) ?? const []).whereType<Map>())
+          ((e['from'] as String?) ?? '', (e['to'] as String?) ?? ''),
+      ],
+    );
+  }
 }
 
 /// `GET /story` result.

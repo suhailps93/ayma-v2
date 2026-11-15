@@ -364,3 +364,34 @@ def test_user_edit_does_not_create_a_pending_public_profile_suggestion():
         "ai_body": "She climbs and surfs.",
     })
     assert [p["page_id"] for p in pm.list_proposals(db, uid)] == ["interests"]
+
+
+def test_set_linkedin_profile_tool_is_registered_and_saves_a_url(monkeypatch):
+    # Founder order (story-sections/person-graph, point 6): Ayma accepts a
+    # LinkedIn link in chat and updates the story via a tool call.
+    base = {d["name"] for d in session_tool_declarations()}
+    assert "set_linkedin_profile" in base
+
+    import career_timeline
+
+    saved = {}
+    monkeypatch.setattr(
+        career_timeline, "set_linkedin_url",
+        lambda db, uid, url: saved.setdefault("url", url) or url,
+    )
+    fn = _bound("set_linkedin_profile", FakeDb({}))
+    out = fn(url="https://www.linkedin.com/in/jane-doe")
+    assert saved["url"] == "https://www.linkedin.com/in/jane-doe"
+    assert "LinkedIn" in out and "Career" in out
+
+
+def test_set_linkedin_profile_rejects_a_non_linkedin_url(monkeypatch):
+    import career_timeline
+
+    def _raise(db, uid, url):
+        raise ValueError("not linkedin")
+
+    monkeypatch.setattr(career_timeline, "set_linkedin_url", _raise)
+    fn = _bound("set_linkedin_profile", FakeDb({}))
+    out = fn(url="https://example.com/jane")
+    assert "linkedin.com" in out.lower()

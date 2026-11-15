@@ -18,6 +18,8 @@ import time
 
 from firebase_admin import firestore
 
+import question_tree
+
 logger = logging.getLogger("ayma.story")
 
 # --- Firestore field / collection names (local, not in schema.py) -----------
@@ -81,22 +83,6 @@ REPORT_LINKED_PAGE_IDS = (
     "web-findings",
 )
 
-# Narrative section display order; unknown page_types sort after, alpha by title.
-_NARRATIVE_ORDER = [
-    "identity",
-    "background",
-    "career",
-    "values",
-    "personality",
-    "goals",
-    "relationships",
-    "family",
-    "dealbreakers",
-    "lifestyle",
-    "interests",
-    "health",
-    "misc",
-]
 
 
 def _server_ts():
@@ -120,18 +106,31 @@ def _label(text: str) -> str:
 
 
 def _section_title(page_id: str, page_type: str, title: str = "") -> str:
-    """A user-titled (custom) section keeps its own ``title``; every other
-    section is titled by its page type."""
+    """A skill page keeps its fixed title; a user-titled (custom) section keeps
+    its own ``title``; every canonical section is titled by the founder's
+    section name (``question_tree.section_meta``, tree v6); anything else falls
+    back to a humanized page_type."""
     if page_id in _SKILL_TITLES:
         return _SKILL_TITLES[page_id]
-    return (title or "").strip() or humanize(page_type)
+    custom = (title or "").strip()
+    if custom:
+        return custom
+    if page_type in question_tree.section_meta():
+        return question_tree.section_title(page_type)
+    return humanize(page_type)
+
+
+def _section_subtitle(page_type: str) -> str:
+    """Short "what belongs here" subtitle for a canonical section (empty if the
+    page_type has no canonical metadata — e.g. a skill or custom page)."""
+    return question_tree.section_subtitle(page_type)
 
 
 def _section_order(page_id: str, page_type: str) -> int:
     if page_id in _SKILL_ORDER:
         return 300 + _SKILL_ORDER[page_id]
-    if page_type in _NARRATIVE_ORDER:
-        return 100 + _NARRATIVE_ORDER.index(page_type)
+    if page_type in question_tree.section_meta():
+        return 100 + question_tree.section_order(page_type)
     return 200
 
 

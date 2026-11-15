@@ -14,6 +14,7 @@ import '../widgets/completeness_ring.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
+import 'person_graph_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
@@ -85,6 +86,13 @@ class ProfileTabScreen extends StatelessWidget {
             hint: 'Everything, what\'s public, and Ayma\'s own AI notes — with '
                 'version history',
             onTap: () => context.push(StoryEditorScreen.path),
+          ),
+          _Item(
+            anchorId: TourAnchors.profileGraphRow,
+            icon: Icons.hub_outlined,
+            label: 'My person graph',
+            hint: 'You and your story sections as a map you can tap through',
+            onTap: () => context.push(PersonGraphScreen.path),
           ),
           _Item(
             anchorId: TourAnchors.profileDetailsRow,

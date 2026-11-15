@@ -171,6 +171,33 @@ class _FakeApi extends ApiClient {
   void Function(String message)? onChatSent;
   ChatResult chatReply = const ChatResult(reply: "Done — made that private.");
 
+  final List<(String, List<StoryBullet>)> bulletSaves = [];
+  final List<(String, List<StoryBullet>)> bulletCreates = [];
+
+  @override
+  Future<List<BulletSection>> profileBullets() async {
+    calls.add('bullets_get');
+    return const [
+      BulletSection(
+        pageType: 'career', title: 'Career', subtitle: 'What drives me at work',
+        order: 1, pageId: 'career',
+        bullets: [
+          StoryBullet(id: 'a', text: 'I lead the analytics team in Lisbon.', visibility: 'public'),
+          StoryBullet(id: 'b', text: 'Wants to move into product.', visibility: 'ai_only'),
+        ],
+      ),
+      BulletSection(pageType: 'hobbies', title: 'Hobbies', order: 2),
+    ];
+  }
+
+  @override
+  Future<void> profileBulletsSave(String pageId, List<StoryBullet> bullets) async =>
+      bulletSaves.add((pageId, bullets));
+
+  @override
+  Future<void> profileBulletsCreate(String pageType, List<StoryBullet> bullets) async =>
+      bulletCreates.add((pageType, bullets));
+
   @override
   Future<StoryData> storyGet() async {
     calls.add('get');
@@ -611,141 +638,59 @@ void main() {
   });
 
   testWidgets(
-      'Story tab: narrative wiki pages render via the shared Living Report '
-      'renderer (story_private), sentence-level block ids and no numbered '
-      'eyebrow (§ Living Report migration)', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    expect(api.calls, contains('get_report:story_private:u1'));
-    expect(find.textContaining('Your Story'), findsOneWidget);
-    // Section headings are the ONE shared renderer's own uppercase style now
-    // — no more per-section "01 " numbering (that convention belonged to the
-    // old bespoke narrative widget; the shared renderer never numbers
-    // sections, same as Appearance/deep-dive).
-    expect(find.text('CAREER'), findsOneWidget);
-    expect(find.textContaining('I lead the analytics team in Lisbon.'),
-        findsOneWidget);
-    expect(
-        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')),
-        findsOneWidget);
-  });
-
-  testWidgets(
-      'a bare short tap on a Story sentence opens Edit with Ayma scoped to '
-      'just that block id, exactly like every other block type on every '
-      'other report type (§ regression fix: this used to be long-press-only, '
-      'so a normal tap on narrative prose silently did nothing — the exact '
-      'bug the founder reported as "this font is not clickable to edit")',
+      'Story: the bullet editor renders every canonical section, empty ones '
+      'included, with title, subtitle and a visibility control per bullet',
       (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    await tester.tap(
-        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ask Ayma'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).last, 'fix this sentence');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    expect(api.correctCalls, hasLength(1));
-    final call = api.correctCalls.single;
-    expect(call['report_type'], 'story_private');
-    expect(call['report_id'], 'u1');
-    expect(call['scope'], 'block');
-    expect(call['block_ids'], ['page:career:sent:0']);
-    expect(call['message'], 'fix this sentence');
+    expect(api.calls, contains('bullets_get'));
+    expect(find.text('Career'), findsOneWidget);
+    expect(find.text('What drives me at work'), findsOneWidget);
+    expect(find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
+    expect(find.text('Hobbies'), findsOneWidget);
+    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
+    // Ayma-only bullets are controlled like any other: cycle and delete.
+    expect(find.text('Ayma-only'), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete_career_1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('visibility_career_1')), findsOneWidget);
   });
 
   testWidgets(
-      'long-pressing one Story sentence selects it; "Chat about these" opens '
-      'Edit with Ayma scoped to just that block id — the quick-action label '
-      'now reflects the REPORT TYPE ("story_private" -> "Make public"), not '
-      'the individual passage\'s own real privacy the way the old '
-      'per-sentence mechanism did', (tester) async {
+      'Story: "+" on an empty section creates it, splitting two sentences '
+      'into two bullets', (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    await tester.longPress(
-        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
-    await tester.pumpAndSettle();
-    expect(find.text('1 selected'), findsOneWidget);
-
-    await tester.tap(find.text('Chat about these'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ask Ayma'), findsOneWidget);
-    expect(find.text('Make public'), findsOneWidget);
-    expect(find.text('Delete'), findsOneWidget);
-
-    await tester.tap(find.text('Make public'));
-    // The quick-action chip fills the composer AND sends in one tap; no
-    // separate send tap follows (the WhatsApp composer model swaps the
-    // cleared composer's send slot back to the mic).
+    final add = find.byKey(const ValueKey('add_bullet_hobbies'));
+    await tester.ensureVisible(add);
+    await tester.tap(add);
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'I climb. I bake.');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(api.correctCalls, hasLength(1));
-    final call = api.correctCalls.single;
-    expect(call['report_type'], 'story_private');
-    expect(call['report_id'], 'u1');
-    expect(call['scope'], 'block');
-    expect(call['block_ids'], ['page:career:sent:0']);
-    expect(call['message'], 'Make public');
+    expect(api.bulletCreates, hasLength(1));
+    expect(api.bulletCreates.single.$1, 'hobbies');
+    expect(api.bulletCreates.single.$2.map((b) => b.text),
+        ['I climb.', 'I bake.']);
   });
 
-  testWidgets(
-      'multi-select bundles two Story sentence block ids under scope '
-      '"block" and sends a free-text correction for both at once',
+  testWidgets('Story: tapping a bullet visibility cycles it and saves',
       (tester) async {
     final api = _FakeApi();
     await _pumpWithRouter(tester, api);
 
-    await tester.longPress(
-        find.byKey(const ValueKey('livingReportBlock:page:career:sent:0')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-        find.byKey(const ValueKey('livingReportBlock:page:career:sent:1')));
-    await tester.pumpAndSettle();
-    expect(find.text('2 selected'), findsOneWidget);
-
-    await tester.tap(find.text('Chat about these'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-        find.byType(TextField).last, 'Combine these into one line.');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    final vis = find.byKey(const ValueKey('visibility_career_0'));
+    await tester.ensureVisible(vis);
+    await tester.tap(vis);
     await tester.pumpAndSettle();
 
-    expect(api.correctCalls, hasLength(1));
-    final call = api.correctCalls.single;
-    expect(call['scope'], 'block');
-    expect(call['block_ids'],
-        unorderedEquals(<String>['page:career:sent:0', 'page:career:sent:1']));
-    expect(call['message'], 'Combine these into one line.');
-  });
-
-  testWidgets(
-      'tapping a section heading sends scope "section" with every sentence '
-      'in that page', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    await tester
-        .tap(find.byKey(const ValueKey('livingReportSection:Career')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, "that's wrong");
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    expect(api.correctCalls, hasLength(1));
-    final call = api.correctCalls.single;
-    expect(call['scope'], 'section');
-    expect(call['block_ids'],
-        unorderedEquals(<String>['page:career:sent:0', 'page:career:sent:1']));
+    expect(api.bulletSaves, hasLength(1));
+    expect(api.bulletSaves.single.$1, 'career');
+    expect(api.bulletSaves.single.$2.first.visibility, 'private');
+    // The full list is sent, Ayma-only bullets included.
+    expect(api.bulletSaves.single.$2.last.visibility, 'ai_only');
   });
 
   testWidgets(
@@ -881,7 +826,7 @@ void main() {
     // Exact match, not `textContaining` — the standalone "CAREER & EDUCATION"
     // section (§ Living Report migration) now also contains the substring
     // "CAREER", so a loose match here would hit two widgets.
-    final careerTop = tester.getTopLeft(find.text('CAREER')).dy;
+    final careerTop = tester.getTopLeft(find.text('Career')).dy;
     expect(photosTop, lessThan(careerTop));
   });
 
@@ -1139,7 +1084,7 @@ void main() {
     // The previous account's cover must be GONE — only B's own clean empty
     // state, never A's "N topics / N photos" ghost stacked on top.
     expect(find.text('Your Story'), findsNothing);
-    expect(find.textContaining('your story takes'), findsOneWidget);
+    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
   });
 
   testWidgets(
@@ -1152,6 +1097,6 @@ void main() {
 
     // No cover block (no "Your Story" / topics / photos), just the empty state.
     expect(find.text('Your Story'), findsNothing);
-    expect(find.textContaining('your story takes'), findsOneWidget);
+    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
   });
 }

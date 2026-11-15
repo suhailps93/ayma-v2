@@ -146,58 +146,35 @@ def test_sections_for_intent_ordering():
     assert set(pts) == {n["page_type"] for n in qt.nodes_for_intent("long_term")}
     for s in secs:
         assert s["label"] and 1 <= s["priority"] <= 5
-    # Beyond the pinned block the sections stay priority-descending, with ties
-    # broken by first appearance in the tree.
-    tail = [s for s in secs if s["page_type"] not in qt.PINNED_SECTION_ORDER]
-    tail_prios = [s["priority"] for s in tail]
-    assert tail_prios == sorted(tail_prios, reverse=True)
-    tree_order = []
-    for n in qt.nodes_for_intent("long_term"):
-        if n["page_type"] not in tree_order:
-            tree_order.append(n["page_type"])
-    for a, b in zip(tail, tail[1:]):
-        if a["priority"] == b["priority"]:
-            assert tree_order.index(a["page_type"]) < tree_order.index(
-                b["page_type"]
-            )
+        # the label is now the founder's canonical section title
+        assert s["label"] == qt.section_title(s["page_type"])
 
 
-def test_sections_for_intent_pinned_order():
-    """Pinned sections lead every tree in the fixed order; the rest keep their
-    prior relative order (explicit deterministic override, founder decision)."""
-    assert qt.PINNED_SECTION_ORDER == (
+def test_sections_for_intent_canonical_order():
+    """Sections follow the canonical founder order from the metadata block
+    (tree v6), not node weight — any section present in the tree appears in the
+    same relative order as :func:`ordered_page_types`."""
+    canonical = list(qt.ordered_page_types())
+    # the founder's explicit leading order
+    assert canonical[:9] == [
         "identity",
-        "personality",
-        "relationships",
+        "looking_for",
         "dealbreakers",
-    )
+        "career",
+        "personality",
+        "interests",
+        "family",
+        "goals",
+        "values",
+    ]
+    # private sections sit at the tail, relationships last
+    assert canonical[-3:] == ["finances", "sensitive", "relationships"]
     for intent in (None, "long_term", "casual"):
         pts = [s["page_type"] for s in qt.sections_for_intent(intent)]
-        present_pins = [p for p in qt.PINNED_SECTION_ORDER if p in pts]
-        # the pinned sections lead, in exactly the pinned order
-        assert pts[: len(present_pins)] == present_pins
-        # and the sections after the pins keep the order they had before the
-        # pin was applied (weight desc, then first appearance in the tree)
-        order, priority = [], {}
-        for n in qt.nodes_for_intent(intent):
-            pt = n["page_type"]
-            if pt not in priority:
-                order.append(pt)
-                priority[pt] = n["weight"]
-            else:
-                priority[pt] = max(priority[pt], n["weight"])
-        prior = sorted(order, key=lambda pt: (-priority[pt], order.index(pt)))
-        prior_tail = [p for p in prior if p not in qt.PINNED_SECTION_ORDER]
-        assert pts[len(present_pins):] == prior_tail
-
-    # default intent prints exactly the required leading four
-    default_pts = [s["page_type"] for s in qt.sections_for_intent(None)]
-    assert default_pts[:4] == [
-        "identity",
-        "personality",
-        "relationships",
-        "dealbreakers",
-    ]
+        present = [pt for pt in canonical if pt in pts]
+        # every present canonical section appears in canonical order and leads
+        # any straggler (a tree page_type missing from the metadata block)
+        assert pts[: len(present)] == present
 
 
 def test_branch_breakdown():
@@ -374,3 +351,36 @@ def test_every_new_dimension_is_documented_in_the_coverage_doc():
     doc = (Path(__file__).parents[3] / "docs" / "PROFILE_COVERAGE.md").read_text()
     for nid in _COVERAGE_V2_ALL | _COVERAGE_V2_LONG_TERM:
         assert f"`{nid}`" in doc, nid
+
+
+def test_section_meta_canonical_names_and_subtitles():
+    """Tree v6 carries founder section names, subtitles and a full order."""
+    assert qt.version() >= 6
+    meta = qt.section_meta()
+    # the renames the founder called out
+    assert qt.section_title("identity") == "About Me"
+    assert qt.section_title("goals") == "Life Goals"
+    assert qt.section_title("misc") == "Little Extras"
+    assert meta["goals"].get("name_locked") is True
+    # the new split-out section exists with a subtitle
+    assert "looking_for" in meta
+    assert qt.section_subtitle("looking_for")
+    # every section has a non-empty title + subtitle and a distinct order
+    orders = [m["order"] for m in meta.values()]
+    assert len(orders) == len(set(orders))
+    for pt, m in meta.items():
+        assert m["title"].strip() and m["subtitle"].strip(), pt
+    # unknown page_type falls back, never raises
+    assert qt.section_title("not_a_real_type") == "Not A Real Type"
+    assert qt.section_subtitle("not_a_real_type") == ""
+
+
+def test_relationships_private_by_default_finances_sensitive_too():
+    """Private-by-default sections (founder order): relationships, finances,
+    sensitive. Default visibility is owned by wiki_schema, not the tree."""
+    import wiki_schema
+    for pt in ("relationships", "finances", "sensitive"):
+        assert wiki_schema.default_visibility_for(pt) == "private", pt
+    # looking_for was split out public (age range public; specifics go private
+    # at the bullet level, not the section level)
+    assert wiki_schema.default_visibility_for("looking_for") == "public"

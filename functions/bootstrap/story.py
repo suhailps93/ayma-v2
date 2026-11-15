@@ -87,7 +87,6 @@ from story_common import (
     VIS_PRIVATE,
     VIS_PUBLIC,
     WIKI_PAGES,
-    _NARRATIVE_ORDER,
     _SKILL_ORDER,
     _SKILL_TITLES,
     _SPAN_RE,
@@ -138,10 +137,12 @@ from story_reads import (
 )
 from story_writes import (
     _require_page,
+    create_section,
     maybe_snapshot_section_after_ai,
     remove_section,
     revert_section,
     save_section,
+    set_section_ai_only,
     set_visibility,
 )
 from story_chat import (
@@ -181,7 +182,6 @@ __all__ = [
     "_SKILL_ORDER",
     "_SKILL_TITLES",
     "REPORT_LINKED_PAGE_IDS",
-    "_NARRATIVE_ORDER",
     "_server_ts",
     "_now_ms",
     "humanize",
@@ -220,6 +220,8 @@ __all__ = [
     "get_section_provenance",
     "_require_page",
     "save_section",
+    "create_section",
+    "set_section_ai_only",
     "set_visibility",
     "remove_section",
     "revert_section",

@@ -56,6 +56,7 @@ import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/screens/skills_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
+import 'package:ayma_flutter/screens/person_graph_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/screens/terms_screen.dart';
 import 'package:ayma_flutter/screens/trial_paywall_screen.dart';
@@ -156,6 +157,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     ),
     CompleteProfileScreen.path: () =>
         shell(CompleteProfileScreen(apiClient: api)),
+    PersonGraphScreen.path: () => shell(PersonGraphScreen(api: api)),
     StoryEditorScreen.path: () =>
         shell(StoryEditorScreen(api: api, myUid: 'me')),
     '/dm/:threadId': () => shell(

@@ -24,6 +24,7 @@ from story_common import (
     VIS_PRIVATE,
     VIS_PUBLIC,
     _section_order,
+    _section_subtitle,
     _section_title,
     _to_epoch,
 )
@@ -53,6 +54,7 @@ def _section_dict(
         "page_id": page_id,
         "page_type": page_type,
         "title": _section_title(page_id, page_type, data.get(F_TITLE) or ""),
+        "subtitle": _section_subtitle(page_type),
         "body": body,
         "edit_body": edit_body,
         "user_hidden": data.get(F_USER_HIDDEN) is True,

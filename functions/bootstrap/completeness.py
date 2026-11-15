@@ -106,16 +106,18 @@ def _profile_answered(node_id: str, profile: dict) -> bool:
 
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
-# Questionnaire section labels come from :mod:`question_tree` (the config layer);
-# the extra keys here cover other profile surfaces that reuse this map.
+# Section labels come from :mod:`question_tree` — the canonical founder titles
+# (``section_meta``, tree v6: "About Me", "Life Goals", "Little Extras", …) so
+# Profile Completeness shows the new section names (founder order, point 7),
+# falling back to the older ``PAGE_TYPE_LABELS`` for any page_type without
+# canonical metadata. The extra keys cover non-section profile surfaces.
 _PAGE_TYPE_LABELS = {
     **question_tree.PAGE_TYPE_LABELS,
-    "sensitive": "Private context",
+    **{pt: question_tree.section_title(pt) for pt in question_tree.section_meta()},
     "steering": "How to talk to me",
     "web_findings": "From the web",
     "face_analysis": "Face analysis",
     "body_analysis": "Body analysis",
-    "misc": "Other",
 }
 
 # How many highest-weight open nodes to surface as "do these next".

@@ -61,7 +61,6 @@ def test_facade_reexports_all_common_symbols():
             "_SKILL_ORDER",
             "_SKILL_TITLES",
             "REPORT_LINKED_PAGE_IDS",
-            "_NARRATIVE_ORDER",
             "_server_ts",
             "_now_ms",
             "humanize",

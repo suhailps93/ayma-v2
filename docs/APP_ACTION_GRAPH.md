@@ -311,6 +311,23 @@ and also `UI`:
 | Edit manually: text field + Save | Hand-edit the public profile text | COVERED `edit_profile_section` (same content, no UI driving needed) |
 | Appearance analysis / topics rows | Open the linked section | `UI` |
 
+Bullet editor (embedded in the story screen, `bullet_sections_editor.dart`, driven by `GET /profile/bullets`): every canonical section renders with its title + subtitle, even when empty.
+
+| Control | Does | Ayma |
+|---|---|---|
+| "+ Add" under a section | Add one bullet (inline field; several sentences split into separate bullets); saves via `PUT /profile/bullets/{page_id}` or `POST /profile/bullets` for an empty section | `UI`; content edits COVERED by the story-entry tools |
+| Bullet visibility chip (tap) | Cycle Public / Private / Ayma-only | `UI`; `set_passage_privacy` covers the same intent |
+| Bullet delete icon | Remove any bullet, Ayma-only included | `UI` |
+| "Add your LinkedIn profile" (Career) | `POST /story/linkedin` | COVERED `set_linkedin_profile` |
+
+### 15a. My person graph (`/profile/graph`) — `person_graph_screen.dart`
+
+| Control | Does | Ayma |
+|---|---|---|
+| Section node / list row (tap) | Expand or collapse that section's bullets around the graph | `UI` |
+| Bullet node (tap) | Show its text and visibility (colour: public / private / Ayma-only) | `UI` |
+| Profile tab row "My person graph" | Open the graph | COVERED `open_screen person_graph` |
+
 ## 16. Profile details (`/settings/profile`) — `profile_settings_screen.dart`, `partner_preferences_fields.dart`
 
 | Control | Does | Ayma |

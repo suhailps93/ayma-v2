@@ -1,10 +1,102 @@
 {
-  "version": 5,
+  "version": 6,
   "_doc": "Tree-based deep-matchmaking questionnaire (revamp). A flat array of nodes; `branch` routes them: `all` is the global core every intent sees, and `casual` / `long_term` / `nikah` are the intent-specific deep layers. `question_tree.nodes_for_intent(intent)` returns the global core plus one branch. The `nikah` branch is complete but never routed to yet (parked). Source: docs research schema (Aimma Deep Matchmaking Data Model). Loaded by question_tree.py and completeness.py; nothing here is hardcoded inline. `ayma_prompt` is a hint for how Ayma raises the topic naturally in conversation, never a scripted question.",
-
-  "kinds": ["enum", "multi", "scale", "bool", "narrative"],
-  "branches": ["all", "casual", "long_term", "nikah"],
-
+  "kinds": [
+    "enum",
+    "multi",
+    "scale",
+    "bool",
+    "narrative"
+  ],
+  "branches": [
+    "all",
+    "casual",
+    "long_term",
+    "nikah"
+  ],
+  "sections": {
+    "identity": {
+      "title": "About Me",
+      "subtitle": "The basics — who you are, day to day.",
+      "order": 0
+    },
+    "looking_for": {
+      "title": "What I'm Looking For",
+      "subtitle": "The relationship and the person you want next.",
+      "order": 1
+    },
+    "dealbreakers": {
+      "title": "Dealbreakers",
+      "subtitle": "Lines you won't cross in a partner.",
+      "order": 2
+    },
+    "career": {
+      "title": "Career",
+      "subtitle": "What you do and where you're headed in work.",
+      "order": 3
+    },
+    "personality": {
+      "title": "Personality",
+      "subtitle": "Your temperament and how you show up.",
+      "order": 4
+    },
+    "interests": {
+      "title": "Interests",
+      "subtitle": "What you love doing with your time.",
+      "order": 5
+    },
+    "family": {
+      "title": "Family",
+      "subtitle": "Your family, kinship and how it shapes you.",
+      "order": 6
+    },
+    "goals": {
+      "title": "Life Goals",
+      "subtitle": "Where you want your life to go.",
+      "order": 7,
+      "name_locked": true
+    },
+    "values": {
+      "title": "Values & Beliefs",
+      "subtitle": "What matters most to you, and why.",
+      "order": 8
+    },
+    "lifestyle": {
+      "title": "Lifestyle",
+      "subtitle": "Your daily habits, health and routines.",
+      "order": 9
+    },
+    "social_circle": {
+      "title": "Social Circle",
+      "subtitle": "Your friends and the people around you.",
+      "order": 10
+    },
+    "taste": {
+      "title": "Taste",
+      "subtitle": "Your music, film and food.",
+      "order": 11
+    },
+    "misc": {
+      "title": "Little Extras",
+      "subtitle": "Everything else worth knowing.",
+      "order": 12
+    },
+    "finances": {
+      "title": "Finances",
+      "subtitle": "Money and security — private by default.",
+      "order": 13
+    },
+    "sensitive": {
+      "title": "Private Context",
+      "subtitle": "Sensitive context, kept private.",
+      "order": 14
+    },
+    "relationships": {
+      "title": "Relationships",
+      "subtitle": "Your relationship history and patterns.",
+      "order": 15
+    }
+  },
   "nodes": [
     {
       "id": "legal_first_name",
@@ -41,7 +133,14 @@
       "branch": "all",
       "label": "Gender identity",
       "kind": "enum",
-      "options": ["Male", "Female", "Non-Binary", "Trans-Male", "Trans-Female", "Custom"],
+      "options": [
+        "Male",
+        "Female",
+        "Non-Binary",
+        "Trans-Male",
+        "Trans-Female",
+        "Custom"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": true,
@@ -55,7 +154,14 @@
       "branch": "all",
       "label": "Interested in",
       "kind": "multi",
-      "options": ["Male", "Female", "Non-Binary", "Trans-Male", "Trans-Female", "Custom"],
+      "options": [
+        "Male",
+        "Female",
+        "Non-Binary",
+        "Trans-Male",
+        "Trans-Female",
+        "Custom"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": true,
@@ -79,11 +185,17 @@
     {
       "id": "relocation_radius",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Relocation / travel radius",
       "kind": "enum",
-      "options": ["Within my city", "Within ~50 km", "Within ~250 km", "Anywhere in my country", "Globally open / digital nomad"],
+      "options": [
+        "Within my city",
+        "Within ~50 km",
+        "Within ~250 km",
+        "Anywhere in my country",
+        "Globally open / digital nomad"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -97,7 +209,24 @@
       "branch": "all",
       "label": "Ethnic & cultural origin",
       "kind": "multi",
-      "options": ["African", "Arab", "Black / Caribbean", "Central Asian", "East Asian", "Hispanic / Latino", "Indigenous / First Nations", "Jewish", "Middle Eastern / Persian", "Mixed / Multiracial", "North African", "Pacific Islander", "South Asian", "Southeast Asian", "White / European", "Other"],
+      "options": [
+        "African",
+        "Arab",
+        "Black / Caribbean",
+        "Central Asian",
+        "East Asian",
+        "Hispanic / Latino",
+        "Indigenous / First Nations",
+        "Jewish",
+        "Middle Eastern / Persian",
+        "Mixed / Multiracial",
+        "North African",
+        "Pacific Islander",
+        "South Asian",
+        "Southeast Asian",
+        "White / European",
+        "Other"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -111,7 +240,12 @@
       "branch": "all",
       "label": "Attachment style",
       "kind": "enum",
-      "options": ["Secure", "Anxious-Preoccupied", "Dismissive-Avoidant", "Fearful-Avoidant"],
+      "options": [
+        "Secure",
+        "Anxious-Preoccupied",
+        "Dismissive-Avoidant",
+        "Fearful-Avoidant"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": false,
@@ -126,7 +260,12 @@
       "label": "Social energy",
       "kind": "scale",
       "options": null,
-      "scale": {"min": 1, "max": 10, "min_label": "Solitary / deep introvert", "max_label": "High social pacing / extreme extrovert"},
+      "scale": {
+        "min": 1,
+        "max": 10,
+        "min_label": "Solitary / deep introvert",
+        "max_label": "High social pacing / extreme extrovert"
+      },
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
@@ -139,7 +278,11 @@
       "branch": "all",
       "label": "How they process decisions",
       "kind": "enum",
-      "options": ["Hyper-Rational / Analytical", "Intuitive / Emotional-First", "Action-Oriented Pragmatist"],
+      "options": [
+        "Hyper-Rational / Analytical",
+        "Intuitive / Emotional-First",
+        "Action-Oriented Pragmatist"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -153,7 +296,11 @@
       "branch": "all",
       "label": "Communication in friction",
       "kind": "enum",
-      "options": ["Immediate confrontation and resolution", "Cool-down period before verbal processing", "Written / structured mediation"],
+      "options": [
+        "Immediate confrontation and resolution",
+        "Cool-down period before verbal processing",
+        "Written / structured mediation"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": false,
@@ -167,7 +314,11 @@
       "branch": "all",
       "label": "Daily rhythm",
       "kind": "enum",
-      "options": ["Early Morning Lark", "Balanced / Standard Day", "Deep Night Owl"],
+      "options": [
+        "Early Morning Lark",
+        "Balanced / Standard Day",
+        "Deep Night Owl"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -182,7 +333,12 @@
       "label": "Domestic order",
       "kind": "scale",
       "options": null,
-      "scale": {"min": 1, "max": 10, "min_label": "Extreme minimalism / highly sanitised", "max_label": "Relaxed / cluttered / organic chaos"},
+      "scale": {
+        "min": 1,
+        "max": 10,
+        "min_label": "Extreme minimalism / highly sanitised",
+        "max_label": "Relaxed / cluttered / organic chaos"
+      },
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
@@ -195,7 +351,12 @@
       "branch": "all",
       "label": "Alcohol",
       "kind": "enum",
-      "options": ["Never", "Rare Social", "Weekly", "Heavy"],
+      "options": [
+        "Never",
+        "Rare Social",
+        "Weekly",
+        "Heavy"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -223,7 +384,12 @@
       "branch": "all",
       "label": "Cannabis / other substances",
       "kind": "enum",
-      "options": ["Never", "Rare Social", "Weekly", "Heavy"],
+      "options": [
+        "Never",
+        "Rare Social",
+        "Weekly",
+        "Heavy"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": true,
@@ -237,7 +403,13 @@
       "branch": "all",
       "label": "Pets",
       "kind": "multi",
-      "options": ["Cats", "Dogs", "Birds", "Reptiles", "None"],
+      "options": [
+        "Cats",
+        "Dogs",
+        "Birds",
+        "Reptiles",
+        "None"
+      ],
       "scale": null,
       "weight": 2,
       "hard_filter": false,
@@ -251,7 +423,14 @@
       "branch": "all",
       "label": "Animal allergies / aversions",
       "kind": "multi",
-      "options": ["Cats", "Dogs", "Birds", "Reptiles", "Horses", "None"],
+      "options": [
+        "Cats",
+        "Dogs",
+        "Birds",
+        "Reptiles",
+        "Horses",
+        "None"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": true,
@@ -265,14 +444,18 @@
       "branch": "all",
       "label": "Relationship intent",
       "kind": "enum",
-      "options": ["Casual", "Long-term", "Marriage", "Not sure yet"],
+      "options": [
+        "Casual",
+        "Long-term",
+        "Marriage",
+        "Not sure yet"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
       "ayma_prompt": "what kind of relationship they're actually here for — this routes the rest of the questionnaire, so find it out early"
     },
-
     {
       "id": "family_of_origin_narrative",
       "tier": "core",
@@ -399,7 +582,6 @@
       "dating_relevant": true,
       "ayma_prompt": "any pattern they've noticed repeating across past relationships, and what, if anything, they're doing differently this time"
     },
-
     {
       "id": "love_language_ranking",
       "tier": "core",
@@ -407,7 +589,13 @@
       "branch": "all",
       "label": "Love languages (ranked)",
       "kind": "multi",
-      "options": ["Physical Touch", "Words of Affirmation", "Quality Time", "Acts of Service", "Receiving Gifts"],
+      "options": [
+        "Physical Touch",
+        "Words of Affirmation",
+        "Quality Time",
+        "Acts of Service",
+        "Receiving Gifts"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": false,
@@ -421,7 +609,11 @@
       "branch": "all",
       "label": "Physical activity level",
       "kind": "enum",
-      "options": ["Sedentary / Leisurely", "Moderate Hiker / Walker", "High-Performance Athlete / Gym-Enthusiast"],
+      "options": [
+        "Sedentary / Leisurely",
+        "Moderate Hiker / Walker",
+        "High-Performance Athlete / Gym-Enthusiast"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -436,7 +628,12 @@
       "label": "Spontaneity",
       "kind": "scale",
       "options": null,
-      "scale": {"min": 1, "max": 10, "min_label": "Meticulously planned itineraries only", "max_label": "Drop everything and go to the airport right now"},
+      "scale": {
+        "min": 1,
+        "max": 10,
+        "min_label": "Meticulously planned itineraries only",
+        "max_label": "Drop everything and go to the airport right now"
+      },
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
@@ -449,7 +646,11 @@
       "branch": "all",
       "label": "Communication density",
       "kind": "enum",
-      "options": ["Constant text-pinging throughout the day", "Single evening catch-up call", "Strictly logistics-based messaging"],
+      "options": [
+        "Constant text-pinging throughout the day",
+        "Single evening catch-up call",
+        "Strictly logistics-based messaging"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -463,7 +664,10 @@
       "branch": "casual",
       "label": "Exclusivity expectations",
       "kind": "enum",
-      "options": ["Exclusively seeing one person at a time during casual phases", "Multi-dating completely acceptable until explicit consensus"],
+      "options": [
+        "Exclusively seeing one person at a time during casual phases",
+        "Multi-dating completely acceptable until explicit consensus"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -477,7 +681,12 @@
       "branch": "casual",
       "label": "Splitting the bill",
       "kind": "enum",
-      "options": ["Alternating rounds", "Absolute 50/50 down to the cent", "Initiator pays", "High-income partner covers"],
+      "options": [
+        "Alternating rounds",
+        "Absolute 50/50 down to the cent",
+        "Initiator pays",
+        "High-income partner covers"
+      ],
       "scale": null,
       "weight": 2,
       "hard_filter": false,
@@ -512,7 +721,6 @@
       "dating_relevant": true,
       "ayma_prompt": "What is a highly niche topic, weird hobby, or controversial pop-culture hill that you are prepared to die on?"
     },
-
     {
       "id": "capital_vs_experiential",
       "tier": "core",
@@ -521,7 +729,12 @@
       "label": "Saving vs spending on experience",
       "kind": "scale",
       "options": null,
-      "scale": {"min": 1, "max": 10, "min_label": "Frugal, heavy retirement optimisation, asset investing", "max_label": "Live for the present, high luxury travel, lifestyle-first"},
+      "scale": {
+        "min": 1,
+        "max": 10,
+        "min_label": "Frugal, heavy retirement optimisation, asset investing",
+        "max_label": "Live for the present, high luxury travel, lifestyle-first"
+      },
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
@@ -534,7 +747,11 @@
       "branch": "long_term",
       "label": "Role of work in life",
       "kind": "enum",
-      "options": ["Hustle / High-Growth Executive", "Balanced 9-to-5 / Priority on Leisure", "Intentionally retiring early / Alternative lifestyle"],
+      "options": [
+        "Hustle / High-Growth Executive",
+        "Balanced 9-to-5 / Priority on Leisure",
+        "Intentionally retiring early / Alternative lifestyle"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": false,
@@ -548,7 +765,11 @@
       "branch": "long_term",
       "label": "Money as a couple",
       "kind": "enum",
-      "options": ["Complete unification of accounts", "Hybrid \"Yours, Mine, and Ours\" model", "Total separate accounts with shared expenses ledger"],
+      "options": [
+        "Complete unification of accounts",
+        "Hybrid \"Yours, Mine, and Ours\" model",
+        "Total separate accounts with shared expenses ledger"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -576,7 +797,13 @@
       "branch": "long_term",
       "label": "General income comfort",
       "kind": "enum",
-      "options": ["Stretched thin", "Getting by", "Comfortable", "Thriving", "Prefer not to say"],
+      "options": [
+        "Stretched thin",
+        "Getting by",
+        "Comfortable",
+        "Thriving",
+        "Prefer not to say"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -590,7 +817,13 @@
       "branch": "long_term",
       "label": "Long-term savings outlook",
       "kind": "enum",
-      "options": ["Actively saving / investing for it", "Some savings, no real plan yet", "Just starting out", "Not thinking about it yet", "Prefer not to say"],
+      "options": [
+        "Actively saving / investing for it",
+        "Some savings, no real plan yet",
+        "Just starting out",
+        "Not thinking about it yet",
+        "Prefer not to say"
+      ],
       "scale": null,
       "weight": 2,
       "hard_filter": false,
@@ -618,7 +851,13 @@
       "branch": "long_term",
       "label": "Kids & timeline",
       "kind": "enum",
-      "options": ["Absolutely non-negotiably childfree", "Want children within 1-3 years", "Want children within 4-7 years", "Open to adoption / fostering", "Undecided"],
+      "options": [
+        "Absolutely non-negotiably childfree",
+        "Want children within 1-3 years",
+        "Want children within 4-7 years",
+        "Open to adoption / fostering",
+        "Undecided"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": true,
@@ -633,7 +872,12 @@
       "label": "Extended-family involvement",
       "kind": "scale",
       "options": null,
-      "scale": {"min": 1, "max": 10, "min_label": "Complete independence, rare holiday visits, tight boundaries", "max_label": "Intergenerational cohabitation, high daily involvement from parents/siblings"},
+      "scale": {
+        "min": 1,
+        "max": 10,
+        "min_label": "Complete independence, rare holiday visits, tight boundaries",
+        "max_label": "Intergenerational cohabitation, high daily involvement from parents/siblings"
+      },
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
@@ -646,7 +890,11 @@
       "branch": "long_term",
       "label": "Parenting approach",
       "kind": "enum",
-      "options": ["Highly structured / Authoritative / Traditional", "Gentle / Unstructured / Progressive", "Focus on early-childhood independence"],
+      "options": [
+        "Highly structured / Authoritative / Traditional",
+        "Gentle / Unstructured / Progressive",
+        "Focus on early-childhood independence"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -660,7 +908,10 @@
       "branch": "long_term",
       "label": "Debate vs harmony",
       "kind": "enum",
-      "options": ["I need high-frequency, passionate intellectual debates and disagreements to stay engaged", "I value harmony, peace, and consensus above intellectual sparring"],
+      "options": [
+        "I need high-frequency, passionate intellectual debates and disagreements to stay engaged",
+        "I value harmony, peace, and consensus above intellectual sparring"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -674,7 +925,13 @@
       "branch": "long_term",
       "label": "Core life anchor",
       "kind": "enum",
-      "options": ["Career & Innovation", "Creativity & Artistry", "Community & Service", "Family Preservation", "Spiritual Growth"],
+      "options": [
+        "Career & Innovation",
+        "Creativity & Artistry",
+        "Community & Service",
+        "Family Preservation",
+        "Spiritual Growth"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": false,
@@ -709,7 +966,6 @@
       "dating_relevant": true,
       "ayma_prompt": "What is a version of yourself that you are actively trying to leave behind, and how does your ideal future partner help support that transformation?"
     },
-
     {
       "id": "islamic_sect",
       "tier": "core",
@@ -717,7 +973,13 @@
       "branch": "nikah",
       "label": "Sect / school of thought",
       "kind": "enum",
-      "options": ["Sunni", "Shia", "Just Muslim / Non-denominational", "Sufi", "Ahmadi"],
+      "options": [
+        "Sunni",
+        "Shia",
+        "Just Muslim / Non-denominational",
+        "Sufi",
+        "Ahmadi"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": true,
@@ -731,7 +993,13 @@
       "branch": "nikah",
       "label": "Madhhab adherence",
       "kind": "enum",
-      "options": ["Flexible / General Principles", "Strict adherence to Hanafi", "Strict adherence to Shafi'i", "Strict adherence to Maliki", "Strict adherence to Hanbali"],
+      "options": [
+        "Flexible / General Principles",
+        "Strict adherence to Hanafi",
+        "Strict adherence to Shafi'i",
+        "Strict adherence to Maliki",
+        "Strict adherence to Hanbali"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -745,7 +1013,12 @@
       "branch": "nikah",
       "label": "Daily prayer (Salah)",
       "kind": "enum",
-      "options": ["Consistently prays all 5 daily prayers on time", "Prays regularly but sometimes catches up", "Prays occasionally (Friday / Eid only)", "Actively working towards establishing regular prayers"],
+      "options": [
+        "Consistently prays all 5 daily prayers on time",
+        "Prays regularly but sometimes catches up",
+        "Prays occasionally (Friday / Eid only)",
+        "Actively working towards establishing regular prayers"
+      ],
       "scale": null,
       "weight": 5,
       "hard_filter": false,
@@ -759,7 +1032,12 @@
       "branch": "nikah",
       "label": "Halal diet",
       "kind": "enum",
-      "options": ["Strictly Halal certified meats only", "Halal at home / Zabihah-only", "Halal friendly / avoids pork and alcohol", "No dietary restrictions"],
+      "options": [
+        "Strictly Halal certified meats only",
+        "Halal at home / Zabihah-only",
+        "Halal friendly / avoids pork and alcohol",
+        "No dietary restrictions"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -787,7 +1065,12 @@
       "branch": "nikah",
       "label": "Modesty — for themselves",
       "kind": "enum",
-      "options": ["Observes Abaya / Niqab", "Hijab consistently", "Modest Western / Modern attire", "Casual Western dress"],
+      "options": [
+        "Observes Abaya / Niqab",
+        "Hijab consistently",
+        "Modest Western / Modern attire",
+        "Casual Western dress"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -801,7 +1084,11 @@
       "branch": "nikah",
       "label": "Modesty — expected of a partner",
       "kind": "enum",
-      "options": ["Strict requirement for Hijab / Niqab", "Prefers modest modern attire", "Complete freedom / no requirement"],
+      "options": [
+        "Strict requirement for Hijab / Niqab",
+        "Prefers modest modern attire",
+        "Complete freedom / no requirement"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -815,7 +1102,11 @@
       "branch": "nikah",
       "label": "Free-mixing boundary",
       "kind": "enum",
-      "options": ["Avoids non-essential mixing with the opposite gender completely", "Comfortable in professional settings only", "Comfortable in casual / co-ed social gatherings"],
+      "options": [
+        "Avoids non-essential mixing with the opposite gender completely",
+        "Comfortable in professional settings only",
+        "Comfortable in casual / co-ed social gatherings"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -829,7 +1120,11 @@
       "branch": "nikah",
       "label": "Wali involvement",
       "kind": "enum",
-      "options": ["Wali is involved from Day 1 of matching and screens communication", "Wali is introduced once personal compatibility is confirmed", "Independent decision-making prior to marriage setup"],
+      "options": [
+        "Wali is involved from Day 1 of matching and screens communication",
+        "Wali is introduced once personal compatibility is confirmed",
+        "Independent decision-making prior to marriage setup"
+      ],
       "scale": null,
       "weight": 3,
       "hard_filter": false,
@@ -843,7 +1138,11 @@
       "branch": "nikah",
       "label": "Mahr philosophy",
       "kind": "enum",
-      "options": ["Symbolic / Spiritual Mahr prioritised", "Standard cultural / financial asset protection baseline", "Deferred Mahr structure focused on future security"],
+      "options": [
+        "Symbolic / Spiritual Mahr prioritised",
+        "Standard cultural / financial asset protection baseline",
+        "Deferred Mahr structure focused on future security"
+      ],
       "scale": null,
       "weight": 2,
       "hard_filter": false,
@@ -857,7 +1156,11 @@
       "branch": "nikah",
       "label": "Polygyny stance",
       "kind": "enum",
-      "options": ["Intentionally looking for a polygynous arrangement", "Open to discussion", "Strictly monogamous marriage contract clause required"],
+      "options": [
+        "Intentionally looking for a polygynous arrangement",
+        "Open to discussion",
+        "Strictly monogamous marriage contract clause required"
+      ],
       "scale": null,
       "weight": 4,
       "hard_filter": true,
@@ -895,7 +1198,7 @@
     {
       "id": "partner_age_min",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Youngest partner age",
       "kind": "scale",
@@ -914,7 +1217,7 @@
     {
       "id": "partner_age_max",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Oldest partner age",
       "kind": "scale",
@@ -933,7 +1236,7 @@
     {
       "id": "geographic_flexibility",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Geographic flexibility",
       "kind": "enum",

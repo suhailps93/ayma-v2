@@ -456,6 +456,51 @@ _REMOVE_DECL = {
 }
 
 
+_LINKEDIN_DECL = {
+    "name": "set_linkedin_profile",
+    "description": (
+        "Save the user's LinkedIn profile URL to their story when they paste or "
+        "give you a linkedin.com link in chat. YOU CAN do this from an ordinary "
+        "chat. Their Career section then builds a structured work/education "
+        "timeline from it (nothing is scraped — the URL is handed to the same "
+        "research tool Ayma already uses), so user-added career bullets only "
+        "need to cover what LinkedIn doesn't. Pass the exact URL they gave. "
+        "After it succeeds, confirm in one line that their Career is set to "
+        "build from LinkedIn."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "the user's linkedin.com profile URL, as given",
+            }
+        },
+        "required": ["url"],
+    },
+}
+
+
+def _bind_set_linkedin(db, uid: str) -> Callable[..., str]:
+    def set_linkedin_profile(url: str = "") -> str:
+        import career_timeline
+
+        try:
+            saved = career_timeline.set_linkedin_url(db, uid, url)
+        except ValueError:
+            return (
+                "that doesn't look like a linkedin.com profile link — paste the "
+                "full URL (it should start with linkedin.com/in/...)"
+            )
+        return (
+            f"saved your LinkedIn ({saved}) — your Career section will build a "
+            "work and education timeline from it; add bullets only for what it "
+            "doesn't cover"
+        )
+
+    return set_linkedin_profile
+
+
 def _bind_edit(db, uid: str) -> Callable[..., str]:
     def edit_story_entry(
         section: str = "", find_text: str = "", new_text: str = ""
@@ -572,4 +617,5 @@ def _bind_remove(db, uid: str) -> Callable[..., str]:
 SKILLS: list[Skill] = [
     Skill(declaration=_EDIT_DECL, bind=_bind_edit),
     Skill(declaration=_REMOVE_DECL, bind=_bind_remove),
+    Skill(declaration=_LINKEDIN_DECL, bind=_bind_set_linkedin),
 ]

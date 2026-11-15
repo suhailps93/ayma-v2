@@ -2,38 +2,124 @@
   "version": 1,
   "_doc": "Wiki page types, id conventions and update rules (ARCHITECTURE.md §2.1, §2.7, §2.8 step 2). Read by the ingest (§2.3) and query code; nothing here is hardcoded inline.",
   "scope": "Every page describes the ACCOUNT HOLDER. Content about other people (a deep-dive report on a match, a shared profile card, a match-report walkthrough) is never filed as the user's own facts — only the user's own reaction/preference goes in `interactions`.",
-
   "page_id": {
     "convention": "kebab-case slug derived from the page's concept/title, unique per user",
     "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
     "max_length": 80
   },
-
   "page_types": [
-    { "type": "identity",      "description": "Name, age, pronouns (only if the user explicitly stated them — never guessed from their name or photo), where they live now, where they're from.", "default_visibility": "public" },
-    { "type": "career",        "description": "Work, studies, ambitions, how they spend their days.",           "default_visibility": "public" },
-    { "type": "family",        "description": "Family of origin, siblings, kids, closeness, obligations.",        "default_visibility": "public" },
-    { "type": "social_circle", "description": "Friends — who's close, how they know them, what those friendships mean.", "default_visibility": "public" },
-    { "type": "relationships", "description": "Relationship history, what they're looking for, patterns.",        "default_visibility": "public" },
-    { "type": "dealbreakers",  "description": "Hard nos and non-negotiables for a partner.",                     "default_visibility": "public" },
-    { "type": "values",        "description": "Beliefs, politics, faith, ethics, what matters to them. The kind of thing that belongs on a dating profile.", "default_visibility": "public" },
-    { "type": "personality",   "description": "Temperament, humour, communication style, how they show up.",      "default_visibility": "public" },
-    { "type": "interests",     "description": "Hobbies, activities and pursuits — how they spend their time and what they do for fun. NOT lists of favourite music/films/food (those are the taste page).", "default_visibility": "public" },
-    { "type": "taste",         "description": "Favourite music, films/shows and food/places — the public Taste page the Qloo taste-match engine reads. Composed from the taste questionnaire answers as `Music: … / Film: … / Food: …` lines; up to 5 names each.", "default_visibility": "public" },
-    { "type": "lifestyle",     "description": "Daily rhythm, substances, money habits, travel. Wrap a genuinely sensitive line ({{private}}…{{/private}}).", "default_visibility": "public" },
-    { "type": "goals",         "description": "Life goals, timelines, kids/marriage intent, where they're headed.", "default_visibility": "public" },
-    { "type": "sensitive",     "description": "Health, trauma, legal issues, exact home address — anything a stranger shouldn't see.", "default_visibility": "private" },
-    { "type": "finances",     "description": "Income comfort, savings/retirement outlook, debt or money stress — framed around life-stage and compatibility, never a bald net-worth figure.", "default_visibility": "private" },
-    { "type": "steering",      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed. Never shown to the user by default.", "default_visibility": "ai_only" },
-    { "type": "interactions",  "description": "Things the user did with Ayma and what it says about them — deep dives they ran, profiles they asked about, the kinds of people they gravitate to, matches they pursued. NOT biographies of other people; a short dated log of the user's own behaviour and the preference/pattern inferred from it. Reverse-chronological, capped ~15 lines, oldest dropped. Ayma's own behavioural inference, not user-stated content — never shown to the user by default.", "default_visibility": "ai_only" },
-    { "type": "web_findings",  "description": "What the open web says about this person — Ayma-gathered, not user-stated.", "default_visibility": "private" },
-    { "type": "face_analysis", "description": "Facial-analysis notes from a photo.",                                "default_visibility": "private" },
-    { "type": "body_analysis", "description": "Physique-analysis notes from a photo.",                              "default_visibility": "private" },
-    { "type": "misc",          "description": "Anything real that doesn't fit another type yet.",                 "default_visibility": "public" }
+    {
+      "type": "identity",
+      "description": "Name, age, pronouns (only if the user explicitly stated them — never guessed from their name or photo), where they live now, where they're from.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "looking_for",
+      "description": "Name, age, pronouns (only if the user explicitly stated them — never guessed from their name or photo), where they live now, where they're from.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "career",
+      "description": "Work, studies, ambitions, how they spend their days.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "family",
+      "description": "Family of origin, siblings, kids, closeness, obligations.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "social_circle",
+      "description": "Friends — who's close, how they know them, what those friendships mean.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "relationships",
+      "description": "Relationship history, what they're looking for, patterns.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "dealbreakers",
+      "description": "Hard nos and non-negotiables for a partner.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "values",
+      "description": "Beliefs, politics, faith, ethics, what matters to them. The kind of thing that belongs on a dating profile.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "personality",
+      "description": "Temperament, humour, communication style, how they show up.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "interests",
+      "description": "Hobbies, activities and pursuits — how they spend their time and what they do for fun. NOT lists of favourite music/films/food (those are the taste page).",
+      "default_visibility": "public"
+    },
+    {
+      "type": "taste",
+      "description": "Favourite music, films/shows and food/places — the public Taste page the Qloo taste-match engine reads. Composed from the taste questionnaire answers as `Music: … / Film: … / Food: …` lines; up to 5 names each.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "lifestyle",
+      "description": "Daily rhythm, substances, money habits, travel. Wrap a genuinely sensitive line ({{private}}…{{/private}}).",
+      "default_visibility": "public"
+    },
+    {
+      "type": "goals",
+      "description": "Life goals, timelines, kids/marriage intent, where they're headed.",
+      "default_visibility": "public"
+    },
+    {
+      "type": "sensitive",
+      "description": "Health, trauma, legal issues, exact home address — anything a stranger shouldn't see.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "finances",
+      "description": "Income comfort, savings/retirement outlook, debt or money stress — framed around life-stage and compatibility, never a bald net-worth figure.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "steering",
+      "description": "Standing instructions the user gave about how Ayma should talk to them (topics to avoid, style). Ayma-managed. Never shown to the user by default.",
+      "default_visibility": "ai_only"
+    },
+    {
+      "type": "interactions",
+      "description": "Things the user did with Ayma and what it says about them — deep dives they ran, profiles they asked about, the kinds of people they gravitate to, matches they pursued. NOT biographies of other people; a short dated log of the user's own behaviour and the preference/pattern inferred from it. Reverse-chronological, capped ~15 lines, oldest dropped. Ayma's own behavioural inference, not user-stated content — never shown to the user by default.",
+      "default_visibility": "ai_only"
+    },
+    {
+      "type": "web_findings",
+      "description": "What the open web says about this person — Ayma-gathered, not user-stated.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "face_analysis",
+      "description": "Facial-analysis notes from a photo.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "body_analysis",
+      "description": "Physique-analysis notes from a photo.",
+      "default_visibility": "private"
+    },
+    {
+      "type": "misc",
+      "description": "Anything real that doesn't fit another type yet.",
+      "default_visibility": "public"
+    }
   ],
-
   "visibility": {
-    "values": ["public", "private", "ai_only"],
+    "values": [
+      "public",
+      "private",
+      "ai_only"
+    ],
     "default": "public",
     "rules": [
       "Default every narrative page to public — the user's profile is meant to be seen. Set a whole page to private only when its subject is inherently sensitive for THIS user (their health, finances, past trauma, legal issues, sexuality they haven't chosen to share, exact home address).",
@@ -43,33 +129,29 @@
       "ai_only pages are never returned to any client, owner or not, and never read by the matching skill (§2.1)."
     ]
   },
-
   "fields": {
-    "ai_body":        "AI-authored markdown, the compiled source of truth. Rewritten in place on ingest, never appended, never mutated by user edits.",
-    "visibility":     "one of visibility.values",
-    "frontmatter":    "map of structured fields for the matching Pass-1 filter (e.g. age, location, intent) — lives on the page beside the narrative body",
-    "links":          "array of related page_ids (cross-references)",
-    "image_refs":     "array of Firebase Storage URLs for photos relevant to this page; the caption is woven into ai_body, this is the pointer to the file",
-    "user_edits":     "optional user-authored override markdown; rendered instead of ai_body in the user's own views. Set only by the client edit path.",
-    "user_hidden":    "boolean; the user removed this page from their own view. ai_body is retained regardless. Set only by the client edit path.",
-    "lint_flags":     "array of { type, detail, flagged_at } written by the Lint job (§2.3). Never auto-resolved.",
-    "source_turn_ids":"array of raw_turns doc ids that contributed to this page — every claim in ai_body should trace to at least one",
-    "created_at":     "server timestamp",
-    "updated_at":     "server timestamp"
+    "ai_body": "AI-authored markdown, the compiled source of truth. Rewritten in place on ingest, never appended, never mutated by user edits.",
+    "visibility": "one of visibility.values",
+    "frontmatter": "map of structured fields for the matching Pass-1 filter (e.g. age, location, intent) — lives on the page beside the narrative body",
+    "links": "array of related page_ids (cross-references)",
+    "image_refs": "array of Firebase Storage URLs for photos relevant to this page; the caption is woven into ai_body, this is the pointer to the file",
+    "user_edits": "optional user-authored override markdown; rendered instead of ai_body in the user's own views. Set only by the client edit path.",
+    "user_hidden": "boolean; the user removed this page from their own view. ai_body is retained regardless. Set only by the client edit path.",
+    "lint_flags": "array of { type, detail, flagged_at } written by the Lint job (§2.3). Never auto-resolved.",
+    "source_turn_ids": "array of raw_turns doc ids that contributed to this page — every claim in ai_body should trace to at least one",
+    "created_at": "server timestamp",
+    "updated_at": "server timestamp"
   },
-
   "update_rules": [
     "Ingest creates a page when a concept has no existing page; otherwise it revises that page's ai_body in place.",
     "ai_body is a compiled narrative, not a log: rewrite it to stay current and coherent, do not append.",
     "Ingest and Lint never write user_edits or user_hidden; the client edit path never writes ai_body.",
     "On every write, refresh updated_at and union the contributing raw_turns ids into source_turn_ids."
   ],
-
   "raw_turns_extension": {
     "_doc": "Step 19's users/{uid}/raw_turns/{sessionId} doc, extended for §2.2.",
     "image_refs": "array of Firebase Storage URLs shared during the session"
   },
-
   "pending_questions": {
     "_doc": "Task state, not compiled knowledge (§2.4). No visibility tier — never shown to the user.",
     "path": "users/{uid}/pending_questions/{questionId}",

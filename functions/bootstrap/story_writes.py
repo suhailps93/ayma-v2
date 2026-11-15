@@ -93,6 +93,69 @@ def save_section(
     }
 
 
+def _unique_page_id(db, uid, page_type: str) -> str:
+    """A fresh kebab-case page id for a new section of ``page_type`` — the
+    page_type itself (underscores → hyphens), de-duplicated with a numeric
+    suffix if that id is already taken for this user."""
+    from wiki_schema import is_valid_page_id
+
+    base = (page_type or "misc").replace("_", "-").strip("-") or "misc"
+    col = _pages_col(db, uid)
+    candidate = base
+    n = 1
+    while getattr(col.document(candidate).get(), "exists", False):
+        n += 1
+        candidate = f"{base}-{n}"
+    if not is_valid_page_id(candidate):
+        candidate = "misc" if is_valid_page_id("misc") else base
+    return candidate
+
+
+def create_section(
+    db, uid: str, page_type: str, body: str, visibility: str = VIS_PRIVATE
+) -> dict:
+    """Create a brand-new Your Story section for ``page_type`` from a direct
+    user edit (the manual-first bullet path: a user who never talked to Ayma
+    adds the first bullet to an empty section). Writes ``user_edits`` so the
+    content is the user's own, stamps ``user_updated_at`` and suppresses the
+    next ingest's re-proposal, then snapshots. Returns the new page id."""
+    vis = visibility if visibility in (VIS_PUBLIC, VIS_PRIVATE, VIS_AI_ONLY) else VIS_PRIVATE
+    page_id = _unique_page_id(db, uid, page_type)
+    _pages_col(db, uid).document(page_id).set(
+        {
+            F_PAGE_TYPE: page_type,
+            F_USER_EDITS: (body or "").strip(),
+            F_VISIBILITY: vis,
+            F_USER_UPDATED_AT: _server_ts(),
+            F_SUPPRESS_PROPOSAL: True,
+            F_PENDING_PROPOSAL: None,
+        },
+        merge=True,
+    )
+    return {
+        "page_id": page_id,
+        "head_version_id": _snapshot_section(db, uid, page_id, AUTHOR_USER),
+    }
+
+
+def set_section_ai_only(db, uid: str, page_id: str) -> dict:
+    """Make a whole section Ayma-only — used when every bullet in it is tagged
+    Ayma-only (``ai_only``), which ``save_section`` (public/private only) can't
+    express. Mirrors ``set_visibility`` but for the ai_only state."""
+    ref, data = _require_page(db, uid, page_id)
+    label = _section_title(
+        page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
+    )
+    ref.set(
+        {F_VISIBILITY: VIS_AI_ONLY, F_USER_UPDATED_AT: _server_ts()}, merge=True
+    )
+    return {
+        "head_version_id": _snapshot_section(
+            db, uid, page_id, AUTHOR_USER, f"made {label} Ayma-only"
+        )
+    }
+
+
 def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
     if visibility not in (VIS_PUBLIC, VIS_PRIVATE):
         raise ValueError(visibility)
