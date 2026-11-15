@@ -173,21 +173,32 @@ class _FakeApi extends ApiClient {
 
   final List<(String, List<StoryBullet>)> bulletSaves = [];
   final List<(String, List<StoryBullet>)> bulletCreates = [];
+  List<BulletSection>? bulletSections;
 
   @override
   Future<List<BulletSection>> profileBullets() async {
     calls.add('bullets_get');
-    return const [
-      BulletSection(
-        pageType: 'career', title: 'Career', subtitle: 'What drives me at work',
-        order: 1, pageId: 'career',
-        bullets: [
-          StoryBullet(id: 'a', text: 'I lead the analytics team in Lisbon.', visibility: 'public'),
-          StoryBullet(id: 'b', text: 'Wants to move into product.', visibility: 'ai_only'),
-        ],
-      ),
-      BulletSection(pageType: 'hobbies', title: 'Hobbies', order: 2),
-    ];
+    return bulletSections ??
+        const [
+          BulletSection(
+            pageType: 'career',
+            title: 'Career',
+            subtitle: 'What drives me at work',
+            order: 1,
+            pageId: 'career',
+            bullets: [
+              StoryBullet(
+                  id: 'a',
+                  text: 'I lead the analytics team in Lisbon.',
+                  visibility: 'public'),
+              StoryBullet(
+                  id: 'b',
+                  text: 'Wants to move into product.',
+                  visibility: 'ai_only'),
+            ],
+          ),
+          BulletSection(pageType: 'hobbies', title: 'Hobbies', order: 2),
+        ];
   }
 
   @override
@@ -1098,5 +1109,64 @@ void main() {
     // No cover block (no "Your Story" / topics / photos), just the empty state.
     expect(find.text('Your Story'), findsNothing);
     expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Story: opening My story with duplicated pageTypes (demo-test1 shape) '
+      'renders bullet editor cleanly with no duplicate key crash or error card',
+      (tester) async {
+    final api = _FakeApi()
+      ..bulletSections = const [
+        BulletSection(
+          pageType: 'dealbreakers',
+          title: 'Core Non-Negotiables',
+          pageId: 'core-non-negotiables',
+          order: 3,
+          bullets: [
+            StoryBullet(
+                id: 'b1', text: 'Must want children.', visibility: 'private'),
+          ],
+        ),
+        BulletSection(
+          pageType: 'dealbreakers',
+          title: 'Non-Negotiables',
+          pageId: 'dealbreakers',
+          order: 3,
+          bullets: [
+            StoryBullet(
+                id: 'b2', text: 'Never smoke.', visibility: 'public'),
+          ],
+        ),
+        BulletSection(
+          pageType: 'family',
+          title: 'Family',
+          pageId: 'family',
+          order: 7,
+          bullets: [
+            StoryBullet(
+                id: 'b3', text: 'Close to parents.', visibility: 'public'),
+          ],
+        ),
+        BulletSection(
+          pageType: 'family',
+          title: 'Family 2',
+          pageId: 'family-2',
+          order: 7,
+          bullets: [
+            StoryBullet(
+                id: 'b4', text: 'Brother in Chicago.', visibility: 'public'),
+          ],
+        ),
+      ];
+    await _pumpWithRouter(tester, api);
+
+    expect(find.text('Something didn\'t load'), findsNothing);
+    expect(find.text('Could not load your story'), findsNothing);
+    expect(find.text('Core Non-Negotiables'), findsOneWidget);
+    expect(find.text('Non-Negotiables'), findsOneWidget);
+    expect(find.text('Must want children.'), findsOneWidget);
+    expect(find.text('Never smoke.'), findsOneWidget);
+    expect(find.text('Close to parents.'), findsOneWidget);
+    expect(find.text('Brother in Chicago.'), findsOneWidget);
   });
 }

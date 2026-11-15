@@ -9,8 +9,8 @@ snapshots and the public-profile assembly all keep working unchanged.
   no page yet — so the editor shows all sections with a "+" and is never an
   empty page, for every user including non-paid ones who never talk to Ayma.
 * An existing page is split into bullets at read time (``story_bullets``); no
-  migration. A section with more than one page shows one entry per page
-  (lossless), each editable on its own.
+  migration. A section with more than one page has its pages merged into a
+  single canonical section entry with all bullets preserved in order.
 * Ayma-only (``ai_only``) spans surface as Ayma-only bullets in the same list.
 """
 
@@ -43,36 +43,60 @@ def _section_shell(page_type: str) -> dict:
 def get_bullets(db, uid: str) -> dict:
     """Every canonical section as a bullet list. Existing pages are split into
     bullets; sections with no page yet come back empty (``page_id`` empty) so
-    the editor can show them with a "+"."""
-    sections: list[dict] = []
-    present: set[str] = set()
+    the editor can show them with a "+". Duplicate pages of the same canonical
+    page_type are merged so each canonical type appears exactly once with all
+    bullets preserved."""
+    by_pt: dict[str, dict] = {}
     for s in story.get_ai_notes(db, uid).get("sections", []):
         pt = s.get("page_type")
         if pt not in question_tree.section_meta():
             continue  # skill pages, steering/interactions, custom — not here
-        present.add(pt)
         vis = s.get("visibility") or VIS_PRIVATE
+        cur_page_id = s.get("page_id", "")
         bullets = story_bullets.parse_bullets(
             s.get("edit_body") or s.get("body") or "",
             vis,
-            page_id=s.get("page_id", ""),
+            page_id=cur_page_id,
         )
-        shell = _section_shell(pt)
-        shell.update(
-            {
-                "page_id": s.get("page_id", ""),
-                "bullets": bullets,
-                "has_ai_only": any(b["visibility"] == VIS_AI_ONLY for b in bullets),
-                "empty": not bullets,
-            }
-        )
-        sections.append(shell)
+        canonical_id = pt.replace("_", "-")
+        if pt not in by_pt:
+            shell = _section_shell(pt)
+            shell.update(
+                {
+                    "page_id": cur_page_id,
+                    "bullets": list(bullets),
+                    "has_ai_only": any(b["visibility"] == VIS_AI_ONLY for b in bullets),
+                    "empty": not bullets,
+                }
+            )
+            by_pt[pt] = shell
+        else:
+            cur_sec = by_pt[pt]
+            if not cur_sec["page_id"]:
+                cur_sec["page_id"] = cur_page_id
+            elif cur_page_id in (pt, canonical_id) and cur_sec["page_id"] not in (pt, canonical_id):
+                cur_sec["page_id"] = cur_page_id
+
+            seen_texts = {b["text"].strip().lower() for b in cur_sec["bullets"]}
+            for b in bullets:
+                t = b["text"].strip().lower()
+                if t and t in seen_texts:
+                    continue
+                cur_sec["bullets"].append(b)
+                if t:
+                    seen_texts.add(t)
+
+            cur_sec["has_ai_only"] = any(b["visibility"] == VIS_AI_ONLY for b in cur_sec["bullets"])
+            cur_sec["empty"] = not cur_sec["bullets"]
+
     for pt in _CANONICAL:
-        if pt in present:
+        if pt in by_pt:
             continue
         shell = _section_shell(pt)
         shell.update({"page_id": "", "bullets": [], "has_ai_only": False, "empty": True})
-        sections.append(shell)
+        by_pt[pt] = shell
+
+    sections = list(by_pt.values())
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
     return {"sections": sections, "visibilities": [VIS_PUBLIC, VIS_PRIVATE, VIS_AI_ONLY]}
 

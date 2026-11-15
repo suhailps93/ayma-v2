@@ -112,14 +112,20 @@ class _BulletSectionsEditorState extends State<BulletSectionsEditor> {
         ),
       );
     }
+    final seenKeys = <String>{};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final s in _sections)
+        for (var i = 0; i < _sections.length; i++)
           BulletSectionCard(
-            key: ValueKey('bullet_section_${s.pageType}'),
-            section: s,
-            onSave: (bullets) => _save(s, bullets),
+            key: ValueKey(() {
+              final s = _sections[i];
+              final base = s.pageId.isNotEmpty ? s.pageId : s.pageType;
+              final keyStr = 'bullet_section_$base';
+              return seenKeys.add(keyStr) ? keyStr : '${keyStr}_$i';
+            }()),
+            section: _sections[i],
+            onSave: (bullets) => _save(_sections[i], bullets),
           ),
       ],
     );
