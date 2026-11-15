@@ -164,6 +164,56 @@ def _public_pages(db, uid: str) -> list[dict]:
     return out
 
 
+def public_bullet_sections(db, uid: str) -> list[dict]:
+    """The public profile as PUBLIC BULLETS, in canonical section order — the
+    single source the public-profile Living Report renders (the owner's own
+    "My public profile" self-view and another member's Explore tap-through
+    alike), never the legacy page-body prose.
+
+    Each story section's effective body is split into bullets
+    (``story_bullets.parse_bullets``, clamped by the section's own
+    visibility); only the ``public`` bullets are kept. A ``{{private}}`` /
+    ``{{ai_only}}`` span inside a public page clamps to private / ai_only and
+    drops out, and a private (or all-private) section yields no public bullet
+    and is dropped entirely — so a section with no public bullet is hidden,
+    exactly as the public/private view requires (founder order, Nov 14/15).
+    The report-linked pages (face/body/physical/web-findings) are excluded,
+    the same ones ``report_adapters._narrative_pages`` drops — they have their
+    own report types.
+
+    Returns ``[{page_id, page_type, title, bullets: [str, ...]}]`` in section
+    order. Reads ``story.get_story`` (the ai-only-stripped owner view), so
+    Ayma-only content never reaches it; the per-bullet public filter then
+    removes private content too."""
+    import story
+    import story_bullets
+
+    out: list[dict] = []
+    for sec in story.get_story(db, uid).get("sections", []):
+        page_id = sec.get("page_id", "")
+        if page_id in story.REPORT_LINKED_PAGE_IDS:
+            continue
+        vis = sec.get("visibility") or story.VIS_PRIVATE
+        bullets = [
+            b["text"]
+            for b in story_bullets.parse_bullets(
+                sec.get("body") or "", vis, page_id=page_id
+            )
+            if b["visibility"] == story.VIS_PUBLIC
+        ]
+        if not bullets:
+            continue
+        out.append(
+            {
+                "page_id": page_id,
+                "page_type": sec.get("page_type") or "misc",
+                "title": sec.get("title") or page_id,
+                "bullets": bullets,
+            }
+        )
+    return out
+
+
 def _physical_attributes(db, uid: str) -> dict | None:
     """The owner's structured physical-attributes record (§ physical
     attributes) — every field with its ``{value, source, confidence}`` label.

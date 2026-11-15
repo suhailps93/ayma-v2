@@ -673,39 +673,53 @@ def test_get_report_story_public_owner_sees_viewer_can_edit_true(monkeypatch):
     assert out["meta"]["viewer_can_edit"] is True
 
 
-def test_correct_story_public_page_block_routes_to_story(monkeypatch):
+def test_story_public_blocks_are_read_only_public_bullets(monkeypatch):
+    """story_public is now a READ view of the public profile: the owner's
+    public bullets rendered as read-only ``fact`` blocks (founder bug, Nov 15
+    — it used to render the legacy page-body prose as editable sentence
+    blocks). Editing happens in the bullet editor (``/profile/bullets``),
+    never by tapping a bullet here, so every block is uncorrectable."""
     monkeypatch.setattr(
         story, "get_story",
         lambda db, uid: {
             "sections": [
-                {"page_id": "identity", "title": "Identity", "body": "Hi there.", "visibility": "public"}
+                {"page_id": "identity", "page_type": "identity",
+                 "title": "Identity", "body": "Hi there. I sail.",
+                 "visibility": "public"}
             ]
         },
     )
-    monkeypatch.setattr(story, "_require_page", lambda db, uid, pid: _page(uid, pid))
-    monkeypatch.setattr(story, "_display_body", lambda db, uid, pid, data: "Hi there.")
+    out = report_hub.get_report(object(), "story_public", "owner-uid", "owner-uid")
+    blocks = [b for sec in out["sections"] for b in sec["blocks"]]
+    assert blocks
+    assert all(b["type"] == rb.FACT and b["editable"] is False for b in blocks)
+    assert [b["text"] for b in blocks] == ["Hi there.", "I sail."]
+
+
+def test_correct_story_public_sentence_block_no_longer_resolves(monkeypatch):
+    """The former editable ``page:<id>:sent:<n>`` blocks are gone, so a stale
+    sentence-correction attempt on story_public finds no such block and fails
+    gracefully (a plain ValueError), never silently editing the wrong thing."""
+    monkeypatch.setattr(
+        story, "get_story",
+        lambda db, uid: {
+            "sections": [
+                {"page_id": "identity", "page_type": "identity",
+                 "title": "Identity", "body": "Hi there.", "visibility": "public"}
+            ]
+        },
+    )
     appearance_touched = {"called": False}
     monkeypatch.setattr(
         appearance, "correct_finding",
         lambda *a, **k: appearance_touched.__setitem__("called", True),
     )
-
-    async def _edit_section(db, uid, pid, selection, messages):
-        return {"reply": "ok", "action": "chat", "revised_body": "Hi there, revised."}
-
-    monkeypatch.setattr(story, "edit_section", _edit_section)
-    calls = {}
-    monkeypatch.setattr(
-        story, "save_section",
-        lambda db, uid, pid, body, visibility=None, **kw: calls.update(body=body),
-    )
-    out = _run(report_hub.correct(
-        object(), "story_public", "owner-uid", "owner-uid",
-        block_ids=["page:identity:sent:0"], scope="block", message="reword it",
-    ))
+    with pytest.raises(ValueError):
+        _run(report_hub.correct(
+            object(), "story_public", "owner-uid", "owner-uid",
+            block_ids=["page:identity:sent:0"], scope="block", message="reword it",
+        ))
     assert appearance_touched["called"] is False
-    assert calls["body"] == "Hi there, revised."
-    assert out["ok"] is True
 
 
 def test_correct_story_public_non_owner_403(monkeypatch):

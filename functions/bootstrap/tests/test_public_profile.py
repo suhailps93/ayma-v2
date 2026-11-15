@@ -119,6 +119,46 @@ def test_build_returns_public_view_with_photos_pages_and_caller_state(monkeypatc
     assert v["has_chatted"] is False
 
 
+# --- public_bullet_sections ------------------------------------------------
+# The public profile renders EXACTLY the public-tagged bullets, in section
+# order, with no private/ai_only content and no section that has no public
+# bullet (founder bug, Nov 15: it was showing the legacy page-body prose).
+
+
+def test_public_bullet_sections_keeps_only_public_bullets_in_section_order(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    # A public page mixing a public sentence, a {{private}} span and an
+    # {{ai_only}} span (the ai_only is already stripped by story.get_story).
+    db.docs[("users", "her", "wiki_pages", "about")] = {
+        "visibility": "public", "page_type": "identity",
+        "ai_body": (
+            "Grew up sailing. {{private}}Bad breakup.{{/private}} "
+            "{{ai_only}}Robot note.{{/ai_only}} Loves the sea."
+        ),
+    }
+    # An entirely private section -> no public bullet -> dropped.
+    db.docs[("users", "her", "wiki_pages", "fam")] = {
+        "visibility": "private", "page_type": "family", "ai_body": "Three siblings.",
+    }
+    sections = pp.public_bullet_sections(db, "her")
+    assert [s["page_type"] for s in sections] == ["identity"]
+    assert sections[0]["bullets"] == ["Grew up sailing.", "Loves the sea."]
+    # Nothing private or ai_only leaks through.
+    flat = " ".join(b for s in sections for b in s["bullets"])
+    assert "Bad breakup" not in flat
+    assert "Robot note" not in flat
+
+
+def test_public_bullet_sections_empty_when_nothing_public(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "wiki_pages", "fam")] = {
+        "visibility": "private", "page_type": "family", "ai_body": "Three siblings.",
+    }
+    assert pp.public_bullet_sections(db, "her") == []
+
+
 # --- online / presence ----------------------------------------------------
 # Real signal only (`last_active_at`, stamped on every authed request — same
 # 5-minute window `/profiles/mini` already uses for its own `online` flag),
