@@ -64,9 +64,28 @@ that switches a consumer deletes the path it replaces in the same change.
   the live LLM tool dispatch — these are the validated primitives the
   consumer-switch phase binds as tools. No user-facing change.
 
-## Phases 3–7 — planned (design §10)
+## Phase 3 — renders ✅
 
-3. Renders — `render_story`, `render_public_profile`, persona/match-report.
+- **`person_graph_render.py`.** Story, public profile and persona prose become
+  renders of the graph (design §1, §8.1), emitting the same shapes today's
+  wiki-backed renders produce so consumers can switch without changing their own
+  output contract:
+  - `story_sections(graph)` → Your Story (public + private; Ayma-only never
+    shown) — same shape as `profile_bullets.get_bullets`.
+  - `public_sections(graph)` → public bullets only, empty sections dropped —
+    same shape as `public_profile.public_bullet_sections`.
+  - `persona_prose(graph, …)` → prose for persona / sims / match report; owner
+    (public + private), viewer (`public_only`), or Ayma-grounding
+    (`include_ayma_only`).
+  - Narrative answers render verbatim; structured answers are prompt-labelled;
+    children render as their own bullets with independent visibility. The
+    graph's `ayma_only` maps to the story model's `ai_only` at this boundary.
+- **Tests:** `tests/test_person_graph_render.py` (7) green. Byte-level parity
+  with the live wiki is pinned per account in Phase 4. Additive — old render
+  paths stay live until the consumer-switch phase.
+
+## Phases 4–7 — planned (design §10)
+
 4. Migration — questionnaire answers / profile fields / wiki / assessment → overlay.
 5. Consumers switch — sims, match report, deterministic scorer, per-user
    emergent gates; delete old stores.
