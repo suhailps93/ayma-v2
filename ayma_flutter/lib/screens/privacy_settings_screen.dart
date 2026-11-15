@@ -28,6 +28,7 @@ class PrivacySettingsScreen extends StatefulWidget {
     this.profileService,
     this.api,
     this.imagePicker,
+    this.locationService,
   });
 
   static const path = '/settings/privacy';
@@ -35,16 +36,20 @@ class PrivacySettingsScreen extends StatefulWidget {
   final ProfileService? profileService;
   final ApiClient? api;
   final ImagePicker? imagePicker;
+  final LocationService? locationService;
 
   @override
   State<PrivacySettingsScreen> createState() => _PrivacySettingsScreenState();
 }
 
-class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
+class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
+    with WidgetsBindingObserver {
   late final ProfileService _profiles =
       widget.profileService ?? ProfileService();
   late final ApiClient _api = widget.api ?? ApiClient();
   late final ImagePicker _picker = widget.imagePicker ?? ImagePicker();
+  late final LocationService _location =
+      widget.locationService ?? const LocationService();
 
   bool? _verified; // null while loading
   bool _verifying = false;
@@ -59,7 +64,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   bool _masterSaving = false;
   bool _backgroundSaving = false;
   bool _logSaving = false;
-  final LocationService _location = const LocationService();
+  bool _awaitingSettingsGrant = false;
 
   /// Learned place routines (null while loading, empty when none).
   List<LocationPattern>? _patterns;
@@ -67,8 +72,49 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadVerification();
     _loadPatterns();
+    _reconcileLocationPermission();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reconcileLocationPermission();
+    }
+  }
+
+  /// Keep the Location log toggle and screen state aligned with OS permission.
+  /// If the user was sent to system settings to grant permission, turns the
+  /// log ON if granted; otherwise keeps it OFF. If permission was revoked
+  /// outside the app while Location log was ON, turns it OFF.
+  Future<void> _reconcileLocationPermission() async {
+    if (_logSaving) return;
+    try {
+      final hasPerm = await _location.hasBackgroundPermission();
+      if (_awaitingSettingsGrant) {
+        _awaitingSettingsGrant = false;
+        if (hasPerm) {
+          await _profiles.setLocationLog(true);
+          _loadPatterns();
+        } else {
+          await _profiles.setLocationLog(false);
+        }
+      } else {
+        final logOn = await _profiles.locationLogEnabled();
+        if (logOn && !hasPerm) {
+          await _profiles.setLocationLog(false);
+        }
+      }
+      if (mounted) setState(() {});
+    } catch (_) {}
   }
 
   Future<void> _loadPatterns() async {
@@ -129,25 +175,53 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
     }
   }
 
-  /// The opt-in location log. Enabling needs location permission; if denied it
-  /// stays off. Turning it off never touches permission.
+  /// The opt-in location log. Enabling needs location permission.
+  /// If permission is missing, it triggers the system permission popup.
+  /// If permanently denied (or cannot be prompted), it opens system settings.
+  /// Turning it off never touches permission.
   Future<void> _setLocationLog(bool value) async {
     if (_logSaving) return;
     setState(() => _logSaving = true);
     try {
-      if (value && !await _location.ensureBackgroundPermission()) {
-        if (mounted) {
-          AymaToast.show(
-            context,
-            'The location log needs location permission. Allow it, then turn '
-            'it on again.',
-            kind: AymaToastKind.warning,
-          );
-        }
+      if (!value) {
+        _awaitingSettingsGrant = false;
+        await _profiles.setLocationLog(false);
         return;
       }
-      await _profiles.setLocationLog(value);
-      if (value) _loadPatterns();
+
+      // Check if background permission is already granted.
+      final alreadyGranted = await _location.hasBackgroundPermission();
+      if (alreadyGranted) {
+        _awaitingSettingsGrant = false;
+        await _profiles.setLocationLog(true);
+        _loadPatterns();
+        return;
+      }
+
+      // Check whether permission can be prompted.
+      var perm = await _location.checkPermission();
+      if (perm == LocationPermission.denied) {
+        // Can be prompted: trigger the system location permission popup.
+        perm = await _location.requestPermission();
+        if (perm == LocationPermission.whileInUse) {
+          perm = await _location.requestPermission();
+        }
+      }
+
+      if (perm == LocationPermission.always) {
+        _awaitingSettingsGrant = false;
+        await _profiles.setLocationLog(true);
+        _loadPatterns();
+      } else if (perm == LocationPermission.deniedForever ||
+          perm == LocationPermission.whileInUse) {
+        // Permission cannot be prompted (permanently denied or requires settings
+        // for background location): open the app system settings page.
+        _awaitingSettingsGrant = true;
+        await _location.openAppSettings();
+      } else {
+        // User dismissed / denied the prompt (not permanently).
+        _awaitingSettingsGrant = false;
+      }
     } catch (e) {
       if (mounted) {
         AymaToast.show(context, 'Could not save ($e).',
