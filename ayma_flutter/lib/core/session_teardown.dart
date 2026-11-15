@@ -15,6 +15,7 @@ import '../services/deep_link_queue.dart';
 import '../services/dev_panel_session.dart';
 import '../services/match_activity.dart';
 import '../services/match_report_cache.dart';
+import '../services/profile_proposals_state.dart';
 import '../services/push_service.dart';
 import '../services/report_cache.dart';
 import '../services/revenuecat_service.dart';
@@ -71,6 +72,7 @@ void teardownSession({required bool isSwitch}) {
   AppContext.instance.clear();
   RecoveryRequiredState.instance.clear();
   BiometricConsentState.instance.clear();
+  ProfileProposalsState.instance.clear();
   DevPanelSession.instance.unlocked.value = false;
 
   // Disk cache, RevenueCat and push-token cleanup each reach an external

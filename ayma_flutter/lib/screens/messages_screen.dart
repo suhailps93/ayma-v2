@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/connection_heartbeat.dart';
 import '../services/dm_service.dart';
 import '../services/fresh_data.dart';
 import '../services/match_service.dart';
@@ -26,6 +27,7 @@ class MessagesScreen extends StatefulWidget {
     this.dmService,
     this.matchService,
     this.apiClient,
+    this.heartbeat,
   });
 
   static const path = '/messages';
@@ -33,6 +35,7 @@ class MessagesScreen extends StatefulWidget {
   final DmService? dmService;
   final MatchService? matchService;
   final ApiClient? apiClient;
+  final ConnectionHeartbeat? heartbeat;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -42,7 +45,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
   late final DmService _dm = widget.dmService ?? DmService();
   late final MatchService _matches = widget.matchService ?? MatchService();
   late final ApiClient _api = widget.apiClient ?? ApiClient();
+  late final ConnectionHeartbeat _heartbeat =
+      widget.heartbeat ?? ConnectionHeartbeat.instance;
   final _scrollController = ScrollController();
+
+  late Stream<FreshData<List<DmThread>>> _threadsStream;
+  late Stream<FreshData<List<MatchView>>> _matchesStream;
 
   /// Archive tier (Phase 2 pagination design §3.2.3): threads older than
   /// the live top-25 listener, appended as the user scrolls.
@@ -67,6 +75,21 @@ class _MessagesScreenState extends State<MessagesScreen> {
     AppContext.instance.set(screen: 'messages');
     _mini.addAll(TabPrefetchCoordinator.instance.takeMiniProfiles());
     _scrollController.addListener(_onScroll);
+    _initStreams();
+  }
+
+  void _initStreams() {
+    _threadsStream = _dm.watchThreadsFresh();
+    _matchesStream = _matches.watchMutualMatchesFresh();
+  }
+
+  @override
+  void didUpdateWidget(MessagesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dmService != widget.dmService ||
+        oldWidget.matchService != widget.matchService) {
+      _initStreams();
+    }
   }
 
   @override
@@ -174,16 +197,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
       body: SafeArea(
         bottom: false,
         child: StreamBuilder<FreshData<List<DmThread>>>(
-          stream: _dm.watchThreadsFresh(),
+          stream: _threadsStream,
           builder: (context, threadSnap) {
             return StreamBuilder<FreshData<List<MatchView>>>(
-              stream: _matches.watchMutualMatchesFresh(),
+              stream: _matchesStream,
               builder: (context, matchSnap) {
                 final threadFresh = threadSnap.data;
                 _markDeliveredIfSynced(threadFresh);
                 final matchFresh = matchSnap.data;
                 final waiting = threadFresh == null && matchFresh == null;
-                final freshness = (threadFresh != null && matchFresh != null)
+                final rawFreshness = (threadFresh != null && matchFresh != null)
                     ? FreshData.mergeMeta<bool>(
                         data: (threadFresh.hasData || matchFresh.hasData)
                             ? true
@@ -209,8 +232,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         ..._archived,
                       ]),
                     ),
-                    if (freshness != null)
-                      FreshnessIndicator.fromFresh(freshness),
+                    ValueListenableBuilder<ConnectionQuality>(
+                      valueListenable: _heartbeat.listenable,
+                      builder: (context, quality, _) {
+                        final activeFreshness = (rawFreshness != null &&
+                                quality == ConnectionQuality.ok &&
+                                rawFreshness.state == FreshnessState.stale)
+                            ? rawFreshness.copyWith(refreshing: true)
+                            : rawFreshness;
+                        if (activeFreshness == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return FreshnessIndicator.fromFresh(activeFreshness);
+                      },
+                    ),
                     Expanded(
                       child: waiting
                           // First emission of the threads + mutual-matches

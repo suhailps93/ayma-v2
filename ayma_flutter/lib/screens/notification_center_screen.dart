@@ -5,6 +5,7 @@ import '../routing/app_router.dart';
 import '../services/api_client.dart';
 import '../services/inbox_actions.dart';
 import '../services/notification_service.dart';
+import '../services/profile_proposals_state.dart';
 import '../theme.dart';
 import '../widgets/ayma_rail_icons.dart';
 import '../widgets/ayma_toast.dart';
@@ -36,7 +37,7 @@ class NotificationCenterScreen extends StatefulWidget {
 
 class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
   late final NotificationService _svc = widget.service ?? NotificationService();
-  late final ApiClient _api = widget.apiClient ?? ApiClient();
+  ApiClient get _api => widget.apiClient ?? ApiClient();
   late final String _myUid = _svc.currentUid;
 
   /// The active centre filter — shared with Ayma's
@@ -49,17 +50,33 @@ class _NotificationCenterScreenState extends State<NotificationCenterScreen> {
   void initState() {
     super.initState();
     NotificationFilterState.instance.current.addListener(_onFilterState);
+    ProfileProposalsState.instance.listenable
+        .addListener(_onProposalsStateChanged);
+    _ensureProposalsCount();
   }
 
   @override
   void dispose() {
     NotificationFilterState.instance.current.removeListener(_onFilterState);
+    ProfileProposalsState.instance.listenable
+        .removeListener(_onProposalsStateChanged);
     super.dispose();
   }
 
   void _onFilterState() {
     if (!mounted) return;
     setState(() => _filter = NotificationFilterState.instance.current.value);
+  }
+
+  void _onProposalsStateChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _ensureProposalsCount() {
+    if (ProfileProposalsState.instance.currentCount == null) {
+      ProfileProposalsState.instance.refresh(widget.apiClient);
+    }
   }
 
   final Map<String, MiniProfile> _mini = {};
@@ -440,6 +457,22 @@ class _EntryRow extends StatelessWidget {
       final name = (mini?.name.isNotEmpty ?? false) ? mini!.name : 'Someone';
       title = count > 1 ? '$name · $count new messages' : name;
       subtitle = n.body.isEmpty ? 'New message' : n.body;
+    } else if (n.type == 'profile_suggestions') {
+      final proposalsCount = ProfileProposalsState.instance.currentCount;
+      if (proposalsCount != null) {
+        if (proposalsCount == 0) {
+          title = 'All public profile updates reviewed';
+        } else {
+          title = proposalsCount == 1
+              ? 'Ayma suggests 1 update to your public profile.'
+              : 'Ayma suggests $proposalsCount updates to your public profile.';
+        }
+      } else if (n.body.isNotEmpty) {
+        title = n.body;
+      } else {
+        title = notificationCategories[n.type] ?? n.type;
+      }
+      subtitle = notificationCategories[n.type];
     } else if (n.body.isNotEmpty) {
       // The one string the backend gives us reads as the headline (a
       // proactive check-in's own question, a match/DM summary, …) — the

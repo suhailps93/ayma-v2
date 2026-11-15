@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/photo_service.dart';
+import '../services/profile_proposals_state.dart';
 import '../services/share_kit.dart';
 import '../widgets/ayma_share_sheet.dart';
 import 'public_profile_screen.dart' show ProfileBody;
@@ -63,6 +64,8 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   @override
   void initState() {
     super.initState();
+    ProfileProposalsState.instance.listenable
+        .addListener(_onProposalsStateChanged);
     _loadPendingUpdates();
     _photos.onCommitError = (m) {
       if (mounted) AymaToast.show(context, m, kind: AymaToastKind.error);
@@ -75,9 +78,18 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
 
   @override
   void dispose() {
+    ProfileProposalsState.instance.listenable
+        .removeListener(_onProposalsStateChanged);
     // We own the controller only when we built it ourselves.
     if (widget.photoController == null) _photos.dispose();
     super.dispose();
+  }
+
+  void _onProposalsStateChanged() {
+    final count = ProfileProposalsState.instance.currentCount;
+    if (count != null && mounted && _pendingUpdates != count) {
+      setState(() => _pendingUpdates = count);
+    }
   }
 
   /// Pick and add photos to the public carousel (the photo strip's
@@ -196,12 +208,9 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   /// across sections). A failed lookup just hides the banner; the profile
   /// itself is unaffected.
   Future<void> _loadPendingUpdates() async {
-    try {
-      final list = await _api.profileProposals();
-      final count = list.fold<int>(0, (n, p) => n + p.changes.length);
-      if (mounted) setState(() => _pendingUpdates = count);
-    } on Object {
-      if (mounted) setState(() => _pendingUpdates = 0);
+    final count = await ProfileProposalsState.instance.refresh(_api);
+    if (mounted && _pendingUpdates != count) {
+      setState(() => _pendingUpdates = count);
     }
   }
 

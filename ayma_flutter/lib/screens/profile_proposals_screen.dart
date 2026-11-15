@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/profile_proposals_state.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -42,7 +43,12 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
     setState(() => _loadFailed = false);
     try {
       final list = await _api.profileProposals();
-      if (mounted) setState(() => _proposals = list);
+      if (mounted) {
+        setState(() => _proposals = list);
+        final count =
+            list.fold<int>(0, (sum, item) => sum + item.changes.length);
+        ProfileProposalsState.instance.setCount(count);
+      }
     } on Object {
       if (mounted) setState(() => _loadFailed = true);
     }
@@ -65,6 +71,9 @@ class _ProfileProposalsScreenState extends State<ProfileProposalsScreen> {
       }
     }
     _proposals = next;
+    final remainingCount =
+        next.fold<int>(0, (sum, item) => sum + item.changes.length);
+    ProfileProposalsState.instance.setCount(remainingCount);
   }
 
   Future<void> _actChange(ProfileProposal p, ProfileChange c,
