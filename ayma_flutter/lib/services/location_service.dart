@@ -3,11 +3,23 @@ import 'dart:io' show Platform;
 import 'package:geocoding/geocoding.dart' as gc;
 import 'package:geolocator/geolocator.dart';
 
+export 'package:geolocator/geolocator.dart' show LocationPermission;
+
 /// Device location → a human "City, Country" string for the profile location
 /// field (ARCHITECTURE.md §4.3). Callers fall back to typed/voice entry when
 /// this returns `null` (permission denied, services off, no fix).
 class LocationService {
-  const LocationService();
+  const LocationService({
+    this.checkPermissionFn,
+    this.requestPermissionFn,
+    this.openAppSettingsFn,
+    this.hasBackgroundPermissionFn,
+  });
+
+  final Future<LocationPermission> Function()? checkPermissionFn;
+  final Future<LocationPermission> Function()? requestPermissionFn;
+  final Future<bool> Function()? openAppSettingsFn;
+  final Future<bool> Function()? hasBackgroundPermissionFn;
 
   Future<String?> detectCity() async {
     if (!await Geolocator.isLocationServiceEnabled()) return null;
@@ -86,10 +98,43 @@ class LocationService {
     }
   }
 
+  /// Current permission status without prompting.
+  Future<LocationPermission> checkPermission() async {
+    if (checkPermissionFn != null) return checkPermissionFn!();
+    try {
+      return await Geolocator.checkPermission();
+    } catch (_) {
+      return LocationPermission.denied;
+    }
+  }
+
+  /// Request location permission from the OS.
+  Future<LocationPermission> requestPermission() async {
+    if (requestPermissionFn != null) return requestPermissionFn!();
+    try {
+      return await Geolocator.requestPermission();
+    } catch (_) {
+      return LocationPermission.denied;
+    }
+  }
+
+  /// Open the app's system settings page.
+  Future<bool> openAppSettings() async {
+    if (openAppSettingsFn != null) return openAppSettingsFn!();
+    try {
+      return await Geolocator.openAppSettings();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Whether "Always" (background) location is already granted — the
   /// authorization the always-on arrival geofence + location log need. `false`
   /// for while-in-use or denied.
   Future<bool> hasBackgroundPermission() async {
+    if (hasBackgroundPermissionFn != null) {
+      return hasBackgroundPermissionFn!();
+    }
     try {
       return await Geolocator.checkPermission() == LocationPermission.always;
     } catch (_) {
