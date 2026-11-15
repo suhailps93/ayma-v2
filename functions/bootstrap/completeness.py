@@ -346,6 +346,12 @@ def _cache_ref(db, uid: str):
     )
 
 
+# A node's narrative verdict: its coverage status plus, for a covered/partial
+# node, a short phrase of what the story already says (so a partial node is
+# followed up on, not re-asked cold — founder requirement 2, 2026-11-14).
+_MISSING_VERDICT = {"status": "missing", "known": ""}
+
+
 async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> dict:
     schema = {
         "type": "object",
@@ -360,6 +366,7 @@ async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> di
                             "type": "string",
                             "enum": ["covered", "partial", "missing"],
                         },
+                        "known": {"type": "string"},
                     },
                     "required": ["id", "status"],
                 },
@@ -383,28 +390,34 @@ async def _run_narrative_llm(uid: str, wiki_text: str, topics: list[dict]) -> di
         temperature=0.0,
     )
     wanted = {t["id"] for t in topics}
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for a in (raw or {}).get("assessments", []):
         if a.get("id") in wanted and a.get("status") in _NARRATIVE_COVERAGE:
-            out[a["id"]] = a["status"]
+            known = str(a.get("known") or "").strip()
+            out[a["id"]] = {
+                "status": a["status"],
+                # Only a covered/partial node carries a "known" gist; a missing
+                # one has nothing to follow up on.
+                "known": known if a["status"] != "missing" else "",
+            }
     for t in topics:
-        out.setdefault(t["id"], "missing")
+        out.setdefault(t["id"], dict(_MISSING_VERDICT))
     return out
 
 
-async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]:
-    """``{node_id: "covered"|"partial"|"missing"}`` for the nodes in ``targets``
-    (narrative *and* structured) judged against the user's free-text story.
-    Cached on ``users/{uid}/completeness_cache/narrative`` keyed by
-    a hash of the wiki text + the target id set, so an unchanged wiki never
-    re-hits Gemini."""
+async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, dict]:
+    """``{node_id: {"status": "covered"|"partial"|"missing", "known": str}}`` for
+    the nodes in ``targets`` (narrative *and* structured) judged against the
+    user's free-text story. Cached on ``users/{uid}/completeness_cache/narrative``
+    keyed by a hash of the wiki text + the target id set, so an unchanged wiki
+    never re-hits Gemini."""
     if not targets:
         return {}
     topics = [
         {"id": n["id"], "label": n["label"], "ayma_prompt": n["ayma_prompt"]}
         for n in targets
     ]
-    missing_all = {t["id"]: "missing" for t in topics}
+    missing_all = {t["id"]: dict(_MISSING_VERDICT) for t in topics}
     try:
         wiki_text = (
             wiki_query.read_wiki_context(
@@ -436,7 +449,15 @@ async def _narrative_status(db, uid: str, targets: list[dict]) -> dict[str, str]
             if cached.get("wiki_hash") == key and isinstance(
                 cached.get("result"), dict
             ):
-                return {t["id"]: cached["result"].get(t["id"], "missing") for t in topics}
+                res = cached["result"]
+                return {
+                    t["id"]: (
+                        res[t["id"]]
+                        if isinstance(res.get(t["id"]), dict)
+                        else dict(_MISSING_VERDICT)
+                    )
+                    for t in topics
+                }
     except Exception:  # noqa: BLE001
         logger.exception("completeness: narrative cache read failed for %s", uid)
 
@@ -494,15 +515,20 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
     evaluated: list[dict] = []
     for n in nodes:
         nid = n["id"]
+        # What's already known for this node, surfaced so a partially-answered
+        # node is followed up on (not re-asked cold) — founder requirement 2.
+        known = ""
         deriv = _profile_derived_field(nid, profile)
         if deriv and not _blank(profile.get(deriv)):
             cov, src, val = 1.0, "profile", _stringify(profile.get(deriv))
+            known = val
         elif nid in store:
             entry = store[nid]
             raw_src = str(entry.get("source") or "stated").lower()
             cov = 0.7 if raw_src == "inferred" else 1.0
             src = raw_src if raw_src in ("stated", "inferred") else "stated"
             val = entry.get("value")
+            known = _stringify(val) if val is not None else ""
         else:
             # Answer not in the structured store — check the free-text story.
             # Founder bug (2026-10): `wiki_ingest` reliably folds every chat
@@ -517,13 +543,16 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
             # a `covered` story verdict satisfies it — a vague/partial mention
             # leaves the exact value unknown and the question still worth
             # asking.
-            st = story.get(nid, "missing")
+            verdict = story.get(nid) or _MISSING_VERDICT
+            st = verdict.get("status", "missing")
             if n["kind"] == "narrative":
                 cov = _NARRATIVE_COVERAGE.get(st, 0.0)
             else:
                 cov = 1.0 if st == "covered" else 0.0
             src = "wiki" if cov > 0 else None
             val = None
+            if cov > 0:
+                known = str(verdict.get("known") or "")
         evaluated.append(
             {
                 "node": n,
@@ -531,6 +560,7 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
                 "status": _status(cov),
                 "value": val,
                 "source": src,
+                "known": known,
                 # Whether this node is (still) answerable purely from a
                 # preboarding profile field — see _profile_derived_field.
                 # `_next` uses this instead of a static `_PROFILE_DERIVABLE`
@@ -739,6 +769,11 @@ def _next(
                 "ayma_prompt": n["ayma_prompt"],
                 "weight": n["weight"],
                 "sensitive": bool(n.get("sensitive")),
+                # Coverage state + what's already known, so the check-before-
+                # asking gate can confirm the node's state and, for a partial
+                # one, follow up on `known` instead of re-asking (reqs 1 & 2).
+                "status": e.get("status"),
+                "known": e.get("known") or "",
             }
         )
     return picked
@@ -782,6 +817,16 @@ async def compute(db, uid: str) -> dict:
     branch, intent_set, evaluated = await _evaluate(db, uid)
     offered = _read_offers(db, uid)
     result = _summarise(branch, intent_set, evaluated, offered)
+    # Volunteered / off-tree topics already captured (founder requirement 4):
+    # carried on the summary so the check-before-asking gate (next_questions and
+    # the per-turn note) treats them as known and never raises them again.
+    try:
+        import supplemental
+
+        result["supplemental"] = supplemental.read_supplemental(db, uid)
+    except Exception:  # noqa: BLE001 - supplemental is additive; never break compute
+        logger.exception("completeness: supplemental read failed for %s", uid)
+        result["supplemental"] = []
     _persist(db, uid, result)
     return result
 

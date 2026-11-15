@@ -363,8 +363,10 @@ def test_next_questions_returns_highest_weight_unanswered_first():
     assert weights[0] == 5
     assert {
         "id", "label", "kind", "options", "scale", "ayma_prompt", "weight",
-        "sensitive",
+        "sensitive", "status", "known",
     } == set(qs[0])
+    # The state-check surface also carries volunteered topics (founder req 4).
+    assert "already_known" in payload and isinstance(payload["already_known"], list)
 
 
 def test_next_questions_offers_taste_early_for_a_user_without_taste():

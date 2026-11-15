@@ -157,7 +157,12 @@ async def persist_and_ingest(
         try:
             import wiki_ingest
 
-            await wiki_ingest.ingest(db, uid, session_id, turns)
+            # capture_questionnaire=True: this is the real session-end
+            # conversation flush (voice shutdown + /post-turn), so the mandatory
+            # structured capture (reqs 3 & 4) runs first — see wiki_ingest.ingest.
+            await wiki_ingest.ingest(
+                db, uid, session_id, turns, capture_questionnaire=True
+            )
         except Exception:  # noqa: BLE001 - left ingest_pending for the sweep
             logger.exception(
                 "wiki ingest failed for %s/%s, left pending", uid, session_id

@@ -28,5 +28,13 @@ unsure between `partial` and `missing`, choose `partial` only if some real
 on-topic fact is present. Never invent coverage that is not in the text. If the
 wiki is empty or unrelated, everything is `missing`.
 
-Return JSON matching the schema: `{"assessments": [{"id": ..., "status": ...}, ...]}`
+For every topic that is `covered` or `partial`, also return `known`: a single
+short phrase (not a sentence) naming what the wiki already says on this topic,
+in the person's own terms — so Ayma can open a follow-up with it instead of
+asking the question cold ("you mentioned FIRE by 45 — …", "you train for
+marathons — …"). For a `missing` topic return `known` as an empty string. Keep
+`known` to a few words; it is a reminder of the gist, not the full answer.
+
+Return JSON matching the schema:
+`{"assessments": [{"id": ..., "status": ..., "known": ...}, ...]}`
 with one entry per topic id you were given, and no ids you were not given.
