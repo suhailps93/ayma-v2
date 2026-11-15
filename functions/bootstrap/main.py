@@ -825,6 +825,41 @@ def _call_state_context(call_state: CallStateModel | None) -> str:
     )
 
 
+def _build_awareness_context(app_version: str, whats_new: str) -> str:
+    """The prompt line that lets Ayma answer "what build are you running / what's
+    new" (founder item A). ``app_version`` is the client's own build string and
+    ``whats_new`` the user-facing changelog for that build (from the client's
+    maintained release notes). Returns "" when the client sent no version.
+
+    The whats-new source is the user-facing release notes, so it never contains
+    developer-only content — but the instruction still forbids revealing any
+    internal/unreleased feature, as a guard against the model inventing one."""
+    version = (app_version or "").strip()
+    if not version:
+        return ""
+    line = (
+        f"App build awareness: the user is running app build {version}. If they "
+        f"ask which build or version you're running, tell them it's build "
+        f"{version}."
+    )
+    notes = (whats_new or "").strip()
+    if notes:
+        line += (
+            " If they ask what's new, what changed, or what features this build "
+            "has, summarise these user-facing updates for this build — and ONLY "
+            "these; never describe any developer-only, internal, experimental or "
+            "unreleased feature, and don't invent features that aren't listed:\n"
+            + notes
+        )
+    else:
+        line += (
+            " You don't have a what's-new list for this build, so if they ask "
+            "what's new, say you can tell them the build number but don't have "
+            "the change list handy — never guess at features."
+        )
+    return line
+
+
 def _voice_call_state_context(call_state: CallStateModel | None) -> str:
     """The call-state lines for a VOICE seed (`/bootstrap`).
 
@@ -869,6 +904,11 @@ class BootstrapRequest(_TruncatingModel):
     # Previous voice call (ledger 2cy): a call that just ended, so the
     # new room's seed opens knowing it happened — see CallStateModel.
     call_state: CallStateModel | None = None
+    # Build awareness (founder item A): same as the /chat request — the client's
+    # build string and the user-facing what's-new for it, so Ayma can answer
+    # "what build / what's new" by voice too.
+    app_version: str = Field(default="", max_length=40)
+    whats_new: str = Field(default="", max_length=2000)
 
 
 def _should_auto_dive(uid: str) -> bool:
@@ -1147,6 +1187,10 @@ async def bootstrap(
             model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
             call_state_context=_voice_call_state_context(
                 req.call_state if req else None
+            ),
+            build_awareness_context=(
+                _build_awareness_context(req.app_version, req.whats_new)
+                if req else ""
             ),
             app_accent_context=app_control_mod.accent_color_context(get_db(), uid),
             db=get_db(),
@@ -1530,6 +1574,14 @@ class ChatRequest(_TruncatingModel):
     # a call is live, or just ended — so a typed disconnect after an
     # idle-ended call gets an acknowledgment, never a denial.
     call_state: CallStateModel | None = None
+    # Build awareness (founder item A): the client reports its own build string
+    # and the user-facing "what's new" for that build (sourced from the client's
+    # maintained release notes — `release_notes.dart`, which is already the
+    # user-safe changelog, so it never carries developer-only features). The
+    # brain uses these to answer "what build are you running / what's new",
+    # correctly and per build, without a hand-edited prompt. Both optional.
+    app_version: str = Field(default="", max_length=40)
+    whats_new: str = Field(default="", max_length=2000)
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -2067,6 +2119,9 @@ async def _prepare_chat(
         shared_photo_note=shared_photo_note,
         current_screen_context=current_screen_context,
         call_state_context=_call_state_context(req.call_state),
+        build_awareness_context=_build_awareness_context(
+            req.app_version, req.whats_new
+        ),
         location_context=location_log_mod.current_location_context(
             get_db(), uid),
         db=get_db(),

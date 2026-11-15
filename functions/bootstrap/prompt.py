@@ -507,6 +507,7 @@ def compose_system_prompt(
     questionnaire_note: str = "",
     current_screen_context: str = "",
     call_state_context: str = "",
+    build_awareness_context: str = "",
     location_context: str = "",
     db=None,
     lessons_md_override: str | None = None,
@@ -659,6 +660,12 @@ def compose_system_prompt(
     # call existed.
     if call_state_context.strip():
         parts.append(call_state_context.strip())
+
+    # Build/version awareness (founder item A): the client reports its build and
+    # the user-facing "what's new" for it, so Ayma answers "what build are you
+    # running / what's new" correctly — and only with user-facing features.
+    if build_awareness_context.strip():
+        parts.append(build_awareness_context.strip())
 
     # Truthful location (founder bug, build 2426): the brain gets the user's
     # shared location (opted-in only) so "do you have my location?" is answered

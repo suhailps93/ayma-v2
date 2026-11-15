@@ -90,4 +90,14 @@ void main() {
     expect(kReleaseNotes, contains('## 1.1.0'));
     expect(kReleaseNotes, contains('Full Terms of Service and a new Privacy Policy.'));
   });
+
+  test('latestReleaseNotesBody returns only the top block bullets', () {
+    final body = latestReleaseNotesBody();
+    expect(body, startsWith('- '));
+    expect(body, isNot(contains('## ')));
+    expect(body, isNot(contains('## 1.29.0')));
+    expect(
+        body, contains('The floating Ayma button no longer shows over the'));
+    expect(body, isNot(contains('The call notification')));
+  });
 }

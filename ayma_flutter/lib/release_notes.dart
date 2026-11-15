@@ -266,3 +266,20 @@ const String kReleaseNotes = r'''
 - Explore: filter chips (your likes / mutual / scored) and natural-language search.
 - The back button now walks back through your tabs instead of quitting.
 ''';
+
+/// The bullet text of the top release-notes block (the notes for
+/// [kReleaseNotesVersion]) without its `## x.y.z — date` heading. Sent to the
+/// brain as `whats_new` so Ayma can answer "what's new in this build".
+String latestReleaseNotesBody() {
+  final lines = <String>[];
+  var inTop = false;
+  for (final line in kReleaseNotes.split('\n')) {
+    if (line.startsWith('## ')) {
+      if (inTop) break;
+      inTop = true;
+      continue;
+    }
+    if (inTop) lines.add(line);
+  }
+  return lines.join('\n').trim();
+}

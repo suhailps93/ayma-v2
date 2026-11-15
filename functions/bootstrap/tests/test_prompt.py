@@ -778,3 +778,30 @@ def test_persona_source_rule_names_natural_provenance_phrasings():
     ):
         assert phrase in persona, phrase
     assert "find_fact_source" in persona
+
+
+def test_build_awareness_context_is_folded_into_the_prompt():
+    from prompt import compose_system_prompt
+
+    note = (
+        "App build awareness: the user is running app build 2.6.1. If they ask "
+        "what's new: - Bullet editor\n- Person graph"
+    )
+    sp = compose_system_prompt(build_awareness_context=note)
+    assert "2.6.1" in sp and "Bullet editor" in sp
+    # absent by default
+    assert "App build awareness" not in compose_system_prompt()
+
+
+def test_build_awareness_note_builder():
+    import main
+
+    n = main._build_awareness_context("2.6.1 (2438)", "- New bullet editor")
+    assert "2.6.1 (2438)" in n and "New bullet editor" in n
+    # user-safe guard present
+    assert "never describe any developer-only" in n.lower()
+    # no version -> no note at all
+    assert main._build_awareness_context("", "- stuff") == ""
+    # version but no notes -> names build, refuses to guess features
+    n2 = main._build_awareness_context("9.9.9", "")
+    assert "9.9.9" in n2 and "never guess" in n2.lower()

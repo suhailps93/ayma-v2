@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
+import '../build_awareness.dart';
 import '../env.dart';
 import '../features/date_sim/date_sim_models.dart';
 import '../widgets/taste_models.dart';
@@ -522,6 +523,10 @@ Map<String, dynamic> buildChatRequestBody({
       // computed a snapshot with something to report, so payloads from
       // call sites that never did stay byte-identical to before.
       if (callState.wireJson != null) 'call_state': callState.wireJson,
+      if (BuildAwareness.appVersion.isNotEmpty)
+        'app_version': BuildAwareness.appVersion,
+      if (BuildAwareness.whatsNew.isNotEmpty)
+        'whats_new': BuildAwareness.whatsNew,
     };
 
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
@@ -727,6 +732,10 @@ class ApiClient {
               // Previous voice call, when one just ended (ledger 2cy) —
               // same conditional shape as the practice-return id above.
               if (callState.wireJson != null) 'call_state': callState.wireJson,
+              if (BuildAwareness.appVersion.isNotEmpty)
+                'app_version': BuildAwareness.appVersion,
+              if (BuildAwareness.whatsNew.isNotEmpty)
+                'whats_new': BuildAwareness.whatsNew,
             }),
           )
           .timeout(isPracticeReturn ? longTimeout : _bootstrapPostTimeout);
