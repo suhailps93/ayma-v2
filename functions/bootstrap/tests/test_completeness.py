@@ -140,7 +140,8 @@ def test_score_zero_for_empty_user(monkeypatch):
     # highest-weight nodes come first in `next`
     assert res["next"][0]["weight"] == 5
     assert {"id", "label", "page_type", "kind", "options", "scale",
-            "ayma_prompt", "weight", "sensitive"} == set(res["next"][0])
+            "ayma_prompt", "weight", "sensitive", "status", "known"} == set(
+                res["next"][0])
 
 
 def test_profile_fields_mark_preboarding_nodes_covered(monkeypatch):
@@ -996,3 +997,45 @@ def test_score_is_monotonic_in_coverage():
     after = completeness._score(evaluated)
     assert after >= before
     assert after == completeness._MAX_SCORE
+
+
+# --- founder reqs 2 & 4: partial follow-up + volunteered topics ------------
+
+
+def test_partial_node_surfaces_known_for_followup(monkeypatch):
+    """A partially-answered node carries `known` into `next`, so Ayma follows up
+    on what's already recorded instead of re-asking it cold (requirement 2)."""
+    async def _fake(contents, system_prompt, schema, **kw):  # noqa: ARG001
+        return {
+            "assessments": [
+                {"id": "taste_music", "status": "partial",
+                 "known": "likes indie and jazz"},
+            ]
+        }
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    monkeypatch.setattr(
+        completeness.wiki_query, "read_wiki_context",
+        lambda db, uid, **k: "Mentions indie and jazz in passing.",
+    )
+    db = FakeDb({_profile_key(): {"relationship_intent": "Casual"}})
+    res = _run(completeness.compute(db, "u1"))
+    item = next((n for n in res["next"] if n["id"] == "taste_music"), None)
+    assert item is not None
+    assert item["status"] == "partial"
+    assert item["known"] == "likes indie and jazz"
+
+
+def test_compute_includes_volunteered_supplemental(monkeypatch):
+    """Volunteered off-tree topics ride on the completeness summary so the
+    check-before-asking gate treats them as known (requirement 4)."""
+    import supplemental
+
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({_profile_key(): {}})
+    supplemental.record_supplemental(
+        db, "u1", "family", "Their dog Max", "golden retriever named Max"
+    )
+    res = _run(completeness.compute(db, "u1"))
+    topics = {s["topic"] for s in res.get("supplemental", [])}
+    assert "Their dog Max" in topics

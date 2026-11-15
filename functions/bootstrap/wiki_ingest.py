@@ -299,11 +299,22 @@ async def ingest(
     turns: list[Turn],
     force_visibility: str | None = None,
     record_source: bool = True,
+    capture_questionnaire: bool = False,
 ) -> int:
     """Run one ingest pass. Returns the number of pages written.
 
     ``force_visibility`` overrides the model's choice on every page — used for
     DM-image / DM-voice derived content, which defaults to ``ai_only`` (§6.8).
+
+    ``capture_questionnaire=True`` (the real session-end conversation ingests —
+    :func:`post_turn.persist_and_ingest`, the ``/post-turn`` tail, and the
+    nightly backfill) first runs the mandatory structured capture
+    (:func:`questionnaire_ingest.record_from_turns`): it records any still-open
+    tree answer the user gave and any volunteered off-tree topic, deterministically,
+    before the wiki pages are written — "record_answer as the first line, not
+    the only line" (founder requirements 3 & 4, 2026-11-14). It stays off for
+    the non-conversation callers (Gmail/Calendar import, DM-derived content, the
+    ``remember`` tool, photo captions), which pass nothing and keep the default.
 
     ``record_source=False`` skips writing the ``source_log`` provenance entry
     (see ``_write_page``) even when a page's body genuinely changes. This
@@ -317,6 +328,21 @@ async def ingest(
     """
     if not uid or not turns:
         return 0
+    # Requirements 3 & 4 (founder, 2026-11-14): the mandatory structured capture
+    # runs FIRST and independently of whether the in-call model ever called the
+    # record_answer tool — a still-open tree answer the user gave, and any
+    # volunteered off-tree topic, are written to the questionnaire / supplemental
+    # stores before the wiki pages below. Best-effort: never blocks or fails the
+    # wiki ingest it rides on.
+    if capture_questionnaire:
+        try:
+            import questionnaire_ingest
+
+            await questionnaire_ingest.record_from_turns(db, uid, session_id, turns)
+        except Exception:  # noqa: BLE001 - capture is best-effort; wiki ingest proceeds
+            logger.exception(
+                "questionnaire capture failed for %s/%s", uid, session_id
+            )
     existing = _read_existing_pages(db, uid)
     existing_bodies = {
         p["page_id"]: (p.get("ai_body") or "").strip() for p in existing
@@ -424,6 +450,7 @@ async def ingest_or_defer(
     session_id: str,
     turns: list[Turn],
     force_visibility: str | None = None,
+    capture_questionnaire: bool = False,
 ) -> int:
     """Like :func:`ingest`, but on a *genuine* ingest failure flags the
     session for later re-ingest (§15's ``backfill_ops``) instead of the turns
@@ -464,7 +491,8 @@ async def ingest_or_defer(
     """
     try:
         return await ingest(
-            db, uid, session_id, turns, force_visibility=force_visibility
+            db, uid, session_id, turns, force_visibility=force_visibility,
+            capture_questionnaire=capture_questionnaire,
         )
     except Exception:  # noqa: BLE001 - genuine ingest failure; see docstring
         logger.exception(

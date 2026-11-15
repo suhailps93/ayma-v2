@@ -121,6 +121,7 @@ FEATURE_FACE_REPORT = "face_report"  # honest facial-beauty analysis of a photo
 FEATURE_BODY_REPORT = "body_report"  # honest physique analysis of a photo
 FEATURE_PHYSICAL_ATTRS = "physical_attrs"  # structured physical-profile extraction
 FEATURE_COMPLETENESS = "completeness"  # profile-completeness narrative coverage pass
+FEATURE_QUESTIONNAIRE = "questionnaire"  # session-end deterministic questionnaire/supplemental capture
 FEATURE_SUMMARY = "summary"  # rolling conversation-summary maintenance (context_opt)
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
 FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction

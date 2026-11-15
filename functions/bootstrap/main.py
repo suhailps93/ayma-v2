@@ -469,8 +469,11 @@ def _questionnaire_note(uid: str, mode: str) -> str:
             "more urgent is live in the conversation, quietly working through "
             "the profile questionnaire is your top priority — weave in one "
             "question at a time, conversationally (see the questionnaire "
-            "guidance in your persona). Call `record_answer` the moment you "
-            "have a clear answer.",
+            "guidance in your persona). This note is the current confirmed "
+            "state — only raise a topic listed here as still open, and never "
+            "ask one from memory without checking its state (call "
+            "`next_questions` if this note isn't fresh). Call `record_answer` "
+            "the moment you have a clear answer.",
         ]
         if c.get("intent_set"):
             intent = str(c.get("intent") or "").replace("_", "-") or "unclear"
@@ -484,7 +487,29 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         if nxt:
             lines.append("Highest-priority topics still open:")
             for n in nxt:
-                lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+                known = str(n.get("known") or "").strip()
+                if str(n.get("status")) == "partial" and known:
+                    # Partial: follow up on what's known, don't re-ask cold
+                    # (founder requirement 2).
+                    lines.append(
+                        f"- {n.get('label')} (PARTIAL — you already know: "
+                        f"{known}): follow up on that to get the rest "
+                        f"({n.get('ayma_prompt')}); don't ask it from scratch."
+                    )
+                else:
+                    lines.append(f"- {n.get('label')}: {n.get('ayma_prompt')}")
+        # Volunteered / off-tree topics already captured — never ask about these
+        # again (founder requirement 4).
+        volunteered = [
+            s for s in (c.get("supplemental") or [])
+            if isinstance(s, dict) and s.get("topic")
+        ][:8]
+        if volunteered:
+            topics = ", ".join(str(s.get("topic")) for s in volunteered)
+            lines.append(
+                "Already known from what they volunteered (do not ask about "
+                f"these again, only build on them): {topics}."
+            )
         # This is the exact spot Ayma has actually gotten wrong in production
         # (real transcript, Sept 2026): right after weaving one of the above
         # in, she added a wrap-up line the questionnaire guidance already
@@ -507,7 +532,10 @@ def _questionnaire_note(uid: str, mode: str) -> str:
         return ""
 
 
-async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
+async def _run_ingest(
+    uid: str, session_id: str, turns: list[Turn],
+    *, capture_questionnaire: bool = False,
+) -> None:
     """Wiki ingest (§2.3), run after the response is sent. Best-effort.
 
     Runs regardless of the user's credit balance — wiki ingest is exempt
@@ -515,9 +543,16 @@ async def _run_ingest(uid: str, session_id: str, turns: list[Turn]) -> None:
     genuine ingest failure (a real Gemini/Firestore error) flags the session
     for the nightly backfill sweep to retry — via ``wiki_ingest.
     ingest_or_defer``, shared with the voice agent worker's own
-    session-shutdown hook (``agent.py``)."""
+    session-shutdown hook (``agent.py``).
+
+    ``capture_questionnaire=True`` only for the session-end ``/post-turn``
+    flush, so the mandatory structured capture (reqs 3 & 4) runs there; the
+    mid-session photo-caption ingest leaves it off (it is not a session end)."""
     try:
-        written = await wiki_ingest(get_db(), uid, session_id, turns)
+        written = await wiki_ingest(
+            get_db(), uid, session_id, turns,
+            capture_questionnaire=capture_questionnaire,
+        )
         if written:
             logger.info("wiki ingest wrote %d page(s) for %s", written, uid)
     except Exception:  # noqa: BLE001
@@ -3074,7 +3109,9 @@ async def post_turn(
     turns = _to_turns(req.recent_turns)
     _persist_session(uid, req.session_id, turns)
     if turns:
-        background.add_task(_run_ingest, uid, req.session_id, turns)
+        background.add_task(
+            _run_ingest, uid, req.session_id, turns, capture_questionnaire=True
+        )
         # Cheap per-user nudge: fill in at most one missing profile-building
         # skill (cheapest first) so an active user's wiki populates without
         # waiting for `POST /cron/skill-backfill`.

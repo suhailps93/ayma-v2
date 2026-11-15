@@ -109,7 +109,12 @@ async def drain(db, uid: str, *, limit: int = _MAX_PER_DRAIN) -> int:
         turns = _turns(doc.to_dict() or {})
         try:
             if turns:
-                await wiki_ingest.ingest(db, uid, doc.id, turns)
+                # capture_questionnaire=True: this is the safety net for a
+                # session whose live flush never landed, so it must also run the
+                # mandatory structured capture (reqs 3 & 4), not just wiki pages.
+                await wiki_ingest.ingest(
+                    db, uid, doc.id, turns, capture_questionnaire=True
+                )
         except token_ledger.TokenCapExceeded:
             break  # still out of credits — leave the remainder pending
         except Exception:  # noqa: BLE001

@@ -439,6 +439,23 @@ def _record(
     return f"recorded {node['label'].lower()}: {normalised}{tag}"
 
 
+def record_answer_direct(
+    db, uid: str, node_id: str, value: str, source: str = "stated",
+    *, session_id: str = "", turns: list | None = None,
+) -> str:
+    """Public, non-tool entry to the shared questionnaire write (the same
+    :func:`_record` the ``record_answer`` tool calls — validation, the
+    ``qz_*`` hard-filter mirror, provenance, and the debounced completeness
+    recompute). Used by the mandatory session-end recorder
+    (:mod:`questionnaire_ingest`) so a tree answer the user gave in
+    conversation is written to the structured store even when the in-call model
+    never called the tool (founder requirement 3, 2026-11-14). Returns the same
+    ``"recorded …"`` / error string ``_record`` returns."""
+    return _record(
+        db, uid, node_id, value, source, session_id=session_id, turns=turns,
+    )
+
+
 # Distance preference (miles, or "anywhere") -> the closest
 # `relocation_radius` option. The questionnaire has no mileage scale and no
 # geocoding exists, so this is an approximation, not a distance calculation.
@@ -509,9 +526,12 @@ def save_partner_preferences(
 # --- next_questions -----------------------------------------------------------
 
 _NEXT_DESCRIPTION = (
-    "The questionnaire items still worth asking, highest priority first. "
-    "Returns JSON: a short list of {id, label, kind, options, scale, "
-    "ayma_prompt, weight, sensitive}."
+    "Check this before asking any profile question. Returns the items still "
+    "worth asking, highest priority first — each as {id, label, kind, options, "
+    "scale, ayma_prompt, weight, sensitive, status, known}: `status` is "
+    "partial/missing and `known` is what you already have (follow up on a "
+    "partial one, never re-ask it cold). Also returns `already_known`: topics "
+    "the user volunteered — never ask about those again."
 )
 
 _NEXT_DECLARATION = {
@@ -530,14 +550,33 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
         keys = (
             "id", "label", "kind", "options", "scale", "ayma_prompt", "weight",
             "sensitive",
+            # The confirmed state of each item + what's already known, so this
+            # call IS the check-before-asking: a `partial` item is followed up
+            # on using `known`, never re-asked cold (founder reqs 1 & 2).
+            "status", "known",
         )
         questions = [{k: q.get(k) for k in keys} for q in nxt[:_NEXT_LIMIT]]
+        # Volunteered / off-tree topics already captured — so Ayma never asks
+        # about something the user already told her unprompted (founder req 4).
+        known_topics = [
+            {
+                "section": s.get("section"),
+                "topic": s.get("topic"),
+                "value": s.get("value"),
+                "status": s.get("status"),
+            }
+            for s in ((res or {}).get("supplemental") or [])
+            if isinstance(s, dict) and s.get("topic")
+        ]
         # Remember these were just offered so a still-unanswered one among
         # them (declined/deflected rather than recorded) doesn't monopolise
         # the top of the list on the very next call — see
         # completeness._OFFER_COOLDOWN_SECONDS for why.
         completeness.mark_offered(db, uid, [q["id"] for q in questions])
-        return json.dumps({"questions": questions}, ensure_ascii=False)
+        return json.dumps(
+            {"questions": questions, "already_known": known_topics},
+            ensure_ascii=False,
+        )
 
     return next_questions
 
