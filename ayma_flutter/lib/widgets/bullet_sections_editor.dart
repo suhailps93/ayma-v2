@@ -337,6 +337,46 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     unawaited(_persist());
   }
 
+  /// Asks before deleting a bullet — tapping the trash icon used to delete
+  /// instantly (how a Scout test bullet vanished during NOTE 219). Deletes only
+  /// after the user confirms; Cancel leaves the bullet untouched.
+  Future<void> _confirmDelete(int i) async {
+    if (_saving || i < 0 || i >= _bullets.length) return;
+    final ac = context.ac;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('delete_bullet_confirm'),
+        backgroundColor: ac.bg,
+        title: Text(
+          'Delete this bullet?',
+          style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg),
+        ),
+        content: Text(
+          'This removes it from your story. You can always add it again later.',
+          style: AymaType.sans(size: 13, color: ac.fgMute),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('delete_bullet_cancel'),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('delete_bullet_confirm_action'),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: ac.errorText,
+              minimumSize: const Size(64, 48),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) _delete(i);
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -476,7 +516,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
                       ),
                     InkWell(
                       key: ValueKey('delete_${widget.section.pageType}_$i'),
-                      onTap: _saving ? null : () => _delete(i),
+                      onTap: _saving ? null : () => unawaited(_confirmDelete(i)),
                       child: Padding(
                         padding: const EdgeInsets.all(8),
                         child: Icon(

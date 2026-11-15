@@ -264,4 +264,82 @@ void main() {
       expect(find.text('Private'), findsOneWidget);
     });
   });
+
+  // Bullet delete asks first (founder order, Nov 15 2026): the trash icon used
+  // to delete instantly — how a Scout test bullet vanished during NOTE 219.
+  group('bullet delete confirmation', () {
+    Future<_FakeApi> pumpEditor(WidgetTester tester, _FakeApi api) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: BulletSectionsEditor(api: api)),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      return api;
+    }
+
+    testWidgets('tapping delete shows a confirm dialog and does NOT delete',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Keep me.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('delete_about_me_0')));
+      await tester.pumpAndSettle();
+
+      // The confirm dialog is up…
+      expect(find.byKey(const ValueKey('delete_bullet_confirm')), findsOneWidget);
+      // …and nothing has been deleted or persisted yet.
+      expect(find.text('Keep me.'), findsOneWidget);
+      expect(api.bulletSaves, isEmpty);
+    });
+
+    testWidgets('cancel leaves the bullet untouched', (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Keep me.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('delete_about_me_0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('delete_bullet_cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('delete_bullet_confirm')), findsNothing);
+      expect(find.text('Keep me.'), findsOneWidget);
+      expect(api.bulletSaves, isEmpty);
+    });
+
+    testWidgets('confirming deletes the bullet and persists', (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'Delete me.', visibility: 'public'),
+            StoryBullet(id: 'b2', text: 'Keep me.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('delete_about_me_0')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('delete_bullet_confirm_action')));
+      await tester.pumpAndSettle();
+
+      // Dialog gone, the bullet is deleted, and the save persisted the rest.
+      expect(find.byKey(const ValueKey('delete_bullet_confirm')), findsNothing);
+      expect(find.text('Delete me.'), findsNothing);
+      expect(find.text('Keep me.'), findsOneWidget);
+      expect(api.saveSnapshots.last, [('Keep me.', 'public')]);
+    });
+  });
 }
