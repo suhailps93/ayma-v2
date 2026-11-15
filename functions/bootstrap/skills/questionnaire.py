@@ -526,12 +526,14 @@ def save_partner_preferences(
 # --- next_questions -----------------------------------------------------------
 
 _NEXT_DESCRIPTION = (
-    "Check this before asking any profile question. Returns the items still "
-    "worth asking, highest priority first — each as {id, label, kind, options, "
+    "Check this before asking any profile or lifestyle question. Returns the items "
+    "still worth asking, highest priority first — each as {id, label, kind, options, "
     "scale, ayma_prompt, weight, sensitive, status, known}: `status` is "
     "partial/missing and `known` is what you already have (follow up on a "
-    "partial one, never re-ask it cold). Also returns `already_known`: topics "
-    "the user volunteered — never ask about those again."
+    "partial one, never re-ask it cold). Also returns `already_known`: every "
+    "answer already recorded or volunteered — NEVER re-ask about any of these "
+    "cold; if steered to one of these topics, reference what you already know "
+    "and build on it or explore deeper."
 )
 
 _NEXT_DECLARATION = {
@@ -556,9 +558,21 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
             "status", "known",
         )
         questions = [{k: q.get(k) for k in keys} for q in nxt[:_NEXT_LIMIT]]
-        # Volunteered / off-tree topics already captured — so Ayma never asks
-        # about something the user already told her unprompted (founder req 4).
+        # Both recorded tree answers and volunteered / off-tree topics — so Ayma
+        # knows what is already answered and never asks about them cold (founder
+        # NOTE 214 Defect C).
         known_topics = [
+            {
+                "id": r.get("id"),
+                "section": r.get("section"),
+                "topic": r.get("topic"),
+                "value": r.get("value"),
+                "status": r.get("status"),
+            }
+            for r in ((res or {}).get("recorded") or [])
+            if isinstance(r, dict) and r.get("topic") and r.get("value")
+        ]
+        known_topics.extend(
             {
                 "section": s.get("section"),
                 "topic": s.get("topic"),
@@ -567,7 +581,7 @@ def _bind_next(db, uid: str) -> Callable[..., str]:
             }
             for s in ((res or {}).get("supplemental") or [])
             if isinstance(s, dict) and s.get("topic")
-        ]
+        )
         # Remember these were just offered so a still-unanswered one among
         # them (declined/deflected rather than recorded) doesn't monopolise
         # the top of the list on the very next call — see

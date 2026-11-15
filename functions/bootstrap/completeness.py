@@ -98,11 +98,13 @@ def _profile_derived_field(node_id: str, profile: dict) -> str | None:
 
 
 def _profile_answered(node_id: str, profile: dict) -> bool:
-    """True when a preboarding ``profile/main`` field currently answers
-    ``node_id`` — i.e. the node is both profile-derivable (see
-    :func:`_profile_derived_field`) and that field holds a non-blank value."""
+    """True when a preboarding or recorded ``profile/main`` field currently answers
+    ``node_id`` — i.e. the node is profile-derivable (see
+    :func:`_profile_derived_field`), or holds a non-blank recorded ``qz_*`` value."""
     field = _profile_derived_field(node_id, profile)
-    return bool(field) and not _blank(profile.get(field))
+    if bool(field) and not _blank(profile.get(field)):
+        return True
+    return not _blank(profile.get(f"qz_{node_id}"))
 
 _NARRATIVE_COVERAGE = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 
@@ -326,8 +328,10 @@ def _resolve_intent(store: dict, profile: dict) -> tuple[str, bool]:
     """``(branch, explicitly_set)``. Branch is the routed
     :mod:`question_tree` branch; ``explicitly_set`` is False when the user has
     given no usable ``relationship_intent`` (unset or "Not sure yet")."""
-    raw = (store.get("relationship_intent") or {}).get("value") or profile.get(
-        "relationship_intent"
+    raw = (
+        (store.get("relationship_intent") or {}).get("value")
+        or profile.get("relationship_intent")
+        or profile.get("qz_relationship_intent")
     )
     branch = question_tree.branch_for_intent(raw)
     explicitly_set = bool(
@@ -521,8 +525,12 @@ async def _evaluate(db, uid: str) -> tuple[str, bool, list[dict]]:
         # node is followed up on (not re-asked cold) — founder requirement 2.
         known = ""
         deriv = _profile_derived_field(nid, profile)
+        qz_val = profile.get(f"qz_{nid}")
         if deriv and not _blank(profile.get(deriv)):
             cov, src, val = 1.0, "profile", _stringify(profile.get(deriv))
+            known = val
+        elif not _blank(qz_val):
+            cov, src, val = 1.0, "profile", _stringify(qz_val)
             known = val
         elif nid in store:
             entry = store[nid]
@@ -819,6 +827,20 @@ async def compute(db, uid: str) -> dict:
     branch, intent_set, evaluated = await _evaluate(db, uid)
     offered = _read_offers(db, uid)
     result = _summarise(branch, intent_set, evaluated, offered)
+    # Recorded tree answers (so check-before-asking gate knows what is already recorded):
+    recorded = [
+        {
+            "id": e["node"]["id"],
+            "section": e["node"]["page_type"],
+            "topic": e["node"]["label"],
+            "value": str(e["known"] or e.get("value") or ""),
+            "status": e["status"],
+        }
+        for e in evaluated
+        if (e["coverage"] >= 0.7 or e["known"])
+        and str(e["known"] or e.get("value") or "").strip()
+    ]
+    result["recorded"] = recorded
     # Volunteered / off-tree topics already captured (founder requirement 4):
     # carried on the summary so the check-before-asking gate (next_questions and
     # the per-turn note) treats them as known and never raises them again.

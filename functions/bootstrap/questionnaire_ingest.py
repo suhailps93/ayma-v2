@@ -122,11 +122,15 @@ def _profile(db, uid: str) -> dict:
 def _open_candidates(store: dict, profile: dict) -> list[dict]:
     """The intent tree's nodes that have no recorded structured answer yet — the
     only items worth extracting (an already-recorded node is left untouched)."""
-    intent = (store.get("relationship_intent") or {}).get("value") or profile.get(
-        "relationship_intent"
+    intent = (
+        (store.get("relationship_intent") or {}).get("value")
+        or profile.get("relationship_intent")
+        or profile.get("qz_relationship_intent")
     )
     return [
-        n for n in question_tree.nodes_for_intent(intent) if n["id"] not in store
+        n for n in question_tree.nodes_for_intent(intent)
+        if n["id"] not in store
+        and not (profile.get(f"qz_{n['id']}") is not None and str(profile.get(f"qz_{n['id']}")).strip())
     ]
 
 
