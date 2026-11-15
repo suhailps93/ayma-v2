@@ -165,24 +165,27 @@ def test_create_rejects_unknown_section():
         pass
 
 
-def test_deleting_an_ai_only_bullet_is_refused():
-    # save_section's hidden-span guard protects Ayma-only content from loss.
+def test_user_can_reverse_an_ai_only_bullet_in_the_bullet_editor():
+    # The bullet editor is a full explicit editor: the user sees every bullet
+    # (Ayma-only included) and controls each one. Moving an Ayma-only bullet
+    # back to private/public must work — no cycle trap (the default hidden-span
+    # loss-guard does not apply here).
     db = FakeDb()
     _page(
         db, "u1", "identity", page_type="identity", visibility="public",
-        ai_body="Public line. {{ai_only}}Ayma note not to lose.{{/ai_only}}",
+        ai_body="Public line. {{ai_only}}Was Ayma-only, now surfaced.{{/ai_only}}",
     )
-    # editing but dropping the ai_only bullet must raise
-    try:
-        profile_bullets.save_bullets(db, "u1", "identity", [
-            {"text": "Public line.", "visibility": "public"},
-        ])
-        assert False, "expected ValueError (hidden passage loss)"
-    except ValueError:
-        pass
-    # keeping it round-trips fine
     out = profile_bullets.save_bullets(db, "u1", "identity", [
         {"text": "Public line.", "visibility": "public"},
-        {"text": "Ayma note not to lose.", "visibility": "ai_only"},
+        {"text": "Was Ayma-only, now surfaced.", "visibility": "private"},
     ])
     assert out["visibility"] == "public"
+    body = _edits(db, "u1", "identity")
+    # it is now a private bullet, no longer an ai_only span
+    assert "{{private}}Was Ayma-only, now surfaced.{{/private}}" in body
+    assert "{{ai_only}}" not in body
+    # and the user may remove it entirely
+    out2 = profile_bullets.save_bullets(db, "u1", "identity", [
+        {"text": "Public line.", "visibility": "public"},
+    ])
+    assert "ai_only" not in _edits(db, "u1", "identity")

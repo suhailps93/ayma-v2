@@ -79,9 +79,16 @@ def get_bullets(db, uid: str) -> dict:
 
 def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
     """Compose an edited bullet list back into an existing section's body and
-    save it through the per-section save path (keeps moderation, hidden-span
-    protection and version history). Raises ``KeyError`` if the page is gone and
-    ``ValueError`` if the edit would drop a hidden Ayma-only passage."""
+    save it through the per-section save path (keeps moderation and version
+    history). Raises ``KeyError`` if the page is gone.
+
+    ``allow_hidden_changes=True``: unlike the plain-text editor, the bullet
+    editor shows EVERY bullet — including Ayma-only ones — and lets the user
+    change each one's visibility or remove it explicitly. So moving an
+    Ayma-only bullet to private/public (which rewrites its ``{{ai_only}}`` span)
+    is a deliberate, visible edit, not the silent hidden-content loss the
+    default guard protects against. Keeping the guard here trapped a user who
+    tagged their own bullet Ayma-only — they could never change it back."""
     composed = story_bullets.compose_body(bullets)
     vis = composed["visibility"]
     story.save_section(
@@ -90,6 +97,7 @@ def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
         page_id,
         composed["body"],
         visibility=vis if vis in (VIS_PUBLIC, VIS_PRIVATE) else None,
+        allow_hidden_changes=True,
     )
     if vis == VIS_AI_ONLY:
         # an all-Ayma-only section: save_section won't set ai_only, so set it.
