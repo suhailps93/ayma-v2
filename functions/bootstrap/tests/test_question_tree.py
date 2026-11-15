@@ -167,8 +167,11 @@ def test_sections_for_intent_canonical_order():
         "goals",
         "values",
     ]
-    # private sections sit at the tail, relationships last
-    assert canonical[-3:] == ["finances", "sensitive", "relationships"]
+    # private sections sit at the tail, relationships last. Private Context was
+    # removed as a section (founder, 2026-11-15); its 2 nodes remapped to
+    # Relationships as ayma_only, so the tail is Little Extras, Finances,
+    # Relationships.
+    assert canonical[-3:] == ["misc", "finances", "relationships"]
     for intent in (None, "long_term", "casual"):
         pts = [s["page_type"] for s in qt.sections_for_intent(intent)]
         present = [pt for pt in canonical if pt in pts]

@@ -1,6 +1,6 @@
 {
-  "version": 6,
-  "_doc": "Tree-based deep-matchmaking questionnaire (revamp). A flat array of nodes; `branch` routes them: `all` is the global core every intent sees, and `casual` / `long_term` / `nikah` are the intent-specific deep layers. `question_tree.nodes_for_intent(intent)` returns the global core plus one branch. The `nikah` branch is complete but never routed to yet (parked). Source: docs research schema (Aimma Deep Matchmaking Data Model). Loaded by question_tree.py and completeness.py; nothing here is hardcoded inline. `ayma_prompt` is a hint for how Ayma raises the topic naturally in conversation, never a scripted question.",
+  "version": 7,
+  "_doc": "Person-graph seed (v7, evolved from the v6 deep-matchmaking tree). A flat array of nodes; `branch` routes them (`all` + one of casual/long_term/nikah). `level` (1/2/3 here; 4+ grown by Ayma in conversation) replaces the core/deep tier for guidance order and like-for-like matching — `tier` is retained for back-compat until consumers switch. Level 1 = the 9 pre-boarding form items; levels 2+ are learned by Ayma in conversation, never forms. Private Context is removed as a section (15 sections); its 2 nodes remap to Relationships as ayma_only. Per-node `visibility` is the common-sense default (section default_visibility is the fallback); the user can change any node. Loaded by question_tree.py / completeness.py / person_graph.py.",
   "kinds": [
     "enum",
     "multi",
@@ -18,83 +18,93 @@
     "identity": {
       "title": "About Me",
       "subtitle": "The basics — who you are, day to day.",
-      "order": 0
+      "order": 0,
+      "default_visibility": "public"
     },
     "looking_for": {
       "title": "What I'm Looking For",
       "subtitle": "The relationship and the person you want next.",
-      "order": 1
+      "order": 1,
+      "default_visibility": "public"
     },
     "dealbreakers": {
       "title": "Dealbreakers",
       "subtitle": "Lines you won't cross in a partner.",
-      "order": 2
+      "order": 2,
+      "default_visibility": "public"
     },
     "career": {
       "title": "Career",
       "subtitle": "What you do and where you're headed in work.",
-      "order": 3
+      "order": 3,
+      "default_visibility": "public"
     },
     "personality": {
       "title": "Personality",
       "subtitle": "Your temperament and how you show up.",
-      "order": 4
+      "order": 4,
+      "default_visibility": "public"
     },
     "interests": {
       "title": "Interests",
       "subtitle": "What you love doing with your time.",
-      "order": 5
+      "order": 5,
+      "default_visibility": "public"
     },
     "family": {
       "title": "Family",
       "subtitle": "Your family, kinship and how it shapes you.",
-      "order": 6
+      "order": 6,
+      "default_visibility": "public"
     },
     "goals": {
       "title": "Life Goals",
       "subtitle": "Where you want your life to go.",
       "order": 7,
-      "name_locked": true
+      "name_locked": true,
+      "default_visibility": "public"
     },
     "values": {
       "title": "Values & Beliefs",
       "subtitle": "What matters most to you, and why.",
-      "order": 8
+      "order": 8,
+      "default_visibility": "public"
     },
     "lifestyle": {
       "title": "Lifestyle",
       "subtitle": "Your daily habits, health and routines.",
-      "order": 9
+      "order": 9,
+      "default_visibility": "public"
     },
     "social_circle": {
       "title": "Social Circle",
       "subtitle": "Your friends and the people around you.",
-      "order": 10
+      "order": 10,
+      "default_visibility": "public"
     },
     "taste": {
       "title": "Taste",
       "subtitle": "Your music, film and food.",
-      "order": 11
+      "order": 11,
+      "default_visibility": "public"
     },
     "misc": {
       "title": "Little Extras",
       "subtitle": "Everything else worth knowing.",
-      "order": 12
+      "order": 12,
+      "default_visibility": "public"
     },
     "finances": {
       "title": "Finances",
       "subtitle": "Money and security — private by default.",
-      "order": 13
-    },
-    "sensitive": {
-      "title": "Private Context",
-      "subtitle": "Sensitive context, kept private.",
-      "order": 14
+      "order": 13,
+      "default_visibility": "private"
     },
     "relationships": {
       "title": "Relationships",
       "subtitle": "Your relationship history and patterns.",
-      "order": 15
+      "order": 14,
+      "default_visibility": "private"
     }
   },
   "nodes": [
@@ -110,7 +120,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": false,
-      "ayma_prompt": "what they'd like to be called"
+      "ayma_prompt": "what they'd like to be called",
+      "level": 1
     },
     {
       "id": "date_of_birth",
@@ -124,7 +135,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their age or date of birth — drives age-distance modelling"
+      "ayma_prompt": "their age or date of birth — drives age-distance modelling",
+      "level": 1
     },
     {
       "id": "gender_identity",
@@ -145,7 +157,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "how they identify"
+      "ayma_prompt": "how they identify",
+      "level": 1
     },
     {
       "id": "target_match_genders",
@@ -166,7 +179,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "which gender(s) they want to be matched with"
+      "ayma_prompt": "which gender(s) they want to be matched with",
+      "level": 1
     },
     {
       "id": "primary_location",
@@ -180,7 +194,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their city and country now"
+      "ayma_prompt": "their city and country now",
+      "level": 1
     },
     {
       "id": "relocation_radius",
@@ -200,7 +215,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "how far they'd move or regularly travel for the right person"
+      "ayma_prompt": "how far they'd move or regularly travel for the right person",
+      "level": 1
     },
     {
       "id": "ethnic_cultural_origin",
@@ -231,7 +247,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their ethnic and cultural roots — one or several"
+      "ayma_prompt": "their ethnic and cultural roots — one or several",
+      "level": 3
     },
     {
       "id": "attachment_style",
@@ -250,7 +267,8 @@
       "weight": 5,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they typically bond and handle closeness under stress"
+      "ayma_prompt": "how they typically bond and handle closeness under stress",
+      "level": 2
     },
     {
       "id": "social_energy",
@@ -269,7 +287,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how much social time energises vs drains them"
+      "ayma_prompt": "how much social time energises vs drains them",
+      "level": 2
     },
     {
       "id": "cognitive_processing",
@@ -287,7 +306,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they work through a hard call"
+      "ayma_prompt": "how they work through a hard call",
+      "level": 3
     },
     {
       "id": "conflict_communication",
@@ -305,7 +325,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "what they need from a partner mid-disagreement"
+      "ayma_prompt": "what they need from a partner mid-disagreement",
+      "level": 2
     },
     {
       "id": "circadian_rhythm",
@@ -323,7 +344,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "when they're naturally at their best in the day"
+      "ayma_prompt": "when they're naturally at their best in the day",
+      "level": 3
     },
     {
       "id": "cleanliness_index",
@@ -342,7 +364,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how tidy they keep a shared space"
+      "ayma_prompt": "how tidy they keep a shared space",
+      "level": 3
     },
     {
       "id": "alcohol_consumption",
@@ -361,7 +384,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their relationship with drinking"
+      "ayma_prompt": "their relationship with drinking",
+      "level": 2
     },
     {
       "id": "smoking_vaping",
@@ -375,7 +399,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "whether they smoke or vape at all"
+      "ayma_prompt": "whether they smoke or vape at all",
+      "level": 2
     },
     {
       "id": "cannabis_substances",
@@ -394,7 +419,8 @@
       "weight": 3,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "cannabis or other recreational substance use"
+      "ayma_prompt": "cannabis or other recreational substance use",
+      "level": 3
     },
     {
       "id": "pets_owned",
@@ -414,7 +440,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "any animals they live with"
+      "ayma_prompt": "any animals they live with",
+      "level": 3
     },
     {
       "id": "animal_allergies",
@@ -435,7 +462,8 @@
       "weight": 3,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "severe animal allergies or strong aversions"
+      "ayma_prompt": "severe animal allergies or strong aversions",
+      "level": 3
     },
     {
       "id": "relationship_intent",
@@ -454,7 +482,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "what kind of relationship they're actually here for — this routes the rest of the questionnaire, so find it out early"
+      "ayma_prompt": "what kind of relationship they're actually here for — this routes the rest of the questionnaire, so find it out early",
+      "level": 1
     },
     {
       "id": "family_of_origin_narrative",
@@ -468,7 +497,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "who's in their family — parents, siblings, and what that household was like growing up, in their own words"
+      "ayma_prompt": "who's in their family — parents, siblings, and what that household was like growing up, in their own words",
+      "level": 2
     },
     {
       "id": "parental_relationship_narrative",
@@ -482,7 +512,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they'd describe their relationship with their parents today — close, distant, complicated, whatever's actually true for them, at whatever level of detail feels comfortable"
+      "ayma_prompt": "how they'd describe their relationship with their parents today — close, distant, complicated, whatever's actually true for them, at whatever level of detail feels comfortable",
+      "level": 3
     },
     {
       "id": "sibling_relationship_narrative",
@@ -496,7 +527,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their relationship with any siblings — closeness or distance, and names if it comes up naturally in conversation, not asked for directly"
+      "ayma_prompt": "their relationship with any siblings — closeness or distance, and names if it comes up naturally in conversation, not asked for directly",
+      "level": 3
     },
     {
       "id": "childhood_formative_narrative",
@@ -510,7 +542,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "a memory or moment from growing up that shaped who they are now — something good or meaningful is just as welcome as anything hard"
+      "ayma_prompt": "a memory or moment from growing up that shaped who they are now — something good or meaningful is just as welcome as anything hard",
+      "level": 3
     },
     {
       "id": "childhood_hardship_narrative",
@@ -524,7 +557,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "gently, and only if they seem open to it: whether anything difficult happened growing up that still shapes how they show up in relationships today. Never phrase this like an interview question, never press for detail, and drop it immediately and warmly if they'd rather not go there."
+      "ayma_prompt": "gently, and only if they seem open to it: whether anything difficult happened growing up that still shapes how they show up in relationships today. Never phrase this like an interview question, never press for detail, and drop it immediately and warmly if they'd rather not go there.",
+      "level": 3
     },
     {
       "id": "closest_friendships_narrative",
@@ -538,7 +572,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "who their closest friends are — names if it comes up naturally, how they know them, and what makes those friendships matter to them"
+      "ayma_prompt": "who their closest friends are — names if it comes up naturally, how they know them, and what makes those friendships matter to them",
+      "level": 2
     },
     {
       "id": "friendship_role_narrative",
@@ -552,7 +587,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "what kind of friend they are, and how big a role friendships play in their day-to-day life"
+      "ayma_prompt": "what kind of friend they are, and how big a role friendships play in their day-to-day life",
+      "level": 3
     },
     {
       "id": "past_relationship_narrative",
@@ -566,7 +602,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "about a past relationship that mattered to them — what happened, and what they took from it, at whatever level of detail feels comfortable"
+      "ayma_prompt": "about a past relationship that mattered to them — what happened, and what they took from it, at whatever level of detail feels comfortable",
+      "level": 2
     },
     {
       "id": "relationship_patterns_narrative",
@@ -580,7 +617,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "any pattern they've noticed repeating across past relationships, and what, if anything, they're doing differently this time"
+      "ayma_prompt": "any pattern they've noticed repeating across past relationships, and what, if anything, they're doing differently this time",
+      "level": 3
     },
     {
       "id": "love_language_ranking",
@@ -600,7 +638,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "which love languages land most for them, ideally in order"
+      "ayma_prompt": "which love languages land most for them, ideally in order",
+      "level": 2
     },
     {
       "id": "physical_activity_level",
@@ -618,7 +657,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how active a lifestyle they keep and want shared"
+      "ayma_prompt": "how active a lifestyle they keep and want shared",
+      "level": 3
     },
     {
       "id": "spontaneity_index",
@@ -637,7 +677,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how spontaneous vs planned they like plans to be"
+      "ayma_prompt": "how spontaneous vs planned they like plans to be",
+      "level": 3
     },
     {
       "id": "communication_density",
@@ -655,7 +696,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how much day-to-day contact feels right to them"
+      "ayma_prompt": "how much day-to-day contact feels right to them",
+      "level": 3
     },
     {
       "id": "exclusivity_expectations",
@@ -672,7 +714,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their default expectation about exclusivity while things are casual"
+      "ayma_prompt": "their default expectation about exclusivity while things are casual",
+      "level": 2
     },
     {
       "id": "financial_splitting",
@@ -691,7 +734,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they like to handle the cost of outings"
+      "ayma_prompt": "how they like to handle the cost of outings",
+      "level": 3
     },
     {
       "id": "casual_perfect_night_narrative",
@@ -705,7 +749,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "Describe the absolute perfect, unstructured Saturday night encounter you want to experience with a new match. Don't censor details; focus on the vibe, environment, and sensory memories."
+      "ayma_prompt": "Describe the absolute perfect, unstructured Saturday night encounter you want to experience with a new match. Don't censor details; focus on the vibe, environment, and sensory memories.",
+      "level": 2
     },
     {
       "id": "casual_hill_to_die_on_narrative",
@@ -719,7 +764,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "What is a highly niche topic, weird hobby, or controversial pop-culture hill that you are prepared to die on?"
+      "ayma_prompt": "What is a highly niche topic, weird hobby, or controversial pop-culture hill that you are prepared to die on?",
+      "level": 3
     },
     {
       "id": "capital_vs_experiential",
@@ -738,7 +784,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "where they sit between accumulating capital and spending on experiences"
+      "ayma_prompt": "where they sit between accumulating capital and spending on experiences",
+      "level": 2
     },
     {
       "id": "career_integration_vector",
@@ -756,12 +803,13 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how central career ambition is to their life plan"
+      "ayma_prompt": "how central career ambition is to their life plan",
+      "level": 2
     },
     {
       "id": "financial_comingling",
       "tier": "deep",
-      "page_type": "values",
+      "page_type": "finances",
       "branch": "long_term",
       "label": "Money as a couple",
       "kind": "enum",
@@ -774,7 +822,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they'd want finances structured with a partner"
+      "ayma_prompt": "how they'd want finances structured with a partner",
+      "level": 3
     },
     {
       "id": "financial_security_narrative",
@@ -788,7 +837,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how financially secure they feel day to day, and what money means to them right now — comfort, stress, ambition, whatever's true. Frame it around life-stage and compatibility, never as a bald 'how much do you make' question."
+      "ayma_prompt": "how financially secure they feel day to day, and what money means to them right now — comfort, stress, ambition, whatever's true. Frame it around life-stage and compatibility, never as a bald 'how much do you make' question.",
+      "level": 2
     },
     {
       "id": "income_comfort_level",
@@ -808,7 +858,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "a general sense of how comfortable their financial situation is right now — not an exact number, and entirely fine to skip"
+      "ayma_prompt": "a general sense of how comfortable their financial situation is right now — not an exact number, and entirely fine to skip",
+      "level": 3
     },
     {
       "id": "retirement_savings_outlook",
@@ -828,7 +879,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how deliberately they're planning for the long term financially — this is about life-stage and mindset, not a balance"
+      "ayma_prompt": "how deliberately they're planning for the long term financially — this is about life-stage and mindset, not a balance",
+      "level": 3
     },
     {
       "id": "financial_stress_narrative",
@@ -842,7 +894,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "gently, and only if they seem open to it: whether debt or money worries weigh on them right now, and how they'd want a partner to show up around that. Never pried into, dropped warmly if they'd rather not."
+      "ayma_prompt": "gently, and only if they seem open to it: whether debt or money worries weigh on them right now, and how they'd want a partner to show up around that. Never pried into, dropped warmly if they'd rather not.",
+      "level": 3
     },
     {
       "id": "procreation_intent",
@@ -862,7 +915,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "whether they want children and roughly when"
+      "ayma_prompt": "whether they want children and roughly when",
+      "level": 2
     },
     {
       "id": "extended_family_boundary",
@@ -881,7 +935,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how much extended family they want woven into daily life"
+      "ayma_prompt": "how much extended family they want woven into daily life",
+      "level": 2
     },
     {
       "id": "parenting_ideology",
@@ -899,7 +954,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they'd want to raise children, if kids are on the table"
+      "ayma_prompt": "how they'd want to raise children, if kids are on the table",
+      "level": 3
     },
     {
       "id": "conversational_friction_demand",
@@ -916,7 +972,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "whether they want intellectual sparring or calm consensus with a partner"
+      "ayma_prompt": "whether they want intellectual sparring or calm consensus with a partner",
+      "level": 3
     },
     {
       "id": "core_existential_anchor",
@@ -936,7 +993,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "the thing that gives their life its centre of gravity"
+      "ayma_prompt": "the thing that gives their life its centre of gravity",
+      "level": 2
     },
     {
       "id": "longterm_crisis_narrative",
@@ -950,7 +1008,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "Imagine a severe external crisis hits your family structure 10 years from now (financial loss, unexpected move). Describe how you and your ideal partner tackle the crisis together behind closed doors."
+      "ayma_prompt": "Imagine a severe external crisis hits your family structure 10 years from now (financial loss, unexpected move). Describe how you and your ideal partner tackle the crisis together behind closed doors.",
+      "level": 2
     },
     {
       "id": "longterm_transformation_narrative",
@@ -964,7 +1023,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "What is a version of yourself that you are actively trying to leave behind, and how does your ideal future partner help support that transformation?"
+      "ayma_prompt": "What is a version of yourself that you are actively trying to leave behind, and how does your ideal future partner help support that transformation?",
+      "level": 2
     },
     {
       "id": "islamic_sect",
@@ -984,7 +1044,8 @@
       "weight": 5,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their branch or orientation within Islam"
+      "ayma_prompt": "their branch or orientation within Islam",
+      "level": 2
     },
     {
       "id": "madhhab_adherence",
@@ -1004,7 +1065,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how closely they follow a specific school of jurisprudence"
+      "ayma_prompt": "how closely they follow a specific school of jurisprudence",
+      "level": 3
     },
     {
       "id": "salah_frequency",
@@ -1023,7 +1085,8 @@
       "weight": 5,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their daily prayer practice"
+      "ayma_prompt": "their daily prayer practice",
+      "level": 2
     },
     {
       "id": "halal_dietary",
@@ -1042,7 +1105,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "how they keep halal day to day"
+      "ayma_prompt": "how they keep halal day to day",
+      "level": 2
     },
     {
       "id": "riba_free_finance",
@@ -1056,7 +1120,8 @@
       "weight": 3,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "whether they require fully Shariah-compliant, interest-free finances"
+      "ayma_prompt": "whether they require fully Shariah-compliant, interest-free finances",
+      "level": 3
     },
     {
       "id": "modesty_observance_self",
@@ -1075,7 +1140,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they observe modesty in dress themselves"
+      "ayma_prompt": "how they observe modesty in dress themselves",
+      "level": 3
     },
     {
       "id": "modesty_expectation_partner",
@@ -1093,7 +1159,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "what they expect from a partner on modest dress"
+      "ayma_prompt": "what they expect from a partner on modest dress",
+      "level": 2
     },
     {
       "id": "free_mixing_boundary",
@@ -1111,7 +1178,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their comfort with mixed-gender socialising"
+      "ayma_prompt": "their comfort with mixed-gender socialising",
+      "level": 3
     },
     {
       "id": "wali_involvement",
@@ -1129,7 +1197,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they want a wali / guardian involved in the process"
+      "ayma_prompt": "how they want a wali / guardian involved in the process",
+      "level": 3
     },
     {
       "id": "mahr_philosophy",
@@ -1147,7 +1216,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their view on mahr"
+      "ayma_prompt": "their view on mahr",
+      "level": 3
     },
     {
       "id": "polygyny_stance",
@@ -1165,7 +1235,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "their stance on polygyny"
+      "ayma_prompt": "their stance on polygyny",
+      "level": 2
     },
     {
       "id": "nikah_spiritual_material_narrative",
@@ -1179,7 +1250,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "Detail how you envision balancing Islamic spiritual goals (Hajj, Umrah, continuous learning, teaching children) with your worldly career and personal ambitions."
+      "ayma_prompt": "Detail how you envision balancing Islamic spiritual goals (Hajj, Umrah, continuous learning, teaching children) with your worldly career and personal ambitions.",
+      "level": 2
     },
     {
       "id": "nikah_household_roles_narrative",
@@ -1193,7 +1265,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "How do you define the roles and structural rights/responsibilities of a husband and a wife when managing a household? Be specific regarding financial maintenance, emotional labor, and leadership."
+      "ayma_prompt": "How do you define the roles and structural rights/responsibilities of a husband and a wife when managing a household? Be specific regarding financial maintenance, emotional labor, and leadership.",
+      "level": 2
     },
     {
       "id": "partner_age_min",
@@ -1212,7 +1285,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "the youngest age they would consider dating, as a number; ask about their comfortable partner age range naturally, then record the minimum here and the maximum under partner_age_max"
+      "ayma_prompt": "the youngest age they would consider dating, as a number; ask about their comfortable partner age range naturally, then record the minimum here and the maximum under partner_age_max",
+      "level": 1
     },
     {
       "id": "partner_age_max",
@@ -1231,7 +1305,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "the oldest age they would consider dating, as a number; record alongside partner_age_min"
+      "ayma_prompt": "the oldest age they would consider dating, as a number; record alongside partner_age_min",
+      "level": 1
     },
     {
       "id": "geographic_flexibility",
@@ -1251,12 +1326,13 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "whether they are rooted where they live, open to long-distance for a while, or would relocate (within their country or abroad) for the right person"
+      "ayma_prompt": "whether they are rooted where they live, open to long-distance for a while, or would relocate (within their country or abroad) for the right person",
+      "level": 2
     },
     {
       "id": "education_level",
       "tier": "deep",
-      "page_type": "identity",
+      "page_type": "career",
       "branch": "all",
       "label": "Education",
       "kind": "enum",
@@ -1273,7 +1349,8 @@
       "hard_filter": false,
       "dating_relevant": true,
       "ayma_prompt": "the highest level of education they have completed; casual and optional",
-      "optional": true
+      "optional": true,
+      "level": 3
     },
     {
       "id": "existing_children",
@@ -1291,7 +1368,8 @@
       "weight": 4,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "whether they already have children, and if so whether the children live with them"
+      "ayma_prompt": "whether they already have children, and if so whether the children live with them",
+      "level": 2
     },
     {
       "id": "partner_children_openness",
@@ -1309,7 +1387,8 @@
       "weight": 3,
       "hard_filter": true,
       "dating_relevant": true,
-      "ayma_prompt": "how they feel about dating a partner who already has children"
+      "ayma_prompt": "how they feel about dating a partner who already has children",
+      "level": 3
     },
     {
       "id": "career_role_narrative",
@@ -1323,7 +1402,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their exact role and field, what a normal working day looks like and its rhythm, and how they got here; concrete detail, not just an industry"
+      "ayma_prompt": "their exact role and field, what a normal working day looks like and its rhythm, and how they got here; concrete detail, not just an industry",
+      "level": 2
     },
     {
       "id": "work_schedule_pattern",
@@ -1345,7 +1425,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how their working week is actually structured: hours, remote or on-site, travel, shifts"
+      "ayma_prompt": "how their working week is actually structured: hours, remote or on-site, travel, shifts",
+      "level": 3
     },
     {
       "id": "career_trajectory_narrative",
@@ -1359,7 +1440,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "where their career is heading, what they are passionate about in it, and what they would do with more freedom"
+      "ayma_prompt": "where their career is heading, what they are passionate about in it, and what they would do with more freedom",
+      "level": 3
     },
     {
       "id": "religion_affiliation",
@@ -1387,7 +1469,8 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. their religion or belief system, if any",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2
     },
     {
       "id": "religiosity_importance",
@@ -1408,7 +1491,8 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. how important faith or spirituality is in their day-to-day life",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2
     },
     {
       "id": "partner_religion_requirement",
@@ -1429,7 +1513,8 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. whether a partner needs to share their faith",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2
     },
     {
       "id": "political_orientation",
@@ -1453,7 +1538,8 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. where they sit politically, in their own words",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2
     },
     {
       "id": "politics_partner_alignment",
@@ -1474,7 +1560,8 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. whether a partner needs to share their politics",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2
     },
     {
       "id": "stress_support_style",
@@ -1494,7 +1581,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "what they want from a partner when they are stressed or low: space, talking, practical help, closeness, or quiet company"
+      "ayma_prompt": "what they want from a partner when they are stressed or low: space, talking, practical help, closeness, or quiet company",
+      "level": 2
     },
     {
       "id": "pet_peeves_narrative",
@@ -1508,7 +1596,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "the everyday habits that really grate on them in a partner or housemate, and anything about how they communicate (texting, calls, replying) that they expect"
+      "ayma_prompt": "the everyday habits that really grate on them in a partner or housemate, and anything about how they communicate (texting, calls, replying) that they expect",
+      "level": 3
     },
     {
       "id": "physical_affection_level",
@@ -1526,7 +1615,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how affectionate they are day to day and how much physical affection they want from a partner, in public and in private"
+      "ayma_prompt": "how affectionate they are day to day and how much physical affection they want from a partner, in public and in private",
+      "level": 3
     },
     {
       "id": "dealbreakers_narrative",
@@ -1540,7 +1630,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their hard no's in a partner or relationship (habits, values, behaviours, life choices) and the one or two that would end things fast"
+      "ayma_prompt": "their hard no's in a partner or relationship (habits, values, behaviours, life choices) and the one or two that would end things fast",
+      "level": 2
     },
     {
       "id": "diet_style",
@@ -1561,7 +1652,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they eat: everything, pescatarian, vegetarian, vegan, religious rules, or a medical diet"
+      "ayma_prompt": "how they eat: everything, pescatarian, vegetarian, vegan, religious rules, or a medical diet",
+      "level": 3
     },
     {
       "id": "food_habits",
@@ -1579,7 +1671,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "whether they mostly cook at home or eat out and order in"
+      "ayma_prompt": "whether they mostly cook at home or eat out and order in",
+      "level": 3
     },
     {
       "id": "pet_attitude",
@@ -1597,7 +1690,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they feel about living with pets, whether or not they have one now"
+      "ayma_prompt": "how they feel about living with pets, whether or not they have one now",
+      "level": 3
     },
     {
       "id": "hobbies_recharge_narrative",
@@ -1611,7 +1705,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "the specific hobbies and activities that recharge them and how they spend free time, including fitness and anything they do regularly"
+      "ayma_prompt": "the specific hobbies and activities that recharge them and how they spend free time, including fitness and anything they do regularly",
+      "level": 2
     },
     {
       "id": "travel_style",
@@ -1631,12 +1726,13 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they like to travel and how often"
+      "ayma_prompt": "how they like to travel and how often",
+      "level": 3
     },
     {
       "id": "intimacy_pace",
       "tier": "core",
-      "page_type": "sensitive",
+      "page_type": "relationships",
       "branch": "all",
       "label": "Pace of physical intimacy",
       "kind": "enum",
@@ -1652,12 +1748,14 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. the pace at which they like physical intimacy to develop, kept respectful and general, never graphic",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 2,
+      "visibility": "ayma_only"
     },
     {
       "id": "physical_preferences_narrative",
       "tier": "deep",
-      "page_type": "sensitive",
+      "page_type": "relationships",
       "branch": "all",
       "label": "Physical preferences",
       "kind": "narrative",
@@ -1668,7 +1766,9 @@
       "dating_relevant": true,
       "ayma_prompt": "Sensitive and entirely optional: raise it gently once there is rapport, say it is fine to skip, and record 'Prefer not to say' if they would rather not. what they find physically attractive in a partner and any must-haves (for example height or fitness), in their own words",
       "optional": true,
-      "sensitive": true
+      "sensitive": true,
+      "level": 3,
+      "visibility": "ayma_only"
     },
     {
       "id": "dating_to_marriage_timeline",
@@ -1688,7 +1788,8 @@
       "weight": 4,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how long they expect to date before committing to marriage, or whether marriage is on the table at all"
+      "ayma_prompt": "how long they expect to date before committing to marriage, or whether marriage is on the table at all",
+      "level": 2
     },
     {
       "id": "children_count",
@@ -1708,7 +1809,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "roughly how many children they would like, if any"
+      "ayma_prompt": "roughly how many children they would like, if any",
+      "level": 3
     },
     {
       "id": "future_family_proximity",
@@ -1727,7 +1829,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "where they picture living relative to extended family in the future"
+      "ayma_prompt": "where they picture living relative to extended family in the future",
+      "level": 3
     },
     {
       "id": "household_roles",
@@ -1746,7 +1849,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they expect chores, childcare and household management to be shared"
+      "ayma_prompt": "how they expect chores, childcare and household management to be shared",
+      "level": 3
     },
     {
       "id": "argument_repair_narrative",
@@ -1760,7 +1864,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "how they typically repair after an argument and what they need from a partner to feel reconnected"
+      "ayma_prompt": "how they typically repair after an argument and what they need from a partner to feel reconnected",
+      "level": 3
     },
     {
       "id": "financial_strategy_narrative",
@@ -1774,7 +1879,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their long-term money plan: any early-retirement (FIRE) target age or number if they have one, how they invest and save, and how they would plan finances with a partner. A number is optional; the strategy is what matters"
+      "ayma_prompt": "their long-term money plan: any early-retirement (FIRE) target age or number if they have one, how they invest and save, and how they would plan finances with a partner. A number is optional; the strategy is what matters",
+      "level": 2
     },
     {
       "id": "early_retirement_intent",
@@ -1793,7 +1899,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "whether they aim to retire early (FIRE), retire traditionally, or keep working as long as they enjoy it"
+      "ayma_prompt": "whether they aim to retire early (FIRE), retire traditionally, or keep working as long as they enjoy it",
+      "level": 3
     },
     {
       "id": "housing_preference",
@@ -1812,7 +1919,8 @@
       "weight": 3,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "whether they plan to rent or buy a home, and how soon"
+      "ayma_prompt": "whether they plan to rent or buy a home, and how soon",
+      "level": 3
     },
     {
       "id": "spending_philosophy",
@@ -1830,7 +1938,8 @@
       "weight": 2,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "whether they keep their lifestyle modest as income grows or upgrade with it"
+      "ayma_prompt": "whether they keep their lifestyle modest as income grows or upgrade with it",
+      "level": 3
     },
     {
       "id": "taste_music",
@@ -1844,7 +1953,8 @@
       "weight": 5,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their favourite artists or bands — record as a comma-separated list of up to 5 names (e.g. 'Khruangbin, Bon Iver, Phoebe Bridgers'), not a sentence; drives the Qloo taste match on their public Taste page"
+      "ayma_prompt": "their favourite artists or bands — record as a comma-separated list of up to 5 names (e.g. 'Khruangbin, Bon Iver, Phoebe Bridgers'), not a sentence; drives the Qloo taste match on their public Taste page",
+      "level": 2
     },
     {
       "id": "taste_film",
@@ -1858,7 +1968,8 @@
       "weight": 5,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their favourite films or shows — record as a comma-separated list of up to 5 titles (e.g. 'Arrival, Amélie, Spirited Away'), not a sentence; drives the Qloo taste match on their public Taste page"
+      "ayma_prompt": "their favourite films or shows — record as a comma-separated list of up to 5 titles (e.g. 'Arrival, Amélie, Spirited Away'), not a sentence; drives the Qloo taste match on their public Taste page",
+      "level": 3
     },
     {
       "id": "taste_food",
@@ -1872,7 +1983,76 @@
       "weight": 5,
       "hard_filter": false,
       "dating_relevant": true,
-      "ayma_prompt": "their favourite restaurants, cafes, cuisines or foods — record as a comma-separated list of up to 5 (e.g. 'Tartine Bakery, Zuni Café, ramen'), not a sentence; drives the Qloo taste match on their public Taste page"
+      "ayma_prompt": "their favourite restaurants, cafes, cuisines or foods — record as a comma-separated list of up to 5 (e.g. 'Tartine Bakery, Zuni Café, ramen'), not a sentence; drives the Qloo taste match on their public Taste page",
+      "level": 3
+    },
+    {
+      "id": "marital_status",
+      "tier": "deep",
+      "page_type": "identity",
+      "branch": "all",
+      "label": "Marital status",
+      "kind": "enum",
+      "options": [
+        "Single",
+        "Divorced",
+        "Widowed"
+      ],
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "level": 2,
+      "ayma_prompt": "whether they've been married before — single, divorced or widowed"
+    },
+    {
+      "id": "languages_spoken",
+      "tier": "deep",
+      "page_type": "identity",
+      "branch": "all",
+      "label": "Languages spoken",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "level": 2,
+      "ayma_prompt": "which languages they speak"
+    },
+    {
+      "id": "height",
+      "tier": "deep",
+      "page_type": "identity",
+      "branch": "all",
+      "label": "Height",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 3,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "level": 2,
+      "visibility": "private",
+      "ayma_prompt": "roughly how tall they are"
+    },
+    {
+      "id": "weight",
+      "tier": "deep",
+      "page_type": "identity",
+      "branch": "all",
+      "label": "Weight",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 2,
+      "hard_filter": false,
+      "dating_relevant": false,
+      "level": 2,
+      "sensitive": true,
+      "optional": true,
+      "visibility": "ayma_only",
+      "ayma_prompt": "their build or weight — a body topic, optional and kept private"
     }
   ]
 }
