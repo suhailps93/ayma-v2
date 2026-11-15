@@ -70,7 +70,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
   bool _masterSaving = false;
   bool _backgroundSaving = false;
   bool _logSaving = false;
-  bool _awaitingSettingsGrant = false;
+  bool _awaitingLocationLogGrant = false;
+  bool _awaitingDateMomentsGrant = false;
 
   /// Learned place routines (null while loading, empty when none).
   List<LocationPattern>? _patterns;
@@ -97,28 +98,44 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
     }
   }
 
-  /// Keep the Location log toggle and screen state aligned with OS permission.
-  /// If the user was sent to system settings to grant permission, turns the
-  /// log ON if granted; otherwise keeps it OFF. If permission was revoked
-  /// outside the app while Location log was ON, turns it OFF.
+  /// Keep the Location log and Date moments toggles and screen state aligned
+  /// with OS permission. If the user was sent to system settings to grant
+  /// permission, turns the toggle ON if granted; otherwise keeps it OFF.
+  /// If permission was revoked outside the app while Location log was ON,
+  /// turns it OFF.
   Future<void> _reconcileLocationPermission() async {
-    if (_logSaving) return;
     try {
-      final hasPerm = await _location.hasBackgroundPermission();
-      if (_awaitingSettingsGrant) {
-        _awaitingSettingsGrant = false;
-        if (hasPerm) {
-          await _profiles.setLocationLog(true);
-          _loadPatterns();
+      if (!_logSaving) {
+        final hasBackground = await _location.hasBackgroundPermission();
+        if (_awaitingLocationLogGrant) {
+          _awaitingLocationLogGrant = false;
+          if (hasBackground) {
+            await _profiles.setLocationLog(true);
+            _loadPatterns();
+          } else {
+            await _profiles.setLocationLog(false);
+          }
         } else {
-          await _profiles.setLocationLog(false);
-        }
-      } else {
-        final logOn = await _profiles.locationLogEnabled();
-        if (logOn && !hasPerm) {
-          await _profiles.setLocationLog(false);
+          final logOn = await _profiles.locationLogEnabled();
+          if (logOn && !hasBackground) {
+            await _profiles.setLocationLog(false);
+          }
         }
       }
+
+      if (!_dateMomentsSaving && _awaitingDateMomentsGrant) {
+        _awaitingDateMomentsGrant = false;
+        final perm = await _location.checkPermission();
+        final hasPerm = perm == LocationPermission.always ||
+            perm == LocationPermission.whileInUse ||
+            await _location.hasBackgroundPermission();
+        if (hasPerm) {
+          await _profiles.setDateMoments(true);
+        } else {
+          await _profiles.setDateMoments(false);
+        }
+      }
+
       if (mounted) setState(() {});
     } catch (_) {}
   }
@@ -221,15 +238,53 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
     if (isGranted(perm)) return _LocationPermOutcome.granted;
 
     // The popup can't get us there (permanently denied, or background that
-    // Android only grants from Settings): tell the user and open Settings.
+    // Android only grants from Settings): tell the user in a dialog before
+    // leaving the app, and open Settings.
     if (perm == LocationPermission.deniedForever ||
         (needsBackground && perm == LocationPermission.whileInUse)) {
-      if (trackSettingsReturn) _awaitingSettingsGrant = true;
+      if (!mounted) return _LocationPermOutcome.declined;
+
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          scrollable: true,
+          title: Text('$feature needs location permission'),
+          content: Text(
+            needsBackground
+                ? 'Allow location "All the time" in Settings to turn on $feature.'
+                : 'Allow location in Settings to turn on $feature.',
+            style: AymaType.sans(size: 14, color: ctx.ac.fg),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true) {
+        return _LocationPermOutcome.declined;
+      }
+
+      if (trackSettingsReturn) {
+        if (feature == 'Location log') {
+          _awaitingLocationLogGrant = true;
+        } else if (feature == 'Date moments') {
+          _awaitingDateMomentsGrant = true;
+        }
+      }
+
       if (mounted) {
         AymaToast.show(
           context,
           '$feature needs location permission. Opening Settings — allow '
-          'location there, then turn it on again.',
+          'location there to turn it on.',
           kind: AymaToastKind.warning,
         );
       }
@@ -257,7 +312,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
     setState(() => _logSaving = true);
     try {
       if (!value) {
-        _awaitingSettingsGrant = false;
+        _awaitingLocationLogGrant = false;
         await _profiles.setLocationLog(false);
         return;
       }
@@ -267,11 +322,11 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
         trackSettingsReturn: true,
       );
       if (outcome == _LocationPermOutcome.granted) {
-        _awaitingSettingsGrant = false;
+        _awaitingLocationLogGrant = false;
         await _profiles.setLocationLog(true);
         _loadPatterns();
       }
-      // sentToSettings: _awaitingSettingsGrant is armed; the resume reconcile
+      // sentToSettings: _awaitingLocationLogGrant is armed; the resume reconcile
       // flips it on once permission comes back. declined: the user was told;
       // the stream-driven switch stays off.
     } catch (e) {
@@ -360,24 +415,29 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen>
   /// Date-moments toggle (opt-in, default off). Enabling requires location
   /// permission: in the denied state it shows the system popup when promptable,
   /// else opens Settings with a message — the same treatment as the Location
-  /// log, never a silent no-op (NOTE 216 Leg f). Turning it off never touches
-  /// permission.
+  /// log, never a silent no-op (NOTE 216 Leg f, NOTE 218). Turning it off never
+  /// touches permission.
   Future<void> _setDateMoments(bool value) async {
     if (_dateMomentsSaving) return;
     setState(() => _dateMomentsSaving = true);
     try {
-      if (value) {
-        final outcome = await _requestLocationPermission(
-          'Date moments',
-          needsBackground: false,
-        );
-        if (outcome != _LocationPermOutcome.granted) {
-          // The user already got feedback and a path forward (popup, or a
-          // message + Settings); the stream-driven switch stays off.
-          return;
-        }
+      if (!value) {
+        _awaitingDateMomentsGrant = false;
+        await _profiles.setDateMoments(false);
+        return;
       }
-      await _profiles.setDateMoments(value);
+      final outcome = await _requestLocationPermission(
+        'Date moments',
+        needsBackground: false,
+        trackSettingsReturn: true,
+      );
+      if (outcome == _LocationPermOutcome.granted) {
+        _awaitingDateMomentsGrant = false;
+        await _profiles.setDateMoments(true);
+      }
+      // sentToSettings: _awaitingDateMomentsGrant is armed; the resume reconcile
+      // flips it on once permission comes back. declined: the user was told;
+      // the stream-driven switch stays off.
     } catch (e) {
       if (mounted) {
         AymaToast.show(context, 'Could not save ($e).',
