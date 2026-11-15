@@ -84,9 +84,28 @@ that switches a consumer deletes the path it replaces in the same change.
   with the live wiki is pinned per account in Phase 4. Additive — old render
   paths stay live until the consumer-switch phase.
 
-## Phases 4–7 — planned (design §10)
+## Phase 4 — migration ✅
 
-4. Migration — questionnaire answers / profile fields / wiki / assessment → overlay.
+- **`person_graph_migrate.py`.** One-time ingest of what a user already has into
+  the overlay (design §9), idempotent (emergent ids derived from their source,
+  so re-running overwrites rather than duplicating) and non-destructive (no
+  source store is deleted — that is the cutover phase):
+  - `migrate_questionnaire` → answers onto matching seed nodes (stated/inferred
+    provenance, confidence from the doc).
+  - `migrate_profile` → the 5 derivable level-1 nodes, `imported`; wins over a
+    questionnaire doc for the same node (completeness precedence).
+  - `migrate_wiki` → each public/private story bullet becomes an emergent node
+    homed in its section, visibility kept, `imported`; unplaceable → Little Extras.
+  - `migrate_assessment` → Ayma-only passages become `ayma_only` emergent nodes,
+    `inferred`.
+  - `migrate_user(db, uid, write=…)` composes and (optionally) persists via the
+    store, validated at the boundary.
+- **Tests:** `tests/test_person_graph_migrate.py` (6) green, incl. end-to-end
+  migrate→write→render and idempotency. Real-account byte-parity against the
+  live wiki is Astro's post-merge verification.
+
+## Phases 5–7 — planned (design §10)
+
 5. Consumers switch — sims, match report, deterministic scorer, per-user
    emergent gates; delete old stores.
 6. Guided flow by level; reports-as-views + image nodes; completeness tiers
