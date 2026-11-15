@@ -1,5 +1,6 @@
 import 'package:ayma_flutter/screens/messages_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/connection_heartbeat.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/fresh_data.dart';
 import 'package:ayma_flutter/services/match_service.dart';
@@ -157,4 +158,73 @@ void main() {
     final count = tester.widget<Text>(find.text('3'));
     expect(count.style?.color, AymaTokens.dark.onAccent);
   });
+
+  testWidgets('online state does not show false Offline banner for cached data',
+      (tester) async {
+    final fs = FakeFirebaseFirestore();
+    final hb = _scripted([ProbeOutcome.good]);
+    await tester.pumpWidget(MaterialApp(
+      home: MessagesScreen(
+        dmService: _CachedDmService(auth: _auth(), firestore: fs),
+        matchService: _NoMatches(),
+        apiClient: _ApiWith(const {'a': MiniProfile(name: 'Zara', photo: '')}),
+        heartbeat: hb,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Offline — showing saved data'), findsNothing);
+  });
+
+  testWidgets('offline state renders honest Offline banner for cached data',
+      (tester) async {
+    final fs = FakeFirebaseFirestore();
+    final hb = _scripted([
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+      ProbeOutcome.failure,
+    ]);
+    await hb.probeNow();
+    await hb.probeNow();
+    await hb.probeNow();
+    expect(hb.state, ConnectionQuality.offline);
+    await tester.pumpWidget(MaterialApp(
+      home: MessagesScreen(
+        dmService: _CachedDmService(auth: _auth(), firestore: fs),
+        matchService: _NoMatches(),
+        apiClient: _ApiWith(const {'a': MiniProfile(name: 'Zara', photo: '')}),
+        heartbeat: hb,
+      ),
+    ));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Offline — showing saved data'), findsOneWidget);
+  });
+}
+
+class _CachedDmService extends DmService {
+  _CachedDmService({required super.auth, required super.firestore});
+  @override
+  Stream<FreshData<List<DmThread>>> watchThreadsFresh({int limit = 25}) =>
+      Stream.value(FreshData(
+        data: const [
+          DmThread(
+            threadId: 'a__me',
+            otherUid: 'a',
+            unread: 0,
+            lastMessageAt: null,
+          )
+        ],
+        isFromCache: true,
+      ));
+}
+
+ConnectionHeartbeat _scripted(List<ProbeOutcome> script) {
+  var i = 0;
+  return ConnectionHeartbeat(
+    probe: () async => script[i < script.length ? i++ : script.length - 1],
+    connectivityChanges: const Stream.empty(),
+  );
 }

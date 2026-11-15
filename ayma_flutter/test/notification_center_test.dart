@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/notification_prefs_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
+import 'package:ayma_flutter/services/profile_proposals_state.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_orb.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
@@ -527,5 +528,38 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(svc.prefWrites, contains(('dm_message', false)));
+  });
+
+  testWidgets(
+      'profile_suggestions notification uses live count from ProfileProposalsState (e.g. 28 not stale 38)',
+      (tester) async {
+    ProfileProposalsState.instance.setCount(28);
+    addTearDown(ProfileProposalsState.instance.clear);
+
+    final notif = AppNotification(
+      id: 'profile_suggestions_pending',
+      type: 'profile_suggestions',
+      body: 'Ayma suggests 38 updates to your public profile.',
+      deepLink: 'profile_suggestions',
+      read: false,
+      createdAt: DateTime.now(),
+    );
+    final svc = _FakeSvc([notif]);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: NotificationCenterScreen(service: svc, apiClient: _api()),
+    ));
+    await tester.pumpAndSettle();
+
+    // Must show 28 from the shared source of truth, NOT stale 38 from Firestore doc.
+    expect(find.text('Ayma suggests 28 updates to your public profile.'),
+        findsOneWidget);
+    expect(find.text('Ayma suggests 38 updates to your public profile.'),
+        findsNothing);
+
+    // When proposals are all reviewed (count = 0), row updates in sync
+    ProfileProposalsState.instance.setCount(0);
+    await tester.pump();
+    expect(find.text('All public profile updates reviewed'), findsOneWidget);
   });
 }
