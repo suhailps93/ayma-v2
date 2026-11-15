@@ -3251,16 +3251,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               waiting.isEmpty &&
                               aymaVoiceRow == 0) ||
                           partialSheet) {
-                        if (askAyma != null) {
-                          // The quick-suggestion chips show here, as the body:
-                          // for a brand-new conversation with no history yet,
-                          // and — per the partial-sheet rule above — whenever
-                          // this turn is still docked, since the transcript
-                          // list below stands down there. Once expanded (or
-                          // with turns outside a sheet) they pin above the
-                          // composer instead (see below), so the scoped
-                          // affordance is always exactly one place.
+                        if (askAyma != null && !partialSheet) {
+                          // The quick-suggestion chips show here, as the body,
+                          // for a brand-new conversation with no history yet
+                          // (expanded, or outside a sheet). While DOCKED they
+                          // pin above the composer instead (see below): the
+                          // docked sheet's body sits in a bare `Expanded` whose
+                          // hit region does not reliably receive taps on-device
+                          // (Scout NOTE 219 leg b — the chips looked present but
+                          // a tap was a silent no-op), whereas the composer
+                          // section does, so the scoped chips live beside the
+                          // composer there. Either way the affordance is in
+                          // exactly one place.
                           return Padding(
+                            key: const ValueKey('askAymaBodyChips'),
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             child: Align(
                               alignment: Alignment.topLeft,
@@ -3532,13 +3536,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     h * 0.5,
                     reverse: true,
                     // The scoped quick-suggestion chips pin above the composer
-                    // once turns exist AND the history is actually listed (§
-                    // D13: the sheet shares the real main history, so the
-                    // empty-body placement above would almost never show) —
-                    // inside this same cap, so they can never push the column
-                    // past its bounds. Stood down while partial: the chips
-                    // already show as the body there (see above), and showing
-                    // them twice would duplicate the affordance.
+                    // whenever the body's own empty-conversation placement is
+                    // NOT showing them: once turns exist (§ D13: the sheet
+                    // shares the real main history, so the empty-body placement
+                    // almost never shows), AND whenever the sheet is docked —
+                    // the docked body's bare `Expanded` doesn't reliably take
+                    // taps on-device (Scout NOTE 219 leg b), so the chips live
+                    // here, beside the composer, which does. Inside this same
+                    // cap, so they can never push the column past its bounds.
                     ListenableBuilder(
                       listenable: _store,
                       builder: (context, _) {
@@ -3547,10 +3552,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (!partialSheet &&
-                                _store.turns.isNotEmpty &&
-                                suggestions.isNotEmpty)
+                            if (suggestions.isNotEmpty &&
+                                (partialSheet || _store.turns.isNotEmpty))
                               Padding(
+                                key: const ValueKey('askAymaComposerChips'),
                                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
                                 child: _QuickChips(
                                   suggestions: suggestions,

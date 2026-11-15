@@ -235,38 +235,93 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     _focus.requestFocus();
   }
 
-  /// Finishes the open edit: a multi-sentence text becomes one bullet per
-  /// sentence, an emptied text removes the bullet; then saves the section.
-  Future<void> _commit() async {
+  /// Folds the open editor's text into `_bullets` — a multi-sentence text
+  /// becomes one bullet per sentence, an emptied text drops the bullet — and
+  /// closes the editor. Pure state mutation: no setState and no save (the
+  /// caller owns both), so a commit and a visibility cycle in the same gesture
+  /// save exactly once. Returns whether anything changed and whether the
+  /// edited bullet still exists at its index afterwards.
+  ({bool changed, bool kept}) _foldOpenEdit() {
     final i = _editing;
-    if (i == null || i >= _bullets.length) return;
+    if (i == null || i >= _bullets.length) {
+      return (changed: false, kept: true);
+    }
     final vis = _bullets[i].visibility;
     final pieces = splitIntoBullets(_ctrl.text);
-    final next = [
+    final unchanged = pieces.length == 1 && pieces.first == _bullets[i].text;
+    _editing = null;
+    _bullets = [
       ..._bullets.sublist(0, i),
       for (final p in pieces) StoryBullet(text: p, visibility: vis),
       ..._bullets.sublist(i + 1),
     ];
-    final unchanged = pieces.length == 1 && pieces.first == _bullets[i].text;
-    setState(() {
-      _editing = null;
-      _bullets = next;
-    });
-    if (!unchanged) await _persist();
+    return (changed: !unchanged, kept: pieces.isNotEmpty);
   }
 
+  /// Finishes the open edit (focus loss / submit) and saves if it changed.
+  Future<void> _commit() async {
+    if (_editing == null) return;
+    final r = _foldOpenEdit();
+    if (mounted) setState(() {});
+    if (r.changed) await _persist();
+  }
+
+  /// Serialises saves: a change made while a save is in flight (e.g. a quick
+  /// second visibility tap) doesn't start a second concurrent write — it marks
+  /// a re-save that runs with the latest `_bullets` once the current one
+  /// finishes, so the last value the user picked is the one that persists.
+  bool _resaveNeeded = false;
+
   Future<void> _persist() async {
+    if (_saving) {
+      // A save is already running — fold this change into it (re-save after).
+      _resaveNeeded = true;
+      return;
+    }
     setState(() => _saving = true);
-    final ok = await widget.onSave(_bullets);
+    var ok = await widget.onSave(_bullets);
+    while (ok && _resaveNeeded && mounted) {
+      _resaveNeeded = false;
+      ok = await widget.onSave(_bullets);
+    }
+    _resaveNeeded = false;
     if (!mounted) return;
     setState(() {
       _saving = false;
+      // A failed save is never silent: onSave has already toasted. Snap the
+      // bullets back to the server's truth so the UI can't show a change that
+      // didn't land.
       if (!ok) _bullets = _visibleBullets(widget.section);
     });
   }
 
+  /// Cycles one bullet's visibility (public <-> private). Stays live during a
+  /// save — the flip is optimistic and [_persist] serialises the writes — so a
+  /// tap is never a dead no-op (Scout NOTE 219 leg a). If the tapped bullet is
+  /// open in the editor, its typed text is committed first (kept, not lost), so
+  /// one tap = commit + cycle; closing the editor here also means the focus-
+  /// loss auto-commit this same tap triggers finds nothing open and can't race
+  /// it. One save covers both the committed text and the new visibility.
   void _cycle(int i) {
-    if (_saving) return;
+    if (i < 0 || i >= _bullets.length) return;
+    if (_editing == i) {
+      final r = _foldOpenEdit();
+      if (!r.kept) {
+        // The edit had emptied the bullet, so it's gone — just save the change.
+        setState(() {});
+        unawaited(_persist());
+        return;
+      }
+    } else if (_editing != null) {
+      // A different bullet is open — commit it first. A single-line commit
+      // doesn't shift indices; guard the (rare) multi-line case below.
+      _foldOpenEdit();
+      if (i >= _bullets.length) {
+        setState(() {});
+        unawaited(_persist());
+        return;
+      }
+    }
     setState(() {
       _bullets[i] = StoryBullet(
         text: _bullets[i].text,
@@ -392,7 +447,9 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
                   children: [
                     InkWell(
                       key: ValueKey('visibility_${widget.section.pageType}_$i'),
-                      onTap: _saving ? null : () => _cycle(i),
+                      // Stays live during a save (Scout NOTE 219 leg a): the
+                      // flip is optimistic and _persist serialises the writes.
+                      onTap: () => _cycle(i),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           vertical: 8,
