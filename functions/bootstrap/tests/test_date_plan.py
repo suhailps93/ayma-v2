@@ -165,3 +165,51 @@ def test_suggest_change_rejects_a_time_already_passed():
         date_plan.suggest_change(
             db, "a__b", mid, "a", starts_at="2026-11-13T21:00:00+00:00",
             now=now)
+
+
+# --- past-time guard via time_label (Scout NOTE 214 Defect B) -------------
+
+_NOW = datetime(2026, 11, 14, 18, 0, tzinfo=timezone.utc)  # Sat Nov 14, 6pm
+
+
+@pytest.mark.parametrize("label", [
+    "yesterday at 7pm",
+    "Yesterday at 8 PM",
+    "last night at 9",
+    "day before yesterday at noon",
+    "last Friday at 7pm",
+    "Nov 5 at 3pm",          # an explicitly past calendar date
+])
+def test_require_future_start_refuses_a_past_time_label(label):
+    # starts_at empty — the exact shape of Scout's live card — must still refuse.
+    with pytest.raises(ValueError, match="already passed"):
+        date_plan._require_future_start("", label, _NOW)
+
+
+@pytest.mark.parametrize("label", [
+    "tomorrow at 7pm",
+    "today at 8pm",
+    "tonight at 9",
+    "Friday at 8 PM",
+    "Nov 20 at 7pm",         # a future calendar date
+    "",                      # nothing to check
+    "the usual spot",        # no resolvable time -> never blocks
+    "sometime next week",
+])
+def test_require_future_start_allows_a_future_or_loose_label(label):
+    date_plan._require_future_start("", label, _NOW)  # does not raise
+
+
+def test_propose_plan_refuses_a_past_time_label_with_empty_starts_at():
+    with pytest.raises(ValueError, match="already passed"):
+        date_plan.propose_plan(
+            place_name="Blue Bottle Coffee", address="1 Main St",
+            time_label="yesterday at 7pm", starts_at="", now=_NOW)
+
+
+def test_propose_plan_allows_a_future_time_label_with_empty_starts_at():
+    plan = date_plan.propose_plan(
+        place_name="Blue Bottle Coffee", address="1 Main St",
+        time_label="tomorrow at 7pm", starts_at="", now=_NOW)
+    assert plan["status"] == "proposed"
+    assert plan["starts_at"] == ""  # still no structured time, by design

@@ -21,6 +21,7 @@ and this feature does not route around it.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
@@ -47,6 +48,27 @@ def _coord(value) -> float | None:
 # 2026-11-14). The grace covers clock skew and a plan for "right now".
 _PAST_START_GRACE = timedelta(minutes=5)
 
+_PAST_TIME_MSG = "That time has already passed. Pick a time in the future."
+
+# A ``time_label`` names a day in the USER's own frame, so an explicit past-day
+# word is unambiguously past regardless of the server's timezone.
+_PAST_DAY_RE = re.compile(
+    r"\b(yesterday|last\s+night|day\s+before\s+yesterday|last\s+week|"
+    r"last\s+(mon|tues?|wednes|thurs?|fri|satur|sun)day)\b",
+    re.I,
+)
+_WEEKDAYS = (
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+)
+# The widest real UTC offset: a label we can pin to a clock time but not to a
+# timezone is only refused when it is past beyond any plausible zone's doubt,
+# so a valid future plan is never wrongly blocked.
+_TZ_SLACK = timedelta(hours=14)
+_TIME_RE = re.compile(
+    r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b|\b(\d{1,2}):(\d{2})\b",
+    re.I,
+)
+
 
 def _parse_starts_at(value: str) -> datetime | None:
     """An ISO 8601 start time as an aware datetime, or None when absent/unparseable."""
@@ -62,21 +84,112 @@ def _parse_starts_at(value: str) -> datetime | None:
     return parsed
 
 
-def _require_future_start(starts_at: str, now: datetime | None = None) -> None:
+def _time_of_day(s: str) -> tuple[int, int] | None:
+    """``(hour, minute)`` parsed from a label's clock time, or None."""
+    if "midnight" in s:
+        return (0, 0)
+    if re.search(r"\bnoon\b", s):
+        return (12, 0)
+    m = _TIME_RE.search(s)
+    if not m:
+        return None
+    if m.group(3):  # 12-hour am/pm form
+        hour = int(m.group(1))
+        mins = int(m.group(2) or 0)
+        pm = m.group(3).lower().startswith("p")
+        if pm and hour != 12:
+            hour += 12
+        if not pm and hour == 12:
+            hour = 0
+        return (hour % 24, mins)
+    return (int(m.group(4)) % 24, int(m.group(5)))  # 24-hour form
+
+
+def _resolve_label_time(time_label: str, now: datetime) -> datetime | None:
+    """Best-effort resolve a human ``time_label`` ("yesterday at 7pm",
+    "tomorrow 8pm", "Nov 20 7pm") to an aware datetime (UTC day), or None when
+    it carries no day we can pin down. Used only to catch a clearly-past time
+    when the model left ``starts_at`` empty (Scout NOTE 214 Defect B)."""
+    s = (time_label or "").strip().lower()
+    if not s:
+        return None
+    today = now.date()
+    day = None
+    if "day before yesterday" in s:
+        day = today - timedelta(days=2)
+    elif "yesterday" in s or "last night" in s:
+        day = today - timedelta(days=1)
+    elif "day after tomorrow" in s:
+        day = today + timedelta(days=2)
+    elif "tomorrow" in s:
+        day = today + timedelta(days=1)
+    elif any(
+        w in s
+        for w in ("today", "tonight", "this evening", "this afternoon",
+                  "this morning", "right now")
+    ):
+        day = today
+    else:
+        for i, wd in enumerate(_WEEKDAYS):
+            if wd in s:
+                ahead = (i - today.weekday()) % 7
+                if "last" in s:
+                    ahead -= 7
+                elif ahead == 0:
+                    ahead = 7  # a bare weekday means the upcoming one
+                day = today + timedelta(days=ahead)
+                break
+    tod = _time_of_day(s)
+    if day is not None:
+        hour, mins = tod if tod else (12, 0)
+        return datetime(day.year, day.month, day.day, hour, mins, tzinfo=timezone.utc)
+    # No relative day word — try an absolute date (needs a digit, e.g.
+    # "Nov 20 at 7pm"); plain prose with no date resolves to nothing.
+    if not re.search(r"\d", s):
+        return None
+    try:
+        from dateutil import parser as _dateparser
+        base = now.replace(
+            hour=(tod or (12, 0))[0], minute=(tod or (12, 0))[1],
+            second=0, microsecond=0,
+        )
+        dt = _dateparser.parse(s, default=base, fuzzy=True)
+    except (ValueError, OverflowError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _require_future_start(
+    starts_at: str, time_label: str = "", now: datetime | None = None
+) -> None:
     """Reject a proposed start time that has already passed.
 
-    Empty or unparseable values are left alone: the display label
-    (``time_label``) is what the user sees, and a loose label must not
-    break the propose path.
+    Checks the structured ``starts_at`` first (precise, 5-minute grace). When
+    the model left ``starts_at`` empty — as it did on Scout's past-time card
+    (NOTE 214 Defect B), which is exactly why the 2438 ``starts_at``-only guard
+    never fired — fall back to the human ``time_label``: an explicit past-day
+    word ("yesterday", "last Friday") is past in the user's own frame, and any
+    other label we can pin to a clock time is refused only when it is past
+    beyond the widest timezone offset, so a valid future plan is never blocked.
     """
-    start = _parse_starts_at(starts_at)
-    if start is None:
-        return
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    if start < moment - _PAST_START_GRACE:
-        raise ValueError("That time has already passed. Pick a time in the future.")
+    start = _parse_starts_at(starts_at)
+    if start is not None:
+        if start < moment - _PAST_START_GRACE:
+            raise ValueError(_PAST_TIME_MSG)
+        return
+    label = (time_label or "").strip()
+    if not label:
+        return
+    if _PAST_DAY_RE.search(label):
+        raise ValueError(_PAST_TIME_MSG)
+    resolved = _resolve_label_time(label, moment)
+    if resolved is not None and resolved < moment - _PAST_START_GRACE - _TZ_SLACK:
+        raise ValueError(_PAST_TIME_MSG)
 
 
 def propose_plan(
@@ -108,7 +221,7 @@ def propose_plan(
         raise ValueError(
             "A date plan needs an address or coordinates so the place is "
             "locatable.")
-    _require_future_start(starts_at, now)
+    _require_future_start(starts_at, time_label, now)
     return {
         "status": STATUS_PROPOSED,
         "proposer_uid": str(proposer_uid or ""),
@@ -297,7 +410,9 @@ def suggest_change(
     if not str(fresh.get("address", "")).strip() and not has_coords:
         raise ValueError(
             "The revised plan still needs an address or coordinates.")
-    _require_future_start(str(fresh.get("starts_at", "")), now)
+    _require_future_start(
+        str(fresh.get("starts_at", "")), str(fresh.get("time_label", "")), now
+    )
     fresh["approvals"] = {}
     fresh["status"] = STATUS_PROPOSED
     fresh["revision"] = int(plan.get("revision", 1)) + 1
