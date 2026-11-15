@@ -64,14 +64,11 @@ _INTENT_TO_BRANCH = {
 
 _DEFAULT_BRANCH = "long_term"
 
-# Explicit, deterministic section order override (founder product decision):
-# these sections are pinned to the front of every tree, in exactly this order,
-# regardless of node weight. Every section not listed here keeps its existing
-# weight-then-first-appearance order, after the pinned block. A pinned section
-# absent from a given tree is simply skipped (never forced in). This is a hard
-# ordering rule, not a weight tie-break, so Dealbreakers sits 4th — right after
-# Relationship style — independent of any future weight changes.
-PINNED_SECTION_ORDER = ("identity", "personality", "relationships", "dealbreakers")
+# Section order / names / subtitles / default-visibility are the canonical
+# ``sections`` block in question_tree.json (tree v6, the story-sections /
+# person-graph redesign), read via :func:`section_meta`. The former
+# ``PINNED_SECTION_ORDER`` weight override is superseded by that explicit full
+# order.
 
 
 @lru_cache(maxsize=1)
@@ -145,9 +142,49 @@ def core_ids() -> tuple[str, ...]:
     return tuple(n["id"] for n in nodes() if n.get("tier") == "core")
 
 
-def label_for_page_type(page_type: str) -> str:
-    """The section label for ``page_type`` — falls back to a title-cased id."""
+@lru_cache(maxsize=1)
+def section_meta() -> dict[str, dict]:
+    """The canonical per-section metadata block (``sections`` in the config):
+    ``{page_type: {title, subtitle, order, name_locked?}}``. The single source
+    of truth for the founder's section names, order and subtitles. Added in
+    tree v6 (story-sections / person-graph redesign). Default per-section
+    visibility is owned separately by ``wiki_schema.default_visibility_for``."""
+    return {pt: dict(m) for pt, m in (_raw().get("sections") or {}).items()}
+
+
+@lru_cache(maxsize=1)
+def ordered_page_types() -> tuple[str, ...]:
+    """Every section ``page_type`` in canonical founder order."""
+    return tuple(
+        sorted(section_meta(), key=lambda pt: section_meta()[pt].get("order", 999))
+    )
+
+
+def section_order(page_type: str) -> int:
+    """Canonical display order for ``page_type``; unknown types sort last."""
+    m = section_meta().get(page_type)
+    return int(m["order"]) if m and "order" in m else 999
+
+
+def section_title(page_type: str) -> str:
+    """Canonical display title (the founder's name) for ``page_type``."""
+    m = section_meta().get(page_type)
+    if m and m.get("title"):
+        return str(m["title"])
     return PAGE_TYPE_LABELS.get(page_type, page_type.replace("_", " ").title())
+
+
+def section_subtitle(page_type: str) -> str:
+    """Short "what belongs here" subtitle for ``page_type`` (empty if none)."""
+    m = section_meta().get(page_type)
+    return str(m.get("subtitle", "")) if m else ""
+
+
+def label_for_page_type(page_type: str) -> str:
+    """The section label for ``page_type`` — the canonical founder title when
+    the section is in the metadata block, else the legacy label, else a
+    title-cased id."""
+    return section_title(page_type)
 
 
 def sections_for_intent(intent: str | None) -> list[dict]:
@@ -155,11 +192,11 @@ def sections_for_intent(intent: str | None) -> list[dict]:
     ``{page_type, label, priority}`` where ``priority`` is the highest node
     weight in that section.
 
-    The sections in :data:`PINNED_SECTION_ORDER` come first, in that exact
-    order (any pinned section not present in this tree is skipped). Every other
-    section follows, ordered by ``priority`` descending then by the order the
-    section first appears in the tree — i.e. its prior relative order is
-    preserved."""
+    Ordered by the canonical :func:`section_meta` order (the founder's explicit
+    full section order, tree v6) — not by node weight. Any section present in
+    the tree but missing from the metadata block sorts after the canonical
+    block, by node weight descending then first appearance, so a straggler is
+    never dropped."""
     order: list[str] = []
     priority: dict[str, int] = {}
     for n in nodes_for_intent(intent):
@@ -169,17 +206,21 @@ def sections_for_intent(intent: str | None) -> list[dict]:
             priority[pt] = n["weight"]
         else:
             priority[pt] = max(priority[pt], n["weight"])
-    ranked = sorted(order, key=lambda pt: (-priority[pt], order.index(pt)))
-    computed_rank = {pt: i for i, pt in enumerate(ranked)}
-    unpinned = len(PINNED_SECTION_ORDER)
+    first_seen = {pt: i for i, pt in enumerate(order)}
+    canonical = section_meta()
 
-    def _order_key(pt: str) -> tuple[int, int]:
-        pinned = (
-            PINNED_SECTION_ORDER.index(pt)
-            if pt in PINNED_SECTION_ORDER
-            else unpinned
-        )
-        return (pinned, computed_rank[pt])
+    # Stragglers (page_types in the tree but not in the metadata block) keep a
+    # stable, weight-aware order among themselves, after the canonical block.
+    stragglers = sorted(
+        (pt for pt in order if pt not in canonical),
+        key=lambda pt: (-priority[pt], first_seen[pt]),
+    )
+    straggler_rank = {pt: i for i, pt in enumerate(stragglers)}
+
+    def _key(pt: str) -> tuple[int, int]:
+        if pt in canonical:
+            return (0, section_order(pt))
+        return (1, straggler_rank[pt])
 
     return [
         {
@@ -187,5 +228,5 @@ def sections_for_intent(intent: str | None) -> list[dict]:
             "label": label_for_page_type(pt),
             "priority": priority[pt],
         }
-        for pt in sorted(ranked, key=_order_key)
+        for pt in sorted(order, key=_key)
     ]

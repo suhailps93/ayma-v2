@@ -577,7 +577,9 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
     res2 = _run(completeness.compute(db2, "u1"))
     by_pt2 = {s["page_type"]: s for s in res2["sections"]}
     assert by_pt2["identity"]["core_answered"] == len(core_ids)
-    assert by_pt2["personality"]["unlocked"] is True
+    # the next gated section in the canonical founder order (tree v6) is
+    # Dealbreakers, right after About Me — it unlocks once identity core is done.
+    assert by_pt2["dealbreakers"]["unlocked"] is True
 
 
 def test_score_is_full_tree_not_just_unlocked(monkeypatch):
@@ -660,7 +662,8 @@ def test_promoted_taste_does_not_lock_sections_after_it(monkeypatch):
     # identity core is complete -> the first gated section opens, and taste
     # being unanswered did not stand in the way.
     assert by_pt["identity"]["core_answered"] == by_pt["identity"]["core_total"]
-    assert by_pt["personality"]["unlocked"] is True
+    # the first gated section after About Me (canonical order) is Dealbreakers
+    assert by_pt["dealbreakers"]["unlocked"] is True
     assert by_pt["taste"]["unlocked"] is True
 
 
