@@ -456,3 +456,25 @@ def test_non_empty_first_response_does_not_retry(monkeypatch):
     out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
     assert out.text == "hello!"
     assert len(sent) == 1
+
+
+def test_empty_first_response_plain_chat_recovers_once(monkeypatch):
+    # Scout NOTE 214 Defect A: transient empty first response on a plain chat turn
+    # retries once on LiveKit Inference and yields the text reply without error.
+    sent = _install_complete(monkeypatch, [
+        _empty("stop"),
+        _resp("Hello there!"),
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    events = []
+
+    async def _drain():
+        async for ev in gemini.generate_reply_events("hi", system_prompt="p"):
+            events.append(ev)
+
+    asyncio.run(_drain())
+    assert len(sent) == 2
+    assert any(ev.get("type") == "reply" and ev.get("text") == "Hello there!" for ev in events)
+
