@@ -374,3 +374,85 @@ def test_a_hung_tool_is_reported_to_the_model_and_the_turn_still_replies(
     asyncio.run(_collect())
     assert events[-1]["type"] == "reply"
     assert "took too long" in sent[1]["messages"][-1]["content"]
+
+
+def _empty(finish_reason=None):
+    r = _resp("")
+    return dataclasses.replace(r, finish_reason=finish_reason)
+
+
+def test_empty_first_response_retries_and_runs_the_tool(monkeypatch):
+    # Scout NOTE 214 Defect A: the first inference comes back empty (no text,
+    # no tool call, finish_reason=stop) and would drop the whole turn. It must
+    # retry once, and the retried response's tool call must actually run.
+    sent = _install_complete(monkeypatch, [
+        _empty("stop"),  # the flake — empty, no tool call
+        _resp("", [_call("propose_date_plan", {"place": "Blue Bottle Coffee"})]),
+        _resp("Here's your date plan!"),
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    ran = {}
+
+    def _plan(place=""):
+        ran["place"] = place
+        return "posted"
+
+    out = asyncio.run(
+        gemini.generate_reply(
+            "plan a date tomorrow at 7pm",
+            system_prompt="persona",
+            tool_declarations=[{"name": "propose_date_plan"}],
+            tool_fns={"propose_date_plan": _plan},
+        )
+    )
+    assert out.text == "Here's your date plan!"
+    assert ran == {"place": "Blue Bottle Coffee"}  # the tool ran on the retry
+    assert len(sent) == 3  # flake + retry(tool) + final text
+
+
+def test_empty_final_response_recovers_once(monkeypatch):
+    # The flake can also hit the FINAL text call after a tool ran: a transient
+    # empty stop must retry once instead of raising.
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("record_feedback", {"note": "ok"})]),
+        _empty("stop"),              # empty final text — the flake
+        _resp("All set, thanks!"),   # retry recovers
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    out = asyncio.run(
+        gemini.generate_reply(
+            "that was great",
+            system_prompt="persona",
+            tool_declarations=[{"name": "record_feedback"}],
+            tool_fns={"record_feedback": lambda **k: "logged"},
+        )
+    )
+    assert out.text == "All set, thanks!"
+    assert len(sent) == 3
+
+
+def test_persistent_empty_still_raises_after_retries(monkeypatch):
+    # A genuinely dead response (empty on every attempt) still fails loudly,
+    # bounded — never an infinite retry loop.
+    _install_complete(monkeypatch, [_empty("stop")] * 5)
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    with pytest.raises(RuntimeError, match="empty response"):
+        asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+
+
+def test_non_empty_first_response_does_not_retry(monkeypatch):
+    # A normal reply still costs exactly one call — the retry only triggers on
+    # an empty response.
+    sent = _install_complete(monkeypatch, [_resp("hello!")])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    out = asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
+    assert out.text == "hello!"
+    assert len(sent) == 1
