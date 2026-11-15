@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../theme.dart';
+import 'ask_ayma_overlay.dart';
 import 'ayma_toast.dart';
 import 'bullet_visibility.dart';
 import 'overflow_guards.dart';
@@ -82,6 +83,31 @@ class _BulletSectionsEditorState extends State<BulletSectionsEditor> {
     return true;
   }
 
+  /// Open a scoped Ask-Ayma chat about ONE bullet (founder order, Nov 15 2026).
+  /// Reuses the shared Ask-Ayma overlay / reply-style machinery: it sends only
+  /// the section reference (`story_page_id`) + the bullet as the scoped passage
+  /// (`story_passage`) — Ayma's existing story_edit tools act on that exact
+  /// bullet (edit wording, make public/private, remove). No parallel system.
+  Future<void> _chat(BulletSection section, StoryBullet bullet) async {
+    if (section.pageId.isEmpty || bullet.text.trim().isEmpty) return;
+    await showAskAymaOverlay(
+      context,
+      api: widget.api,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.story,
+        pageId: section.pageId,
+        selectedText: bullet.text,
+        sectionTitle: section.title,
+        isPrivate: bullet.visibility != 'public',
+        quoteTitle: section.title,
+        quoteText: bullet.text,
+      ),
+      // After each reply, re-pull so an edit Ayma made to the bullet shows.
+      onExchange: () => _load(silent: true),
+    );
+    if (mounted) await _load(silent: true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -126,6 +152,7 @@ class _BulletSectionsEditorState extends State<BulletSectionsEditor> {
             }()),
             section: _sections[i],
             onSave: (bullets) => _save(_sections[i], bullets),
+            onChat: (bullet) => _chat(_sections[i], bullet),
           ),
       ],
     );
@@ -138,17 +165,25 @@ class BulletSectionCard extends StatefulWidget {
     super.key,
     required this.section,
     required this.onSave,
+    required this.onChat,
   });
 
   final BulletSection section;
   final Future<bool> Function(List<StoryBullet> bullets) onSave;
+  final void Function(StoryBullet bullet) onChat;
 
   @override
   State<BulletSectionCard> createState() => _BulletSectionCardState();
 }
 
+/// Ayma-only bullets are never shown in Your Story (founder order, Nov 15
+/// 2026). The backend already strips them from `/profile/bullets`; this is a
+/// belt-and-braces guard on the render path so one can never slip through.
+List<StoryBullet> _visibleBullets(BulletSection s) =>
+    s.bullets.where((b) => !b.isAiOnly).toList();
+
 class _BulletSectionCardState extends State<BulletSectionCard> {
-  late List<StoryBullet> _bullets = List.of(widget.section.bullets);
+  late List<StoryBullet> _bullets = _visibleBullets(widget.section);
   final _ctrl = TextEditingController();
   final _focus = FocusNode();
   int? _editing;
@@ -166,7 +201,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   void didUpdateWidget(BulletSectionCard old) {
     super.didUpdateWidget(old);
     if (_editing == null && !_saving) {
-      _bullets = List.of(widget.section.bullets);
+      _bullets = _visibleBullets(widget.section);
     }
   }
 
@@ -226,7 +261,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     if (!mounted) return;
     setState(() {
       _saving = false;
-      if (!ok) _bullets = List.of(widget.section.bullets);
+      if (!ok) _bullets = _visibleBullets(widget.section);
     });
   }
 
@@ -366,6 +401,22 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
                         child: chip,
                       ),
                     ),
+                    if (widget.section.pageId.isNotEmpty &&
+                        b.text.trim().isNotEmpty &&
+                        _editing != i)
+                      InkWell(
+                        key: ValueKey('chat_${widget.section.pageType}_$i'),
+                        onTap: _saving ? null : () => widget.onChat(b),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            Icons.chat_bubble_outline,
+                            size: 18,
+                            color: ac.fgMute,
+                            semanticLabel: 'Ask Ayma about this bullet',
+                          ),
+                        ),
+                      ),
                     InkWell(
                       key: ValueKey('delete_${widget.section.pageType}_$i'),
                       onTap: _saving ? null : () => _delete(i),
