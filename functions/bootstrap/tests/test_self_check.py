@@ -452,6 +452,18 @@ def test_manifest_covers_every_session_tool():
     assert missing == set(), f"tools missing from the self-check manifest: {missing}"
 
 
+def test_set_linkedin_profile_manifest_treatment():
+    assert "set_linkedin_profile" in self_check.PROBE_TOOLS
+    assert "set_linkedin_profile" in self_check.manifest_tool_names()
+    assert self_check._TOOL_DISPLAY.get("set_linkedin_profile") == "Save your LinkedIn"
+    h = _Harness()
+    runner = h.runner()
+    asyncio.run(runner.run())
+    by_name = {r.name: r for r in runner.results}
+    assert by_name["tool:set_linkedin_profile"].status == self_check.PROBE
+    assert "user story" in by_name["tool:set_linkedin_profile"].detail
+
+
 # --- build-relative accounting (staging port) --------------------------------
 # The check lists are a superset across builds: a tool this build neither
 # declares (skills.session_tool_declarations) nor binds is not part of
