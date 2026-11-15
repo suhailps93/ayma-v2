@@ -64,6 +64,15 @@ form of the tools above) are: `navigate`, `search_explore`,
 tool descriptions are generated from `app_registry.json`, so the registry
 — and now this graph — are what she knows.
 
+## Build awareness (context only, no destination)
+
+The client reports `app_version` (runtime `version+build`) and `whats_new`
+(the top block of `release_notes.dart`, via `latestReleaseNotesBody()`) on
+`/chat`, `/chat/stream` and `/bootstrap`, cached once at startup in
+`build_awareness.dart`. Ayma uses them to answer "what build are you running /
+what's new"; the notes are user-facing only. No screen or tool, so no
+`app_registry.json` entry.
+
 ## Exclusions (config-driven, founder 2026-11-06, final form)
 
 Ayma must **NEVER** activate these, no matter how she is asked.

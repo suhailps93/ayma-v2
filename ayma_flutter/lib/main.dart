@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:logging/logging.dart';
 
+import 'build_awareness.dart';
 import 'core/app_recovery.dart';
 import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
@@ -72,6 +73,7 @@ Future<void> main() async {
   // RevenueCat bind, push sync) then run in the background.
   final push = PushService();
   setupAuthDeepLinkDrain();
+  unawaited(loadBuildAwareness());
   unawaited(InstallReferrerService.instance.checkInstallReferrer());
   // Ask for OS location permission at start, the same way the app asks for
   // notification permission (push.syncToken on auth). Granting it here does
