@@ -77,7 +77,9 @@ service cloud.firestore {
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
-               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started'
+               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started',
+               'location_master_enabled', 'location_background_enabled',
+               'location_log_enabled', 'date_moments_enabled'
              ])
           && isAdultBirthdate(request.resource.data);
         allow update: if isOwner(uid)
@@ -85,7 +87,9 @@ service cloud.firestore {
                'name', 'first_name', 'last_name', 'phone',
                'birthdate', 'gender', 'interested_in', 'location',
                'paused', 'ai_avatar_enabled', 'ayma_voice_name', 'ayma_voice_language',
-               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started'
+               'ayma_accent_color', 'seen_tour_features', 'updated_at', 'onboarding_started',
+               'location_master_enabled', 'location_background_enabled',
+               'location_log_enabled', 'date_moments_enabled'
              ])
           && (!birthdateTouched() || isAdultBirthdate(request.resource.data));
       }
