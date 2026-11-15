@@ -189,3 +189,88 @@ def test_user_can_reverse_an_ai_only_bullet_in_the_bullet_editor():
         {"text": "Public line.", "visibility": "public"},
     ])
     assert "ai_only" not in _edits(db, "u1", "identity")
+
+
+def test_get_bullets_dedupes_and_merges_duplicate_page_types():
+    # Live staging Firestore fixture shape (e.g. demo-test1 Daniel Reyes has
+    # 27 wiki pages with 7 duplicated page_types: dealbreakers x2, family x2,
+    # interests x2, lifestyle x2, relationships x2, social_circle x2, values x2).
+    # get_bullets() must return each canonical page_type exactly once, merging
+    # the content of duplicate pages so all bullets are preserved in order.
+    db = FakeDb()
+    _page(
+        db, "demo-test1", "dealbreakers",
+        page_type="dealbreakers", title="Non-Negotiables", visibility="public",
+        ai_body="Must love dogs. {{private}}Never smoke.{{/private}}",
+    )
+    _page(
+        db, "demo-test1", "core-non-negotiables",
+        page_type="dealbreakers", title="Core Non-Negotiables", visibility="private",
+        ai_body="Must want children. {{ai_only}}Cannot tolerate dishonesty.{{/ai_only}}",
+    )
+    _page(
+        db, "demo-test1", "family",
+        page_type="family", title="Family", visibility="public",
+        ai_body="Close with my parents.",
+    )
+    _page(
+        db, "demo-test1", "family-2",
+        page_type="family", title="Family Background", visibility="public",
+        ai_body="I have an older brother in Chicago.",
+    )
+
+    res = profile_bullets.get_bullets(db, "demo-test1")
+    sections = res["sections"]
+    page_types = [s["page_type"] for s in sections]
+
+    # Every canonical section appears exactly once — no duplicates
+    assert len(page_types) == len(set(page_types))
+    assert len(page_types) == len(question_tree.ordered_page_types())
+
+    by_pt = {s["page_type"]: s for s in sections}
+
+    # dealbreakers merged: both pages' bullets preserved in sensible order
+    db_sec = by_pt["dealbreakers"]
+    assert db_sec["page_id"] == "dealbreakers"
+    bullet_texts = [b["text"] for b in db_sec["bullets"]]
+    assert bullet_texts == [
+        "Must want children.",
+        "Cannot tolerate dishonesty.",
+        "Must love dogs.",
+        "Never smoke.",
+    ]
+    bullet_vis = [b["visibility"] for b in db_sec["bullets"]]
+    assert bullet_vis == ["private", "ai_only", "public", "private"]
+    assert db_sec["has_ai_only"] is True
+    assert db_sec["empty"] is False
+
+    # family merged: both bullets preserved
+    fam_sec = by_pt["family"]
+    assert fam_sec["page_id"] == "family"
+    assert [b["text"] for b in fam_sec["bullets"]] == [
+        "Close with my parents.",
+        "I have an older brother in Chicago.",
+    ]
+
+
+def test_get_bullets_merges_and_dedupes_identical_bullet_texts():
+    db = FakeDb()
+    _page(
+        db, "u1", "dealbreakers-1",
+        page_type="dealbreakers", visibility="public",
+        ai_body="No smokers.",
+    )
+    _page(
+        db, "u1", "dealbreakers",
+        page_type="dealbreakers", visibility="public",
+        ai_body="No smokers. Must like outdoor hiking.",
+    )
+    res = profile_bullets.get_bullets(db, "u1")
+    by_pt = {s["page_type"]: s for s in res["sections"]}
+    db_sec = by_pt["dealbreakers"]
+    assert db_sec["page_id"] == "dealbreakers"
+    assert [b["text"] for b in db_sec["bullets"]] == [
+        "No smokers.",
+        "Must like outdoor hiking.",
+    ]
+
