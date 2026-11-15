@@ -5,6 +5,7 @@ import 'package:ayma_flutter/screens/accent_color_screen.dart';
 import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
+import 'package:ayma_flutter/screens/camera_color_picker_screen.dart';
 import 'package:ayma_flutter/screens/assistant_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
@@ -260,6 +261,13 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     SettingsScreen.path: () => shell(const SettingsScreen()),
     AppearanceSettingsScreen.path: () =>
         shell(AppearanceSettingsScreen(controller: ThemeController())),
+    CameraColorPickerScreen.path: () => shell(
+      CameraColorPickerScreen(
+        accentController: AccentColorController(profileService: profiles),
+        requestPermission: () async => true,
+        bypassCameraInit: true,
+      ),
+    ),
     PrivacySettingsScreen.path: () =>
         shell(PrivacySettingsScreen(profileService: profiles, api: api)),
     // The assistant surface in its dormant state (no summon capture,

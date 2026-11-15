@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+import '../theme.dart';
+
 /// Supported image formats for frame color sampling.
 enum CameraFrameFormat {
   yuv420,
@@ -115,7 +117,7 @@ class CameraColorSampler {
     final int avgG = (gSum / count).round().clamp(0, 255);
     final int avgB = (bSum / count).round().clamp(0, 255);
 
-    return Color.fromARGB(255, avgR, avgG, avgB);
+    return AymaColors.fromARGB(255, avgR, avgG, avgB);
   }
 
   /// Convenience method directly from a live [CameraImage].
@@ -181,7 +183,7 @@ class CameraColorSampler {
         (yValue - 0.344136 * uValue - 0.714136 * vValue).round().clamp(0, 255);
     final int b = (yValue + 1.772 * uValue).round().clamp(0, 255);
 
-    return Color.fromARGB(255, r, g, b);
+    return AymaColors.fromARGB(255, r, g, b);
   }
 
   Color? _readBgraPixel(CameraFrameData frame, int x, int y) {
@@ -195,7 +197,7 @@ class CameraColorSampler {
     final int g = plane.bytes[index + 1];
     final int r = plane.bytes[index + 2];
 
-    return Color.fromARGB(255, r, g, b);
+    return AymaColors.fromARGB(255, r, g, b);
   }
 
   Color? _readRgbaPixel(CameraFrameData frame, int x, int y) {
@@ -209,6 +211,6 @@ class CameraColorSampler {
     final int g = plane.bytes[index + 1];
     final int b = plane.bytes[index + 2];
 
-    return Color.fromARGB(255, r, g, b);
+    return AymaColors.fromARGB(255, r, g, b);
   }
 }

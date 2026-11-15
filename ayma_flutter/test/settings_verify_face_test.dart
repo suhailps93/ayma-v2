@@ -47,6 +47,18 @@ class _FakeProfiles extends ProfileService {
   Stream<bool> watchPaused() => Stream.value(false);
 
   @override
+  Stream<bool> watchLocationMaster() => Stream.value(false);
+
+  @override
+  Stream<bool> watchLocationBackground() => Stream.value(false);
+
+  @override
+  Stream<bool> watchLocationLog() => Stream.value(false);
+
+  @override
+  Stream<bool> watchDateMoments() => Stream.value(false);
+
+  @override
   Future<String> uploadVerificationSelfie(file) async {
     uploadCalls++;
     if (uploadError != null) throw uploadError!;
