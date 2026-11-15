@@ -144,6 +144,23 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 3,
   ),
   TourFeature(
+    featureId: 'story_bullets',
+    headline: 'Your story, bullet by bullet',
+    subtitle: 'Open My story, tap + under any section to add a bullet, and tap '
+        'its lock to choose public, private or Ayma-only.',
+    icon: Icons.format_list_bulleted_rounded,
+    anchorId: TourAnchors.profileStoryRow,
+    tab: 3,
+  ),
+  TourFeature(
+    featureId: 'person_graph',
+    headline: 'See yourself as a graph',
+    subtitle: 'Open My person graph, then tap a section to expand its bullets.',
+    icon: Icons.hub_outlined,
+    anchorId: TourAnchors.profileGraphRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'appearance_report',
     headline: 'An honest mirror',
     subtitle: 'Open Appearance, tick several photos per section, and get one '

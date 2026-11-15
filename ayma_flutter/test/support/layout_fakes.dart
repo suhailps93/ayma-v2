@@ -198,6 +198,46 @@ Object? _bodyFor(String path) {
       'has_body_photo': true,
     };
   }
+  if (path == '/profile/bullets') {
+    return {
+      'sections': [
+        for (var i = 0; i < 4; i++)
+          {
+            'page_type': 'section_$i',
+            'title': 'Section $i $kLongName',
+            'subtitle': kLongText,
+            'order': i,
+            'page_id': i == 3 ? '' : 'p$i',
+            'bullets': i == 3
+                ? []
+                : [
+                    {'id': 'b${i}0', 'text': kLongText, 'visibility': 'public'},
+                    {'id': 'b${i}1', 'text': kLongText, 'visibility': 'private'},
+                    {'id': 'b${i}2', 'text': kLongText, 'visibility': 'ai_only'},
+                  ],
+          },
+      ],
+      'visibilities': ['public', 'private', 'ai_only'],
+    };
+  }
+  if (path == '/profile/graph') {
+    return {
+      'center': {'id': 'me', 'label': 'Me'},
+      'nodes': [
+        {'id': 'me', 'kind': 'person', 'label': 'Me'},
+        for (var i = 0; i < 6; i++) ...[
+          {'id': 's$i', 'kind': 'section', 'label': 'Section $i $kLongName', 'subtitle': kLongText, 'page_type': 'section_$i'},
+          {'id': 'b$i', 'kind': 'bullet', 'text': kLongText, 'visibility': i.isEven ? 'public' : 'ai_only'},
+        ],
+      ],
+      'edges': [
+        for (var i = 0; i < 6; i++) ...[
+          {'from': 'me', 'to': 's$i'},
+          {'from': 's$i', 'to': 'b$i'},
+        ],
+      ],
+    };
+  }
   if (path == '/explore') {
     return {'cards': [for (var i = 0; i < 6; i++) _card(i)]};
   }

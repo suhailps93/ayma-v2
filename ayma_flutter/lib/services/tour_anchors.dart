@@ -39,6 +39,9 @@ class TourAnchors {
   /// walkthrough (§11.2a).
   static const profileStoryRow = 'profile_story_row';
 
+  /// The "My person graph" row inside the Profile tab.
+  static const profileGraphRow = 'profile_graph_row';
+
   /// The "Appearance" row inside the Profile tab.
   static const profileAppearanceRow = 'profile_appearance_row';
 
