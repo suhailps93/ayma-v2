@@ -56,6 +56,7 @@ from . import (
     followup,
     guided_tour,
     physical_attributes,
+    propose_date_plan,
     questionnaire,
     read_dm_thread,
     read_failures,
@@ -134,6 +135,13 @@ _REGISTRY: list[Skill] = [
     # of doing nothing (founder feedback CpR0f2fjG5UBOsxDay12). Self-only: it
     # always recalculates the caller's own pair with the named person.
     rerun_match_report.SKILL,
+    # Post a date-plan card into a DM thread from a chat/voice ask — the
+    # counterpart to the thread attach sheet's "Plan a date" button. Runs
+    # the propose endpoint's own write path, so "plan a date with X" posts
+    # the card instead of only talking about one (founder feedback
+    # zVnQBIG0HGvSpx8Egwei). Own-thread only: the pair is always the
+    # caller's own thread with the named person.
+    propose_date_plan.SKILL,
     face_report.SKILL,
     body_report.SKILL,
     physical_attributes.SKILL,
