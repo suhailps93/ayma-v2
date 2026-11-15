@@ -204,3 +204,28 @@ def test_card_lands_only_in_the_callers_own_thread(monkeypatch):
                        if k[0] == "dm_threads" and len(k) > 2}
     assert message_threads == {_THREAD}
     assert _cards(db)[0]["participants"] == sorted((_ME, _SOFIA))
+
+
+def test_past_time_label_only_is_refused_and_no_card_posted(monkeypatch):
+    # Scout NOTE 214 Defect B (the real repro): the model posts only a human
+    # time_label and leaves starts_at EMPTY — which is why the 2438
+    # starts_at-only guard never fired and a "yesterday at 7pm" card went live.
+    # This drives the REAL guard (no stub): it resolves the label and refuses.
+    _resolve_ok(monkeypatch)
+    db = _seeded_db()
+    out = _ask(db, person="Sofia", place_name="Blue Bottle Coffee",
+               time_label="yesterday at 7pm", starts_at="")
+    assert not out.startswith(pdp.SUCCESS_PREFIX)
+    assert "That time has already passed. Pick a time in the future." in out
+    assert _cards(db) == []  # nothing written to the thread
+
+
+def test_future_time_label_only_still_posts(monkeypatch):
+    # The guard must not over-refuse: a valid future plan with only a
+    # time_label (no starts_at) still posts normally.
+    _resolve_ok(monkeypatch)
+    db = _seeded_db()
+    out = _ask(db, person="Sofia", place_name="Blue Bottle Coffee",
+               time_label="tomorrow at 7pm", starts_at="")
+    assert out.startswith(pdp.SUCCESS_PREFIX)
+    assert len(_cards(db)) == 1

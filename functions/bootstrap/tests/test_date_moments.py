@@ -89,13 +89,17 @@ class FakeDb:
 
 START = "2026-11-13T20:00:00+00:00"
 AT_TIME = datetime(2026, 11, 13, 20, 10, tzinfo=timezone.utc)
+# Pin the propose-time clock to START so the past-time guard (which now also
+# reads time_label) sees a plan "for right now", deterministically, instead of
+# comparing a fixed 2026 fixture against the real wall clock.
+NOW = datetime(2026, 11, 13, 20, 0, tzinfo=timezone.utc)
 PLACE = dict(place_name="Sakura Sushi", address="1 Main St",
              lat=37.3382, lng=-121.8863, time_label="Friday at 8:00 PM",
              starts_at=START)
 
 
 def _approved_card(db, parts=("a", "b")):
-    plan = date_plan.propose_plan(proposer_uid="a", **PLACE)
+    plan = date_plan.propose_plan(proposer_uid="a", now=NOW, **PLACE)
     mid = date_plan.post_date_plan_message(db, "a__b", list(parts), plan)
     date_plan.approve(db, "a__b", mid, "a")
     date_plan.approve(db, "a__b", mid, "b")
@@ -152,7 +156,7 @@ def test_fire_clears_active_pointer():
 
 def test_does_not_fire_when_not_approved():
     db = FakeDb()
-    plan = date_plan.propose_plan(proposer_uid="a", **PLACE)
+    plan = date_plan.propose_plan(proposer_uid="a", now=NOW, **PLACE)
     mid = date_plan.post_date_plan_message(db, "a__b", ["a", "b"], plan)
     date_plan.approve(db, "a__b", mid, "a")  # only one approval
     assert date_moments.fire_moment(db, "a__b", mid, "a", "Sofia", AT_TIME) is None
