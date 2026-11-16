@@ -230,6 +230,18 @@ creates that bucket on first run and grants both projects' Firestore service
 agents (`service-235381544962@…` prod, `service-187469876115@…` staging)
 `roles/storage.admin` on it (IAM writes are on the staging bucket only).
 
+**Post-import `wiki_pages` purge (person-graph switch, Phase 7).** The retired
+`wiki_pages` store is deleted from staging after each Firestore import. The
+import re-copies prod's still-live `wiki_pages` (prod runs flags OFF), and
+managed import `--collection-ids` is include-only so it can't be excluded at
+import time — so `sync_firestore` runs `scripts/purge_staging_wiki_pages.py`
+**immediately after the import**, which recursively deletes every `wiki_pages`
+document (both `users/{uid}/…` and `deleted_accounts/{uid}/…`) **and** its
+`versions` subcollection. The purge is **staging-only**: the Python helper hard-
+guards on project (refuses `ayma-ai`), and the sync calls it under the same
+`assert_dest_is_staging` guard. In `--dry-run` it only counts. It touches
+nothing on the prod side and does not change what the import pulls.
+
 ### One-way guardrails (ironclad)
 
 This pipeline is **one-way, prod → staging, ONLY.** It never runs an

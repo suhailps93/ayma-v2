@@ -3,7 +3,12 @@
 # sync-prod-to-staging.sh — STRICTLY ONE-WAY data copy: PRODUCTION -> STAGING.
 #
 # Copies a full 1:1 snapshot of prod (ayma-ai) into staging (ayma-staging):
-#   1. FIRESTORE  — gcloud export (reads prod) -> gcloud import (writes staging)
+#   1. FIRESTORE  — gcloud export (reads prod) -> gcloud import (writes staging),
+#                   then a staging-only POST-IMPORT PURGE of the retired
+#                   wiki_pages store (person-graph switch, Phase 7): the import
+#                   re-copies prod's live wiki_pages and managed import
+#                   --collection-ids is include-only, so staging deletes it again
+#                   right after each import (scripts/purge_staging_wiki_pages.py).
 #   2. STORAGE    — gsutil rsync  (prod SOURCE) -> (staging DEST), additive
 #   3. AUTH USERS — firebase auth:export (prod) -> auth:import (staging) with
 #                   prod's SCRYPT hash params so real passwords keep working
@@ -165,6 +170,7 @@ sync_firestore() {
 
   if [[ "$MODE" == "dry-run" ]]; then
     log "  [dry-run] would run the two commands above (export reads prod, import writes staging)"
+    purge_wiki_pages   # dry-run: counts what the post-import purge would remove
     return 0
   fi
 
@@ -175,7 +181,31 @@ sync_firestore() {
   assert_dest_is_staging "firestore import project" "$DEST_PROJECT"
   log "  importing -> ${DEST_PROJECT} Firestore ..."
   $import_cmd 2>&1 | tee -a "$LOG_FILE"
+  log "  FIRESTORE import complete."
+
+  # POST-IMPORT PURGE — the import re-copies prod's live wiki_pages into staging
+  # (managed import --collection-ids is include-only, so it can't be excluded at
+  # import time). The old store is retired (person-graph switch, Phase 7), so
+  # staging purges it right after every import. Recursive: page docs + their
+  # versions subcollections. STAGING ONLY (the Python script hard-guards too).
+  purge_wiki_pages
   log "  FIRESTORE sync complete."
+}
+
+# Delete the retired wiki_pages store from STAGING after the import. In dry-run
+# mode this only counts; in execute mode it performs the recursive delete. The
+# Python helper refuses to run against prod (ayma-ai).
+purge_wiki_pages() {
+  local purge="$(dirname "$0")/purge_staging_wiki_pages.py"
+  [[ -f "$purge" ]] || die "post-import purge script missing: ${purge}"
+  assert_dest_is_staging "wiki_pages purge project" "$DEST_PROJECT"
+  if [[ "$MODE" == "dry-run" ]]; then
+    log "  [dry-run] post-import wiki_pages purge (count only):"
+    python3 "$purge" --project "$DEST_PROJECT" --dry-run 2>&1 | tee -a "$LOG_FILE"
+  else
+    log "  purging retired wiki_pages from ${DEST_PROJECT} (recursive) ..."
+    python3 "$purge" --project "$DEST_PROJECT" --execute 2>&1 | tee -a "$LOG_FILE"
+  fi
 }
 
 # ============================================================================
