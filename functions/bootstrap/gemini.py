@@ -87,6 +87,12 @@ def strip_inline_refs(text: str) -> str:
 # A hung model call or tool must end in an error the user can retry, never an
 # endless "Thinking…" (founder tester report, 2026-10-20). Module-level so
 # tests can shrink them.
+# Last-resort nudge when the model closes a turn with a repeated empty `stop`
+# (no reply after its tool call, or nothing at all). Sent once with tools OFF so
+# the model produces the user-facing sentence it skipped, instead of forcing the
+# user to repeat themselves (demo-test1 2026-11-15, staging WTKCv8ARQfBnygn7Y6df).
+_EMPTY_REPLY_NUDGE = "Please reply to me now in plain text — a sentence or two."
+
 _TOOL_TIMEOUT_SECONDS = 120.0
 # Grounded web research (google_search + url_context) legitimately runs longer
 # than a plain generate — and the deep-dive path that uses it is a polled
@@ -163,9 +169,10 @@ async def _reply_events_inference(
             "provide inference_chat_max_tokens (no inline default here)."
         )
 
-    async def _call(max_tokens: int = chat_max_tokens):
+    async def _call(max_tokens: int = chat_max_tokens, *, use_tools: bool = True):
         return await inference_llm.complete(
-            model=model, messages=messages, tools=tools,
+            model=model, messages=messages,
+            tools=tools if use_tools else None,
             temperature=0.9, max_tokens=max_tokens, reasoning_effort=effort,
         )
 
@@ -283,9 +290,27 @@ async def _reply_events_inference(
             getattr(usage, "candidates_token_count", None),
             chat_max_tokens,
         )
-        # One retry already happened at the empty generation point above (the
-        # first response, or the post-tool response) — a reply still empty here
-        # is a genuine dead response, so fail loudly and honestly, no loop.
+        # The same-call retry above did not help: the model keeps closing with
+        # an empty `stop` (demo-test1 2026-11-15 — an empty post-tool stop
+        # recurred identically across three turns, so the user had to repeat the
+        # same answer three times). Re-issuing the identical request reproduces
+        # it, so nudge ONCE for a plain-text reply with tools OFF — the model
+        # cannot loop back into another empty tool round, and a fresh
+        # instruction breaks the repeated empty stop. Still LiveKit Inference,
+        # same model, no provider/model change — a clearer ask, not a fallback.
+        messages.append({"role": "user", "content": _EMPTY_REPLY_NUDGE})
+        response = await _call(use_tools=False)
+        token_ledger.record(
+            uid, feature, response, model=model, session_id=session_id or None,
+        )
+        text = strip_inline_refs(response.text.strip())
+    if not text:
+        # Empty even after the nudge — a genuinely dead response. Fail loudly and
+        # honestly, no loop: one honest failure for this turn, never a silent
+        # non-response.
+        logger.warning(
+            "chat: inference still empty after the reply nudge — failing honestly"
+        )
         raise RuntimeError("Gemini returned an empty response.")
     yield {"type": "reply", "text": text, "tools_used": used}
 
