@@ -543,8 +543,19 @@ async def score_pair(
     intent = match_deterministic.pair_intent(
         _intent_of(profile_a, q_a), _intent_of(profile_b, q_b)
     )
+    # Per-user emergent gates (Phase 5c, §4.3): nodes each user raised to the top
+    # of their weight budget become personal hard filters. Only with the graph
+    # reads flag on; off → empty, today's fixed-gate behaviour exactly.
+    pg_gates_a: frozenset[str] = frozenset()
+    pg_gates_b: frozenset[str] = frozenset()
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        pg_gates_a = person_graph_source.personal_gate_ids(db, uid_a)
+        pg_gates_b = person_graph_source.personal_gate_ids(db, uid_b)
     structured = match_deterministic.score_structured(
-        profile_a, q_a, profile_b, q_b, intent
+        profile_a, q_a, profile_b, q_b, intent,
+        personal_gates_a=pg_gates_a, personal_gates_b=pg_gates_b,
     )
     llm_keys = list(structured["coverage"]["llm_dimensions"])
 

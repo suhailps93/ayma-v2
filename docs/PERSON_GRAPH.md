@@ -198,9 +198,27 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
   All three 5b read switches share `PERSON_GRAPH_READS` — flip it only after the
   graph is migrated for the account under test; flag-off is today's reads
   exactly across scorer, report and sims.
-- **5c — per-user emergent gates (§4.3).** Gate set becomes fixed gates + any
-  node the user's confirmed weight pushed into the top band; like-for-like
-  levels (§5.4).
+- **5c — per-user emergent gates (§4.3). DONE.** The gate set becomes the fixed
+  gates **plus** any node a user raised to the top of their weight budget
+  (`weight ≥ _TOP_BAND_WEIGHT = 4.5` on the 0–5 tool scale, read from the
+  OVERLAY so only user-set weights count — `person_graph_source.personal_gate_ids`).
+  `score_structured` takes `personal_gates_a/b`; each fires a gate failure when
+  the pair clashes on that node (`_node_subscore < 0.5`) with data on both
+  sides — missing data never fails, exactly like the fixed gates — and caps the
+  score like any soft gate (not a score→0 dealbreaker). Deduped against the
+  fixed gates and each other. **Scope:** deterministic personal gates apply to
+  **seed** nodes only (both users share the id, so the clash is comparable); a
+  gate on a purely emergent node is a semantic match handled by the LLM report
+  layer. `matching_skill.score_pair` passes the gates only when
+  `PERSON_GRAPH_READS` is on; off → empty → today's fixed-gate behaviour exactly
+  (parity test). The top-band threshold and "a confirmed `pg_set_weight` to the
+  top band = a personal gate" semantic are the founder-verifiable knobs.
+  - *Confirmation (§4.4/§11 Q3):* the gate derives from a top-band weight, which
+    `pg_set_weight`'s contract only writes after Ayma confirms out loud — so no
+    gate is minted from an unconfirmed spike.
+  - *Like-for-like levels (§5.4):* partially satisfied today (a gate/dimension
+    scores only when both users answered the node); fuller level-banding of
+    graded dimensions is deferred.
 - **6b — guided flow by level; add the open "What I'm Looking For" node to seed
   + allow-list; reports-as-views + image nodes.**
 - **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED

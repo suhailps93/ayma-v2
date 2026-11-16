@@ -105,6 +105,34 @@ def persona_pages(
     )
 
 
+# A node whose personal weight reaches this (on the 0–5 tool scale, where 5 is
+# "crucial") counts as top-of-budget — a confirmed personal hard filter (§4.3).
+# Set here so it is the one founder-verifiable knob for the emergent-gate policy.
+_TOP_BAND_WEIGHT = 4.5
+
+
+def personal_gate_ids(db, uid: str, *, top_band: float = _TOP_BAND_WEIGHT) -> frozenset[str]:
+    """The SEED node ids ``uid`` raised to the top of their weight budget — their
+    personal emergent gates (§4.3), read from the OVERLAY (a user divergence, not
+    a seed default) so only weights the user actually set count. Restricted to
+    seed nodes, because the deterministic scorer can only compare a gate across
+    two users when they share the node id (an emergent-node gate is a semantic
+    match, handled by the LLM report layer). Empty on any read failure."""
+    try:
+        overlay = store.load_overlay(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: overlay read failed for %s", uid)
+        return frozenset()
+    out = set()
+    for nid, entry in overlay.items():
+        if not isinstance(entry, dict):
+            continue
+        w = entry.get("weight")
+        if isinstance(w, (int, float)) and w >= top_band and pg.seed_node(nid) is not None:
+            out.add(nid)
+    return frozenset(out)
+
+
 def _strip_qz_mirrors(profile: dict) -> dict:
     """The profile doc without its ``qz_*`` questionnaire mirrors, so the graph
     is the single authority for a questionnaire answer. Every other profile
