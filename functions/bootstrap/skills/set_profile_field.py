@@ -130,6 +130,42 @@ def _bind(
             normalised = _normalise(field, value)
         if normalised is None:
             return f"could not use {value!r} for {field}"
+
+        from config import CONFIG
+
+        if CONFIG.person_graph_reads:
+            import person_graph_store as store
+            from person_graph import Provenance
+
+            _FIELD_TO_NODE = {
+                "name": "legal_first_name",
+                "first_name": "legal_first_name",
+                "birthdate": "date_of_birth",
+                "gender": "gender_identity",
+                "interested_in": "target_match_genders",
+                "location": "primary_location",
+            }
+            if field in _FIELD_TO_NODE:
+                nid = _FIELD_TO_NODE[field]
+                store.set_answer(
+                    db, uid, nid, normalised,
+                    provenance=Provenance.STATED,
+                )
+            elif field in ("last_name", "phone"):
+                store.upsert_fact_node(
+                    db, uid, f"emergent.profile.{field}", str(normalised),
+                    section="identity", visibility="private",
+                    provenance="stated", label=field.replace("_", " ").title(),
+                )
+
+            try:
+                import completeness
+
+                completeness.schedule(db, uid)
+            except Exception:  # noqa: BLE001 - best-effort, never fail the write
+                pass
+            return f"set {field}"
+
         payload = {field: normalised, "updated_at": firestore.SERVER_TIMESTAMP}
         merge_paths = [field, "updated_at"]
         # Provenance (§ fact-source-of-truth, 2026-09-21): the verbatim user

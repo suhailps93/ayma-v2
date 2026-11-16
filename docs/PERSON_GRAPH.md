@@ -374,3 +374,23 @@ no staging call site). Clean.
 - **Prod wiki_pages is untouched** — prod still reads/writes it (flags OFF), so
   the flag-off wiki code paths stay. Phase 7 retired the *staging* data + the
   sync re-pollution only; nothing is code-dead until prod flips.
+
+## Structured-writer swap ✅ (Nov 16, staging)
+
+Branch `fleet/structured-writer-swap`. With `PERSON_GRAPH_READS` on, the three
+model-called tools that previously wrote `profile/main` + `qstore`
+(`users/{uid}/questionnaire`) and `wiki_pages/taste` are swapped to graph-only:
+- `record_answer`: writes to `users/{uid}/graph/main` via `person_graph_store.set_answer`.
+  Gender-identity inference refusal preserved. Taste node writes compose `emergent.taste.qloo`
+  in the graph's `taste` section (`visibility: public`). `profile/main`, `qstore`, and
+  `wiki_pages/taste` are left completely untouched.
+- `set_relationship_intent`: writes `relationship_intent` to the graph overlay
+  (`visibility: public`). `profile/main` and `qstore` are untouched.
+- `set_profile_field`: writes structured identity fields (`name`/`first_name` → `legal_first_name`,
+  `birthdate` → `date_of_birth`, `gender` → `gender_identity`, `interested_in` → `target_match_genders`,
+  `location` → `primary_location`) to graph seed nodes, and emergent facts (`last_name`, `phone`)
+  to `emergent.profile.*` nodes. 18+ adult birthdate safety check and normalization preserved.
+  `profile/main` is untouched.
+- Visibility: respects established allow-list defaults (private unless on public allow-list).
+- Flag OFF: writes to `profile/main`, `qstore`, and `wiki_pages/taste` unchanged.
+- Tests: `tests/test_structured_writer_swap.py` (9).

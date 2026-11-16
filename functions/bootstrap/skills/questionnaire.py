@@ -224,6 +224,38 @@ def _sync_taste_page(db, uid: str) -> None:
     manual ``user_edits`` override, if the user ever set one, still wins in the
     public view (``public_profile`` prefers it) and is never touched here; an
     existing visibility choice is preserved."""
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_source
+            import person_graph_store as store
+
+            graph = store.effective(db, uid)
+            tvals = person_graph_source.taste_values(graph)
+            qcol = db.collection("users").document(uid).collection("questionnaire")
+            lines: list[str] = []
+            for domain, nid, header in (("music", "taste_music", "Music"),
+                                        ("film", "taste_film", "Film"),
+                                        ("food", "taste_food", "Food")):
+                val = tvals.get(domain)
+                if not val:
+                    snap = qcol.document(nid).get()
+                    if getattr(snap, "exists", False):
+                        val = " ".join(str((snap.to_dict() or {}).get("value") or "").split())
+                if val:
+                    lines.append(f"{header}: {val}")
+            if not lines:
+                return
+            store.upsert_fact_node(
+                db, uid, "emergent.taste.qloo", "\n".join(lines),
+                section="taste", visibility="public",
+                provenance="stated", label="Taste",
+            )
+        except Exception:  # noqa: BLE001 - taste sync is best-effort
+            logger.exception("taste graph sync failed for %s", uid)
+        return
+
     qcol = (
         db.collection("users").document(uid).collection("questionnaire")
     )
@@ -236,24 +268,6 @@ def _sync_taste_page(db, uid: str) -> None:
         if value:
             lines.append(f"{header}: {value}")
     if not lines:
-        return
-    # Person-graph authoritative: the public Taste page is a public node in the
-    # graph's ``taste`` section, holding the same ``Music: … / Film: … / Food: …``
-    # body ``taste_match.parse_taste`` reads (via the now graph-backed
-    # ``public_profile._public_pages``). Off the frozen wiki; prod unchanged.
-    from config import CONFIG
-
-    if CONFIG.person_graph_reads:
-        try:
-            import person_graph_store as store
-
-            store.upsert_fact_node(
-                db, uid, "emergent.taste.qloo", "\n".join(lines),
-                section="taste", visibility="public",
-                provenance="stated", label="Taste",
-            )
-        except Exception:  # noqa: BLE001 - taste sync is best-effort
-            logger.exception("taste graph sync failed for %s", uid)
         return
     page_ref = (
         db.collection("users")
@@ -319,6 +333,63 @@ def merge_taste_mentions(db, uid: str, mentions: dict) -> list[str]:
     failures so capture never blocks a turn."""
     if not uid or not isinstance(mentions, dict):
         return []
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+        import person_graph_store as store
+        from person_graph import Provenance
+
+        try:
+            graph = store.effective(db, uid)
+            existing_taste = person_graph_source.taste_values(graph)
+            changed: list[str] = []
+            for domain, node_id in _TASTE_DOMAIN_NODES.items():
+                incoming = mentions.get(domain)
+                if not isinstance(incoming, list):
+                    continue
+                clean: list[str] = []
+                for item in incoming:
+                    name = " ".join(str(item or "").split()).strip(" .,")
+                    if (
+                        name
+                        and len(name) <= _MAX_TASTE_NAME_CHARS
+                        and len(name.split()) <= _MAX_TASTE_NAME_WORDS
+                    ):
+                        clean.append(name)
+                if not clean:
+                    continue
+                existing_val = existing_taste.get(domain) or ""
+                names = _split_taste_names(existing_val)
+                seen = {n.casefold() for n in names}
+                added = False
+                for name in clean:
+                    if len(names) >= _MAX_TASTE_NAMES:
+                        break
+                    if name.casefold() not in seen:
+                        names.append(name)
+                        seen.add(name.casefold())
+                        added = True
+                if not added:
+                    continue
+                store.set_answer(
+                    db, uid, node_id, ", ".join(names),
+                    provenance=Provenance.STATED,
+                )
+                changed.append(domain)
+            if changed:
+                _sync_taste_page(db, uid)
+                try:
+                    import completeness
+
+                    completeness.schedule(db, uid)
+                except Exception:
+                    pass
+            return changed
+        except Exception:
+            logger.exception("merge_taste_mentions graph write failed for %s", uid)
+            return []
+
     qcol = db.collection("users").document(uid).collection("questionnaire")
     changed: list[str] = []
     for domain, node_id in _TASTE_DOMAIN_NODES.items():
@@ -399,6 +470,36 @@ def _record(
     ok, normalised, mirror, err = _validate(node, value)
     if not ok:
         return err or "couldn't use that answer"
+
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_store as store
+        from person_graph import Provenance
+
+        prov = Provenance.INFERRED if src == "inferred" else Provenance.STATED
+        conf = 0.5 if src == "inferred" else 0.9
+
+        store.set_answer(
+            db, uid, node_id, normalised,
+            provenance=prov, confidence=conf,
+        )
+
+        if node_id in _TASTE_NODE_HEADERS:
+            try:
+                _sync_taste_page(db, uid)
+            except Exception:  # noqa: BLE001 - best-effort, never fail the write
+                logger.warning("taste page sync failed for %s", uid, exc_info=True)
+
+        try:
+            import completeness
+
+            completeness.schedule(db, uid)
+        except Exception:  # noqa: BLE001 - best-effort, never fail the write
+            pass
+
+        tag = " (inferred)" if src == "inferred" else ""
+        return f"recorded {node['label'].lower()}: {normalised}{tag}"
 
     doc = {
         "node_id": node_id,
