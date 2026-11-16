@@ -1,12 +1,15 @@
-"""Failure-only Cloud Run fallback for hosted voice dispatch (§1.1).
+"""Hosted voice dispatch: detection-only failure watcher (§1.1).
 
-Founder policy (2026-11-03): everything voice runs on the LiveKit-Cloud
-hosted worker (``ayma-lk``); GCP (the Cloud Run agent) serves essentially
-never — only when LiveKit Cloud itself is failing. These tests pin:
+Everything voice runs on the LiveKit-Cloud hosted worker (``ayma-lk``). The
+GCP Cloud Run workers were DELETED on 2026-11-06, so there is no worker to
+fall back to. These tests pin:
 
 * ``livekit_token.watch_hosted_dispatch`` — polls a freshly-seeded
-  livekit-routed room; only when NO agent joins within the window does it
-  flip the room's marker to ``cloudrun``, wake Cloud Run and auto-dispatch.
+  livekit-routed room; when NO agent joins within the window it LOGS the
+  failure (returns True) and leaves the room untouched — it never flips the
+  marker, wakes Cloud Run or dispatches (prod feedback RFLpFWkaaCuDC0ew1MUT:
+  a silent-voice call that left no backend trail, and flipping to the deleted
+  Cloud Run target would only have made the hosted worker decline the room).
 * ``livekit_token.resolve_voice_agent_cloud`` — the one resolution shared by
   /bootstrap and Practice Date voice.
 * The welcome room's move to explicit ``ayma-lk`` dispatch (it was the last
@@ -130,27 +133,26 @@ async def test_watch_no_fallback_when_agent_joins(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_watch_falls_back_when_agent_never_joins(monkeypatch):
+async def test_watch_flags_when_agent_never_joins(monkeypatch, caplog):
     room = _FakeRoomSvc([[_USER_KIND]], metadata=_seed_json())
     fake = _patch_lk(monkeypatch, room)
     woken = []
     monkeypatch.setattr(agent_wake, "wake_agent", lambda: woken.append(1))
 
-    fired = await livekit_token.watch_hosted_dispatch(
-        "ayma-u1-x", timeout_seconds=0.05, poll_seconds=0.01
-    )
+    with caplog.at_level("WARNING", logger="ayma.livekit_token"):
+        fired = await livekit_token.watch_hosted_dispatch(
+            "ayma-u1-x", timeout_seconds=0.05, poll_seconds=0.01
+        )
+    # The missing agent is DETECTED and logged — and the room is left exactly
+    # as routed: no marker flip, no Cloud Run wake, no dispatch (that worker is
+    # gone; flipping would only make the hosted worker decline the room).
     assert fired is True
-    # Marker flipped to cloudrun (with the forensic reason), Cloud Run woken,
-    # and exactly one automatic dispatch created for the room.
-    assert len(room.updated) == 1
-    flipped = json.loads(room.updated[0].metadata)
-    assert flipped["voice_agent_cloud"] == "cloudrun"
-    assert flipped["cloud_fallback_reason"] == "hosted_agent_missing"
-    assert woken == [1]
-    assert len(fake.agent_dispatch.created) == 1
-    req = fake.agent_dispatch.created[0]
-    assert req.room == "ayma-u1-x"
-    assert req.agent_name == ""  # automatic dispatch -> the Cloud Run worker
+    assert room.updated == []
+    assert woken == []
+    assert fake.agent_dispatch.created == []
+    assert any(
+        "did not join room ayma-u1-x" in r.message for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -169,7 +171,9 @@ async def test_watch_leaves_room_alone_when_caller_left(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_watch_never_flips_a_cloudrun_marked_room(monkeypatch):
+async def test_watch_never_flags_a_cloudrun_marked_room(monkeypatch):
+    # A cloudrun-marked room is not one the hosted worker was meant to serve,
+    # so the watcher never flags it (and, as always, never touches it).
     room = _FakeRoomSvc([[_USER_KIND]], metadata=_seed_json("cloudrun"))
     fake = _patch_lk(monkeypatch, room)
     fired = await livekit_token.watch_hosted_dispatch(
@@ -181,9 +185,10 @@ async def test_watch_never_flips_a_cloudrun_marked_room(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_watch_aborts_flip_if_agent_joins_during_the_window(monkeypatch):
-    # First poll: only the caller. Flip re-check (deadline already passed):
-    # the hosted agent has arrived after all — no double-join.
+async def test_watch_no_flag_if_agent_joins_during_the_window(monkeypatch):
+    # First poll: only the caller. Final re-check (deadline already passed):
+    # the hosted agent has arrived after all — a merely-slow agent is not
+    # falsely flagged.
     room = _FakeRoomSvc([[_USER_KIND], [_AGENT_KIND]], metadata=_seed_json())
     fake = _patch_lk(monkeypatch, room)
     fired = await livekit_token.watch_hosted_dispatch(

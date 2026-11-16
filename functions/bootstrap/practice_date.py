@@ -459,7 +459,8 @@ async def practice_voice_start(
     except Exception:  # noqa: BLE001 - seeding is best-effort, never blocks voice
         logger.exception("failed to seed practice voice room %s", room)
     if agent_cloud == "livekit":
-        # Failure-only GCP fallback (§1.1), same as /bootstrap.
+        # Detection-only watcher (§1.1), same as /bootstrap: logs if the hosted
+        # worker never joins. No Cloud Run fallback — hosted-only since Nov 6.
         background.add_task(watch_hosted_dispatch, room)
 
     return {

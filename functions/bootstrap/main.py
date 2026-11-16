@@ -1314,10 +1314,10 @@ async def bootstrap(
             logger.exception("failed to seed room context for %s", room)
 
         if agent_cloud == "livekit":
-            # Failure-only GCP fallback (§1.1): if the hosted worker never
-            # joins this room, re-route it to the Cloud Run worker in the
-            # background (livekit_token.watch_hosted_dispatch). GCP serves
-            # voice only when LiveKit Cloud itself is failing.
+            # Detection-only watcher (§1.1): if the hosted worker never joins
+            # this room, log it (livekit_token.watch_hosted_dispatch) so a
+            # silent-voice incident leaves a server-side trail. There is no
+            # Cloud Run fallback — voice has been hosted-only since 2026-11-06.
             background.add_task(watch_hosted_dispatch, room)
 
         if turns:
