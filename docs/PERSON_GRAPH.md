@@ -145,16 +145,137 @@ cosmetic per the founder; deferred.
 
 **Re-verification owed on the founder account before the switch.**
 
-## Phases 5, 6b, 7 — gated on real-account verification (design §9–§10)
+## Phases 5 / 6b — in progress (verification GREEN, Nov 15 2026)
 
-The remaining work switches live consumers and **deletes** the old stores. The
-design gates deletion on migration being verified against real accounts first
-("old documents are kept read-only until the graph path is verified, then
-deleted"). That verification is Astro's post-merge job, so these are held until
-the foundation (Phases 1–4) is confirmed against real data:
+Founder re-verified migration against real accounts (demo-test1 re-migrated
+with `--replace`: 170 nodes, 6 duplicates collapsed, 0 public-render
+violations; founder account 194 nodes / 37 public bullets, all allow-list or
+already-public; DOB as age only; the private health page has zero copies in the
+graph and zero in the public render; old stores untouched by hash). On that
+green, Phases 5/6b proceed. **Phase 7 deletion stays gated on the founder's
+post-switch re-verification.**
 
-5. Consumers switch — sims, match report, deterministic scorer, per-user
-   emergent gates; **delete old stores**.
-6b. Guided flow by level (completeness/Ayma order read levels, delete the old
-    core/deep gate); reports-as-views + image nodes.
-7. Cutover + delete — wiki write path and old report/assessment docs removed.
+The switch is a **flag-gated read boundary**: graph-backed reads/renders feed
+the existing scorer, sims and report with identical math and output; flags
+default **off**, so staging behaviour is unchanged until the founder flips and
+verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
+
+- **5a — graph tools wired into live LLM dispatch. DONE.** The five tools
+  (`pg_set_answer`, `pg_set_weight`, `pg_set_visibility`, `pg_add_node`,
+  `pg_query_nodes` — `skills/person_graph_tools.py`, design §8.2) are registered
+  in `skills/__init__` for both text and voice, gated behind
+  `PERSON_GRAPH_TOOLS` (`config.py`, default off). They write the per-user graph
+  overlay, which nothing reads in production until the reads flag flips, so
+  enabling them alone is additive/safe. Validation at the store boundary; weight
+  top-band promotion is never silent (description tells Ayma to confirm out loud
+  per §4.4/§11 Q3).
+- **5b — graph-backed reads (scorer / sims / match report), behind
+  `PERSON_GRAPH_READS` (`config.py`, default off).**
+  - *Scorer — DONE.* `matching_skill._load_user` reads a graph-derived
+    questionnaire store (`person_graph_source.load_user`) instead of the
+    `questionnaire` subcollection: `qstore = {node_id: {"value": answer}}` from
+    the graph's answered seed nodes, and the profile keeps its gate/identity
+    fields but drops the stale `qz_*` mirrors so the graph is authoritative. The
+    scorer's `_typed_value` reads the same shape, so the math is unchanged — a
+    full-node parity test proves old-read == graph-read on a migrated account.
+    Seed weights unchanged (per-user weights are 5c).
+  - *Match-report narrative — DONE.* `matching_skill.score_pair` feeds each
+    user's `person_graph_source.persona(db, uid)` (public + private story prose,
+    Ayma-only excluded) in place of `read_wiki_context`; Ayma's assessment stays
+    fed separately via its digest, exactly as before. Visibility-boundary test:
+    the report input excludes Ayma-only nodes; `include_ayma_only` folds them in
+    only for Ayma's own grounding.
+  - *Sims persona — DONE.* `practice_core` builds `PersonaContext.pages` from
+    the graph (`person_graph_source.persona_pages` → `render.persona_sections`):
+    the MATCH persona uses the target's PUBLIC nodes only (and
+    `public_profile.build` still enforces the viewer→target permission boundary
+    — block / deleted / self / AI-avatar opt-out — so the switch only swaps page
+    *content*), the SELF persona folds in every visibility including Ayma-only
+    (the documented own-agent asymmetry; the disclosure filter still guards the
+    chat). Style exemplars unchanged. Visibility test: public persona excludes
+    private + Ayma-only; self persona includes both. Sims suites green (98).
+
+  All three 5b read switches share `PERSON_GRAPH_READS` — flip it only after the
+  graph is migrated for the account under test; flag-off is today's reads
+  exactly across scorer, report and sims.
+- **5c — per-user emergent gates (§4.3). DONE.** The gate set becomes the fixed
+  gates **plus** any node a user raised to the top of their weight budget
+  (`weight ≥ _TOP_BAND_WEIGHT = 4.5` on the 0–5 tool scale, read from the
+  OVERLAY so only user-set weights count — `person_graph_source.personal_gate_ids`).
+  `score_structured` takes `personal_gates_a/b`; each fires a gate failure when
+  the pair clashes on that node (`_node_subscore < 0.5`) with data on both
+  sides — missing data never fails, exactly like the fixed gates — and caps the
+  score like any soft gate (not a score→0 dealbreaker). Deduped against the
+  fixed gates and each other. **Scope:** deterministic personal gates apply to
+  **seed** nodes only (both users share the id, so the clash is comparable); a
+  gate on a purely emergent node is a semantic match handled by the LLM report
+  layer. `matching_skill.score_pair` passes the gates only when
+  `PERSON_GRAPH_READS` is on; off → empty → today's fixed-gate behaviour exactly
+  (parity test). The top-band threshold and "a confirmed `pg_set_weight` to the
+  top band = a personal gate" semantic are the founder-verifiable knobs.
+  - *Confirmation (§4.4/§11 Q3):* the gate derives from a top-band weight, which
+    `pg_set_weight`'s contract only writes after Ayma confirms out loud — so no
+    gate is minted from an unconfirmed spike.
+  - *Like-for-like levels (§5.4):* partially satisfied today (a gate/dimension
+    scores only when both users answered the node); fuller level-banding of
+    graded dimensions is deferred.
+- **6b — guided flow by level; the open "What I'm Looking For" node; reports-as-views
+  + image nodes.**
+  - *Open "What I'm looking for" node — DONE.* Seed bumped to **v8**: a level-2
+    narrative node `looking_for_description` in the `looking_for` section
+    (`question_tree.json`), the open template field §5.2 item 5 names. Added to
+    `_PUBLIC_ALLOWLIST` (`person_graph.py`) so it defaults **public** — a
+    standard user-authored dating-profile field, founder-approved alongside the
+    identity set; the user can still make it private per node. Renders in the
+    public profile when answered; migration carries it like any seed node.
+  - *Guided flow by level — DONE.* When `PERSON_GRAPH_READS` is on, Ayma's
+    guided order (`completeness._next` / `_node_unlocked`) becomes breadth-first
+    by `level` (§5.2): `_guided_level_ceiling` is the shallowest still-open
+    level, and she works that level across ALL sections (ranked by weight within
+    the level) before any deeper one — replacing the depth-first section-core
+    walk. The routing node still leads; the **user-facing** flow is untouched
+    (`_node_open_to_user` is never level-gated — §5.3, no locks for the user).
+    Flag off = today's section walk exactly.
+  - *Image nodes (foundation) — DONE.* "Images are nodes" (design §6): an
+    `answer_type == "image"` emergent node holds the Firebase Storage link
+    (`answer`) plus Ayma's read of the image (`image_read`, new field on
+    Overlay/GraphNode), its own visibility, and typed links to the fact nodes it
+    belongs to (§2.4). `person_graph_store.add_image_node` is the validated
+    primitive; renders show the **read**, never the raw URL (public render drops
+    an Ayma-only image; Ayma's grounding sees it). Tests cover create / render /
+    visibility / links / bad input. **Follow-up (not done):** the live wiring —
+    binding a sent image's uploaded URL and Ayma minting the node mid-chat — and
+    migrating existing chat images; this lands the primitive the way the 5 write
+    tools landed before their consumer wiring.
+  - *Reports-as-views.* NEXT — appearance + web-search findings become graph
+    nodes; report screens render from them (design §6, reports settled Nov 15).
+    Two halves: (a) a findings→nodes **migration** (additive, testable, like
+    `migrate_wiki`/`migrate_assessment`); (b) a **render-from-nodes** switch of
+    the live report screens (the riskier half — flag-gate it and the founder
+    verifies the report screens before flipping). Build notes (data model as of
+    Nov 15, mapped from the report subsystems):
+    - *Web-search / deep-dive:* one persistent doc `users/{uid}/deep_dives/{report_id}`
+      (`deep_dive.read_dive`, adapter `report_adapters.deep_dive_blocks`). Each
+      **fact** = `{claim, category, source_url, source_index, confidence}`; its
+      stable id is `deep_dive.fact_id()` = `sha1("<category>|<claim>")[:12]` —
+      reuse as the node id (`emergent.webfind.<fact_id>`). Facts "carry their
+      link" (`source_url`) → a node needs a source-url field (add one, like
+      `image_read`). Also `links` / `social_handles` (`{platform,handle,url}`),
+      `summary`, `caveats`, `confidence`. Web findings default **private**.
+    - *Appearance:* `users/{uid}/appearance_reports/current` (face + body +
+      attributes) + `users/{uid}/physical_attributes/current`
+      (`record[field] = {value, source, confidence, note, photo_ids}`), per-field
+      visibility in a sibling `physical_attributes/visibility` doc. Adapter
+      `report_adapters.appearance_blocks`. Attribute node id `emergent.appearance.<field>`;
+      provenance `inferred` (photo) / `stated`; appearance is sensitive →
+      private/ayma_only. Face/body scored axes stay whole (no per-sub-item node).
+    - *Bridge:* the four stub wiki pages `face-analysis`/`body-analysis`/
+      `physical-profile`/`web-findings` (`story_common.REPORT_LINKED_PAGE_IDS`)
+      carry a `report_id`; `migrate_wiki` already skips `REPORT_LINKED_PAGE_IDS`
+      (so reports aren't double-homed). `ai_assessment` already migrates (its
+      `ayma-assessment` page → ayma_only inferred nodes).
+    - *Adapters* emit `{title, sections:[{heading, blocks}]}`; block types
+      text/fact/attribute/photo/link/stat (`report_blocks.py`). Render-from-nodes
+      must reproduce these block shapes from the migrated nodes.
+- **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
+  on founder post-switch re-verification.

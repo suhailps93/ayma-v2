@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from prompt import load_prompt_file
+from config import CONFIG
 import gemini
 import question_tree
 import token_ledger
@@ -693,14 +694,44 @@ def _section_gating(
     return ordered, meta
 
 
-def _node_unlocked(node: dict, meta: dict[str, dict]) -> bool:
-    """Reachable in **Ayma's own guided flow**: her sequential section gate is
-    on (the section is unlocked) and either the node is ``core`` or its
-    section's core is complete. The routing node is always reachable. This is
-    *Ayma's* ordering only — it drives :func:`_next` (``next_questions``), NOT
-    what the user may open; see :func:`_node_open_to_user`."""
+def _guided_level_ceiling(visible: list[dict]) -> int | None:
+    """Breadth-first-by-level guidance (person-graph §5.2): the shallowest node
+    ``level`` that still has an open node — Ayma fills that level across ALL
+    sections before opening any deeper one. ``None`` when the level-first flow is
+    off (``person_graph_reads``), so the caller keeps today's section gate. Also
+    ``None`` when nothing is open. The routing node is handled separately (always
+    reachable), so it never holds the ceiling at level 1."""
+    if not CONFIG.person_graph_reads:
+        return None
+    open_levels = [
+        int(e["node"].get("level") or 2)
+        for e in visible
+        if e["coverage"] < 1.0
+        and not e.get("profile_derivable")
+        and e["node"]["id"] != _ROUTING_ID
+    ]
+    return min(open_levels) if open_levels else None
+
+
+def _node_unlocked(
+    node: dict, meta: dict[str, dict], level_ceiling: int | None = None
+) -> bool:
+    """Reachable in **Ayma's own guided flow**. The routing node is always
+    reachable; otherwise:
+
+    - ``level_ceiling`` given (person-graph §5.2, breadth-first by level): the
+      node's ``level`` is at or below the shallowest still-open level — Ayma
+      works one level across every section before going deeper.
+    - ``level_ceiling`` ``None`` (today): her sequential section gate is on and
+      the node is ``core`` or its section's core is complete.
+
+    This is *Ayma's* ordering only — it drives :func:`_next`
+    (``next_questions``), NOT what the user may open (:func:`_node_open_to_user`,
+    which is never level-gated — §5.3, the user has no locks)."""
     if node["id"] == _ROUTING_ID:
         return True
+    if level_ceiling is not None:
+        return int(node.get("level") or 2) <= level_ceiling
     m = meta.get(node["page_type"])
     if not m:
         return True
@@ -761,15 +792,23 @@ def _next(
     meta: dict[str, dict],
     intent_set: bool,
     offered: dict[str, str] | None = None,
+    level_ceiling: int | None = None,
 ) -> list[dict]:
     open_nodes = [
         (i, e)
         for i, e in enumerate(visible)
         if e["coverage"] < 1.0
         and not e.get("profile_derivable")
-        and _node_unlocked(e["node"], meta)
+        and _node_unlocked(e["node"], meta, level_ceiling)
     ]
-    open_nodes.sort(key=lambda t: (-t[1]["node"]["weight"], t[0]))
+    if level_ceiling is not None:
+        # Breadth-first by level (§5.2): shallower levels first, then by weight
+        # within a level, then stable by original index.
+        open_nodes.sort(
+            key=lambda t: (int(t[1]["node"].get("level") or 2), -t[1]["node"]["weight"], t[0])
+        )
+    else:
+        open_nodes.sort(key=lambda t: (-t[1]["node"]["weight"], t[0]))
     # until the intent is set, the routing node leads no matter its weight
     lead = not intent_set
     routing = [
@@ -827,7 +866,8 @@ def _summarise(
 ) -> dict:
     visible = _visible(evaluated, intent_set)
     ordered, meta = _section_gating(visible, branch, intent_set)
-    unlocked = [e for e in visible if _node_unlocked(e["node"], meta)]
+    level_ceiling = _guided_level_ceiling(visible)
+    unlocked = [e for e in visible if _node_unlocked(e["node"], meta, level_ceiling)]
     return {
         # scored over the *full* intent tree — a locked section still counts
         # against the max; gating is presentation only.
@@ -843,7 +883,7 @@ def _summarise(
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),
-        "next": _next(visible, meta, intent_set, offered),
+        "next": _next(visible, meta, intent_set, offered, level_ceiling),
         "updated_at": _now_iso(),
     }
 
@@ -982,7 +1022,10 @@ async def questionnaire_view(db, uid: str) -> dict:
         "intent_set": intent_set,
         "score": _score(evaluated),
         "visible_score": _score(
-            [e for e in visible if _node_unlocked(e["node"], meta)]
+            [
+                e for e in visible
+                if _node_unlocked(e["node"], meta, _guided_level_ceiling(visible))
+            ]
         ),
         "nodes": nodes,
     }

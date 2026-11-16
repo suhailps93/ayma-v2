@@ -35,9 +35,13 @@ def test_seed_covers_every_tree_node_with_a_level():
 
 def test_seed_level_counts_match_the_mapping():
     # The original 100 map to L1=9, L2=41, L3=50 (node-level-mapping doc). The
-    # 4 Nov-15 additions are all level 2.
+    # 4 Nov-15 About-Me additions plus the 6b "What I'm looking for" open node
+    # are all level 2.
     s = seed()
-    new_ids = {"marital_status", "languages_spoken", "height", "weight"}
+    new_ids = {
+        "marital_status", "languages_spoken", "height", "weight",
+        "looking_for_description",  # seed v8 (6b) — the open looking-for node
+    }
     orig = {nid: n for nid, n in s.items() if nid not in new_ids}
     counts = {1: 0, 2: 0, 3: 0}
     for n in orig.values():
@@ -68,10 +72,11 @@ def test_common_sense_default_visibility():
     assert s["financial_security_narrative"].default_visibility is Visibility.PRIVATE
     assert s["height"].default_visibility is Visibility.PRIVATE
     assert s["weight"].default_visibility is Visibility.AYMA_ONLY
-    # the founder-approved public set (Nov 15): age/gender/location/interested-in/intent
+    # the founder-approved public set (Nov 15): age/gender/location/interested-in/
+    # intent + the open "What I'm looking for" description (seed v8, 6b)
     public_set = {
         "date_of_birth", "gender_identity", "primary_location",
-        "target_match_genders", "relationship_intent",
+        "target_match_genders", "relationship_intent", "looking_for_description",
     }
     for nid in public_set:
         assert s[nid].default_visibility is Visibility.PUBLIC, nid

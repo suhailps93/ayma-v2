@@ -108,6 +108,10 @@ def _answer_text(node: GraphNode) -> str:
     """A node's answer as display text. Narrative answers are the user's own
     words; a structured answer is labelled by its prompt. Meta/non-answer
     sentinels and empty values render nothing."""
+    # An image node (design §6) renders as Ayma's read of the image, never the
+    # raw storage URL — the url is for display, the read is the prose fact.
+    if node.answer_type == "image":
+        return (node.image_read or "").strip()
     a = node.answer
     if a is None:
         return ""
@@ -249,3 +253,36 @@ def persona_prose(
         lines = "\n".join(f"- {b['text']}" for b in bullets)
         blocks.append(f"## {question_tree.section_title(pt)}\n{lines}")
     return "\n\n".join(blocks)
+
+
+def persona_sections(
+    graph: dict[str, GraphNode],
+    *,
+    public_only: bool = False,
+    include_ayma_only: bool = False,
+) -> list[dict]:
+    """The persona as a list of ``{title, body}`` pages, one per non-empty
+    section in section order — the shape ``practice_core.PersonaContext.pages``
+    takes (its ``to_prompt_block`` renders each as ``[title]\\nbody``). Same
+    visibility keep-sets as :func:`persona_prose`:
+
+    - ``public_only`` → the viewer-visible (public) persona of another member.
+    - default → the owner's own persona (public + private).
+    - ``include_ayma_only`` → also fold in Ayma-only knowledge (the owner's own
+      agent, which may read everything about itself)."""
+    if public_only:
+        keep = {_VIS_PUBLIC}
+    elif include_ayma_only:
+        keep = {_VIS_PUBLIC, _VIS_PRIVATE, _VIS_AI_ONLY}
+    else:
+        keep = {_VIS_PUBLIC, _VIS_PRIVATE}
+
+    by_section = _sections_with_bullets(graph, keep)
+    pages: list[dict] = []
+    for pt in question_tree.ordered_page_types():
+        bullets = by_section.get(pt, [])
+        if not bullets:
+            continue
+        body = "\n".join(b["text"] for b in bullets)
+        pages.append({"title": question_tree.section_title(pt), "body": body})
+    return pages

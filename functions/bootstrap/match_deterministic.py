@@ -940,6 +940,21 @@ def is_hard_dealbreaker(gate_failures) -> bool:
     )
 
 
+# The node ids the fixed gates already own — a user's personal gate on one of
+# these never double-counts (the fixed gate already evaluates it).
+_FIXED_GATE_IDS = frozenset(spec[0] for spec in _GATE_SPECS) | {"orientation"}
+
+# Personal emergent gates (§4.3): a node a user raised to the top of their
+# weight budget (confirmed out loud, §4.4) becomes a personal hard filter. In
+# the DETERMINISTIC scorer these apply to SEED nodes only — both users share the
+# id, so the clash is comparable. A gate on a purely emergent node (different id
+# per user) is a semantic-match concern handled by the LLM report layer, not
+# here. The gate fires only when BOTH users have data and their answers clash
+# (subscore below this floor); missing data is never a failure, exactly like the
+# fixed gates. It caps the score like any soft gate (not a score→0 dealbreaker).
+_PERSONAL_GATE_CLASH = 0.5
+
+
 def _gate_cap(n_failures: int) -> float:
     """Overall-score ceiling (0..100) once ``n_failures`` gates have failed."""
     return max(10.0, 25.0 - 5.0 * (n_failures - 1))
@@ -954,6 +969,9 @@ def score_structured(
     profile_b: dict,
     questionnaire_b: dict,
     intent: str,
+    *,
+    personal_gates_a: frozenset[str] | set[str] = frozenset(),
+    personal_gates_b: frozenset[str] | set[str] = frozenset(),
 ) -> dict:
     """Deterministic structured scoring for one pair.
 
@@ -961,6 +979,12 @@ def score_structured(
     mirrors); ``questionnaire_*`` is ``{node_id: {value, source, ...}}``.
     ``intent`` selects the questionnaire branch — pass :func:`pair_intent` of
     the two users' relationship intents.
+
+    ``personal_gates_a`` / ``personal_gates_b`` (person-graph Phase 5c, §4.3):
+    seed node ids each user raised to the top of their weight budget and
+    confirmed as a personal hard filter. Each fires as a gate failure when the
+    pair clashes on that node with data on both sides. Empty (the default) is
+    today's behaviour exactly — no personal gates.
 
     Returns::
 
@@ -1014,6 +1038,43 @@ def score_structured(
                 "reason": orient_reason,
             }
         )
+
+    # --- personal emergent gates (§4.3) ---
+    # A node a user raised to the top of their weight budget (confirmed, §4.4)
+    # fires when the partner clashes on it with data on both sides. Deduped
+    # against the fixed gates and against each other (one failure per node).
+    seen_personal: set[str] = set()
+    for owner, gates in (("a", personal_gates_a), ("b", personal_gates_b)):
+        for nid in gates:
+            if (
+                nid in _FIXED_GATE_IDS
+                or nid in seen_personal
+                or nid not in tree_ids
+            ):
+                continue
+            a_val, b_val = ta.get(nid), tb.get(nid)
+            if a_val is None or b_val is None:
+                continue  # missing data is never a failure
+            node = question_tree.node(nid)
+            if node is None:
+                continue
+            if _node_subscore(node, a_val, b_val) >= _PERSONAL_GATE_CLASH:
+                continue  # answers are compatible — no clash
+            seen_personal.add(nid)
+            owner_profile = profile_a if owner == "a" else profile_b
+            who = str(owner_profile.get("name") or "").strip().split(" ")[0]
+            label = (question_tree.node(nid) or {}).get("prompt") or nid
+            gate_failures.append(
+                {
+                    "node_id": nid,
+                    "label": label,
+                    "reason": (
+                        f"{who or 'They'} marked this a personal dealbreaker and "
+                        f"the answers differ ({_fmt(a_val)} vs {_fmt(b_val)})."
+                    ),
+                    "personal": True,
+                }
+            )
 
     # --- graded dimensions ---
     per_dim: dict[str, dict] = {

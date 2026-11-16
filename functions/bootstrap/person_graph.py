@@ -186,6 +186,10 @@ class OverlayNode(BaseModel):
     level: Optional[int] = Field(default=None, ge=1)
     parent: Optional[str] = None
     answer_type: Optional[str] = None
+    # image nodes (design §6, "images are nodes"): for an ``answer_type == "image"``
+    # node, ``answer`` holds the Firebase Storage link and ``image_read`` holds
+    # Ayma's read of the image (who/what is in it). Never set on a text node.
+    image_read: Optional[str] = None
 
 
 class GraphNode(BaseModel):
@@ -216,6 +220,9 @@ class GraphNode(BaseModel):
     emergent: bool = False
     parent: Optional[str] = None
     updated_at: Optional[str] = None
+    # image nodes (design §6): ``answer`` = Firebase Storage link,
+    # ``image_read`` = Ayma's read of the image. Only on ``answer_type=="image"``.
+    image_read: Optional[str] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -232,6 +239,11 @@ _PUBLIC_ALLOWLIST = {
     "primary_location",
     "target_match_genders",
     "relationship_intent",
+    # The open "What I'm looking for" description (seed v8, 6b): a standard,
+    # user-authored dating-profile field — founder-approved public alongside the
+    # identity set. Its default visibility is public; the user can still make it
+    # private per node like any other.
+    "looking_for_description",
 }
 
 
@@ -373,6 +385,8 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.history = list(o.history)
     if o.updated_at is not None:
         base.updated_at = o.updated_at
+    if o.image_read is not None:
+        base.image_read = o.image_read
     return base
 
 

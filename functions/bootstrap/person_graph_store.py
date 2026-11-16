@@ -250,6 +250,74 @@ def add_node(
     return nid
 
 
+def add_image_node(
+    db,
+    uid: str,
+    parent_id: str,
+    image_url: str,
+    image_read: str,
+    *,
+    visibility: Visibility | str = Visibility.PRIVATE,
+    section: str | None = None,
+    links: list[dict] | None = None,
+    node_id: str | None = None,
+) -> str:
+    """Create an emergent IMAGE node under ``parent_id`` (design §6, "images are
+    nodes"): an ``answer_type == "image"`` node whose ``answer`` holds the
+    Firebase Storage ``image_url`` and ``image_read`` holds Ayma's read of the
+    image (who/what is in it). Private by default; ``links`` (typed related
+    links, §2.4) connect it to the fact nodes it belongs to — a reference, never
+    a copy. Returns the new node's id."""
+    overlay = load_overlay(db, uid)
+    parent = pg.seed_node(parent_id)
+    if parent is not None:
+        parent_section, parent_level = parent.section, parent.level
+    else:
+        pe = overlay.get(parent_id)
+        if not isinstance(pe, dict):
+            raise ValueError(f"add_image_node parent {parent_id!r} not found")
+        parent_section = pe.get("section")
+        parent_level = pe.get("level")
+        if not parent_section or not parent_level:
+            raise ValueError(f"emergent parent {parent_id!r} missing section/level")
+
+    if not (image_url or "").strip():
+        raise ValueError("add_image_node needs an image_url")
+
+    sec = section or parent_section
+    if sec not in question_tree.section_meta():
+        raise ValueError(f"unknown section {sec!r} for image node")
+
+    vis = visibility.value if isinstance(visibility, Visibility) else str(visibility)
+    if vis not in {v.value for v in Visibility}:
+        raise ValueError(f"invalid visibility {vis!r}")
+
+    nid = node_id or f"emergent.image.{secrets.token_hex(4)}"
+    if nid in overlay or pg.seed_node(nid) is not None:
+        raise ValueError(f"node id {nid!r} already exists")
+
+    e: dict[str, Any] = {
+        "prompt": (image_read or "image").strip()[:120] or "image",
+        "section": sec,
+        "level": int(parent_level) + 1,
+        "parent": parent_id,
+        "answer_type": "image",
+        "answer": image_url,
+        "image_read": image_read,
+        "state": NodeState.ANSWERED.value,
+        "visibility": vis,
+        "provenance": Provenance.STATED.value,
+        "updated_at": pg.now_iso(),
+    }
+    if links:
+        e["links"] = links
+
+    model = OverlayNode.model_validate(e)
+    overlay[nid] = model.model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return nid
+
+
 def query_nodes(
     db,
     uid: str,

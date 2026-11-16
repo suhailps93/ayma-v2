@@ -133,7 +133,20 @@ def _trust_flags(db, uid: str) -> list:
 
 def _load_user(db, uid: str) -> tuple[dict, dict]:
     """``(profile_main, questionnaire_store)`` for ``uid``. Best-effort — a
-    read failure yields an empty dict so scoring can still run on the wikis."""
+    read failure yields an empty dict so scoring can still run on the wikis.
+
+    When ``person_graph_reads`` is on (Phase 5b), the questionnaire store is
+    rebuilt from the person graph's answered nodes instead
+    (``person_graph_source.load_user``) — same shape, same values, so the
+    deterministic scorer's math is unchanged; flag off is this function's
+    original read."""
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.load_user(db, uid)
+
     base = db.collection("users").document(uid)
     profile: dict = {}
     try:
@@ -503,9 +516,21 @@ async def score_pair(
     # is handed to the model separately below as an explicitly labeled block
     # (via its compact digest), so it is kept OUT of the generic wiki dump
     # rather than riding along unlabeled inside "WIKI A".
+    from config import CONFIG
+
     _wiki_excludes = frozenset({ai_assessment.PAGE_TYPE})
-    wiki_a = read_wiki_context(db, uid_a, exclude_page_types=_wiki_excludes)
-    wiki_b = read_wiki_context(db, uid_b, exclude_page_types=_wiki_excludes)
+    if CONFIG.person_graph_reads:
+        # Graph-native narrative (Phase 5b): each user's own persona (public +
+        # private), which excludes Ayma-only nodes — the graph counterpart of
+        # the generic wiki dump that excludes Ayma's assessment page (still fed
+        # separately via its digest below).
+        import person_graph_source
+
+        wiki_a = person_graph_source.persona(db, uid_a)
+        wiki_b = person_graph_source.persona(db, uid_b)
+    else:
+        wiki_a = read_wiki_context(db, uid_a, exclude_page_types=_wiki_excludes)
+        wiki_b = read_wiki_context(db, uid_b, exclude_page_types=_wiki_excludes)
     if not wiki_a or not wiki_b:
         raise ValueError("both users need a wiki to score compatibility")
     assess_a = ai_assessment.digest(db, uid_a)
@@ -518,8 +543,19 @@ async def score_pair(
     intent = match_deterministic.pair_intent(
         _intent_of(profile_a, q_a), _intent_of(profile_b, q_b)
     )
+    # Per-user emergent gates (Phase 5c, §4.3): nodes each user raised to the top
+    # of their weight budget become personal hard filters. Only with the graph
+    # reads flag on; off → empty, today's fixed-gate behaviour exactly.
+    pg_gates_a: frozenset[str] = frozenset()
+    pg_gates_b: frozenset[str] = frozenset()
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        pg_gates_a = person_graph_source.personal_gate_ids(db, uid_a)
+        pg_gates_b = person_graph_source.personal_gate_ids(db, uid_b)
     structured = match_deterministic.score_structured(
-        profile_a, q_a, profile_b, q_b, intent
+        profile_a, q_a, profile_b, q_b, intent,
+        personal_gates_a=pg_gates_a, personal_gates_b=pg_gates_b,
     )
     llm_keys = list(structured["coverage"]["llm_dimensions"])
 
