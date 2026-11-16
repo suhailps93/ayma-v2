@@ -10,11 +10,10 @@ import '../widgets/ayma_back_button.dart';
 
 /// "Connect Instagram" — the missing UI for the already-working
 /// `/instagram/auth-url` / `/instagram/connect` / `/instagram/disconnect`
-/// endpoints (`instagram.py`, ARCHITECTURE.md §8.1/§8.6/§8.7). Mirrors
-/// `google_account_screen.dart`'s pattern closely: the same manual
+/// endpoints (`instagram.py`, ARCHITECTURE.md §8.1/§8.6/§8.7). Uses a manual
 /// redirect-capture round trip (open the OAuth URL externally, then hand the
-/// returned `code` back to the backend), the same status display, and the
-/// same real disconnect action.
+/// returned `code` back to the backend), a status display, and a real
+/// disconnect action.
 class InstagramScreen extends StatefulWidget {
   const InstagramScreen({super.key, this.service});
 

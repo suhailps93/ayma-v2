@@ -58,7 +58,6 @@
     {"route": "/s/:token", "reason": "public shared-report link opened from outside the app"},
     {"route": "/p/:token", "reason": "public page-share link opened from outside the app"},
     {"route": "/profile/usage/trial", "reason": "trial paywall needs a server-issued offer; payment pages open as the Plan page only"},
-    {"route": "/settings/google-account", "reason": "Google account linking is hidden from the v1 UI"},
     {"route": "/settings/instagram", "reason": "Instagram is V2, behind the meta_integrations flag (default off)"},
     {"route": "/settings/developer", "reason": "hidden developer panel (tap the build stamp in Settings seven times)"},
     {"route": "/settings/developer/feedback", "reason": "dev-only feedback triage view, reached from the hidden developer panel"},

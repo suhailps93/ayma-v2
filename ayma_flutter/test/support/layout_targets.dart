@@ -23,7 +23,6 @@ import 'package:ayma_flutter/screens/feedback_screen.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
-import 'package:ayma_flutter/screens/google_account_screen.dart';
 import 'package:ayma_flutter/screens/instagram_screen.dart';
 import 'package:ayma_flutter/screens/invite_friends_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
@@ -68,7 +67,6 @@ import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
-import 'package:ayma_flutter/services/google_account_service.dart';
 import 'package:ayma_flutter/services/instagram_service.dart';
 import 'package:ayma_flutter/services/match_service.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
@@ -217,8 +215,6 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(MyPublicProfileScreen(apiClient: api, myUid: 'me')),
     ProfileProposalsScreen.path: () =>
         shell(ProfileProposalsScreen(apiClient: api)),
-    GoogleAccountScreen.path: () =>
-        shell(GoogleAccountScreen(service: GoogleAccountService(api: api))),
     ConnectAgentScreen.path: () =>
         shell(ConnectAgentScreen(service: layoutMcpConnect())),
     InstagramScreen.path: () => shell(
