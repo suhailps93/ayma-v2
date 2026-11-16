@@ -14,13 +14,27 @@ that window the call is acknowledged but deferred to the session-end pass.
 
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 
 from ._base import Skill
 
+logger = logging.getLogger("ayma.remember")
+
 # Ayma may trigger a notes update at most once every this many turns.
 _MIN_TURN_GAP = 5
+
+
+def _last_user_line(turns: list | None) -> str:
+    """The user's most recent line in the window — the fallback fact when the
+    model calls ``remember`` without an explicit ``highlight``."""
+    from transcript import ROLE_USER
+
+    for t in reversed(list(turns or [])):
+        if getattr(t, "role", None) == ROLE_USER:
+            return (getattr(t, "text", "") or "").strip()
+    return ""
 
 DESCRIPTION = (
     "Fold something just learned about this person into your long-term notes "
@@ -52,6 +66,30 @@ def _bind(
     turns: list | None = None,
 ) -> Callable[..., str]:
     async def remember(highlight: str = "") -> str:
+        from config import CONFIG
+
+        # Graph-authoritative (NOTE 228): record the volunteered fact as a loose
+        # emergent node in the GRAPH (Little Extras), not the wiki — the wiki
+        # write path is gated off (§9.5), so remember writing wiki would persist
+        # NOTHING (NOTE 228 split-brain: facts landed in neither store). This
+        # keeps `remember` as the model's one-call "save a fact" affordance; the
+        # low-level pg_* tools (which need a parent_id from a query dance) stay
+        # for structured / guided writes. No turn-gap throttle — a deliberate
+        # remember call for a fact should always persist.
+        if CONFIG.person_graph_reads:
+            import person_graph_store as store
+
+            fact = (highlight or "").strip() or _last_user_line(turns)
+            if not fact:
+                return "nothing to save yet"
+            try:
+                store.add_loose_node(db, uid, fact)
+                return "noted — added to your story"
+            except Exception:  # noqa: BLE001 - never crash the turn on a write error
+                logger.exception("remember: graph write failed for %s", uid)
+                return "noted"
+
+        # --- legacy wiki path (person-graph flag off) ----------------------
         import wiki_ingest
         from transcript import ROLE_AYMA, Turn
 
