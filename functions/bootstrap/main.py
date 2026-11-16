@@ -3203,9 +3203,16 @@ async def _run_chat_followups(
 
                         url = _photo_url(image_path) or ""
                         if url:
+                            # Dedupe by CONTENT, not the upload path: the client
+                            # re-uploads the same photo to a fresh Storage path on
+                            # each send, so a path-derived id minted a duplicate
+                            # image+fact node for identical content (NOTE 235
+                            # defect 3). Hashing the bytes makes a re-send of the
+                            # same photo reuse the existing node (add_photo_fact is
+                            # idempotent on this id → no second node).
                             img_node_id = (
                                 "emergent.image."
-                                + hashlib.sha1(image_path.encode()).hexdigest()[:8]
+                                + hashlib.sha1(img_bytes).hexdigest()[:8]
                             )
                             await asyncio.to_thread(
                                 pg_store.add_photo_fact,
@@ -4458,7 +4465,13 @@ async def profiles_mini(
                 db.collection("users").document(other)
                 .collection("profile").document("main").get().to_dict()
             ) or {}
-            if _CONFIG.person_graph_reads:
+            # NOTE 235 defect 4: this gate read an undefined ``_CONFIG`` (a typo
+            # from the match-mtime helper), so it raised NameError on EVERY call
+            # → the bare except below blanked every name → the Messages list
+            # showed "Someone"/"Conversation" for everyone. Read the real CONFIG.
+            from config import CONFIG
+
+            if CONFIG.person_graph_reads:
                 import person_graph_source
                 prof = person_graph_source.hydrate_profile(db, other, prof)
         except Exception:  # noqa: BLE001

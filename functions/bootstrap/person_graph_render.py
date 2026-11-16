@@ -160,11 +160,27 @@ def _node_bullets(node: GraphNode, keep: set[str]) -> list[dict]:
     return out
 
 
+def _node_order_key(n: GraphNode, graph: dict[str, GraphNode]) -> tuple:
+    """Section-then-level-then-id order, except an image node homed under a fact
+    in the same section renders *immediately after that fact's bullet* instead of
+    sinking to the end of the section by its deeper level — "each photo sits with
+    its fact" (founder Nov 16; NOTE 235 defect 3 render). Scoped to image nodes so
+    all other ordering is unchanged."""
+    if getattr(n, "answer_type", "") == "image" and getattr(n, "parent", ""):
+        parent = graph.get(n.parent)
+        if parent is not None and parent.section == n.section:
+            return (
+                question_tree.section_order(parent.section),
+                parent.level,
+                parent.id,
+                1,
+                n.id,
+            )
+    return (question_tree.section_order(n.section), n.level, n.id, 0, n.id)
+
+
 def _ordered_nodes(graph: dict[str, GraphNode]) -> list[GraphNode]:
-    return sorted(
-        graph.values(),
-        key=lambda n: (question_tree.section_order(n.section), n.level, n.id),
-    )
+    return sorted(graph.values(), key=lambda n: _node_order_key(n, graph))
 
 
 # Report-linked content (appearance / web-findings) has its own report screens
