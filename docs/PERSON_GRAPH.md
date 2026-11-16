@@ -145,16 +145,38 @@ cosmetic per the founder; deferred.
 
 **Re-verification owed on the founder account before the switch.**
 
-## Phases 5, 6b, 7 — gated on real-account verification (design §9–§10)
+## Phases 5 / 6b — in progress (verification GREEN, Nov 15 2026)
 
-The remaining work switches live consumers and **deletes** the old stores. The
-design gates deletion on migration being verified against real accounts first
-("old documents are kept read-only until the graph path is verified, then
-deleted"). That verification is Astro's post-merge job, so these are held until
-the foundation (Phases 1–4) is confirmed against real data:
+Founder re-verified migration against real accounts (demo-test1 re-migrated
+with `--replace`: 170 nodes, 6 duplicates collapsed, 0 public-render
+violations; founder account 194 nodes / 37 public bullets, all allow-list or
+already-public; DOB as age only; the private health page has zero copies in the
+graph and zero in the public render; old stores untouched by hash). On that
+green, Phases 5/6b proceed. **Phase 7 deletion stays gated on the founder's
+post-switch re-verification.**
 
-5. Consumers switch — sims, match report, deterministic scorer, per-user
-   emergent gates; **delete old stores**.
-6b. Guided flow by level (completeness/Ayma order read levels, delete the old
-    core/deep gate); reports-as-views + image nodes.
-7. Cutover + delete — wiki write path and old report/assessment docs removed.
+The switch is a **flag-gated read boundary**: graph-backed reads/renders feed
+the existing scorer, sims and report with identical math and output; flags
+default **off**, so staging behaviour is unchanged until the founder flips and
+verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
+
+- **5a — graph tools wired into live LLM dispatch. DONE.** The five tools
+  (`pg_set_answer`, `pg_set_weight`, `pg_set_visibility`, `pg_add_node`,
+  `pg_query_nodes` — `skills/person_graph_tools.py`, design §8.2) are registered
+  in `skills/__init__` for both text and voice, gated behind
+  `PERSON_GRAPH_TOOLS` (`config.py`, default off). They write the per-user graph
+  overlay, which nothing reads in production until the reads flag flips, so
+  enabling them alone is additive/safe. Validation at the store boundary; weight
+  top-band promotion is never silent (description tells Ayma to confirm out loud
+  per §4.4/§11 Q3).
+- **5b — graph-backed reads (scorer / sims / match report).** NEXT: a read
+  adapter yields the same structured typed-values + story/public/persona renders
+  from merged graph nodes, behind `PERSON_GRAPH_READS`; flag off = today's reads
+  exactly.
+- **5c — per-user emergent gates (§4.3).** Gate set becomes fixed gates + any
+  node the user's confirmed weight pushed into the top band; like-for-like
+  levels (§5.4).
+- **6b — guided flow by level; add the open "What I'm Looking For" node to seed
+  + allow-list; reports-as-views + image nodes.**
+- **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
+  on founder post-switch re-verification.

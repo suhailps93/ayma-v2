@@ -55,6 +55,7 @@ from . import (
     fact_source,
     followup,
     guided_tour,
+    person_graph_tools,
     physical_attributes,
     propose_date_plan,
     questionnaire,
@@ -105,6 +106,18 @@ def _web_search_skills() -> list[Skill]:
     from config import CONFIG
 
     return [web_search.SKILL] if CONFIG.gemini_web_search else []
+
+
+def _person_graph_tool_skills() -> list[Skill]:
+    """The five person-graph tools (``person_graph_tools.SKILLS``, design §8.2),
+    present only when ``PERSON_GRAPH_TOOLS`` is on in this process. Off by
+    default; the tools write the per-user graph overlay, which nothing reads in
+    production until the consumer-switch reads flag flips, so enabling them
+    alone is safe/additive. Checked per call, not at import, so the flag flips
+    without a restart. Composed into both surfaces (text + voice)."""
+    from config import CONFIG
+
+    return list(person_graph_tools.SKILLS) if CONFIG.person_graph_tools else []
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,
@@ -260,7 +273,8 @@ def session_tool_declarations(
     the user shared into this chat by reference; ``analysis=True`` adds
     ``read_recent_failures``, the analysis-mode-only failure-log reader."""
     reg = (
-        list(_REGISTRY) + _recall_skills() + _web_search_skills() + _TEXT_ONLY_REGISTRY
+        list(_REGISTRY) + _recall_skills() + _web_search_skills()
+        + _person_graph_tool_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
@@ -336,7 +350,8 @@ def make_session_tool_fns(
     binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
-    for s in (_REGISTRY + _recall_skills() + _web_search_skills()):
+    for s in (_REGISTRY + _recall_skills() + _web_search_skills()
+              + _person_graph_tool_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name == "find_fact_source" and deep_dive_ctx:
@@ -769,7 +784,8 @@ def make_livekit_tools(
 
     tools = []
     for s in (
-        _REGISTRY + _recall_skills() + _web_search_skills() + _STORY_MANAGE_REGISTRY
+        _REGISTRY + _recall_skills() + _web_search_skills()
+        + _person_graph_tool_skills() + _STORY_MANAGE_REGISTRY
         + app_control.VOICE_SKILLS + guided_tour.VOICE_SKILLS
         + _ANALYSIS_REGISTRY
     ):

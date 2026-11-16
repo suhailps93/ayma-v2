@@ -274,6 +274,16 @@ class Config:
     validate): Maps grounding only existed on the direct-Google path.
     ``GEMINI_MAPS_GROUNDING``."""
 
+    person_graph_tools: bool
+    """Offer the five person-graph write/read tools (``set_answer``,
+    ``set_weight``, ``set_visibility``, ``add_node``, ``query_nodes`` —
+    ``skills/person_graph_tools.py``, design §8.2) in both text and voice.
+    **Off by default** (``PERSON_GRAPH_TOOLS=true`` to enable): the tools write
+    the per-user graph overlay (``users/{uid}/graph/main``), which nothing reads
+    in production until the consumer-switch reads flag flips, so enabling them
+    alone is safe/additive for testing. Checked per call, so the flag flips
+    without a restart."""
+
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
     **web image search** — finding photos of a person online to face-verify
@@ -1314,6 +1324,8 @@ def _load() -> Config:
         gemini_web_search=os.getenv("GEMINI_WEB_SEARCH", "false").lower()
         == "true",
         gemini_maps_grounding=os.getenv("GEMINI_MAPS_GROUNDING", "true").lower()
+        == "true",
+        person_graph_tools=os.getenv("PERSON_GRAPH_TOOLS", "false").lower()
         == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
