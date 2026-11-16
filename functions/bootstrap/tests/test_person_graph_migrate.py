@@ -276,15 +276,29 @@ def test_migrate_wiki_skips_non_canonical_pages(monkeypatch):
     assert all(e["section"] in __import__("question_tree").section_meta() for e in ov.values())
 
 
-def test_migrate_questionnaire_skips_meta_sentinels():
-    # Scout 2449 blocker 3 at the source: a "skipped"/"addressed" questionnaire
-    # value is not an answer and must not become a node.
+def test_migrate_questionnaire_dealt_with_is_covered_not_rendered():
+    # NOTE 233 defect 2: a "skipped"/"addressed"/"none" value is not content,
+    # but the question is DEALT WITH — it becomes a covered PREFER_NOT_TO_SAY
+    # node (so completeness counts it and it is never re-asked), NOT dropped (a
+    # drop re-opens it + moves the score). It still never renders in Your Story
+    # (Scout 2449 blocker 3) because a PREFER_NOT_TO_SAY node is non-rendering.
+    import person_graph as pg
+    import person_graph_render as render
+
     docs = {}
     docs.update(_q("u1", "family_of_origin_narrative", value="skipped", source="stated"))
+    docs.update(_q("u1", "pets_owned", value="None", source="stated"))
     docs.update(_q("u1", "sibling_relationship_narrative", value="Close.", source="stated"))
     ov = mig.migrate_questionnaire(FakeDb(docs), "u1")
-    assert "sibling_relationship_narrative" in ov
-    assert "family_of_origin_narrative" not in ov
+
+    assert ov["sibling_relationship_narrative"]["state"] == "answered"
+    assert ov["family_of_origin_narrative"]["state"] == "prefer_not_to_say"
+    assert "answer" not in ov["family_of_origin_narrative"]
+    assert ov["pets_owned"]["state"] == "prefer_not_to_say"
+
+    # non-rendering: the dealt-with node contributes no Your Story bullet
+    graph = pg.effective_graph(ov, intent=None)
+    assert render._is_renderable(graph["family_of_origin_narrative"]) is False
 
 
 def test_migrate_assessment_is_ayma_only_inferred(monkeypatch):

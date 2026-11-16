@@ -264,7 +264,11 @@ def _questionnaire_store(db, uid: str) -> dict[str, dict]:
             import person_graph_source
             import person_graph_store as store
 
-            return person_graph_source.structured_qstore(store.effective(db, uid))
+            # completeness_qstore (not structured_qstore): also counts the
+            # dealt-with (PREFER_NOT_TO_SAY) seed nodes as covered, so a skipped /
+            # declined / "none" question keeps its old covered status and the
+            # score doesn't drop or re-open it (NOTE 233 defect 2).
+            return person_graph_source.completeness_qstore(store.effective(db, uid))
         except Exception:  # noqa: BLE001
             logger.exception("completeness: graph questionnaire read failed for %s", uid)
             return {}

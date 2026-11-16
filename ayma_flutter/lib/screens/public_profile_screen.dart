@@ -102,9 +102,14 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
     final now = MatchActivity.instance.recalculating.value;
     final finished = _lastActive.difference(now).isNotEmpty;
     _lastActive = now;
-    if (finished) {
-      setState(() => _future = _loadProfile());
-    }
+    if (!finished) return;
+    // Defer the refresh out of the notifier callback. `recalculating` also
+    // drives a ValueListenableBuilder in this tree, so its change can fire this
+    // listener during a build/layout phase, where setState throws (NOTE 233
+    // defect 1 — the 07:54 crash at this line). Re-check mounted at frame end.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _future = _loadProfile());
+    });
   }
 
   /// The profile GET, with transparent auto-retry (founder 2026-11-01: a
