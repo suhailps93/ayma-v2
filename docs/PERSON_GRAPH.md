@@ -236,6 +236,18 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     walk. The routing node still leads; the **user-facing** flow is untouched
     (`_node_open_to_user` is never level-gated — §5.3, no locks for the user).
     Flag off = today's section walk exactly.
-  - *Reports-as-views + image nodes.* NEXT.
+  - *Image nodes (foundation) — DONE.* "Images are nodes" (design §6): an
+    `answer_type == "image"` emergent node holds the Firebase Storage link
+    (`answer`) plus Ayma's read of the image (`image_read`, new field on
+    Overlay/GraphNode), its own visibility, and typed links to the fact nodes it
+    belongs to (§2.4). `person_graph_store.add_image_node` is the validated
+    primitive; renders show the **read**, never the raw URL (public render drops
+    an Ayma-only image; Ayma's grounding sees it). Tests cover create / render /
+    visibility / links / bad input. **Follow-up (not done):** the live wiring —
+    binding a sent image's uploaded URL and Ayma minting the node mid-chat — and
+    migrating existing chat images; this lands the primitive the way the 5 write
+    tools landed before their consumer wiring.
+  - *Reports-as-views.* NEXT — appearance + web-search findings become graph
+    nodes; report screens render from them (design §6, reports settled Nov 15).
 - **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
   on founder post-switch re-verification.

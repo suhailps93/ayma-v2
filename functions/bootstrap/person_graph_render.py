@@ -108,6 +108,10 @@ def _answer_text(node: GraphNode) -> str:
     """A node's answer as display text. Narrative answers are the user's own
     words; a structured answer is labelled by its prompt. Meta/non-answer
     sentinels and empty values render nothing."""
+    # An image node (design §6) renders as Ayma's read of the image, never the
+    # raw storage URL — the url is for display, the read is the prose fact.
+    if node.answer_type == "image":
+        return (node.image_read or "").strip()
     a = node.answer
     if a is None:
         return ""
