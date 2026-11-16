@@ -169,10 +169,18 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
   enabling them alone is additive/safe. Validation at the store boundary; weight
   top-band promotion is never silent (description tells Ayma to confirm out loud
   per §4.4/§11 Q3).
-- **5b — graph-backed reads (scorer / sims / match report).** NEXT: a read
-  adapter yields the same structured typed-values + story/public/persona renders
-  from merged graph nodes, behind `PERSON_GRAPH_READS`; flag off = today's reads
-  exactly.
+- **5b — graph-backed reads (scorer / sims / match report), behind
+  `PERSON_GRAPH_READS` (`config.py`, default off).**
+  - *Scorer — DONE.* `matching_skill._load_user` reads a graph-derived
+    questionnaire store (`person_graph_source.load_user`) instead of the
+    `questionnaire` subcollection: `qstore = {node_id: {"value": answer}}` from
+    the graph's answered seed nodes, and the profile keeps its gate/identity
+    fields but drops the stale `qz_*` mirrors so the graph is authoritative. The
+    scorer's `_typed_value` reads the same shape, so the math is unchanged — a
+    full-node parity test proves old-read == graph-read on a migrated account.
+    Seed weights unchanged (per-user weights are 5c).
+  - *Sims + match-report narratives.* NEXT: persona / wiki-context reads switch
+    to `person_graph_render` output (same prose shape).
 - **5c — per-user emergent gates (§4.3).** Gate set becomes fixed gates + any
   node the user's confirmed weight pushed into the top band; like-for-like
   levels (§5.4).

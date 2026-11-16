@@ -133,7 +133,20 @@ def _trust_flags(db, uid: str) -> list:
 
 def _load_user(db, uid: str) -> tuple[dict, dict]:
     """``(profile_main, questionnaire_store)`` for ``uid``. Best-effort — a
-    read failure yields an empty dict so scoring can still run on the wikis."""
+    read failure yields an empty dict so scoring can still run on the wikis.
+
+    When ``person_graph_reads`` is on (Phase 5b), the questionnaire store is
+    rebuilt from the person graph's answered nodes instead
+    (``person_graph_source.load_user``) — same shape, same values, so the
+    deterministic scorer's math is unchanged; flag off is this function's
+    original read."""
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.load_user(db, uid)
+
     base = db.collection("users").document(uid)
     profile: dict = {}
     try:
