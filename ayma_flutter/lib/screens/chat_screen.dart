@@ -392,10 +392,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _sheetExpanded = false;
 
   /// [_pageContext] as it applies right now: set aside while [_sheetExpanded]
-  /// (founder rule: full screen drops the context; the popup keeps it), back
-  /// once the popup collapses.
-  ScreenContext? get _activePageContext =>
-      _sheetExpanded ? null : _pageContext;
+  /// or when in full-screen main chat (founder settled spec, Nov 8: half screen
+  /// with a pin shows chip and sends pinned page context; full screen drops
+  /// context and removes chip). Back once the popup collapses.
+  ScreenContext? get _activePageContext {
+    if (_sheetExpanded) return null;
+    final sheet = AymaChatSheetController.maybeOf(context);
+    if (sheet == null && widget.pageContext == null) return null;
+    return _pageContext;
+  }
 
   // --- Ask-Ayma push-to-talk voice (see [ChatScreen.askAymaContext]'s doc)
   // — a second, independent voice pipeline from [_voice]/[_store] above,
@@ -813,13 +818,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _composerFocus.requestFocus();
   }
 
-  /// A `page_context` kickoff — the Ayma tab was just switched to from
-  /// another tab (see `MainShellScreen._selectTab`). Updates the chip and
-  /// what [_send] folds into `/chat`; never touches the transcript.
+  /// A `page_context` kickoff — updates the chip and what [_send] folds into
+  /// `/chat`. An empty screen drops any existing pinned context.
   void _applyPageContext(ChatKickoff k) {
     if (!mounted) return;
     if (_pendingShared != null) return;
-    setState(() => _pageContext = k.screenContext);
+    final ctx = k.screenContext;
+    setState(() => _pageContext = (ctx == null || ctx.screen.isEmpty) ? null : ctx);
   }
 
   /// The chip's own close button — stops showing/sending this page's context

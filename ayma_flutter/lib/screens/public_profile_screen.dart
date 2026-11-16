@@ -342,6 +342,8 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
   Future<void> _closeSheetAndGoToMainChat() async {
     await dismissOpenAymaSheet(context);
     if (!mounted) return;
+    // Settled spec (founder, Nov 8): full screen drops pinned context and chip.
+    ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
     _goToTab(MainShellScreen.aymaTabIndex);
   }
 

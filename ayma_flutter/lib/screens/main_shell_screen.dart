@@ -195,9 +195,11 @@ class _MainShellScreenState extends State<MainShellScreen>
   /// it), then select the Ayma tab, which IS the real main chat screen.
   /// The tab selection is the navigation, and it runs only after the
   /// sheet has finished dismissing so the main chat is what is visible.
+  /// Settled spec (founder, Nov 8): full screen drops context and removes chip.
   Future<void> _closeSheetAndShowMainChat() async {
     await dismissOpenAymaSheet(context);
     if (!mounted) return;
+    ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
     if (_index != MainShellScreen.aymaTabIndex) {
       _selectTab(MainShellScreen.aymaTabIndex);
     }
@@ -252,12 +254,8 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   void _selectTab(int i) {
     final alreadyBuilt = _built[i] != null;
-    // Snapshot *before* the switch below overwrites it — whatever the user
-    // was just looking at (another tab, or a pushed route that popped back
-    // to one) is what the Ayma tab's context chip should name.
     final leavingToAyma = i == 0 && _index != 0;
     if (leavingToAyma) ScreenCapture.instance.refreshNow();
-    final prior = AppContext.instance.current.value;
     setState(() {
       _tab(i);
       if (_tabHistory.isEmpty || _tabHistory.last != i) _tabHistory.add(i);
@@ -272,11 +270,11 @@ class _MainShellScreenState extends State<MainShellScreen>
     // (below) won't re-enter `_selectTab` when this kickoff lands — it only
     // acts while `_index != 0`.
     if (!leavingToAyma) return;
-    if (prior.screen.isNotEmpty && prior.screen != 'ayma') {
-      final inFlight = ChatInbox.instance.pending.value;
-      if (inFlight != null && inFlight.kind != 'page_context') return;
-      ChatInbox.instance.push(ChatKickoff.pageContext(prior));
-    }
+    // Settled spec (founder, Nov 8): half screen (docked sheet) with a pin —
+    // chip shows, the whole pinned page context goes to Ayma. Full screen:
+    // context dropped AND the chip is gone. The full chat starts clean, with
+    // no pinned page attached.
+    ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
   }
 
   /// Popping a pushed route (settings, a profile, …) reveals whichever tab was
@@ -428,7 +426,13 @@ class _MainShellScreenState extends State<MainShellScreen>
 
   void _consumeTabRequest() {
     final target = TabRequest.instance.consume();
-    if (target != null && target != _index) _selectTab(target);
+    if (target != null) {
+      if (target == MainShellScreen.aymaTabIndex) {
+        // Settled spec (founder, Nov 8): full screen drops pinned context and chip.
+        ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
+      }
+      if (target != _index) _selectTab(target);
+    }
   }
 
   /// The tour started or ended — rebuild so the [PopScope] below reflects it.
