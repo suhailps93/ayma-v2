@@ -345,15 +345,19 @@ Bullet editor (embedded in the story screen, `bullet_sections_editor.dart`, driv
 | Partner preferences: age-range slider, distance, who-I-want-to-meet fields | Set partner preferences | COVERED `app_action` (`partner_age_range`, `distance_preference` handlers) / `UI` |
 | Save | Persist edits | `UI` |
 
-## 17. Skills (`/skills`) — `skills_screen.dart`
+## 17. Self-report run flows (Profile/You tab rows) — `report_run_flows.dart`
+
+The standalone "Skills" menu page (`/skills`) was deleted (founder Nov 16). Its
+two run flows now open **directly from the Profile tab's rows** — "Search the web
+about me" and "Appearance" — each of which opens the latest report when one
+exists, else the run flow below. The credits line moved off the menu; the balance
+and top-up live on Plan (`/profile/plan`).
 
 | Control | Does | Ayma |
 |---|---|---|
-| "Search the web about me": Search (+ name confirm dialog) | Run web research on the user | COVERED `deep_dive` / `rerun_web_research` |
-| Appearance: Add photo / Upload photo | Add a photo for analysis | `UI` for entry; OS picker is the user's; analysis itself COVERED `run_appearance_report` |
+| "Search the web about me" (no report yet): name-confirm dialog → Search | Run web research on the user | COVERED `deep_dive` / `rerun_web_research` |
+| Appearance (no report yet): pre-run sheet Add photo / Upload photo | Add a photo for analysis | `UI` for entry; OS picker is the user's; analysis itself COVERED `run_appearance_report` |
 | Appearance: "Run analysis" | Run the appearance report | COVERED `run_appearance_report` |
-| "View my report" | Open the appearance report | COVERED `open_screen my_appearance` |
-| Upgrade (out of credits) | Open Plan | `EXCLUDED` purchase control — open Plan only |
 
 ## 18. Reports: Appearance (`/appearance/:id`), Physical (`/physical-attributes/:id`), Web research (`/deep-dive/:id`)
 

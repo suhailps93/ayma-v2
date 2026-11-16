@@ -60,7 +60,6 @@ import '../screens/settings_screen.dart';
 import '../screens/shared_profile_link_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
-import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
 import '../screens/admin_feedback_screen.dart';
@@ -517,10 +516,6 @@ final appRouter = GoRouter(
       path: AssistantScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AssistantScreen()),
-    ),
-    GoRoute(
-      path: SkillsScreen.path,
-      builder: (context, state) => const NavBarShell(child: SkillsScreen()),
     ),
     GoRoute(
       path: BiometricConsentScreen.path,

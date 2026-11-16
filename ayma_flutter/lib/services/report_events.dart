@@ -4,8 +4,9 @@ import 'package:flutter/foundation.dart';
 /// any report view currently on screen re-fetches and shows the fresh result
 /// without the user reloading by hand.
 ///
-/// Background runs (e.g. the Appearance analysis fired from the Skills screen
-/// or the report screen's Re-run — see `skills_screen.dart`) are not tied to
+/// Background runs (e.g. the Appearance analysis fired from the Profile tab's
+/// Appearance row or the report screen's Re-run — see `report_run_flows.dart`)
+/// are not tied to
 /// the widget that started them: the user can navigate away, and the open
 /// report screen never learned the run landed (founder 2026-10-28: "it didn't
 /// create a new report" when the backend actually had). On success the runner

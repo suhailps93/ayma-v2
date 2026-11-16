@@ -148,8 +148,8 @@ def _tour_redirect(asked: str) -> str:
 def _resolve_path(db, uid: str, dest: dict) -> tuple[str, str]:
     """``(path, label)`` for a destination. ``resolve`` entries point at the
     user's own latest report when one exists, otherwise at the registry
-    ``path`` (Skills, where they can run one) — exactly what the You tab's
-    own rows do."""
+    ``path`` (the You tab, where the Search-the-web / Appearance row runs one) —
+    exactly what the You tab's own rows do."""
     kind = dest.get("resolve")
     label = dest["label"]
     try:
@@ -169,7 +169,7 @@ def _resolve_path(db, uid: str, dest: dict) -> tuple[str, str]:
     except Exception:  # noqa: BLE001 - fall back to the run screen
         logger.exception("resolving %s for %s failed", kind, uid)
     if kind:
-        return dest["path"], "Skills (no report yet — they can run one there)"
+        return dest["path"], "the You tab (no report yet — they can run one from the Search-the-web or Appearance row there)"
     return dest["path"], label
 
 

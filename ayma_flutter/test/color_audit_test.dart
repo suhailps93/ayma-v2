@@ -45,7 +45,6 @@ void main() {
   test('the previously-known strays specifically are gone', () {
     final checks = <String, String>{
       'lib/widgets/markdown_text.dart': 'Color(0xFF3A7BD5)',
-      'lib/screens/skills_screen.dart': 'Color(0x99000000)',
     };
     for (final entry in checks.entries) {
       final content = File(entry.key).readAsStringSync();
