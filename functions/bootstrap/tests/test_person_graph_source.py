@@ -171,3 +171,27 @@ def test_persona_excludes_ayma_only_by_default_report_input():
 
     public = src.persona(db, uid, public_only=True)
     assert "VISIBLE_PRIVATE_FACT" not in public  # a private note is not public
+
+
+def test_persona_pages_shape_and_visibility():
+    # sims read persona_pages -> [{title, body}] for PersonaContext.pages.
+    import person_graph_store as store
+
+    uid, docs = _fixture()
+    db = FakeDb(docs)
+    mig.migrate_user(db, uid, write=True, replace=True)
+    parent = "attachment_style"
+    priv = store.add_node(db, uid, parent, "note", answer="SELF_PRIVATE")
+    secret = store.add_node(db, uid, parent, "note", answer="SELF_AYMA_SECRET")
+    store.set_visibility(db, uid, secret, "ayma_only")
+
+    # MATCH persona: public nodes only — no private, no ayma_only
+    match_pages = src.persona_pages(db, uid, public_only=True)
+    assert all(isinstance(p["title"], str) and isinstance(p["body"], str) for p in match_pages)
+    blob = "\n".join(p["body"] for p in match_pages)
+    assert "SELF_PRIVATE" not in blob and "SELF_AYMA_SECRET" not in blob
+
+    # SELF persona: everything about the owner, ayma_only folded in
+    self_pages = src.persona_pages(db, uid, include_ayma_only=True)
+    self_blob = "\n".join(p["body"] for p in self_pages)
+    assert "SELF_PRIVATE" in self_blob and "SELF_AYMA_SECRET" in self_blob

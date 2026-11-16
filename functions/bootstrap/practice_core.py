@@ -220,14 +220,29 @@ def build_persona_context(
     if not name:
         return None
 
-    pages = [
-        {
-            "title": str(p.get("title") or p.get("page_type") or "Note"),
-            "body": str(p.get("body") or "").strip(),
-        }
-        for p in (view.get("pages") or [])
-        if str(p.get("body") or "").strip()
-    ]
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        # Graph-native MATCH persona (Phase 5b): the target's PUBLIC nodes only.
+        # public_profile.build above still enforces the viewer→target permission
+        # boundary (block / deleted / self / AI-avatar opt-out); this only swaps
+        # the page CONTENT source to the graph's public render, which is itself
+        # public-visibility-filtered — no private/ai-only node can appear.
+        import person_graph_source
+
+        pages = [
+            p for p in person_graph_source.persona_pages(db, target_uid, public_only=True)
+            if str(p.get("body") or "").strip()
+        ]
+    else:
+        pages = [
+            {
+                "title": str(p.get("title") or p.get("page_type") or "Note"),
+                "body": str(p.get("body") or "").strip(),
+            }
+            for p in (view.get("pages") or [])
+            if str(p.get("body") or "").strip()
+        ]
     photos = view.get("photos") or []
     return PersonaContext(
         target_uid=target_uid,
@@ -381,33 +396,48 @@ def build_self_persona_context(db, uid: str) -> PersonaContext | None:
         return None
 
     from matching import _age
+    from config import CONFIG
 
     pages: list[dict] = []
-    try:
-        docs = list(
-            db.collection("users")
-            .document(uid)
-            .collection("wiki_pages")
-            .stream()
-        )
-    except Exception:  # noqa: BLE001 - a missing wiki just means fewer pages
-        logger.warning("self wiki read failed for %s", uid, exc_info=True)
-        docs = []
-    for d in docs:
-        data = d.to_dict() or {}
-        if data.get("user_hidden") is True:
-            continue
-        # Effective body, NOT private-span-stripped: it's the user's own data,
-        # and the disclosure filter (not redaction) keeps it from leaking.
-        body = str(data.get("user_edits") or data.get("ai_body") or "").strip()
-        if not body:
-            continue
-        pages.append(
-            {
-                "title": str(data.get("title") or data.get("page_type") or "Note"),
-                "body": body,
-            }
-        )
+    if CONFIG.person_graph_reads:
+        # Graph-native SELF persona (Phase 5b): the user's OWN graph, every
+        # visibility including Ayma-only — the documented asymmetry (the user's
+        # own agent may read everything about itself; the disclosure filter in
+        # prompts/date_sim.md, not redaction, keeps private specifics from
+        # leaking in the simulated chat).
+        import person_graph_source
+
+        pages = [
+            p for p in person_graph_source.persona_pages(db, uid, include_ayma_only=True)
+            if str(p.get("body") or "").strip()
+        ]
+    else:
+        try:
+            docs = list(
+                db.collection("users")
+                .document(uid)
+                .collection("wiki_pages")
+                .stream()
+            )
+        except Exception:  # noqa: BLE001 - a missing wiki just means fewer pages
+            logger.warning("self wiki read failed for %s", uid, exc_info=True)
+            docs = []
+        for d in docs:
+            data = d.to_dict() or {}
+            if data.get("user_hidden") is True:
+                continue
+            # Effective body, NOT private-span-stripped: it's the user's own
+            # data, and the disclosure filter (not redaction) keeps it from
+            # leaking.
+            body = str(data.get("user_edits") or data.get("ai_body") or "").strip()
+            if not body:
+                continue
+            pages.append(
+                {
+                    "title": str(data.get("title") or data.get("page_type") or "Note"),
+                    "body": body,
+                }
+            )
     photos = [p for p in (prof.get("photos") or []) if isinstance(p, dict)]
     return PersonaContext(
         target_uid=uid,

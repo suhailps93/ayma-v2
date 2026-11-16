@@ -83,6 +83,28 @@ def persona(
     )
 
 
+def persona_pages(
+    db, uid: str, *, public_only: bool = False, include_ayma_only: bool = False
+) -> list[dict]:
+    """``uid``'s persona as ``[{title, body}]`` pages for
+    ``practice_core.PersonaContext.pages`` (sims), from the graph instead of the
+    wiki. Best-effort: ``[]`` on a failed/empty graph (the old wiki reads also
+    yielded no pages then). Visibility matches :func:`person_graph_render`:
+    ``public_only`` for a MATCH persona (public nodes only — the privacy
+    boundary is still enforced by the caller's ``public_profile.build`` gate),
+    default/``include_ayma_only`` for the owner's own SELF persona."""
+    import person_graph_render as render
+
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: persona_pages read failed for %s", uid)
+        return []
+    return render.persona_sections(
+        graph, public_only=public_only, include_ayma_only=include_ayma_only
+    )
+
+
 def _strip_qz_mirrors(profile: dict) -> dict:
     """The profile doc without its ``qz_*`` questionnaire mirrors, so the graph
     is the single authority for a questionnaire answer. Every other profile

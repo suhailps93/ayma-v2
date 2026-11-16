@@ -185,8 +185,19 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     fed separately via its digest, exactly as before. Visibility-boundary test:
     the report input excludes Ayma-only nodes; `include_ayma_only` folds them in
     only for Ayma's own grounding.
-  - *Sims persona.* NEXT: `practice_core` / `persona_snapshot` grounding reads
-    switch to the same persona render.
+  - *Sims persona — DONE.* `practice_core` builds `PersonaContext.pages` from
+    the graph (`person_graph_source.persona_pages` → `render.persona_sections`):
+    the MATCH persona uses the target's PUBLIC nodes only (and
+    `public_profile.build` still enforces the viewer→target permission boundary
+    — block / deleted / self / AI-avatar opt-out — so the switch only swaps page
+    *content*), the SELF persona folds in every visibility including Ayma-only
+    (the documented own-agent asymmetry; the disclosure filter still guards the
+    chat). Style exemplars unchanged. Visibility test: public persona excludes
+    private + Ayma-only; self persona includes both. Sims suites green (98).
+
+  All three 5b read switches share `PERSON_GRAPH_READS` — flip it only after the
+  graph is migrated for the account under test; flag-off is today's reads
+  exactly across scorer, report and sims.
 - **5c — per-user emergent gates (§4.3).** Gate set becomes fixed gates + any
   node the user's confirmed weight pushed into the top band; like-for-like
   levels (§5.4).
