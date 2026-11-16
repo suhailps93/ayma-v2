@@ -589,7 +589,18 @@ async def _run_ingest(
 
     ``capture_questionnaire=True`` only for the session-end ``/post-turn``
     flush, so the mandatory structured capture (reqs 3 & 4) runs there; the
-    mid-session photo-caption ingest leaves it off (it is not a session end)."""
+    mid-session photo-caption ingest leaves it off (it is not a session end).
+
+    When the person-graph is authoritative (``PERSON_GRAPH_READS``) the wiki
+    STOPS being written (design plan §9.5): renders read the graph, and chat-
+    learned facts land in the graph via the ``pg_*`` write tools (§8.2), not
+    ``wiki_pages``. The old wiki documents are kept read-only — deleting them is
+    Phase 7 and stays gated. Flag off: unchanged (wiki is still written)."""
+    if CONFIG.person_graph_reads:
+        logger.info(
+            "person-graph authoritative — skipping wiki ingest for %s (§9.5)", uid
+        )
+        return
     try:
         written = await wiki_ingest(
             get_db(), uid, session_id, turns,
