@@ -394,3 +394,46 @@ model-called tools that previously wrote `profile/main` + `qstore`
 - Visibility: respects established allow-list defaults (private unless on public allow-list).
 - Flag OFF: writes to `profile/main`, `qstore`, and `wiki_pages/taste` unchanged.
 - Tests: `tests/test_structured_writer_swap.py` (9).
+
+## Reports as nodes ✅ (Nov 16, staging)
+
+Branch `fleet/reports-as-nodes` (board row 328). With `PERSON_GRAPH_READS` on,
+the **appearance report** and the **web-search (deep-dive) report** render ONLY
+from graph nodes — the `appearance_reports` and `deep_dives` collections are
+deleted on staging (Astro, Nov 16; prod untouched). Founder design (Option A):
+each report's full structured payload rides ONE Ayma-only emergent node that the
+report screen rebuilds from byte-identically; the human findings keep feeding the
+per-section grounding nodes (`emergent.skill.*`) that own public/match leakage.
+Report nodes are `provenance: inferred` (unconfirmed until the user confirms in
+conversation) and `answer_type: report_doc` — non-rendering scaffolding, never a
+Your Story / public / grounding bullet.
+
+- **Store primitive:** `person_graph_store.upsert_report_node` /
+  `report_node_payload` (`answer` = the report payload dict; ayma_only).
+- **Appearance** → `emergent.appearance.report`. `appearance_storage._persist_report`
+  writes the node flag-on; `appearance_reads.get_report`/`history` and
+  `_read_report_doc` rebuild from it. The share-card photo-curation list already
+  lived on `profile/main` (unchanged). Per-photo reads + photo history are carried
+  ON the report node (`finding_history` + per-section `source_photos`); the report
+  screen renders photos from there via `report_adapters._source_photo_blocks`.
+  Standalone `emergent.image.*` nodes remain the chat-photo path (pg-add-image).
+- **Web-search** → `emergent.webfind.report.<cache_key>` in the SUBJECT's graph
+  (`uid_<subject>` for a member, `name_<slug>` self/non-member under the searcher).
+  `deep_dive._load_dive_doc`/`_store_dive_doc` route `store_dive`/`read_dive`/
+  `cached_dive`/disputes/`correct_finding`/`merge_confirmed_photo` to the node;
+  `_epoch` parses the node's ISO `created_at` so cache-age math holds.
+- **Render surfaces unchanged:** `report_adapters.appearance_blocks` /
+  `deep_dive_blocks` are byte-identical (they read through the producer's own
+  `get_report`/`read_dive`, now node-backed), so the Flutter Living-Report
+  screens need no change.
+- **External readers migrated:** `skill_runs._artifact_seen` (web-dive node
+  counts as a prior run), `fact_source._deep_dive_matches` (reads webfind node
+  payloads) and `fact_source._appearance_matches` (reads via `get_report`).
+- **Loud-fail:** `appearance_storage._report_ref` and `deep_dive._cache_ref`
+  raise `RuntimeError` when `person_graph_reads` is on — any forgotten flag-on
+  path that still touches a deleted collection fails visibly (the founder's
+  stated purpose for the hard deletion), never a silent empty read.
+- **No migration / backup** (founder override): the old data was already deleted;
+  fresh reports generate from the nodes. Flag OFF is byte-identical (prod still
+  runs the collections until its own cutover).
+- Tests: `tests/test_reports_as_nodes.py` (11) + `tests/test_reports_as_nodes_web.py` (8).
