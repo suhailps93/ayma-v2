@@ -20,8 +20,13 @@ import logging
 logger = logging.getLogger("ayma.steering")
 
 _PAGE_ID = "steering"
+_GRAPH_NODE_ID = "emergent.steering.rules"
 _MAX_RULE = 240
 _MAX_RULES = 40
+_STEERING_HEADER = (
+    "Standing instructions this user has given about how to talk to "
+    "them — follow every one:\n"
+)
 
 
 def _page(db, uid: str):
@@ -48,6 +53,32 @@ def add_rule(db, uid: str, rule: str) -> str | None:
     rule = " ".join((rule or "").split())[:_MAX_RULE]
     if not uid or not rule:
         return None
+    # Person-graph authoritative: steering rules live as one ayma_only emergent
+    # node (``emergent.steering.rules``) homed in Little Extras, not the frozen
+    # wiki. node_page_type maps the id back to "steering" so the context-diet
+    # core card still includes it.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_store as store
+
+            cur = store.node_overlay_entry(db, uid, _GRAPH_NODE_ID)
+            existing = _rules(str(cur.get("answer") or ""))
+            if any(r.lower() == rule.lower() for r in existing):
+                return rule
+            existing.append(rule)
+            existing = existing[-_MAX_RULES:]
+            body = _STEERING_HEADER + "\n".join(f"- {r}" for r in existing)
+            store.upsert_fact_node(
+                db, uid, _GRAPH_NODE_ID, body,
+                section="misc", visibility="ayma_only",
+                provenance="stated", level=1, label="steering",
+            )
+            return rule
+        except Exception:  # noqa: BLE001 - never break a chat turn
+            logger.exception("steering add_rule (graph) failed for %s", uid)
+            return None
     try:
         from firebase_admin import firestore
 
@@ -58,10 +89,7 @@ def add_rule(db, uid: str, rule: str) -> str | None:
         existing.append(rule)
         existing = existing[-_MAX_RULES:]
 
-        body = (
-            "Standing instructions this user has given about how to talk to "
-            "them — follow every one:\n" + "\n".join(f"- {r}" for r in existing)
-        )
+        body = _STEERING_HEADER + "\n".join(f"- {r}" for r in existing)
         payload = {
             "ai_body": body,
             "visibility": "ai_only",

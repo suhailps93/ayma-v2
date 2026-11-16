@@ -963,6 +963,11 @@ class SelfCheckRunner:
                 return True, "profile doc present", ""
             return False, "", "profile doc (users/{uid}/profile/main) missing"
         if name == "read:story":
+            from config import CONFIG
+
+            if CONFIG.person_graph_reads:
+                snap = user.collection("graph").document("main").get()
+                return True, f"graph readable (exists={getattr(snap, 'exists', False)})", ""
             docs = list(user.collection("wiki_pages").limit(1).stream())
             return True, f"wiki_pages readable (sample {len(docs)})", ""
         if name == "read:explore_feed":

@@ -301,5 +301,52 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     - *Adapters* emit `{title, sections:[{heading, blocks}]}`; block types
       text/fact/attribute/photo/link/stat (`report_blocks.py`). Render-from-nodes
       must reproduce these block shapes from the migrated nodes.
-- **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
-  on founder post-switch re-verification.
+## Read/write switch FINISHED (Nov 16) — staging code no longer reads or writes wiki_pages (flag-on)
+
+Branch `fleet/graph-read-write-switch`. With `PERSON_GRAPH_READS` on, every live
+reader and content writer is graph-backed; the frozen `wiki_pages` store is no
+longer touched by staging code (the prod→staging sync still restores it, handled
+at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
+
+- **Grounding read.** `wiki_query.read_wiki_context` and `recall_snippets` gate
+  centrally to `person_graph_source.grounding_context` / `recall_context` →
+  `person_graph_render.grounding_block`, migrating ALL callers at once (chat +
+  voice context in `main.py`/`async_voice`, `ai_assessment`, `completeness`,
+  `physical_attributes`, `reengagement`, `analysis_mode`, `taste_backfill`). The
+  block renders graph nodes grouped by a wiki-style **page_type**
+  (`render.node_page_type`: a node's question-tree section, or its id-prefix for
+  live-written meta — `emergent.steering.*`, `emergent.skill.*`,
+  `emergent.assess.*`), so the context-diet include/exclude filters
+  (`CORE_PAGE_TYPES`, `EXCLUDED_FROM_CHAT_CONTEXT`) keep working unchanged.
+- **Story / public reads.** `story.get_story` + `get_ai_notes` render from the
+  graph (`story_reads._graph_sections`); `public_profile.public_bullet_sections`
+  + `_public_pages`, `deep_dive.wiki_dive_context`,
+  `explore._fetch_candidates_wiki_text` all gate to the graph. Report-linked
+  nodes (appearance / web-findings) are dropped from Story/public, kept in
+  grounding/persona. Migration reads the SOURCE wiki via
+  `story_reads.get_story_wiki` / `get_ai_notes_wiki`.
+- **Content writers → graph nodes** (`person_graph_store.upsert_fact_node`,
+  stable ids): skill reports (`emergent.skill.<page_type>`), interactions,
+  steering (`emergent.steering.rules`, ayma_only), the Qloo taste page
+  (`emergent.taste.qloo`, public in the `taste` section). `ai_assessment` moved
+  to an off-wiki `assessment/main` doc (its refresh bookkeeping does not fit a
+  content node).
+- **Your Story editor write-back** (closes the NOTE 230 Phase-6b gap):
+  `profile_bullets.save_bullets`/`create_bullet_section` and the in-chat edit
+  primitives (`story_writes.save_section`/`create_section`/`set_visibility`/
+  `remove_section`, used by `report_hub`) write the graph via
+  `store.replace_section_bullets` — the editor owns a section's public/private
+  **emergent** nodes; seed answers and ayma_only/reserved nodes are never
+  touched, so a delete takes and no structured/Ayma-only fact is lost.
+- **Degraded under the graph (documented):** per-section wiki metadata badges
+  (`user_edited`, `ai_updated_since_user`, `user_hidden`), the face/body report
+  per-photo `reads` history, the `recall` `source_log` excerpts, wiki-page
+  `frontmatter`, and story version history — none have a graph equivalent yet.
+- **Still wiki (flagged, out of this chunk's scope):** `practice_seed` demo-
+  persona seeding (demo tooling, not a live user write).
+- **Tests:** `tests/test_graph_read_write_switch.py` (flag-on reads/writes +
+  wiki-untouched assertions); the flag-off suites stay green.
+
+- **7 — cutover + delete** (the wiki store itself + the prod→staging sync
+  exclusion). GATED on founder post-switch re-verification; now unblocked by the
+  read/write switch above.

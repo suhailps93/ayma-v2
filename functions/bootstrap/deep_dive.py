@@ -646,6 +646,20 @@ def wiki_dive_context(db, uid: str) -> str:
     ``prompts/deep_dive.md`` say this explicitly)."""
     if not db or not uid:
         return ""
+    from config import CONFIG
+
+    # Person-graph authoritative: pull the same identity/career/interests
+    # disambiguation facts from the graph (public nodes), not the frozen wiki.
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.grounding_context(
+            db,
+            uid,
+            max_chars=_MAX_WIKI_CONTEXT,
+            include_page_types=set(_WIKI_CONTEXT_TYPES),
+            include_ayma_only=False,
+        )
     try:
         snaps = list(
             db.collection("users").document(uid).collection("wiki_pages").stream()

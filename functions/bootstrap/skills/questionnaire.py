@@ -237,6 +237,24 @@ def _sync_taste_page(db, uid: str) -> None:
             lines.append(f"{header}: {value}")
     if not lines:
         return
+    # Person-graph authoritative: the public Taste page is a public node in the
+    # graph's ``taste`` section, holding the same ``Music: … / Film: … / Food: …``
+    # body ``taste_match.parse_taste`` reads (via the now graph-backed
+    # ``public_profile._public_pages``). Off the frozen wiki; prod unchanged.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_store as store
+
+            store.upsert_fact_node(
+                db, uid, "emergent.taste.qloo", "\n".join(lines),
+                section="taste", visibility="public",
+                provenance="stated", label="Taste",
+            )
+        except Exception:  # noqa: BLE001 - taste sync is best-effort
+            logger.exception("taste graph sync failed for %s", uid)
+        return
     page_ref = (
         db.collection("users")
         .document(uid)

@@ -161,13 +161,27 @@ def _ordered_nodes(graph: dict[str, GraphNode]) -> list[GraphNode]:
     )
 
 
+# Report-linked content (appearance / web-findings) has its own report screens
+# and is excluded from the Your Story + public-profile renders, matching the wiki
+# ``story_common.REPORT_LINKED_PAGE_IDS`` exclusion. It is NOT excluded from the
+# persona / grounding renders (Ayma and the match report still see it).
+_REPORT_PAGE_TYPES = frozenset(
+    {"web_findings", "face_analysis", "body_analysis", "appearance", "physical_profile"}
+)
+
+
 def _sections_with_bullets(
-    graph: dict[str, GraphNode], keep: set[str]
+    graph: dict[str, GraphNode],
+    keep: set[str],
+    *,
+    drop_report_nodes: bool = False,
 ) -> dict[str, list[dict]]:
     by_section: dict[str, list[dict]] = {}
     seen_texts: set[str] = set()
     for n in _ordered_nodes(graph):
         if not _is_renderable(n):
+            continue
+        if drop_report_nodes and node_page_type(n) in _REPORT_PAGE_TYPES:
             continue
         bullets = _node_bullets(n, keep)
         deduped = []
@@ -189,7 +203,7 @@ def story_sections(graph: dict[str, GraphNode]) -> dict:
     has_ai_only}], "visibilities": [public, private]}``. Every canonical section
     appears (empty ones carry an empty bullet list, for the editor's "+")."""
     keep = {_VIS_PUBLIC, _VIS_PRIVATE}
-    by_section = _sections_with_bullets(graph, keep)
+    by_section = _sections_with_bullets(graph, keep, drop_report_nodes=True)
     sections = []
     for pt in question_tree.ordered_page_types():
         bullets = by_section.get(pt, [])
@@ -215,7 +229,7 @@ def public_sections(graph: dict[str, GraphNode]) -> list[dict]:
     ``public_profile.public_bullet_sections``:
     ``[{page_id, page_type, title, bullets: [str, ...]}]``."""
     keep = {_VIS_PUBLIC}
-    by_section = _sections_with_bullets(graph, keep)
+    by_section = _sections_with_bullets(graph, keep, drop_report_nodes=True)
     out: list[dict] = []
     for pt in question_tree.ordered_page_types():
         bullets = [b["text"] for b in by_section.get(pt, [])]
@@ -261,6 +275,128 @@ def persona_prose(
         lines = "\n".join(f"- {b['text']}" for b in bullets)
         blocks.append(f"## {question_tree.section_title(pt)}\n{lines}")
     return "\n\n".join(blocks)
+
+
+# --- grounding block (the graph-native read_wiki_context) ------------------
+
+# Live-written meta content that has no question-tree section of its own is
+# homed as emergent nodes under a stable id PREFIX; this maps the prefix back to
+# the wiki page_type the context-diet filters (``context_opt.CORE_PAGE_TYPES`` /
+# ``ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT`` / ``wiki_include_types``) name, so
+# the grounding block keeps grouping and filtering by page_type exactly as the
+# wiki read did. Order matters: the most specific prefix is matched first.
+_META_PREFIX_PAGE_TYPE: tuple[tuple[str, str], ...] = (
+    ("emergent.steering.", "steering"),
+    ("emergent.interaction.", "interactions"),
+    ("emergent.assess.", "assessment"),
+    ("emergent.webfind.", "web_findings"),
+    ("emergent.appearance.", "appearance"),
+)
+
+# A live skill writer homes its compiled report at ``emergent.skill.<page_type>``;
+# the page_type is the id suffix (``physical-profile`` → the "appearance" family).
+_SKILL_PREFIX = "emergent.skill."
+_SKILL_SUFFIX_PAGE_TYPE = {"physical-profile": "appearance", "physical_profile": "appearance"}
+
+# The meta page_types, in the order they trail the canonical sections in the
+# grounding block (assessment is normally filtered out by the caller).
+_META_PAGE_TYPE_ORDER = (
+    "steering",
+    "interactions",
+    "web_findings",
+    "face_analysis",
+    "body_analysis",
+    "appearance",
+    "assessment",
+)
+
+
+def node_page_type(node: GraphNode) -> str:
+    """The wiki-style page_type a node maps to for the context-diet filters:
+    its id-prefix for live-written meta content (steering/interactions/
+    assessment/web_findings/appearance), else its question-tree section (which is
+    the canonical wiki page_type verbatim)."""
+    nid = node.id or ""
+    if nid.startswith(_SKILL_PREFIX):
+        suffix = nid[len(_SKILL_PREFIX):]
+        return _SKILL_SUFFIX_PAGE_TYPE.get(suffix, suffix)
+    for prefix, pt in _META_PREFIX_PAGE_TYPE:
+        if nid.startswith(prefix):
+            return pt
+    return node.section
+
+
+def _grounding_label(page_type: str) -> str:
+    try:
+        if page_type in question_tree.section_meta():
+            return question_tree.section_title(page_type)
+    except Exception:  # noqa: BLE001
+        pass
+    return page_type.replace("_", " ").title()
+
+
+def grounding_block(
+    graph: dict[str, GraphNode],
+    *,
+    max_chars: int,
+    include_page_types: Iterable[str] | None = None,
+    exclude_page_types: Iterable[str] | None = None,
+    include_ayma_only: bool = True,
+) -> str:
+    """The user's grounding context as one prose block — the graph-native
+    replacement for ``wiki_query.read_wiki_context``. Groups renderable nodes by
+    their wiki-style page_type (:func:`node_page_type`), honours the same
+    ``include_page_types`` / ``exclude_page_types`` filters the wiki read took,
+    and truncates at ``max_chars``. ``include_ayma_only`` folds in Ayma-only
+    nodes (the standing chat/voice grounding sees Ayma's own knowledge; a
+    viewer-facing caller passes False). Empty string when nothing renders —
+    exactly as the wiki read returned ``""`` for a user with no pages."""
+    keep = {_VIS_PUBLIC, _VIS_PRIVATE}
+    if include_ayma_only:
+        keep = keep | {_VIS_AI_ONLY}
+    inc = set(include_page_types) if include_page_types is not None else None
+    exc = set(exclude_page_types) if exclude_page_types else set()
+
+    by_pt: dict[str, list[dict]] = {}
+    seen_texts: set[str] = set()
+    for n in _ordered_nodes(graph):
+        if not _is_renderable(n):
+            continue
+        pt = node_page_type(n)
+        if inc is not None and pt not in inc:
+            continue
+        if pt in exc:
+            continue
+        deduped = []
+        for b in _node_bullets(n, keep):
+            norm = " ".join(b["text"].casefold().split())
+            if not norm or norm in seen_texts:
+                continue
+            seen_texts.add(norm)
+            deduped.append(b)
+        if deduped:
+            by_pt.setdefault(pt, []).extend(deduped)
+
+    if not by_pt:
+        return ""
+
+    ordered_pts = [pt for pt in question_tree.ordered_page_types() if pt in by_pt]
+    ordered_pts += [pt for pt in _META_PAGE_TYPE_ORDER if pt in by_pt and pt not in ordered_pts]
+
+    out = [
+        "What you already know about this person, from previous conversations "
+        "(your compiled notes — do not read them back verbatim, just talk like "
+        "someone who remembers):"
+    ]
+    used = 0
+    for pt in ordered_pts:
+        lines = "\n".join(f"- {b['text']}" for b in by_pt[pt])
+        block = f"\n### {_grounding_label(pt)}\n{lines}"
+        if used + len(block) > max_chars:
+            break
+        out.append(block)
+        used += len(block)
+    return "\n".join(out) if len(out) > 1 else ""
 
 
 def persona_sections(

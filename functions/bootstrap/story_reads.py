@@ -21,6 +21,7 @@ from story_common import (
     PRIVATE_OPEN,
     REPORT_LINKED_PAGE_IDS,
     SKILL_PAGE_IDS,
+    VIS_AI_ONLY,
     VIS_PRIVATE,
     VIS_PUBLIC,
     _section_order,
@@ -70,12 +71,75 @@ def _section_dict(
     return section
 
 
+def _graph_sections(db, uid: str, *, include_ai_only: bool) -> dict:
+    """``get_story`` / ``get_ai_notes`` rendered from the person graph (design
+    §8.1: the story is a render of the graph). Each canonical section's bullets
+    (public + private, plus ayma_only for AI notes) are composed back into a
+    body with the same ``{{private}}`` / ``{{ai_only}}`` spans the client reads,
+    so the ``/story`` surface is unchanged. Report-linked content (appearance /
+    web-findings) keeps its own report screens and is excluded, matching the
+    wiki story. The wiki-only per-section flags (``user_edited``,
+    ``ai_updated_since_user``, ``user_hidden``) degrade to their safe defaults —
+    the badge data the owner edits through ``/profile/bullets`` (the live editor)
+    is unaffected."""
+    import person_graph_render as render
+    import person_graph_store as pg_store
+    import story_bullets
+
+    graph = pg_store.effective(db, uid)
+    keep = {VIS_PUBLIC, VIS_PRIVATE}
+    if include_ai_only:
+        keep = keep | {VIS_AI_ONLY}
+    by_section = render._sections_with_bullets(graph, keep, drop_report_nodes=True)
+    sections = []
+    for page_type, bullets in by_section.items():
+        composed = story_bullets.compose_body(
+            [{"text": b["text"], "visibility": b["visibility"]} for b in bullets]
+        )
+        body = composed["body"]
+        if not body.strip():
+            continue
+        page_id = page_type.replace("_", "-")
+        visibility = composed["visibility"]
+        if not include_ai_only and visibility not in (VIS_PUBLIC, VIS_PRIVATE):
+            visibility = VIS_PRIVATE
+        sections.append(
+            {
+                "page_id": page_id,
+                "page_type": page_type,
+                "title": _section_title(page_id, page_type, ""),
+                "subtitle": _section_subtitle(page_type),
+                "body": body,
+                "edit_body": body,
+                "user_hidden": False,
+                "visibility": visibility,
+                "user_edited": False,
+                "is_skill": page_id in SKILL_PAGE_IDS,
+                "has_private_spans": PRIVATE_OPEN in body,
+                "ai_updated_since_user": False,
+                "order": _section_order(page_id, page_type),
+            }
+        )
+    sections.sort(key=lambda s: (s["order"], s["title"].lower()))
+    return {"sections": sections}
+
+
 def get_story(db, uid: str) -> dict:
     """The whole story document once. The client renders the Public preview by
     filtering locally (``visibility == 'public'`` + :func:`strip_private_spans`).
     Each section carries its own version history under
     ``wiki_pages/{id}/versions``.
     """
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        return _graph_sections(db, uid, include_ai_only=False)
+    return get_story_wiki(db, uid)
+
+
+def get_story_wiki(db, uid: str) -> dict:
+    """The raw wiki-backed story read, bypassing the graph gate — for the
+    migration, which must read the SOURCE wiki to build the graph from it."""
     sections = []
     for page_id, data in _editor_pages(db, uid):
         section = _section_dict(db, uid, page_id, data)
@@ -92,6 +156,16 @@ def get_ai_notes(db, uid: str) -> dict:
     still ``ai_only``, and any inline ``{{ai_only}}`` passage within an
     otherwise-visible page. Each section carries its own real ``visibility``
     so the client can colour-code public/private/ai_only in one list."""
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        return _graph_sections(db, uid, include_ai_only=True)
+    return get_ai_notes_wiki(db, uid)
+
+
+def get_ai_notes_wiki(db, uid: str) -> dict:
+    """The raw wiki-backed AI-notes read, bypassing the graph gate — for the
+    migration (``migrate_assessment`` reads the SOURCE ai_only passages)."""
     sections = [
         _section_dict(db, uid, page_id, data, include_ai_only=True)
         for page_id, data in _all_pages(db, uid)

@@ -144,6 +144,18 @@ def get_bullets(db, uid: str) -> dict:
     return {"sections": sections, "visibilities": [VIS_PUBLIC, VIS_PRIVATE]}
 
 
+def _page_id_to_section(page_id: str) -> str:
+    """The canonical section (question-tree page_type) for an editor ``page_id``.
+    The editor's page_id is ``page_type.replace("_", "-")`` (``story_sections``),
+    so reverse it; fall back to the raw id if that is already a section."""
+    if page_id in question_tree.section_meta():
+        return page_id
+    candidate = page_id.replace("-", "_")
+    if candidate in question_tree.section_meta():
+        return candidate
+    raise ValueError(f"unknown story section for page_id {page_id!r}")
+
+
 def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
     """Compose an edited bullet list back into an existing section's body and
     save it through the per-section save path (keeps moderation and version
@@ -156,6 +168,17 @@ def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
     Nov 15 2026). The per-section save guard then confirms nothing hidden was
     dropped."""
     visible = [b for b in (bullets or []) if b.get("visibility") != VIS_AI_ONLY]
+    # Person-graph authoritative: write the edited bullets back to the graph
+    # (closing the NOTE 230 Phase-6b gap), not the frozen wiki section page.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_store as pg_store
+
+        section = _page_id_to_section(page_id)
+        pg_store.replace_section_bullets(db, uid, section, visible)
+        vis = story_bullets.compose_body(visible)["visibility"]
+        return {"page_id": page_id, "visibility": vis}
     composed = story_bullets.compose_body(visible)
     vis = composed["visibility"]  # public or private (never ai_only now)
     body = composed["body"]
@@ -179,6 +202,14 @@ def create_bullet_section(db, uid: str, page_type: str, bullets: list[dict]) -> 
     if page_type not in question_tree.section_meta():
         raise ValueError(f"unknown section: {page_type}")
     visible = [b for b in (bullets or []) if b.get("visibility") != VIS_AI_ONLY]
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_store as pg_store
+
+        pg_store.replace_section_bullets(db, uid, page_type, visible)
+        vis = story_bullets.compose_body(visible)["visibility"]
+        return {"page_id": page_type.replace("_", "-"), "visibility": vis}
     composed = story_bullets.compose_body(visible)
     res = story.create_section(db, uid, page_type, composed["body"], composed["visibility"])
     return {"page_id": res["page_id"], "visibility": composed["visibility"]}

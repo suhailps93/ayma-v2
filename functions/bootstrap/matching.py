@@ -70,6 +70,14 @@ def _age(birthdate) -> int | None:
 
 
 def _frontmatter(db, uid: str) -> dict:
+    # Person-graph authoritative: wiki-page frontmatter has no graph equivalent
+    # (structured facts are seed-node answers the migrated scorer reads); the
+    # frozen wiki is not read here. Empty == today's behaviour for a user whose
+    # pages carry no frontmatter.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        return {}
     merged: dict = {}
     for snap in (
         db.collection("users").document(uid).collection("wiki_pages").stream()

@@ -132,6 +132,33 @@ def _public_pages(db, uid: str) -> list[dict]:
     same one-document / filtered-view model the owner edits in Your Story.
     Empty and hidden pages are dropped."""
     import story
+    from config import CONFIG
+
+    # Person-graph authoritative: render the public pages from the graph's
+    # public nodes (section bullets joined into a body), never the frozen wiki.
+    if CONFIG.person_graph_reads:
+        import person_graph_render as render
+        import person_graph_store as pg_store
+
+        try:
+            graph = pg_store.effective(db, uid)
+        except Exception:  # noqa: BLE001
+            logger.warning("public graph read failed for %s", uid, exc_info=True)
+            return []
+        out: list[dict] = []
+        for sec in render.public_sections(graph):
+            body = " ".join(sec.get("bullets") or [])
+            if not body.strip():
+                continue
+            out.append(
+                {
+                    "page_type": str(sec.get("page_type") or "misc"),
+                    "title": str(sec.get("title") or ""),
+                    "body": body,
+                }
+            )
+        out.sort(key=lambda p: (p["page_type"], p["title"]))
+        return out
 
     try:
         docs = list(
@@ -187,6 +214,21 @@ def public_bullet_sections(db, uid: str) -> list[dict]:
     removes private content too."""
     import story
     import story_bullets
+    from config import CONFIG
+
+    # Person-graph authoritative: the public bullets are a render of the graph's
+    # public nodes (``render.public_sections`` emits this exact shape), not a
+    # re-parse of the frozen wiki story bodies.
+    if CONFIG.person_graph_reads:
+        import person_graph_render as render
+        import person_graph_store as pg_store
+
+        try:
+            graph = pg_store.effective(db, uid)
+        except Exception:  # noqa: BLE001
+            logger.warning("public graph read failed for %s", uid, exc_info=True)
+            return []
+        return render.public_sections(graph)
 
     out: list[dict] = []
     seen_bullets: set[str] = set()

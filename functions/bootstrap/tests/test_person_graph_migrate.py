@@ -114,8 +114,11 @@ def test_profile_wins_over_questionnaire_for_derivable_node():
 
 def _patch_story(monkeypatch, story_sections, ai_sections):
     import story
-    monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": story_sections})
-    monkeypatch.setattr(story, "get_ai_notes", lambda db, uid: {"sections": ai_sections})
+    import story_reads
+    # Migration reads the SOURCE wiki via the raw readers (bypassing the graph
+    # gate), so the fixtures patch those.
+    monkeypatch.setattr(story_reads, "get_story_wiki", lambda db, uid: {"sections": story_sections})
+    monkeypatch.setattr(story_reads, "get_ai_notes_wiki", lambda db, uid: {"sections": ai_sections})
     monkeypatch.setattr(story, "REPORT_LINKED_PAGE_IDS", set(), raising=False)
 
 

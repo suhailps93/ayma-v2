@@ -190,6 +190,15 @@ def _questionnaire_matches(db, uid: str, qtok: set[str]) -> list[dict]:
 
 def _wiki_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     out: list[dict] = []
+    from config import CONFIG
+
+    # Person-graph authoritative: the wiki ``source_log`` (verbatim chat
+    # provenance excerpts) has no graph equivalent — graph nodes carry a
+    # provenance tag, not the quoted chat line — so this source drops out when
+    # the graph is authoritative; questionnaire + deep-dive sources still feed
+    # the recall/fact-source tool.
+    if CONFIG.person_graph_reads:
+        return out
     try:
         docs = (
             db.collection("users")
