@@ -247,3 +247,26 @@ def test_appearance_blocks_from_node_flag_on(monkeypatch):
     assert "attr:hair_color" in all_ids           # attribute finding
     assert any(i.startswith("face:") for i in all_ids)  # face axis blocks
     assert created is not None
+
+
+# --- 6. fact-source surfaces appearance corrections from the node flag-on ----
+
+
+def test_fact_source_appearance_matches_from_node_flag_on(monkeypatch):
+    """`fact_source._appearance_matches` read `appearance_reports` directly;
+    flag-on the collection is gone, so it must read the report node (regression:
+    it would otherwise silently surface no appearance-correction provenance)."""
+    _reads_on(monkeypatch, True)
+    from skills import fact_source
+
+    db = FakeDb()
+    face = dict(_FACE)
+    face["user_correction"] = "my eyes are hazel not brown"
+    store.upsert_report_node(
+        db, "u1", "emergent.appearance.report",
+        {"attributes": _ATTRS, "face": face, "body": _BODY,
+         "score": {"value": 7.5, "basis": "face"}, "created_at": "2026-11-16T00:00:00+00:00"},
+        label="appearance report",
+    )
+    matches = fact_source._appearance_matches(db, "u1", {"eyes", "hazel"})
+    assert any(m["field"] == "face" and "hazel" in m["quote"] for m in matches)
