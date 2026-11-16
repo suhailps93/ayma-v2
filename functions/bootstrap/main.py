@@ -592,15 +592,10 @@ async def _run_ingest(
     mid-session photo-caption ingest leaves it off (it is not a session end).
 
     When the person-graph is authoritative (``PERSON_GRAPH_READS``) the wiki
-    STOPS being written (design plan §9.5): renders read the graph, and chat-
-    learned facts land in the graph via the ``pg_*`` write tools (§8.2), not
-    ``wiki_pages``. The old wiki documents are kept read-only — deleting them is
-    Phase 7 and stays gated. Flag off: unchanged (wiki is still written)."""
-    if CONFIG.person_graph_reads:
-        logger.info(
-            "person-graph authoritative — skipping wiki ingest for %s (§9.5)", uid
-        )
-        return
+    STOPS being written (design plan §9.5) — but that gate now lives centrally
+    in :func:`wiki_ingest.ingest` (NOTE 227), so EVERY ingest caller is covered,
+    not just this one. Chat facts land in the graph via the ``pg_*`` write tools;
+    the old wiki documents are kept read-only (deletion is Phase 7, gated)."""
     try:
         written = await wiki_ingest(
             get_db(), uid, session_id, turns,
