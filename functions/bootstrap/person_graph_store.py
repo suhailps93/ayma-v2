@@ -68,6 +68,20 @@ def _save_overlay(db, uid: str, overlay: dict[str, dict]) -> None:
     )
 
 
+def replace_overlay(db, uid: str, overlay: dict[str, dict]) -> None:
+    """Persist ``overlay`` as the WHOLE node set, dropping any node not in it.
+
+    ``_save_overlay`` uses ``merge=True`` — on Firestore that deep-merges the
+    ``nodes`` map, so a node removed from the dict would survive. A re-migration
+    changes the node id scheme (e.g. the dedupe fix re-keyed emergent ids), so
+    stale nodes must be dropped: this writes the document whole (``merge=False``)
+    so the stored ``nodes`` becomes exactly ``overlay``."""
+    pg.validate_overlay(overlay)
+    _graph_ref(db, uid).set(
+        {"nodes": overlay, "updated_at": pg.now_iso()}, merge=False
+    )
+
+
 def effective(db, uid: str, *, intent: str | None = None) -> dict[str, pg.GraphNode]:
     """The user's effective graph (seed ⊕ overlay) for their branch. ``intent``
     defaults to the user's stored ``relationship_intent``."""

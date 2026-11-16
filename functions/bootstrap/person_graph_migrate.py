@@ -244,11 +244,22 @@ def build_overlay(db, uid: str) -> dict[str, dict]:
     return overlay
 
 
-def migrate_user(db, uid: str, *, write: bool = False) -> dict[str, dict]:
-    """Build (and optionally persist) a user's migrated overlay. Idempotent:
-    re-running overwrites by id rather than duplicating."""
+def migrate_user(
+    db, uid: str, *, write: bool = False, replace: bool = False
+) -> dict[str, dict]:
+    """Build (and optionally persist) a user's migrated overlay.
+
+    - ``write`` + ``replace=False`` (default): merge the fresh migration output
+      over whatever the overlay already holds. Idempotent within one id scheme.
+    - ``write`` + ``replace=True``: persist the fresh output as the WHOLE node
+      set, dropping any stale node (e.g. the pre-dedupe duplicate ids). Use this
+      to RE-migrate after a migration-logic change, while the graph is still
+      migration-only (pre-switch, no user edits to preserve)."""
     overlay = build_overlay(db, uid)
     pg.validate_overlay(overlay)  # never persist a malformed node
+    if write and replace:
+        store.replace_overlay(db, uid, overlay)
+        return overlay
     if write:
         existing = store.load_overlay(db, uid)
         existing.update(overlay)

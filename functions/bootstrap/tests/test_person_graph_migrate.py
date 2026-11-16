@@ -266,3 +266,34 @@ def test_migrate_user_writes_a_renderable_graph(monkeypatch):
     before = len(store.load_overlay(db, "u1"))
     mig.migrate_user(db, "u1", write=True)
     assert len(store.load_overlay(db, "u1")) == before
+
+
+def test_remigrate_replace_drops_stale_nodes(monkeypatch):
+    # Scout: an overlay written by the PRE-dedupe migration still holds stale
+    # duplicate ids. A re-migration with replace=True must drop them, leaving
+    # exactly the fresh (deduped) node set.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "interests", "page_id": "interests",
+             "visibility": "public", "body": "I love hiking."},
+        ],
+        ai_sections=[],
+    )
+    db = FakeDb({("users", "u1", "profile", "main"): {"relationship_intent": "Long-term"}})
+    # a stale node id from the old id scheme, plus a legit migrated answer
+    db.docs[("users", "u1", "graph", "main")] = {
+        "nodes": {
+            "emergent.story.interests.0.stale": {
+                "prompt": "I love hiking.", "section": "interests", "level": 2,
+                "answer": "I love hiking.", "answer_type": "narrative",
+                "visibility": "public", "provenance": "imported",
+            },
+        }
+    }
+    mig.migrate_user(db, "u1", write=True, replace=True)
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.story.interests.0.stale" not in overlay  # stale id dropped
+    # exactly one hiking node remains (the fresh deduped one)
+    hiking = [k for k, v in overlay.items() if v.get("answer") == "I love hiking."]
+    assert len(hiking) == 1
