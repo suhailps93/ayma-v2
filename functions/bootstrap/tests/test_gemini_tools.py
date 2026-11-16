@@ -446,6 +446,62 @@ def test_persistent_empty_still_raises_after_retries(monkeypatch):
         asyncio.run(gemini.generate_reply("hi", system_prompt="p"))
 
 
+def test_empty_post_tool_recovers_via_nudge(monkeypatch):
+    # demo-test1 2026-11-15 (staging WTKCv8ARQfBnygn7Y6df): after a tool call
+    # the model closed with an empty `stop`, and the identical same-call retry
+    # returned empty AGAIN — so the turn failed with "couldn't finish that" and
+    # the user had to repeat the same answer three times. The last-resort nudge
+    # (tools OFF) must recover the turn in-place instead of failing.
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("record_feedback", {"note": "ok"})]),  # tool call
+        _empty("stop"),   # empty post-tool close
+        _empty("stop"),   # identical retry — still empty
+        _resp("All set — thanks for sharing that."),  # the nudge recovers
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    out = asyncio.run(
+        gemini.generate_reply(
+            "morning coffee and sketching, studio by 10",
+            system_prompt="persona",
+            tool_declarations=[{"name": "record_feedback"}],
+            tool_fns={"record_feedback": lambda **k: "logged"},
+        )
+    )
+    assert out.text == "All set — thanks for sharing that."
+    assert len(sent) == 4
+    # The nudge call carried NO tools (it can't loop into another empty tool
+    # round) and appended an explicit plain-text ask.
+    assert sent[-1]["tools"] is None
+    assert sent[-1]["messages"][-1]["content"] == gemini._EMPTY_REPLY_NUDGE
+
+
+def test_empty_even_after_nudge_fails_once_honestly(monkeypatch):
+    # A genuinely dead response — empty on the tool-call close, the retry AND the
+    # nudge — still fails loudly, exactly once: never an infinite loop, never a
+    # silent non-response, and never a provider/model change to paper over it.
+    sent = _install_complete(monkeypatch, [
+        _resp("", [_call("record_feedback", {"note": "ok"})]),
+        _empty("stop"),
+        _empty("stop"),
+        _empty("stop"),  # the nudge is empty too
+    ])
+    monkeypatch.setattr(
+        gemini, "CONFIG", dataclasses.replace(CONFIG, gemini_web_search=False)
+    )
+    with pytest.raises(RuntimeError, match="empty response"):
+        asyncio.run(
+            gemini.generate_reply(
+                "that was great",
+                system_prompt="persona",
+                tool_declarations=[{"name": "record_feedback"}],
+                tool_fns={"record_feedback": lambda **k: "logged"},
+            )
+        )
+    assert len(sent) == 4  # tool close + retry + nudge, then the honest failure
+
+
 def test_non_empty_first_response_does_not_retry(monkeypatch):
     # A normal reply still costs exactly one call — the retry only triggers on
     # an empty response.
