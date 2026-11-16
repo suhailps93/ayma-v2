@@ -116,7 +116,10 @@ def _answer_text(node: GraphNode) -> str:
     text = _format_value(node, a)
     if not text or text.strip().lower() in _META_SENTINELS:
         return ""
-    if node.answer_type == "narrative" and node.id not in _DATE_NODE_IDS:
+    # Emergent nodes (migrated story bullets, off-script facts) carry the
+    # content itself as their prompt, so they render verbatim — never
+    # "<text>: <text>". Narrative answers likewise render verbatim.
+    if node.emergent or (node.answer_type == "narrative" and node.id not in _DATE_NODE_IDS):
         return text
     return f"{node.prompt}: {text}"
 

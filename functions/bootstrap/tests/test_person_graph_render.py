@@ -77,6 +77,35 @@ def test_structured_values_render_humanised_not_raw():
     assert not any("true" in t.lower() for t in life)
 
 
+def test_emergent_bullet_renders_verbatim_not_doubled():
+    # a migrated story bullet has prompt == answer; it must render once
+    # ("I love hiking."), never "I love hiking.: I love hiking.".
+    g = _graph(
+        {
+            "emergent.x": {
+                "prompt": "I love hiking.", "section": "interests", "level": 2,
+                "answer": "I love hiking.", "answer_type": "narrative",
+                "visibility": "public",
+            }
+        }
+    )
+    pub = render.public_sections(g)
+    interests = next(s for s in pub if s["page_type"] == "interests")
+    assert interests["bullets"] == ["I love hiking."]
+
+
+def test_no_visibility_node_defaults_private_in_render():
+    # Scout live finding: overlay nodes with NO visibility field were rendering
+    # public. A no-visibility, non-allow-list node must not appear publicly.
+    g = _graph({"childhood_hardship_narrative": {"answer": "A hard year."}})
+    pub = render.public_sections(g)
+    assert not any("hard year" in b for s in pub for b in s["bullets"])
+    # but it IS in the owner's Your Story (private shown there)
+    secs = render.story_sections(g)["sections"]
+    fam = _texts(secs, "family")
+    assert "A hard year." in fam
+
+
 def test_meta_sentinel_answers_do_not_render():
     # Scout 2449 blocker 3: "skipped" / "addressed" placeholders are not bullets.
     g = _graph(
