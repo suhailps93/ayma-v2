@@ -195,9 +195,33 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     chat). Style exemplars unchanged. Visibility test: public persona excludes
     private + Ayma-only; self persona includes both. Sims suites green (98).
 
-  All three 5b read switches share `PERSON_GRAPH_READS` — flip it only after the
+  - *Your Story read — DONE (NOTE 230).* `profile_bullets.get_bullets` (the
+    `/profile/bullets` editor read, and `profile_graph.get_graph`/`public_graph`
+    through it) reads the graph via `person_graph_source.story_bullets` →
+    `render.story_sections` when `PERSON_GRAPH_READS` is on, instead of the
+    frozen `wiki_pages` store. This was the missing read: with the flag on, wiki
+    ingest is gated (NOTE 227), so a volunteered fact lands only in the graph as
+    a loose emergent node in `misc` / Little Extras (NOTE 228) — the wiki read
+    could never surface it; the graph render does. Same output shape, so the
+    editor is unchanged; `None` on a failed graph read falls back to the wiki
+    (never a blank story). **Still the frozen-wiki path (Phase-6b story
+    write-back, not done):** editing/creating a bullet (`save_bullets` /
+    `create_bullet_section`) still writes `wiki_pages`, so an edit won't
+    round-trip into this graph-backed read until the write half lands.
+
+  All four 5b read switches share `PERSON_GRAPH_READS` — flip it only after the
   graph is migrated for the account under test; flag-off is today's reads
-  exactly across scorer, report and sims.
+  exactly across scorer, report, sims and Your Story.
+
+  **Every process that reads or writes must carry the flags (NOTE 230).** The
+  flags are env-only and set per service, so they must be set identically on
+  **both** `ayma-api-staging` (chat + HTTP) **and** the hosted LiveKit voice
+  worker `ayma-lk-stg` (`agent.py`; its session-end `post_turn.persist_and_ingest
+  → wiki_ingest.ingest` and its `remember` tool run the same gate). If the worker
+  lacks `PERSON_GRAPH_READS`, its §9.5 gate can't fire and a voice session
+  dual-writes the frozen wiki — the split-brain, reappearing on the lagging
+  surface. `scripts/deploy-agent-livekit.sh` now sets both for staging; keep the
+  two services in lock-step.
 - **5c — per-user emergent gates (§4.3). DONE.** The gate set becomes the fixed
   gates **plus** any node a user raised to the top of their weight budget
   (`weight ≥ _TOP_BAND_WEIGHT = 4.5` on the 0–5 tool scale, read from the

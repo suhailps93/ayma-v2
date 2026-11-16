@@ -105,6 +105,39 @@ def persona_pages(
     )
 
 
+def story_bullets(db, uid: str) -> dict | None:
+    """Your Story as the section→bullets model, rendered from the graph — the
+    graph-native replacement for the wiki-backed ``profile_bullets.get_bullets``
+    (design §8.1: "the story is a render of the graph"). Returns exactly the
+    same shape (``{"sections": [...], "visibilities": ["public", "private"]}``,
+    every canonical section present, Ayma-only never shown), so the editor reads
+    it with no change.
+
+    This is the read half of the story switch: with ``person_graph_reads`` on,
+    the wiki is frozen (``wiki_ingest.ingest`` is gated, NOTE 227), so a fact a
+    user volunteers now lands only in the graph — a loose emergent node homed in
+    ``misc`` / Little Extras (NOTE 228's ``remember`` → ``add_loose_node``). Read
+    from the wiki, that fact can never appear; read from the graph, it does
+    (NOTE 230). Best-effort: ``None`` on a failed read so the caller falls back
+    to the wiki (flag-off behaviour), never a blank story.
+
+    Not covered here (still the frozen-wiki path, flagged for the Phase-6b story
+    write-back): editing/creating a bullet still writes ``wiki_pages`` via
+    ``profile_bullets.save_bullets`` / ``create_bullet_section`` — those edits
+    won't round-trip into this graph-backed read until the write half lands.
+    """
+    import person_graph_render as render
+
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: story_bullets read failed for %s", uid)
+        return None
+    if not graph:
+        return None
+    return render.story_sections(graph)
+
+
 # A node whose personal weight reaches this (on the 0–5 tool scale, where 5 is
 # "crucial") counts as top-of-budget — a confirmed personal hard filter (§4.3).
 # Set here so it is the one founder-verifiable knob for the emergent-gate policy.
