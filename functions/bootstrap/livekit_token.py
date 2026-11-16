@@ -124,6 +124,7 @@ def build_room_seed(
     voice_accent: str = "",
     greeting_instructions: str = "",
     practice: bool = False,
+    practice_return: bool = False,
     persona_name: str = "",
     persona_gender: str = "",
     target_uid: str = "",
@@ -174,6 +175,12 @@ def build_room_seed(
             "tts_voice": tts_voice,
             "greeting_instructions": greeting_instructions,
             "practice": practice,
+            # This session is the debrief that opened right after a practice call
+            # ended (``/bootstrap practice_return_session_id``). The agent must not
+            # let it auto-launch another practice/sim (the practice-restart loop,
+            # prod feedback SNzmb0u51H8khJenNntn) — see ``agent`` + ``voice_actions
+            # .verdict_to_command(is_practice_return=...)``.
+            "practice_return": practice_return,
             "persona_name": persona_name,
             "persona_gender": persona_gender,
             "target_uid": target_uid,
