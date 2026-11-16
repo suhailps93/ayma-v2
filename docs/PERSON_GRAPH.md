@@ -249,5 +249,33 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     tools landed before their consumer wiring.
   - *Reports-as-views.* NEXT — appearance + web-search findings become graph
     nodes; report screens render from them (design §6, reports settled Nov 15).
+    Two halves: (a) a findings→nodes **migration** (additive, testable, like
+    `migrate_wiki`/`migrate_assessment`); (b) a **render-from-nodes** switch of
+    the live report screens (the riskier half — flag-gate it and the founder
+    verifies the report screens before flipping). Build notes (data model as of
+    Nov 15, mapped from the report subsystems):
+    - *Web-search / deep-dive:* one persistent doc `users/{uid}/deep_dives/{report_id}`
+      (`deep_dive.read_dive`, adapter `report_adapters.deep_dive_blocks`). Each
+      **fact** = `{claim, category, source_url, source_index, confidence}`; its
+      stable id is `deep_dive.fact_id()` = `sha1("<category>|<claim>")[:12]` —
+      reuse as the node id (`emergent.webfind.<fact_id>`). Facts "carry their
+      link" (`source_url`) → a node needs a source-url field (add one, like
+      `image_read`). Also `links` / `social_handles` (`{platform,handle,url}`),
+      `summary`, `caveats`, `confidence`. Web findings default **private**.
+    - *Appearance:* `users/{uid}/appearance_reports/current` (face + body +
+      attributes) + `users/{uid}/physical_attributes/current`
+      (`record[field] = {value, source, confidence, note, photo_ids}`), per-field
+      visibility in a sibling `physical_attributes/visibility` doc. Adapter
+      `report_adapters.appearance_blocks`. Attribute node id `emergent.appearance.<field>`;
+      provenance `inferred` (photo) / `stated`; appearance is sensitive →
+      private/ayma_only. Face/body scored axes stay whole (no per-sub-item node).
+    - *Bridge:* the four stub wiki pages `face-analysis`/`body-analysis`/
+      `physical-profile`/`web-findings` (`story_common.REPORT_LINKED_PAGE_IDS`)
+      carry a `report_id`; `migrate_wiki` already skips `REPORT_LINKED_PAGE_IDS`
+      (so reports aren't double-homed). `ai_assessment` already migrates (its
+      `ayma-assessment` page → ayma_only inferred nodes).
+    - *Adapters* emit `{title, sections:[{heading, blocks}]}`; block types
+      text/fact/attribute/photo/link/stat (`report_blocks.py`). Render-from-nodes
+      must reproduce these block shapes from the migrated nodes.
 - **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
   on founder post-switch re-verification.
