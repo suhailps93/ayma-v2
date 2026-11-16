@@ -176,6 +176,62 @@ def test_public_bullet_sections_deduplicates_across_sections(monkeypatch):
     assert sections[1]["bullets"] == ["Lives downtown now."]
 
 
+def test_public_bullet_sections_preserves_family_and_single_copy_bullets(monkeypatch):
+    # Regression test for NOTE 227 Leg 2 item 4: Family section with 1 private
+    # and 5 public bullets renders all 5 public bullets. A second section with
+    # duplicate bullets drops the duplicates, and single-copy bullets are never dropped.
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "wiki_pages", "family-roots")] = {
+        "visibility": "public",
+        "page_type": "family",
+        "title": "Family Roots",
+        "ai_body": (
+            "He talks frequently with his parents today. "
+            "Their warmth, resilience, and steady encouragement have shaped his worldview. "
+            "{{private}}Raised in a close-knit Mexican-American household.{{/private}} "
+            "Raised in a warm and tight-knit Mexican-American family in San Jose. "
+            "Being the first in the family to earn a master's degree was a collective celebration. "
+            "His upbringing instilled in him a deep respect for family traditions."
+        ),
+    }
+    # Duplicate page with 3 overlapping bullets — drops completely if all duplicate
+    db.docs[("users", "her", "wiki_pages", "roots-in-san-jose")] = {
+        "visibility": "public",
+        "page_type": "family",
+        "title": "Roots in San Jose",
+        "ai_body": (
+            "Raised in a warm and tight-knit Mexican-American family in San Jose. "
+            "Being the first in the family to earn a master's degree was a collective celebration. "
+            "His upbringing instilled in him a deep respect for family traditions."
+        ),
+    }
+    # Single-copy bullet in another section
+    db.docs[("users", "her", "wiki_pages", "goals")] = {
+        "visibility": "public",
+        "page_type": "goals",
+        "title": "Life Goals",
+        "ai_body": "Daniel is actively working to cultivate steady physical fitness.",
+    }
+
+    sections = pp.public_bullet_sections(db, "her")
+    assert len(sections) == 2
+    assert sections[0]["title"] == "Family Roots"
+    assert sections[0]["page_type"] == "family"
+    assert len(sections[0]["bullets"]) == 5
+    assert sections[0]["bullets"] == [
+        "He talks frequently with his parents today.",
+        "Their warmth, resilience, and steady encouragement have shaped his worldview.",
+        "Raised in a warm and tight-knit Mexican-American family in San Jose.",
+        "Being the first in the family to earn a master's degree was a collective celebration.",
+        "His upbringing instilled in him a deep respect for family traditions.",
+    ]
+    assert sections[1]["title"] == "Life Goals"
+    assert sections[1]["bullets"] == [
+        "Daniel is actively working to cultivate steady physical fitness.",
+    ]
+
+
 # --- online / presence ----------------------------------------------------
 # Real signal only (`last_active_at`, stamped on every authed request — same
 # 5-minute window `/profiles/mini` already uses for its own `online` flag),

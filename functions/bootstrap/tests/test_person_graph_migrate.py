@@ -181,6 +181,59 @@ def test_migrate_wiki_dedupes_bullets_across_different_sections(monkeypatch):
     assert node["answer"] == "Grew up in San Jose."
 
 
+def test_migrate_wiki_family_preserves_single_copies_and_collapses_duplicates(monkeypatch):
+    # Regression test for NOTE 227: Family 1 private + 5 public bullets migrates
+    # all 6 nodes; a duplicate section with 3 overlapping bullets collapses into
+    # the existing nodes without dropping the single-copy bullets.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {
+                "page_type": "family",
+                "page_id": "family-roots",
+                "visibility": "public",
+                "body": (
+                    "He talks frequently with his parents today. "
+                    "Their warmth, resilience, and steady encouragement have shaped his worldview. "
+                    "{{private}}Raised in a close-knit Mexican-American household.{{/private}} "
+                    "Raised in a warm and tight-knit Mexican-American family in San Jose. "
+                    "Being the first in the family to earn a master's degree was a collective celebration. "
+                    "His upbringing instilled in him a deep respect for family traditions."
+                ),
+            },
+            {
+                "page_type": "family",
+                "page_id": "roots-in-san-jose",
+                "visibility": "public",
+                "body": (
+                    "Raised in a warm and tight-knit Mexican-American family in San Jose. "
+                    "Being the first in the family to earn a master's degree was a collective celebration. "
+                    "His upbringing instilled in him a deep respect for family traditions."
+                ),
+            },
+            {
+                "page_type": "goals",
+                "page_id": "goals",
+                "visibility": "public",
+                "body": "Daniel is actively working to cultivate steady physical fitness.",
+            },
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    fam_nodes = [n for n in ov.values() if n["section"] == "family"]
+    assert len(fam_nodes) == 6
+    pub_fam = [n for n in fam_nodes if n["visibility"] == Visibility.PUBLIC.value]
+    priv_fam = [n for n in fam_nodes if n["visibility"] == Visibility.PRIVATE.value]
+    assert len(pub_fam) == 5
+    assert len(priv_fam) == 1
+
+    goals_nodes = [n for n in ov.values() if n["section"] == "goals"]
+    assert len(goals_nodes) == 1
+    assert goals_nodes[0]["answer"] == "Daniel is actively working to cultivate steady physical fitness."
+    assert goals_nodes[0]["visibility"] == Visibility.PUBLIC.value
+
+
 def test_duplicate_bullet_keeps_most_private_tag(monkeypatch):
     # if the same text appears public on one page and private on another, the
     # first occurrence stands and a private copy never silently becomes public.
