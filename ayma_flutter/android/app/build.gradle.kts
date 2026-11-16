@@ -93,6 +93,18 @@ android {
                 signingConfig = signingConfigs.getByName("stagingDebug")
             }
         }
+        // AOT (--profile) APK for the boot / first-launch gate (NOTE 226): an
+        // AOT build starts like release, unlike the --debug JIT build whose slow
+        // startup trips the input-dispatch watchdog on a loaded emulator. Sign it
+        // with the SAME staging keystore as the debug staging APK when --staging
+        // passes -PaymaStagingSign, so Scout can `install -r` it over the signed-in
+        // build and its SHA-1 still matches the ayma-staging OAuth client. Flutter
+        // registers the `profile` build type.
+        getByName("profile") {
+            if (project.hasProperty("aymaStagingSign")) {
+                signingConfig = signingConfigs.getByName("stagingDebug")
+            }
+        }
         release {
             // Real upload key when a keystore is available (CI / local release),
             // otherwise debug keys so `flutter run --release` still works.

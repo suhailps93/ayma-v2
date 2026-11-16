@@ -120,11 +120,13 @@ with a **different SHA-1**, so ayma-staging owns its own Android OAuth client.
   now present in `google-services.staging.json` as the `client_type: 1` entry
   whose `certificate_hash` is the staging SHA-1 (lowercased, no colons).
 - Wiring: `build.gradle.kts` defines a `stagingDebug` signing config and applies
-  it to the `debug` build type **only** when the Gradle property
+  it to the `debug` **and** `profile` build types when the Gradle property
   `aymaStagingSign` is present; `build-apk.sh --staging` passes
   `-PaymaStagingSign=true` plus the keystore path/alias/passwords. With the
   property absent (normal/prod/default `--debug`), nothing changes and the build
-  stays on the shared default debug keystore.
+  stays on the shared default debug keystore. (`profile` is staging-signed so the
+  AOT boot-gate APK below matches the debug APK's signature — Scout can
+  `adb install -r` between them without losing the signed-in fixture.)
 
 Verify a `--staging` APK is staging-signed:
 
@@ -138,6 +140,46 @@ Verify a `--staging` APK is staging-signed:
 > mismatch). To install the new staging build, first
 > `adb uninstall com.ayma.ayma_flutter`, then `adb install app-debug.apk`.
 > Uninstall wipes local app data, so the user signs in fresh.
+
+### AOT build for the boot / first-launch gate (NOTE 226)
+
+The `--debug --staging` APK is a **JIT** build: `flags=[ DEBUGGABLE ]`, a ~113 MB
+`assets/flutter_assets/kernel_blob.bin`, no AOT `libapp.so`. On first launch the
+Dart VM loads and JIT-compiles that kernel **on the main thread** (ANR traces
+across v2439/v2442/v2452: main thread in native Dart-VM code, ~160 % CPU, 27k+
+page faults), which trips the 5 s input-dispatch watchdog on a loaded emulator →
+the "Input dispatching timed out … FocusEvent" freeze Scout reported (NOTE 226).
+**This is a debug-build artifact, not an app bug** — the release build real users
+install from Play is AOT and starts in seconds.
+
+So the **boot / first-launch gate runs on an AOT build**, built per staging batch
+alongside the debug APK:
+
+    scripts/build-apk.sh --profile --staging
+
+`--profile` is AOT (real `libapp.so`, no `kernel_blob.bin`) and — because the
+`profile` build type is staging-signed too (see above) — carries the **same
+staging signature** as the debug staging APK, so Scout can `adb install -r`
+between the two without uninstalling (the signed-in fixture is preserved).
+Subscription legs STAY on the `--debug` APK: the RevenueCat TEST key only
+activates subscriptions in a debug build.
+
+Verified on a staging tip (f730a7d1 / versionCode 2453, emulator-5554):
+
+| | `--debug --staging` (JIT) | `--profile --staging` (AOT) |
+|---|---|---|
+| APK | 231 MB, `kernel_blob.bin`, DEBUGGABLE | 164 MB, `libapp.so`, no kernel_blob |
+| `am start -W` cold | **Status: timeout**, 12–21 s | **Status: ok**, ~11 s (one-time dexopt) |
+| warm | — | **Status: ok**, ~42 ms |
+| first-launch ANR | yes (FocusEvent) | **no** |
+
+Per batch (owned by the sweep that publishes the staging release): run
+`scripts/build-apk.sh --profile --staging`, then publish the AOT APK next to the
+debug one, e.g. `gh release upload staging-<tip> app-profile.apk` renamed
+`ayma-staging-<tip>-aot.apk --clobber`. Scout's per-batch brief then points the
+**boot / first-launch leg** at the `-aot` APK (`adb install -r` over the
+signed-in debug build, then first launch) and keeps **subscription / RevenueCat
+legs** on the debug APK.
 
 ## Data isolation
 
