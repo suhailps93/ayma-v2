@@ -7,6 +7,7 @@
 ///
 /// With [AutomaticKeepAliveClientMixin] on [_BulletSectionsEditorState], the editor
 /// is preserved across flings, fetching exactly once and avoiding main-thread frame stalls.
+library;
 
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';

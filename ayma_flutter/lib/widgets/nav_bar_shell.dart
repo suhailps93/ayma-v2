@@ -3,7 +3,9 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/main_shell_screen.dart';
 import '../screens/voice_call_screen.dart';
+import '../services/app_context.dart';
 import '../services/ayma_session.dart';
+import '../services/chat_inbox.dart';
 import '../services/tab_request.dart';
 import 'ask_ayma_overlay.dart';
 import 'ayma_chat_modal.dart';
@@ -125,6 +127,8 @@ class NavBarShell extends StatelessWidget {
   Future<void> _closeSheetAndGoToMainChat(BuildContext context) async {
     final router = GoRouter.of(context);
     await dismissOpenAymaSheet(context);
+    // Settled spec (founder, Nov 8): full screen drops pinned context and chip.
+    ChatInbox.instance.push(ChatKickoff.pageContext(const ScreenContext()));
     TabRequest.instance.request(MainShellScreen.aymaTabIndex);
     router.go(MainShellScreen.path);
   }

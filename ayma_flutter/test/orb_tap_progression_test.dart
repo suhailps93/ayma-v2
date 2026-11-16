@@ -139,11 +139,11 @@ void main() {
       expect(find.byKey(_popupBar), findsNothing);
       expect(isAymaSheetOpen, isFalse);
       expect(aymaSheet.isExpanded, isFalse);
-      // The one chip still shown is the MAIN chat's own page-context
-      // kickoff for the page the user left — the same chip a normal
-      // Explore -> Ayma tab switch posts (MainShellScreen._selectTab) —
-      // not the sheet's chip: the sheet itself is gone above.
-      expect(find.text(_chip), findsOneWidget);
+      // Settled spec (founder, Nov 8): half screen (docked sheet) with a pin —
+      // chip shows, the whole pinned page context goes to Ayma. Full screen:
+      // context dropped AND the chip is gone. The full chat starts clean, with
+      // no pinned page attached.
+      expect(find.text(_chip), findsNothing);
       expect(
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
         MainShellScreen.aymaTabIndex,
@@ -178,6 +178,7 @@ void main() {
         tester.widget<IndexedStack>(find.byType(IndexedStack)).index,
         MainShellScreen.aymaTabIndex,
       );
+      expect(find.text(_chip), findsNothing);
       expect(voice.startCalls, 0);
 
       await tapShellOrb(tester); // on the main chat -> voice
