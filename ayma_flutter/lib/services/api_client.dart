@@ -535,7 +535,7 @@ class ApiClient {
   ApiClient({
     http.Client? httpClient,
     FirebaseAuth? auth,
-    this.chatStreamConnectTimeout = const Duration(seconds: 30),
+    this.chatStreamConnectTimeout = const Duration(seconds: 45),
     this.chatStreamIdleTimeout = const Duration(seconds: 60),
     this.interactiveTimeout = kInteractiveTimeout,
     this.longTimeout = kLongTimeout,

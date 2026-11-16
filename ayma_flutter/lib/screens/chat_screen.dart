@@ -656,6 +656,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // connection died while the app was away): reconcile now — the server
     // very likely finished the turn while we were gone.
     if (state == AppLifecycleState.resumed && _reconcile != null) {
+      _reconcilePollAttempts = 0;
       _reconcilePendingSend();
     }
     // A grant or purchase may have landed while the app was away: let any
@@ -1084,13 +1085,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// app-resume can both trigger it.
   bool _reconciling = false;
 
+  /// Periodic foreground poll timer for pending reconciliation (NOTE 230).
+  /// Polls history while the user remains on the chat screen until the server
+  /// finishes and stores the reply.
+  Timer? _reconcileTimer;
+  int _reconcilePollAttempts = 0;
+  static const int _maxReconcilePollAttempts = 20;
+
   /// True when a send failure should be reconciled against the server rather
   /// than declared failed: the failure is connection-class (socket died,
   /// stream cut mid-read, timeout after the send began — an [ApiException]
-  /// with no HTTP status), or the app left the foreground mid-send (the OS
-  /// kills the socket; whatever error that surfaces as, the server may well
-  /// have finished the turn). A genuine 4xx/5xx *response* with the app in
-  /// the foreground the whole time is a real failure and stays one.
+  /// with no HTTP status or client-fabricated 408 timeout), or the app left the
+  /// foreground mid-send (the OS kills the socket; whatever error that surfaces
+  /// as, the server may well have finished the turn). A genuine 4xx/5xx *response*
+  /// with the app in the foreground the whole time is a real failure and stays one.
   /// User-facing copy for a send failure that was NOT reconciled: when the
   /// failure carries an HTTP status, the server answered and rejected the
   /// send, so say so — never blame a connection that was not broken
@@ -1111,8 +1119,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_backgroundedDuringSend) return true;
     if (error is SocketException || error is TimeoutException) return true;
     if (error is ApiException) {
-      return error.statusCode == null &&
-          error.message.startsWith('Network error');
+      if (error.statusCode == null &&
+          error.message.startsWith('Network error')) {
+        return true;
+      }
+      if (error.statusCode == 408 ||
+          error.message.startsWith('Request timed out')) {
+        return true;
+      }
     }
     return false;
   }
@@ -1155,16 +1169,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _beginReconcile(_PendingSendReconcile rec) {
+    _reconcileTimer?.cancel();
+    _reconcilePollAttempts = 0;
     _reconcile = rec;
     _store.updatePendingText('Reconnecting…');
     unawaited(_reconcilePendingSend());
+  }
+
+  void _scheduleReconcilePoll() {
+    _reconcileTimer?.cancel();
+    if (!mounted || _reconcile == null) return;
+    if (_reconcilePollAttempts >= _maxReconcilePollAttempts) {
+      final rec = _reconcile;
+      _reconcile = null;
+      _store.dropPending();
+      if (mounted && rec != null) {
+        AymaToast.show(
+          context,
+          'Something went wrong sending that message.',
+          kind: AymaToastKind.error,
+          action: AymaToastAction(
+            label: 'Retry',
+            onPressed: () => _send(
+              retry: rec.message,
+              clientMsgId: rec.msgId,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    _reconcilePollAttempts++;
+    _reconcileTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _reconcile != null) {
+        unawaited(_reconcilePendingSend());
+      }
+    });
   }
 
   /// Reconcile a connection-dropped send against the server instead of
   /// trusting the dead socket's error:
   ///
   /// 1. Check `/chat/history` a few times for this send's finished turn —
-  ///    matched by [ _PendingSendReconcile.msgId] (`client_msg_id`, exact),
+  ///    matched by [_PendingSendReconcile.msgId] (`client_msg_id`, exact),
   ///    with the pre-send known-replies set as the fallback for a server
   ///    that predates ids. Found → adopt the server's turn, done.
   /// 2. Not landed: re-ask over plain `/chat` with the SAME `client_msg_id`.
@@ -1173,14 +1220,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   ///    it genuinely never received is run (which is exactly a retry). This
   ///    is what lets a 10–30s image turn ride out the disconnect: the re-ask
   ///    simply waits on the original run.
-  /// 3. Still cut off → stay in the waiting state (the next app resume
-  ///    retries). A real server-side failure → drop the pending turn and
-  ///    show the usual Retry — which reuses the same id, so even a
-  ///    misjudged retry can never double-send a turn that DID land.
+  /// 3. Still cut off → stay in the waiting state (periodic foreground polling
+  ///    checks history, and app resume retries). A real server-side failure →
+  ///    drop the pending turn and show the usual Retry — which reuses the same id,
+  ///    so even a misjudged retry can never double-send a turn that DID land.
   Future<void> _reconcilePendingSend() async {
     final rec = _reconcile;
     if (rec == null || _reconciling) return;
     _reconciling = true;
+    _reconcileTimer?.cancel();
     try {
       for (var i = 0; i < 3 && mounted; i++) {
         if (i > 0) {
@@ -1200,6 +1248,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           if (landed.role.isNotEmpty) {
             if (!mounted || !identical(_reconcile, rec)) return;
             _reconcile = null;
+            _reconcileTimer?.cancel();
             _store.resolvePending(
               landed.text,
               tools: landed.tools,
@@ -1215,9 +1264,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
       }
       if (!mounted || !identical(_reconcile, rec)) return;
+      if (rec.resendAttempted) {
+        // Resend already in flight or failed with timeout/retryable;
+        // continue polling history periodically in the foreground.
+        _store.updatePendingText('Waiting for a connection…');
+        _scheduleReconcilePoll();
+        return;
+      }
+      rec.resendAttempted = true;
       final result = await rec.resend();
       if (!mounted || !identical(_reconcile, rec)) return;
       _reconcile = null;
+      _reconcileTimer?.cancel();
       _store.resolvePending(
         result.reply,
         tools: result.toolsUsed,
@@ -1242,13 +1300,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (e) {
       if (!mounted || !identical(_reconcile, rec)) return;
       if (_shouldReconcile(e)) {
-        // Still no connection: keep waiting — the next resume tries again.
+        // Still no connection: keep waiting — poll periodically in foreground
+        // or retry when app resumes.
         _store.updatePendingText('Waiting for a connection…');
+        _scheduleReconcilePoll();
       } else {
         // The server answered and it's a genuine failure — now (and only
         // now) surface the error. Retry reuses the same client id, so it
         // can never double-send a turn that did land.
         _reconcile = null;
+        _reconcileTimer?.cancel();
         _store.dropPending();
         if (mounted) {
           AymaToast.show(
@@ -1776,6 +1837,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _store.removeListener(_scanTurnsForBubble);
     WidgetsBinding.instance.removeObserver(this);
     _highlightClearTimer?.cancel();
+    _reconcileTimer?.cancel();
     if (widget.askAymaContext == null) {
       // Session-end raw_turns persistence (§1.7 step 8). Fire-and-forget —
       // the screen is going away; the request rides the app's remaining
@@ -2329,6 +2391,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // turn once a new one exists, so let it go. If that turn did land
     // server-side it still shows on the next history load.
     if (_reconcile != null && _reconcile!.msgId != msgId) {
+      _reconcileTimer?.cancel();
       _reconcile = null;
       _store.dropPending();
     }
@@ -4478,7 +4541,7 @@ class _TranscriptLineState extends State<_TranscriptLine> {
 /// for servers that predate ids. [message] feeds the Retry affordance if the
 /// turn genuinely failed.
 class _PendingSendReconcile {
-  const _PendingSendReconcile({
+  _PendingSendReconcile({
     required this.msgId,
     required this.message,
     required this.knownAyma,
@@ -4496,6 +4559,9 @@ class _PendingSendReconcile {
   /// outcome may queue it (not for a shared-card send).
   final String imagePath;
   final bool queueable;
+
+  /// Whether the fallback resend has already been attempted in this reconcile cycle.
+  bool resendAttempted = false;
 }
 
 /// A message waiting in the [PendingChatQueue]: the user's bubble, dimmed, with

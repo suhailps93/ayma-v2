@@ -1674,9 +1674,11 @@ def _classify_shared_photo(db, uid: str, image: tuple[bytes, str]) -> str:
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                res = pool.submit(asyncio.run, check_coro).result()
+                res = pool.submit(
+                    asyncio.run, asyncio.wait_for(check_coro, timeout=8.0)
+                ).result(timeout=9.0)
         else:
-            res = asyncio.run(check_coro)
+            res = asyncio.run(asyncio.wait_for(check_coro, timeout=8.0))
         return res.get("verdict", "unknown")
     except Exception:  # noqa: BLE001
         logger.warning("shared-photo verify: check failed for %s", uid, exc_info=True)
