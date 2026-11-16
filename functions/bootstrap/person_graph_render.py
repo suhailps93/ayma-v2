@@ -62,6 +62,10 @@ def _format_value(node: GraphNode, raw) -> str:
             return "Yes"
         if s in ("false", "no", "0"):
             return "No"
+    if node.id == "date_of_birth":
+        # public as AGE only — the raw birthdate never renders (founder, Nov 15)
+        age = _age_from(raw)
+        return str(age) if age is not None else ""
     if node.id in _DATE_NODE_IDS or _looks_like_timestamp(raw):
         return _date_only(raw)
     if isinstance(raw, (list, tuple)):
@@ -83,6 +87,21 @@ def _date_only(raw) -> str:
             s = s.split(sep, 1)[0]
             break
     return s
+
+
+def _age_from(raw):
+    """Age in whole years from a birthdate value, or None if unparseable. The
+    raw birthdate itself is never shown — only this derived age."""
+    import datetime as _dt
+
+    d = _date_only(raw)
+    try:
+        born = _dt.date.fromisoformat(d[:10])
+    except (ValueError, TypeError):
+        return None
+    today = _dt.date.today()
+    years = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+    return years if 0 < years < 130 else None
 
 
 def _answer_text(node: GraphNode) -> str:

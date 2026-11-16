@@ -122,12 +122,14 @@ The merged foundation verified faithful (202 nodes, idempotent, non-destructive,
 the first time, which the live profile/story did not show. Fixed before any
 consumer switch:
 
-1. **Public expansion (blocker 1).** Structured personal facts now default
-   **private** (owner sees them in Your Story, never public). Publishing a
-   questionnaire answer is an explicit per-node decision — **pending a founder
-   public allow-list** (age/gender/location/interested-in/intent/looking-for are
-   the natural candidates). No seed node defaults public until that is approved.
-   Wiki/story prose keeps its own page visibility (parity preserved).
+1. **Public expansion (blocker 1).** Structured personal facts default
+   **private** (owner sees them in Your Story, never public) unless on the
+   **founder-approved public allow-list** (`_PUBLIC_ALLOWLIST`, Nov 15 2026):
+   **age** (DOB rendered as age only — the raw birthdate never renders),
+   **gender**, **location**, **interested-in**, **relationship intent**. (The
+   open "What I'm Looking For" description node joins the allow-list when the
+   looking-for level-2 flow adds it in 6b.) Everything else private; wiki/story
+   prose keeps its own page visibility (parity preserved).
 2. **Rendering (blocker 2).** Dates render as a date (not a raw timestamp),
    booleans as Yes/No.
 3. **Meta-answers (blocker 3).** `skipped` / `addressed` / `n/a` placeholders are

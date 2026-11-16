@@ -62,17 +62,25 @@ def test_founder_section_moves_applied():
 
 def test_common_sense_default_visibility():
     s = seed()
-    # Structured personal facts are NOT public by default — publishing a
-    # questionnaire answer is an explicit per-node decision (Scout 2449 blocker
-    # 1). DOB defaults private (owner sees it in Your Story, never public).
-    assert s["date_of_birth"].default_visibility is Visibility.PRIVATE
+    # Structured personal facts are NOT public by default (Scout 2449 blocker 1)
+    # EXCEPT the founder-approved dating-profile allow-list. Non-allow-list
+    # facts default private; body/finance facts stay private/ayma_only.
     assert s["financial_security_narrative"].default_visibility is Visibility.PRIVATE
-    # body facts never default public
     assert s["height"].default_visibility is Visibility.PRIVATE
     assert s["weight"].default_visibility is Visibility.AYMA_ONLY
-    # No seed node is public until the founder approves a public allow-list
-    # (explicit per-node visibility). Pending that, nothing defaults public.
-    assert all(n.default_visibility is not Visibility.PUBLIC for n in s.values())
+    # the founder-approved public set (Nov 15): age/gender/location/interested-in/intent
+    public_set = {
+        "date_of_birth", "gender_identity", "primary_location",
+        "target_match_genders", "relationship_intent",
+    }
+    for nid in public_set:
+        assert s[nid].default_visibility is Visibility.PUBLIC, nid
+    # nothing outside the allow-list (or an explicit public tag) defaults public
+    assert all(
+        nid in public_set
+        for nid, n in s.items()
+        if n.default_visibility is Visibility.PUBLIC
+    )
 
 
 def test_seed_section_visibility_matches_production_wiki_line():
@@ -111,7 +119,7 @@ def test_four_values_promotions_are_level_2():
 def test_merge_seed_only_uses_defaults():
     n = merge_node(seed_node("date_of_birth"), None, "date_of_birth")
     assert n.state is NodeState.NOT_ASKED
-    assert n.visibility is Visibility.PRIVATE  # structured fact: private by default
+    assert n.visibility is Visibility.PUBLIC  # DOB is on the public allow-list (as age)
     assert n.answer is None
     assert n.emergent is False
 

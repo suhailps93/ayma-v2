@@ -221,6 +221,20 @@ class GraphNode(BaseModel):
 # --- seed construction (from the v7 tree) ---------------------------------
 
 
+# Founder-approved PUBLIC allow-list (Nov 15 2026): the standard dating-profile
+# facts that appear on the public profile. date_of_birth is public as AGE only —
+# the raw birthdate never renders (see person_graph_render). Everything not here
+# defaults private. (The open "What I'm Looking For" description node is a
+# pending Nov-15 addition; it joins this list when the looking-for flow adds it.)
+_PUBLIC_ALLOWLIST = {
+    "date_of_birth",
+    "gender_identity",
+    "primary_location",
+    "target_match_genders",
+    "relationship_intent",
+}
+
+
 def _default_visibility_for(node: dict, section_default: Visibility) -> Visibility:
     """The node's common-sense default visibility (design §3).
 
@@ -240,6 +254,8 @@ def _default_visibility_for(node: dict, section_default: Visibility) -> Visibili
     explicit = node.get("visibility")
     if explicit in {v.value for v in Visibility}:
         return Visibility(explicit)
+    if node.get("id") in _PUBLIC_ALLOWLIST and not node.get("sensitive"):
+        return Visibility.PUBLIC  # founder-approved public dating-profile fact
     if node.get("sensitive"):
         # sensitive content is never public; keep an even-more-private section
         # default (e.g. ayma_only) if the section sets one.

@@ -37,7 +37,8 @@ def test_story_shows_public_and_private_not_ayma_only():
     # every canonical section present (empty ones included for the editor)
     assert {s["page_type"] for s in secs} >= set(question_tree.ordered_page_types())
     ident = _texts(secs, "identity")
-    assert any("1994-02-02" in t for t in ident)  # public shown
+    assert any(t.startswith("Age:") for t in ident)  # DOB shows as age
+    assert not any("1994-02-02" in t for t in ident)  # raw birthdate never shown
     assert "lean build" not in " ".join(ident)  # ayma_only never in Your Story
     fin = _texts(secs, "finances")
     assert any("freedom" in t for t in fin)  # private shown in Your Story
@@ -68,7 +69,9 @@ def test_structured_values_render_humanised_not_raw():
     )
     secs = render.story_sections(g)["sections"]
     ident = _texts(secs, "identity")
-    assert any("1993-03-05" in t and "20:00:00" not in t for t in ident)
+    # DOB shows as a plain age number, never the raw timestamp or full date
+    assert any(t.startswith("Age:") for t in ident)
+    assert not any("20:00:00" in t or "1993-03-05" in t for t in ident)
     life = _texts(secs, "lifestyle")
     assert any(t.endswith(": Yes") for t in life)
     assert not any("true" in t.lower() for t in life)
@@ -125,7 +128,8 @@ def test_public_shows_only_public_and_drops_empty_sections():
     assert "identity" in pts
     assert "finances" not in pts  # all-private section hidden on public profile
     ident = next(s for s in pub if s["page_type"] == "identity")
-    assert any("1994-02-02" in t for t in ident["bullets"])
+    assert any(t.startswith("Age:") for t in ident["bullets"])  # age, not raw DOB
+    assert not any("1994-02-02" in t for t in ident["bullets"])
 
 
 def test_public_child_visibility_is_independent_of_parent():
@@ -148,7 +152,7 @@ def test_public_child_visibility_is_independent_of_parent():
 def test_persona_prose_owner_vs_public_vs_ayma_only():
     g = _graph(
         {
-            "date_of_birth": {"answer": "1994", "visibility": "public"},
+            "date_of_birth": {"answer": "1994-02-02", "visibility": "public"},
             "financial_security_narrative": {
                 "answer": "Private money thought.",
                 "visibility": "private",
@@ -170,7 +174,7 @@ def test_section_order_preserved_in_renders():
     g = _graph(
         {
             "financial_security_narrative": {"answer": "money", "visibility": "public"},
-            "date_of_birth": {"answer": "1994", "visibility": "public"},
+            "date_of_birth": {"answer": "1994-02-02", "visibility": "public"},
         }
     )
     pub = render.public_sections(g)
