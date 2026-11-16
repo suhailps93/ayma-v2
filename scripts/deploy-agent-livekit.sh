@@ -108,6 +108,16 @@ if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
     # (Gemini + the LiveKit-wired vendors). Prod is NOT pinned (its config
     # default additionally keeps meta/open-weights).
     "BRAIN_CREDITED_PROVIDERS=gemini,gemma,openai,openai-chat,openai-oss,kimi,deepseek,grok"
+    # Person-graph flags MUST match the ayma-api-staging service (NOTE 230). The
+    # voice worker runs the same session-end wiki ingest (agent.py →
+    # post_turn.persist_and_ingest → wiki_ingest.ingest) and the same `remember`
+    # tool as the API. With these OFF, the worker's §9.5 gate can't fire, so a
+    # voice session's facts get written to the frozen wiki (the dual-write NOTE
+    # 227 closed on the API) instead of the graph. Keep these in lock-step with
+    # whatever is set on ayma-api-staging: flip both services together, or the
+    # split-brain returns on the surface whose flag lags.
+    "PERSON_GRAPH_TOOLS=true"
+    "PERSON_GRAPH_READS=true"
   )
 fi
 

@@ -70,6 +70,21 @@ def get_bullets(db, uid: str) -> dict:
     the editor can show them with a "+". Duplicate pages of the same canonical
     page_type are merged so each canonical type appears exactly once with all
     bullets preserved."""
+    # Person-graph authoritative (design §8.1, NOTE 230): Your Story is a render
+    # of the GRAPH, not the frozen wiki. With the flag on, wiki ingest is gated
+    # (NOTE 227) so new facts land only in the graph — a volunteered fact becomes
+    # a loose emergent node in ``misc`` / Little Extras (NOTE 228). The wiki read
+    # below can never surface it; the graph render does. Flag off → the wiki path
+    # below runs unchanged (today's behaviour exactly, reversible by the flag).
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        graph_story = person_graph_source.story_bullets(db, uid)
+        if graph_story is not None:
+            return graph_story
+        # graph read failed — fall through to the frozen-wiki read, never blank.
     by_pt: dict[str, dict] = {}
     # get_story is the ai-only-stripped owner view (public + private only, and
     # whole ai_only pages excluded), so Ayma-only content never reaches the
