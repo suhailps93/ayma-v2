@@ -157,6 +157,34 @@ def test_verdict_to_command_practice_voice_modality_carries_the_flag():
     )
 
 
+def test_debrief_return_session_never_relaunches_practice_or_sim():
+    # Practice-restart loop (prod feedback SNzmb0u51H8khJenNntn): a debrief-return
+    # voice session (the session that opens right after a practice call ended)
+    # must NEVER auto-launch another practice/sim — otherwise it re-opens practice
+    # on every disconnect. A launch verdict in a return session stays conversation.
+    for v in (
+        Verdict(action="launch_practice", partner="Dillu", modality="voice"),
+        Verdict(action="launch_practice", partner="Dillu"),
+        Verdict(action="launch_sim", partner="Sophia"),
+        Verdict(action="clarify", clarify_for="launch_practice"),
+    ):
+        assert voice_actions.verdict_to_command(v, is_practice_return=True) is None
+
+    # A NON-launch command is unaffected in a return session (Ayma can still
+    # navigate / end the call during the debrief).
+    assert voice_actions.verdict_to_command(
+        Verdict(action="navigate", page="explore"), is_practice_return=True
+    ) == ("open_screen", {"screen": "explore"})
+    assert voice_actions.verdict_to_command(
+        Verdict(action="end_call"), is_practice_return=True
+    ) == ("end_call", {})
+
+    # And a launch is still allowed in a NORMAL (non-return) session.
+    assert voice_actions.verdict_to_command(
+        Verdict(action="launch_practice", partner="Dillu", modality="voice")
+    ) == ("open_practice_date", {"name": "Dillu", "voice": True})
+
+
 @pytest.mark.parametrize("tool,value,kwarg,want", [
     ("set_brain", "meta", "brain", "meta"),
     ("set_brain", "switch to Muse Spark", "brain", "meta"),

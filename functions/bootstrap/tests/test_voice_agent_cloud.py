@@ -158,6 +158,17 @@ def test_build_room_seed_carries_livekit_marker():
     assert seed["voice_agent_cloud"] == "livekit"
 
 
+def test_build_room_seed_carries_practice_return_flag():
+    # The debrief-return session flag rides the seed so the agent suppresses
+    # auto-launching another practice (practice-restart loop guard).
+    assert json.loads(livekit_token.build_room_seed("sys", [], "u", "s"))[
+        "practice_return"
+    ] is False
+    assert json.loads(
+        livekit_token.build_room_seed("sys", [], "u", "s", practice_return=True)
+    )["practice_return"] is True
+
+
 # --- explicit-dispatch routing on seed_room_context ------------------------
 
 class _FakeRoomSvc:

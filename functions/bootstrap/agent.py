@@ -2051,6 +2051,7 @@ def relay_voice_commands(
     on_emotion: Callable | None = None,
     uid: str = "",
     session_id: str = "",
+    is_practice_return: bool = False,
 ) -> None:
     """Run the voice-command backstop on ``session``: on each finalized user
     turn, execute a stack / navigation / launch / tour-start / hang-up match
@@ -2303,7 +2304,9 @@ def relay_voice_commands(
                         on_emotion(read)
                     except Exception:  # noqa: BLE001 - emotion is additive
                         logger.exception("emotion wiring failed")
-            match = skills.voice_actions.verdict_to_command(verdict)
+            match = skills.voice_actions.verdict_to_command(
+                verdict, is_practice_return=is_practice_return
+            )
         except Exception:  # noqa: BLE001 - the net below is the fallback
             logger.exception(
                 "voice-actions skill failed; falling back to the net: %r",
@@ -2381,6 +2384,11 @@ class RoomSeed:
     # drive the live coach + practice-transcript persistence without the worker
     # ever re-reading the target's profile.
     practice: bool = False
+    # This voice session is the debrief that opened right after a practice call
+    # ended (``/bootstrap practice_return_session_id``). It must never auto-launch
+    # another practice/sim — that is the practice-restart loop (prod feedback
+    # SNzmb0u51H8khJenNntn). Threaded into ``voice_actions.verdict_to_command``.
+    practice_return: bool = False
     persona_name: str = ""
     # The simulated match's profile gender ("woman"/"man"/"non-binary"/…). Drives
     # the gender-matched practice TTS voice and the live coach's pronouns; empty
@@ -2591,6 +2599,7 @@ def _read_room_seed(ctx: JobContext) -> RoomSeed:
         tts_voice=str(seed.get("tts_voice", "")),
         greeting_instructions=str(seed.get("greeting_instructions", "")),
         practice=bool(seed.get("practice", False)),
+        practice_return=bool(seed.get("practice_return", False)),
         persona_name=str(seed.get("persona_name", "")),
         persona_gender=str(seed.get("persona_gender", "")),
         target_uid=str(seed.get("target_uid", "")),
@@ -3810,6 +3819,7 @@ async def _start_main_gemini_session(
         ),
         uid=seed.uid,
         session_id=seed.session_id,
+        is_practice_return=seed.practice_return,
     )
     relay_world_state(session, seed.uid)
     if swapper:
@@ -4121,6 +4131,7 @@ async def _start_main_cascade_session(
         on_emotion=_on_emotion if emotion_on else None,
         uid=seed.uid,
         session_id=seed.session_id,
+        is_practice_return=seed.practice_return,
     )
     relay_world_state(session, seed.uid)
     agent_kwargs: dict = {

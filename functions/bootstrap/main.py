@@ -1312,6 +1312,9 @@ async def bootstrap(
                     tts_id=engine_seed["tts_id"],
                     tts_voice=engine_seed["tts_voice"],
                     greeting_instructions=greeting_instructions,
+                    practice_return=bool(
+                        req is not None and req.practice_return_session_id
+                    ),
                     voice_agent_cloud=agent_cloud,
                 ),
                 agent_name=dispatch_agent,

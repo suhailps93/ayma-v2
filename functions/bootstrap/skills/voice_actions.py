@@ -427,17 +427,38 @@ def _canonical_stack_value(tool: str, value: str) -> str | None:
     return None
 
 
-def verdict_to_command(verdict: Verdict) -> tuple[str, dict] | None:
+#: Launch actions (open a practice date / a date sim). Suppressed in a
+#: debrief-return session — see ``verdict_to_command(is_practice_return=...)``.
+_RELAUNCH_BLOCKED_ACTIONS = frozenset(_LAUNCH_TOOLS)  # {"launch_practice", "launch_sim"}
+
+
+def verdict_to_command(
+    verdict: Verdict, *, is_practice_return: bool = False
+) -> tuple[str, dict] | None:
     """A verdict → the ``(tool_name, kwargs)`` the existing deterministic
     executors run, in exactly the shape ``detect_voice_command`` returns —
     or ``None`` when the turn stays conversation (or the verdict's target
     does not resolve). ``"end_call"`` is the relay-handled pseudo-command
     (not a session tool), as on the goodbye path; a ``clarify`` verdict maps
     to its launch tool with an empty partner, which the relay answers with
-    the existing "who with?" clarification."""
+    the existing "who with?" clarification.
+
+    ``is_practice_return``: this voice session is the debrief that opened right
+    after a practice call ended (``/bootstrap practice_return_session_id``). A
+    debrief session must NEVER auto-launch another practice or sim — that is the
+    practice-restart loop (prod feedback SNzmb0u51H8khJenNntn: practice kept
+    re-opening on every disconnect). So a launch verdict here stays conversation
+    (Ayma talks about the practice instead of starting a new one); the user can
+    still start a fresh practice from a normal session."""
     if verdict is None:
         return None
     action = verdict.action
+    if is_practice_return and (
+        action in _RELAUNCH_BLOCKED_ACTIONS
+        or (action == "clarify" and verdict.clarify_for.strip() in _RELAUNCH_BLOCKED_ACTIONS)
+    ):
+        # A debrief-return session never re-launches practice/sim (loop guard).
+        return None
     if action == "navigate":
         page = verdict.page.strip()
         if not page:
