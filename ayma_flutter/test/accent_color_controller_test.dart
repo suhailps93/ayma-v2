@@ -117,4 +117,52 @@ void main() {
     expect(c.color, AymaColors.accent);
     expect(profiles.serverWrites.last, AymaColors.accent);
   });
+
+  test('syncRemote(force: true) overrides existing local prefs with remote saved accent',
+      () async {
+    SharedPreferences.setMockInitialValues({'accent_color_hex': '#112233'});
+    final profiles = _FakeProfiles(remote: const Color(0xFF2D6A4F));
+    final c = AccentColorController(
+      initial: const Color(0xFF112233),
+      profileService: profiles,
+    );
+
+    await c.syncRemote(force: true);
+
+    expect(c.color, const Color(0xFF2D6A4F));
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('accent_color_hex'), '#2d6a4f');
+  });
+
+  test('syncRemote(force: true) resets to Cherry Fuchsia when remote has no saved accent',
+      () async {
+    SharedPreferences.setMockInitialValues({'accent_color_hex': '#2D6A4F'});
+    final profiles = _FakeProfiles(remote: null);
+    final c = AccentColorController(
+      initial: const Color(0xFF2D6A4F),
+      profileService: profiles,
+    );
+
+    await c.syncRemote(force: true);
+
+    expect(c.color, AymaColors.accent);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('accent_color_hex'), isNull);
+  });
+
+  test('syncRemote(force: false) leaves existing local prefs untouched',
+      () async {
+    SharedPreferences.setMockInitialValues({'accent_color_hex': '#112233'});
+    final profiles = _FakeProfiles(remote: const Color(0xFF2D6A4F));
+    final c = AccentColorController(
+      initial: const Color(0xFF112233),
+      profileService: profiles,
+    );
+
+    await c.syncRemote(force: false);
+
+    expect(c.color, const Color(0xFF112233));
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('accent_color_hex'), '#112233');
+  });
 }

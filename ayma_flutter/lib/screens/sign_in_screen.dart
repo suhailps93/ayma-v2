@@ -10,10 +10,12 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../legal/biometric_consent_text.dart';
+import '../services/accent_color_controller.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/biometric_consent.dart';
 import '../services/legal_links.dart';
+import '../services/profile_service.dart';
 import '../services/sign_in_voice_intent.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -43,6 +45,8 @@ class SignInScreen extends StatefulWidget {
     this.voiceController,
     this.apiClient,
     this.startInCreateAccountMode = false,
+    this.accentController,
+    this.profileService,
   });
 
   static const path = '/signin';
@@ -61,6 +65,12 @@ class SignInScreen extends StatefulWidget {
   /// Injectable for tests; the greeting orb runs a pre-sign-in voice session.
   final VoiceSessionController? voiceController;
 
+  /// Injectable for tests; the app-wide accent controller to hydrate upon sign-in.
+  final AccentColorController? accentController;
+
+  /// Injectable for tests; durable profile service to read `ayma_accent_color`.
+  final ProfileService? profileService;
+
   @override
   State<SignInScreen> createState() => _SignInScreenState();
 }
@@ -70,6 +80,8 @@ enum _Stage { pick, email, phone }
 class _SignInScreenState extends State<SignInScreen>
     with WidgetsBindingObserver {
   late final AuthService _auth = widget.auth ?? AuthService();
+  late final AccentColorController _accentController =
+      widget.accentController ?? accentColorControllerGlobal;
 
   late final TranscriptStore _transcript = TranscriptStore();
   late final VoiceSessionController _voice =
@@ -282,6 +294,17 @@ class _SignInScreenState extends State<SignInScreen>
     AymaToast.show(context, m, kind: kind);
   }
 
+  Future<void> _hydrateAccent() async {
+    try {
+      await _accentController.syncRemote(
+        profiles: widget.profileService ?? _auth.profileService,
+        force: true,
+      );
+    } catch (_) {
+      // Best-effort hydration: never block sign-in on accent load.
+    }
+  }
+
   /// [onAuthError], when given, gets first look at a [FirebaseAuthException]:
   /// if it returns true it has handled the error (e.g. steered the user into
   /// another mode) and the default error toast is suppressed. Only the email
@@ -297,6 +320,8 @@ class _SignInScreenState extends State<SignInScreen>
     setState(() => _busy = true);
     try {
       await action();
+      if (!mounted || currentEpoch != _runEpoch) return;
+      await _hydrateAccent();
       if (!mounted || currentEpoch != _runEpoch) return;
       await _stopVoice();
       if (!mounted || currentEpoch != _runEpoch) return;
@@ -536,6 +561,7 @@ class _SignInScreenState extends State<SignInScreen>
           _snack(_friendly(e), kind: AymaToastKind.error);
         },
         autoSignedIn: (_) async {
+          await _hydrateAccent();
           await _stopVoice();
           if (mounted) context.go(SplashScreen.path);
         },

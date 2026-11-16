@@ -23,6 +23,8 @@ class AuthService {
   final ProfileService _profileService;
   bool _googleInitialized = false;
 
+  ProfileService get profileService => _profileService;
+
   Completer<User?> _authReadyCompleter = Completer<User?>();
 
   /// Hard Invariant: Awaits confirmed KeyStore/Keychain token restoration.

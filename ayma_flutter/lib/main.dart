@@ -110,6 +110,7 @@ Future<void> main() async {
       AuthService.instance.notifyAuthSessionRestored(user);
       unawaited(RevenueCatService.instance.logIn(user.uid));
       unawaited(push.syncToken());
+      unawaited(accentColorControllerGlobal.syncRemote(force: isSwitch));
       // (Re)start the always-on location watcher for this account. It only
       // acquires GPS once a Privacy toggle is on AND background permission is
       // granted — otherwise it just watches the (default-off) toggles.
