@@ -94,7 +94,9 @@ def no_firestore(monkeypatch):
             {"uid": uid, "session_id": session_id, "turns": list(turns)}
         )
 
-    async def _fake_ingest(_db, uid, session_id, turns):
+    async def _fake_ingest(
+        _db, uid, session_id, turns, force_visibility=None, capture_questionnaire=False
+    ):
         rec.ingested.append(
             {"uid": uid, "session_id": session_id, "turns": list(turns)}
         )
