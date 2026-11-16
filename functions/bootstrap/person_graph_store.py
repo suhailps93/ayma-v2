@@ -250,6 +250,52 @@ def add_node(
     return nid
 
 
+def add_loose_node(
+    db,
+    uid: str,
+    fact: str,
+    *,
+    label: str | None = None,
+    section: str = "misc",
+    provenance: Provenance | str = Provenance.STATED,
+    node_id: str | None = None,
+) -> str:
+    """Record a free-form fact the user volunteered — the graph write path for
+    the ``remember`` tool when the person-graph is authoritative (NOTE 228).
+
+    Unlike :func:`add_node`, it needs NO parent: an off-script fact rarely has a
+    seed node it grows out of, and the empty ``misc`` (Little Extras, design
+    §9.3) section has no seed node to parent under. So this creates a STAND-ALONE
+    emergent node — narrative, private, provenance STATED, homed in ``section``
+    at level 1. Renders order nodes by section (not by a parent tree), so a
+    parentless node shows under its section. Returns the new node's id."""
+    fact = (fact or "").strip()
+    if not fact:
+        raise ValueError("add_loose_node needs a non-empty fact")
+    if section not in question_tree.section_meta():
+        raise ValueError(f"unknown section {section!r} for loose node")
+    overlay = load_overlay(db, uid)
+    nid = node_id or f"emergent.{secrets.token_hex(4)}"
+    if nid in overlay or pg.seed_node(nid) is not None:
+        raise ValueError(f"node id {nid!r} already exists")
+    prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
+    e: dict[str, Any] = {
+        "prompt": (label or fact)[:120],
+        "section": section,
+        "level": 1,
+        "answer_type": "narrative",
+        "answer": fact,
+        "state": NodeState.ANSWERED.value,
+        "visibility": Visibility.PRIVATE.value,
+        "provenance": prov,
+        "updated_at": pg.now_iso(),
+    }
+    model = OverlayNode.model_validate(e)
+    overlay[nid] = model.model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return nid
+
+
 def add_image_node(
     db,
     uid: str,

@@ -175,28 +175,17 @@ _DM_OUTREACH_NAMES = {s.name for s in dm_outreach.SKILLS}
 # attributes the write to (§ fact-source-of-truth, 2026-09-21).
 _PROVENANCE_NAMES = {"set_profile_field", "record_answer", "set_relationship_intent"}
 
-# Tools that write a chat fact to the OLD wiki_pages store. When the person-graph
-# is authoritative (``PERSON_GRAPH_READS``) they are removed from the tool set, so
-# the model records off-script facts in the GRAPH via ``pg_add_node`` instead of
-# wiki_pages (design §9.5: the wiki stops being written). NOTE 227 split-brain:
-# with the flags ON the model kept calling ``remember`` → wiki_pages while
-# graph/main stayed untouched, because ``remember`` was still offered alongside
-# the pg_* tools. (The structured fact-writers ``set_profile_field`` /
-# ``record_answer`` / ``set_relationship_intent`` still write profile/qstore —
-# code outside the graph still reads those — so their full swap to ``pg_set_answer``
-# waits on the Phase-7 reader migration and is NOT done here.)
-_WIKI_WRITE_TOOL_NAMES = {"remember"}
-
-
-def _base_registry() -> list[Skill]:
-    """``_REGISTRY`` with the wiki-writing tools removed when the person-graph is
-    authoritative (``PERSON_GRAPH_READS``, NOTE 227). Flag off: unchanged.
-    Checked per call (like :func:`_person_graph_tool_skills`), not at import."""
-    from config import CONFIG
-
-    if CONFIG.person_graph_reads:
-        return [s for s in _REGISTRY if s.name not in _WIKI_WRITE_TOOL_NAMES]
-    return list(_REGISTRY)
+# `remember` stays in the tool set whether or not the person-graph is
+# authoritative: it is the model's one-call "save a fact" affordance, and when
+# the graph is authoritative its binding writes the fact to the GRAPH (a loose
+# emergent node, `person_graph_store.add_loose_node`) instead of the wiki
+# (`skills/remember.py`). NOTE 227 dropped `remember` and nothing replaced it —
+# the low-level pg_* tools need a parent_id from a query dance the model never
+# did, so chat facts landed in NEITHER store (NOTE 228). Keeping `remember` +
+# redirecting its target restores the write path. (The wiki INGEST paths —
+# automatic post-turn, backfill — stay gated off in `wiki_ingest.ingest`, §9.5;
+# the structured fact-writers set_profile_field/record_answer/set_relationship_intent
+# still write profile/qstore pending the Phase-7 reader migration.)
 
 # The guided-tour tools that must know whether this session is VOICE or TEXT, so
 # they skip steps that can't be completed in the current mode (the chat composer
@@ -296,7 +285,7 @@ def session_tool_declarations(
     the user shared into this chat by reference; ``analysis=True`` adds
     ``read_recent_failures``, the analysis-mode-only failure-log reader."""
     reg = (
-        _base_registry() + _recall_skills() + _web_search_skills()
+        list(_REGISTRY) + _recall_skills() + _web_search_skills()
         + _person_graph_tool_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
@@ -373,7 +362,7 @@ def make_session_tool_fns(
     binds on ``(db, uid)`` alone.
     """
     out: dict[str, Callable[..., str]] = {}
-    for s in (_base_registry() + _recall_skills() + _web_search_skills()
+    for s in (_REGISTRY + _recall_skills() + _web_search_skills()
               + _person_graph_tool_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
@@ -807,7 +796,7 @@ def make_livekit_tools(
 
     tools = []
     for s in (
-        _base_registry() + _recall_skills() + _web_search_skills()
+        list(_REGISTRY) + _recall_skills() + _web_search_skills()
         + _person_graph_tool_skills() + _STORY_MANAGE_REGISTRY
         + app_control.VOICE_SKILLS + guided_tour.VOICE_SKILLS
         + _ANALYSIS_REGISTRY

@@ -72,17 +72,21 @@ def test_wiki_ingest_runs_when_graph_flag_off(monkeypatch):
     assert captured == ["u1"]     # …but the gate was NOT taken: ingest proceeded
 
 
-# --- the tool set: `remember` out, `pg_add_node` in, when graph-authoritative --
+# --- the tool set: `remember` + `pg_add_node` BOTH offered when authoritative --
+# NOTE 227 dropped `remember` → the model had no working write path and facts
+# landed nowhere (NOTE 228). `remember` stays in the tool set and writes the GRAPH
+# when authoritative (see test_note228_remember_graph_write.py); the central
+# wiki_ingest gate still stops the automatic ingest paths.
 
 
-def test_remember_dropped_from_toolset_when_graph_authoritative(monkeypatch):
+def test_remember_stays_and_pg_tools_offered_when_graph_authoritative(monkeypatch):
     monkeypatch.setattr(
         config, "CONFIG",
         dataclasses.replace(CONFIG, person_graph_reads=True, person_graph_tools=True),
     )
     names = {d["name"] for d in skills.session_tool_declarations()}
-    assert "remember" not in names     # the wiki-write tool is gone
-    assert "pg_add_node" in names      # the graph write tool is offered instead
+    assert "remember" in names          # the model's one-call save-a-fact affordance
+    assert "pg_add_node" in names       # plus the graph primitives for structured writes
 
 
 def test_remember_present_when_graph_flag_off(monkeypatch):
