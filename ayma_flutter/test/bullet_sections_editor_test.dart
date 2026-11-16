@@ -1,10 +1,49 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/bullet_sections_editor.dart';
+import 'package:file/file.dart' as fs;
+import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _FakeCacheManager implements BaseCacheManager {
+  _FakeCacheManager(File ioFile)
+      : file = const LocalFileSystem().file(ioFile.path);
+
+  final fs.File file;
+
+  @override
+  Stream<FileResponse> getFileStream(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+    bool withProgress = false,
+  }) async* {
+    yield FileInfo(
+      file,
+      FileSource.Cache,
+      DateTime.now().add(const Duration(days: 1)),
+      url,
+    );
+  }
+
+  @override
+  Future<fs.File> getSingleFile(
+    String url, {
+    String? key,
+    Map<String, String>? headers,
+  }) async =>
+      file;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
 
 class _FakeApi extends ApiClient {
   _FakeApi({required this.sections})
@@ -465,6 +504,9 @@ void main() {
   group('image bullet (pg_add_image)', () {
     testWidgets('renders the photo and is excluded from the save payload',
         (tester) async {
+      AymaPhoto.debugCacheManager = _FakeCacheManager(File('test/fixtures/tiny.png'));
+      addTearDown(() => AymaPhoto.debugCacheManager = null);
+
       final api = _FakeApi(sections: [
         _aboutMe(const [
           StoryBullet(id: 'b1', text: 'Has a dog.', visibility: 'public'),
@@ -484,6 +526,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // the image item renders with its fact
+      expect(find.byType(AymaPhoto), findsOneWidget);
       expect(find.byType(Image), findsOneWidget);
       expect(find.text('a brown dog on grass'), findsOneWidget);
 
