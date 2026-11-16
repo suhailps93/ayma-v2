@@ -228,8 +228,14 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     standard user-authored dating-profile field, founder-approved alongside the
     identity set; the user can still make it private per node. Renders in the
     public profile when answered; migration carries it like any seed node.
-  - *Guided flow by level.* NEXT: Ayma's ask-order becomes breadth-first by
-    level (§5.2), replacing `completeness.py`'s depth-first section walk.
-  - *Reports-as-views + image nodes.* After the guided flow.
+  - *Guided flow by level — DONE.* When `PERSON_GRAPH_READS` is on, Ayma's
+    guided order (`completeness._next` / `_node_unlocked`) becomes breadth-first
+    by `level` (§5.2): `_guided_level_ceiling` is the shallowest still-open
+    level, and she works that level across ALL sections (ranked by weight within
+    the level) before any deeper one — replacing the depth-first section-core
+    walk. The routing node still leads; the **user-facing** flow is untouched
+    (`_node_open_to_user` is never level-gated — §5.3, no locks for the user).
+    Flag off = today's section walk exactly.
+  - *Reports-as-views + image nodes.* NEXT.
 - **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
   on founder post-switch re-verification.
