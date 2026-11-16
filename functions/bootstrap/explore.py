@@ -891,6 +891,27 @@ def _fetch_candidates_wiki_text(db, uids: list[str]) -> dict[str, list[str]]:
     if not uids:
         return {}
 
+    from config import CONFIG
+
+    # Person-graph authoritative: each candidate's public text is a render of
+    # their graph's public nodes, not their frozen wiki pages.
+    if CONFIG.person_graph_reads:
+        import person_graph_render as render
+        import person_graph_store as pg_store
+
+        def _one_graph(other_uid: str) -> tuple[str, list[str]]:
+            try:
+                graph = pg_store.effective(db, other_uid)
+            except Exception:  # noqa: BLE001
+                return (other_uid, [])
+            texts = [
+                f"{sec.get('title') or ''} {' '.join(sec.get('bullets') or [])}".strip()
+                for sec in render.public_sections(graph)
+            ]
+            return (other_uid, [t for t in texts if t])
+
+        return {u: _one_graph(u)[1] for u in uids}
+
     def _one(other_uid: str) -> tuple[str, list[str]]:
         try:
             pages = (

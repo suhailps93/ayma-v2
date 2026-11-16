@@ -18,7 +18,7 @@ validated primitives the consumer-switch phase will bind as tools.
 from __future__ import annotations
 
 import secrets
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import person_graph as pg
 import question_tree
@@ -294,6 +294,205 @@ def add_loose_node(
     overlay[nid] = model.model_dump(exclude_none=True)
     _save_overlay(db, uid, overlay)
     return nid
+
+
+def node_overlay_entry(db, uid: str, node_id: str) -> dict:
+    """The raw overlay entry for ``node_id`` (``{}`` if the user has none) — a
+    writer that appends to / promotes an existing emergent node reads its current
+    ``answer`` / ``visibility`` from here instead of the wiki doc it replaced."""
+    return _entry(load_overlay(db, uid), node_id)
+
+
+def upsert_fact_node(
+    db,
+    uid: str,
+    node_id: str,
+    text: str,
+    *,
+    section: str = "misc",
+    visibility: Visibility | str = Visibility.PRIVATE,
+    provenance: Provenance | str = Provenance.STATED,
+    level: int = 2,
+    label: str | None = None,
+    answer_type: str = "narrative",
+    confidence: float | None = None,
+    children: list[dict] | None = None,
+) -> str:
+    """Create-or-overwrite a stand-alone emergent node at a **stable** id — the
+    graph write path for the live content writers that used to upsert a single
+    wiki page (skill reports, Ayma's assessment, steering, taste, and the Your
+    Story editor). Unlike :func:`add_loose_node` / :func:`add_node`, which mint a
+    fresh node and refuse an existing id, this is idempotent: re-writing the same
+    ``node_id`` replaces that node's content in place (same semantics the wiki
+    ``doc.set(merge=True)`` had), so a nightly re-run or a re-generated report
+    never duplicates. ``node_id`` carries the content's kind as a prefix
+    (``emergent.skill.web_findings``, ``emergent.steering.<h>``, …) so the
+    grounding renderer can map it back to a wiki-style page_type for the
+    context-diet filters. Returns ``node_id``."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("upsert_fact_node needs non-empty text")
+    if section not in question_tree.section_meta():
+        raise ValueError(f"unknown section {section!r} for fact node")
+    if pg.seed_node(node_id) is not None:
+        raise ValueError(f"{node_id!r} is a seed node; use set_answer")
+    vis = visibility.value if isinstance(visibility, Visibility) else str(visibility)
+    if vis not in {v.value for v in Visibility}:
+        raise ValueError(f"invalid visibility {vis!r}")
+    prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
+    overlay = load_overlay(db, uid)
+    e: dict[str, Any] = {
+        "prompt": (label or text)[:120],
+        "section": section,
+        "level": int(level),
+        "answer_type": answer_type,
+        "answer": text,
+        "state": NodeState.ANSWERED.value,
+        "visibility": vis,
+        "provenance": prov,
+        "updated_at": pg.now_iso(),
+    }
+    if confidence is not None:
+        e["confidence"] = confidence
+    if children:
+        e["children"] = children
+    model = OverlayNode.model_validate(e)
+    overlay[node_id] = model.model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return node_id
+
+
+def delete_nodes(db, uid: str, node_ids: Iterable[str]) -> int:
+    """Remove emergent overlay nodes by id (no-op for a seed node or an id the
+    user doesn't have). Returns the count removed. Used by the Your Story editor
+    to drop a bullet, and to clear a section before re-writing it. Writes the
+    overlay whole (``replace_overlay``) so the dropped keys are truly gone — a
+    ``merge=True`` save would resurrect them."""
+    ids = {str(n) for n in node_ids if n}
+    if not ids:
+        return 0
+    overlay = load_overlay(db, uid)
+    removed = 0
+    for nid in list(ids):
+        if nid in overlay and pg.seed_node(nid) is None:
+            del overlay[nid]
+            removed += 1
+    if removed:
+        replace_overlay(db, uid, overlay)
+    return removed
+
+
+# Emergent id prefixes a live writer owns — never editor (Your Story) content,
+# so a section edit must leave them in place.
+_RESERVED_EMERGENT_PREFIXES = (
+    "emergent.skill.",
+    "emergent.taste.",
+    "emergent.steering.",
+    "emergent.assess.",
+    "emergent.webfind.",
+    "emergent.appearance.",
+    "emergent.image.",
+    "emergent.interaction.",
+)
+
+
+def _is_editor_owned(node_id: str) -> bool:
+    """True for a Your Story editor-owned emergent node — a migrated story
+    bullet, a prior editor bullet, or a bare ``emergent.<hex>`` loose fact — but
+    not a reserved-kind node a live writer owns (skill/taste/steering/…)."""
+    if not node_id.startswith("emergent."):
+        return False
+    return not any(node_id.startswith(p) for p in _RESERVED_EMERGENT_PREFIXES)
+
+
+def replace_section_bullets(
+    db, uid: str, section: str, bullets: list[dict]
+) -> list[str]:
+    """The Your Story editor write-back (design §8.1): make ``bullets`` the
+    section's editor-visible content in the graph. The editor owns a section's
+    **public/private emergent** nodes — this removes those and writes one
+    ``emergent.editor.<section>.<i>`` node per bullet — while **seed** nodes
+    (structured questionnaire answers) and **ayma_only** emergent nodes
+    (steering, assessment) are left untouched, so a delete takes effect and no
+    structured fact or Ayma-only note is ever dropped by a story edit. Each
+    bullet is ``{"text", "visibility"}`` (public/private). Returns the new ids.
+
+    This closes the NOTE 230 Phase-6b write-back gap: an edited bullet now
+    round-trips into the graph-backed story/public reads instead of writing a
+    frozen wiki page."""
+    if section not in question_tree.section_meta():
+        raise ValueError(f"unknown section {section!r}")
+    overlay = load_overlay(db, uid)
+    # Drop the section's current editor-owned nodes (emergent, public/private):
+    # the migrated story bullets (``emergent.story.*``), prior editor bullets
+    # (``emergent.editor.*``) and free-form remembered facts (bare
+    # ``emergent.<hex>`` loose nodes). Reserved-kind nodes (skill reports, the
+    # Qloo taste node, steering, assessment, images, …) are NOT editor content
+    # and are preserved even in the same section.
+    editor_vis = {None, Visibility.PUBLIC.value, Visibility.PRIVATE.value}
+    for nid in [
+        n for n, e in overlay.items()
+        if isinstance(e, dict)
+        and pg.seed_node(n) is None
+        and e.get("section") == section
+        and e.get("visibility") in editor_vis
+        and _is_editor_owned(n)
+    ]:
+        del overlay[nid]
+
+    new_ids: list[str] = []
+    i = 0
+    for b in bullets or []:
+        text = str(b.get("text") or "").strip()
+        if not text:
+            continue
+        vis = str(b.get("visibility") or Visibility.PRIVATE.value)
+        if vis not in {v.value for v in Visibility} or vis == Visibility.AYMA_ONLY.value:
+            vis = Visibility.PRIVATE.value  # the editor never writes ayma_only
+        nid = f"emergent.editor.{section}.{i}"
+        overlay[nid] = OverlayNode.model_validate(
+            {
+                "prompt": text[:120],
+                "section": section,
+                "level": 2,
+                "answer_type": "narrative",
+                "answer": text,
+                "state": NodeState.ANSWERED.value,
+                "visibility": vis,
+                "provenance": Provenance.STATED.value,
+                "updated_at": pg.now_iso(),
+            }
+        ).model_dump(exclude_none=True)
+        new_ids.append(nid)
+        i += 1
+    replace_overlay(db, uid, overlay)
+    return new_ids
+
+
+def set_section_visibility(db, uid: str, section: str, visibility: Visibility | str) -> int:
+    """Set every editor-owned node in ``section`` to ``visibility`` — the graph
+    equivalent of flipping a Your Story section's page visibility (the in-chat
+    story edit path). Seed and reserved-kind nodes are untouched. Returns the
+    count changed."""
+    vis = visibility.value if isinstance(visibility, Visibility) else str(visibility)
+    if vis not in {v.value for v in Visibility}:
+        raise ValueError(f"invalid visibility {vis!r}")
+    overlay = load_overlay(db, uid)
+    editor_vis = {None, Visibility.PUBLIC.value, Visibility.PRIVATE.value}
+    changed = 0
+    for nid, e in overlay.items():
+        if (
+            isinstance(e, dict)
+            and pg.seed_node(nid) is None
+            and e.get("section") == section
+            and e.get("visibility") in editor_vis
+            and _is_editor_owned(nid)
+        ):
+            e["visibility"] = vis
+            changed += 1
+    if changed:
+        _save_overlay(db, uid, overlay)
+    return changed
 
 
 def add_image_node(

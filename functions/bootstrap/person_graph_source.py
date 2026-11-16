@@ -138,6 +138,95 @@ def story_bullets(db, uid: str) -> dict | None:
     return render.story_sections(graph)
 
 
+def grounding_context(
+    db,
+    uid: str,
+    *,
+    max_chars: int,
+    include_page_types=None,
+    exclude_page_types=None,
+    include_ayma_only: bool = True,
+) -> str:
+    """The standing chat/voice grounding block, rendered from the graph — the
+    graph-native replacement for ``wiki_query.read_wiki_context`` at every
+    call site, gated on ``CONFIG.person_graph_reads``. Same output contract (one
+    prose block, same page_type grouping, same include/exclude filters,
+    truncated at ``max_chars``), so ``compose_system_prompt`` is unchanged. A
+    read failure yields ``""`` — exactly what the wiki read returned for a user
+    with no pages, so the turn degrades gracefully and never falls back to the
+    wiki (keeping wiki_pages out of the flag-on path)."""
+    import person_graph_render as render
+
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001 - a grounding read must not break the turn
+        logger.exception("person_graph_source: grounding read failed for %s", uid)
+        return ""
+    return render.grounding_block(
+        graph,
+        max_chars=max_chars,
+        include_page_types=include_page_types,
+        exclude_page_types=exclude_page_types,
+        include_ayma_only=include_ayma_only,
+    )
+
+
+def recall_context(db, uid: str, topic: str, max_chars: int = 3000) -> str:
+    """Targeted graph retrieval backing the ``recall(topic)`` tool — the
+    graph-native replacement for ``wiki_query.recall_snippets``. Scores every
+    renderable node (incl. Ayma-only, since recall grounds Ayma herself) by
+    keyword overlap with ``topic`` and returns the best matches' text up to
+    ``max_chars``. Keyword scoring only (no LLM/embedding). Never raises."""
+    import re
+
+    import person_graph_render as render
+
+    terms = [
+        w for w in re.findall(r"[a-z0-9]{3,}", (topic or "").lower())
+        if w not in _RECALL_STOPWORDS
+    ]
+    if not uid or not terms:
+        return "No notes found on that topic."
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001 - a recall failure must not break the turn
+        logger.exception("person_graph_source: recall read failed for %s", uid)
+        return "Could not check the notes right now."
+
+    keep = {"public", "private", "ai_only"}
+    scored: list[tuple[int, str, str]] = []
+    for node in graph.values():
+        bullets = render._node_bullets(node, keep) if render._is_renderable(node) else []
+        for b in bullets:
+            text = b["text"]
+            hay = f"{render.node_page_type(node)} {text}".lower()
+            score = sum(hay.count(t) for t in terms)
+            if score > 0:
+                scored.append((score, render.node_page_type(node), text))
+    if not scored:
+        return "No notes found on that topic."
+
+    scored.sort(key=lambda p: (-p[0], p[1], p[2]))
+    out = ["From your notes on this person:"]
+    used = 0
+    for _score, pt, text in scored:
+        block = f"\n### {render._grounding_label(pt)}\n- {text}"
+        if used + len(block) > max_chars:
+            if used == 0:
+                out.append(block[:max_chars])
+            break
+        out.append(block)
+        used += len(block)
+    return "\n".join(out)
+
+
+_RECALL_STOPWORDS = frozenset(
+    "the and for with what who how does did about their they them she her his "
+    "him you your this that from have has was were are can tell know like "
+    "want said says user ayma".split()
+)
+
+
 # A node whose personal weight reaches this (on the 0–5 tool scale, where 5 is
 # "crucial") counts as top-of-budget — a confirmed personal hard filter (§4.3).
 # Set here so it is the one founder-verifiable knob for the emergent-gate policy.

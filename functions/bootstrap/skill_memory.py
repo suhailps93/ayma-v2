@@ -48,6 +48,52 @@ _PAGES: dict[str, str] = {
 
 PROMOTABLE: frozenset[str] = frozenset(_PAGES)
 
+# --- graph redirect (person-graph authoritative) ---------------------------
+# When PERSON_GRAPH_READS is on the wiki is frozen, so each skill page is homed
+# as a stable emergent node ``emergent.skill.<page_type>`` instead; the grounding
+# renderer maps that id back to the page_type for the context-diet filters. The
+# compiled ``ai_body`` (the latest report / findings) is the node's answer, so
+# the chat grounding and Your Story reads surface it exactly as the wiki page did.
+_SKILL_SECTION = "misc"
+_SKILL_VIS = {
+    "web_findings": "private",
+    "face_analysis": "private",
+    "body_analysis": "private",
+    "physical_profile": "private",
+    "interactions": "ayma_only",
+}
+
+
+def _graph_reads_on() -> bool:
+    from config import CONFIG
+
+    return bool(CONFIG.person_graph_reads)
+
+
+def _skill_node_id(page_type: str) -> str:
+    return f"emergent.skill.{page_type}"
+
+
+def _graph_upsert_skill(db, uid: str, page_type: str, ai_body: str) -> None:
+    """Upsert the compiled skill page as its graph node (idempotent by id). An
+    earlier user promotion to public is preserved; ``interactions`` stays
+    ayma_only always."""
+    import person_graph_store as store
+
+    nid = _skill_node_id(page_type)
+    vis = _SKILL_VIS.get(page_type, "private")
+    if page_type != "interactions":
+        cur = store.node_overlay_entry(db, uid, nid)
+        if cur.get("visibility") and cur["visibility"] != "ai_only":
+            vis = cur["visibility"]  # keep a prior promotion
+    store.upsert_fact_node(
+        db, uid, nid, ai_body,
+        section=_SKILL_SECTION,
+        visibility=vis,
+        provenance="inferred",
+        label=page_type.replace("_", " "),
+    )
+
 
 def _page_ref(db, uid: str, page_type: str):
     return _page_ref_by_id(db, uid, _PAGES[page_type])
@@ -65,6 +111,12 @@ def _page_ref_by_id(db, uid: str, page_id: str):
 def _upsert(db, uid: str, page_type: str, ai_body: str) -> None:
     ai_body = (ai_body or "").strip()
     if not uid or not ai_body:
+        return
+    if _graph_reads_on():
+        try:
+            _graph_upsert_skill(db, uid, page_type, ai_body)
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: %s graph save failed for %s", page_type, uid)
         return
     try:
         doc = _page_ref(db, uid, page_type)
@@ -257,6 +309,22 @@ def note_interaction(db, uid: str, text: str, *, stamp: str | None = None) -> No
         return
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     line = f"- {stamp} — {text}"
+    if _graph_reads_on():
+        try:
+            import person_graph_store as store
+
+            cur = store.node_overlay_entry(db, uid, _skill_node_id("interactions"))
+            prior = [
+                ln.rstrip()
+                for ln in str(cur.get("answer") or "").splitlines()
+                if ln.strip().startswith("- ")
+            ]
+            lines = ([line] + prior)[:_INTERACTIONS_MAX_LINES]
+            ai_body = _INTERACTIONS_HEADER + "\n\n" + "\n".join(lines)
+            _graph_upsert_skill(db, uid, "interactions", ai_body)
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: note_interaction graph save failed for %s", uid)
+        return
     try:
         doc = _page_ref_by_id(db, uid, _INTERACTIONS_PAGE_ID)
         snap = doc.get()
@@ -374,6 +442,19 @@ def _merge_report(
     unusable report. Never raises."""
     if not uid or not (report or {}).get("usable", True):
         return
+    if _graph_reads_on():
+        # Graph home: store the latest compiled report as the node body. The
+        # structured per-photo ``reads`` history + photo refs are a report-screen
+        # feature the separate reports-as-views phase models as per-field
+        # appearance nodes; here the latest read is what the grounding / story
+        # read need.
+        try:
+            _graph_upsert_skill(
+                db, uid, page_type, _report_md(report or {}, kind=kind, noun=noun)
+            )
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: %s graph merge failed for %s", page_type, uid)
+        return
     try:
         doc = _page_ref(db, uid, page_type)
         snap = doc.get()
@@ -443,6 +524,20 @@ def promote(db, uid: str, page_type: str) -> bool:
     already) visible."""
     if page_type not in _PAGES:
         return False
+    if _graph_reads_on():
+        try:
+            import person_graph_store as store
+
+            nid = _skill_node_id(page_type)
+            cur = store.node_overlay_entry(db, uid, nid)
+            if not cur:
+                return False
+            if cur.get("visibility", "ai_only") == "ai_only":
+                store.set_visibility(db, uid, nid, "private")
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("skill_memory: %s graph promote failed for %s", page_type, uid)
+            return False
     try:
         doc = _page_ref(db, uid, page_type)
         snap = doc.get()

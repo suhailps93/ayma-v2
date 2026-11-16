@@ -139,6 +139,7 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
     public."""
     import story
     import story_bullets
+    import story_reads
 
     # publicness order: lower = more public (public < private < ayma_only)
     _rank = {
@@ -149,7 +150,7 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     seen_bullet_texts: dict[str, str] = {}  # norm_text -> first nid
-    for sec in story.get_story(db, uid).get("sections", []):
+    for sec in story_reads.get_story_wiki(db, uid).get("sections", []):
         page_id = sec.get("page_id", "")
         if page_id in getattr(story, "REPORT_LINKED_PAGE_IDS", set()):
             continue  # report-linked pages become report-view nodes, not here
@@ -199,11 +200,11 @@ def migrate_assessment(db, uid: str) -> dict[str, dict]:
     """Ayma's private assessment (and any ai_only story passage) → Ayma-only
     emergent nodes, provenance inferred. These never render in Your Story or
     the public profile; they are Ayma's own knowledge of the user."""
-    import story
     import story_bullets
+    import story_reads
 
     out: dict[str, dict] = {}
-    notes = story.get_ai_notes(db, uid) if hasattr(story, "get_ai_notes") else {"sections": []}
+    notes = story_reads.get_ai_notes_wiki(db, uid)
     for sec in notes.get("sections", []):
         page_id = sec.get("page_id", "")
         page_type = sec.get("page_type") or _LITTLE_EXTRAS

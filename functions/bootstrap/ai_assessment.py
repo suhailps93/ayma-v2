@@ -139,6 +139,20 @@ def _date_of(ts_ms: int) -> str:
 
 
 def _page_ref(db, uid: str):
+    # Person-graph authoritative: the wiki is frozen, so Ayma's assessment (its
+    # body + the incremental-refresh bookkeeping: input/flagged hashes, DM
+    # watermark, compiled digest — state that does not fit a graph content node)
+    # lives in its own off-wiki doc ``users/{uid}/assessment/main``. The match
+    # report still reads it via :func:`digest`; it is excluded from the chat
+    # grounding exactly as before (EXCLUDED_FROM_CHAT_CONTEXT). Flag off → the
+    # legacy wiki page, unchanged, so prod behaviour is untouched.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        return (
+            db.collection("users").document(uid)
+            .collection("assessment").document("main")
+        )
     return (
         db.collection("users")
         .document(uid)

@@ -45,6 +45,26 @@ def read_wiki_context(
     """
     if not uid:
         return ""
+    # Person-graph authoritative (NOTE: finish the read switch): the standing
+    # grounding block is rendered from the graph, not the frozen wiki. One gate
+    # here migrates EVERY read_wiki_context caller (chat + voice context in
+    # main.py, async_voice, ai_assessment, completeness, physical_attributes,
+    # reengagement, analysis_mode, taste_backfill) — same output contract, same
+    # page_type include/exclude filters, Ayma-only folded in exactly as the
+    # unfiltered wiki read did. Flag off → the wiki read below, unchanged.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.grounding_context(
+            db,
+            uid,
+            max_chars=max_chars,
+            include_page_types=include_page_types,
+            exclude_page_types=exclude_page_types,
+            include_ayma_only=True,
+        )
     try:
         snaps = list(
             db.collection("users")
@@ -119,6 +139,13 @@ def recall_snippets(
     terms = _recall_terms(topic)
     if not uid or not terms:
         return "No notes found on that topic."
+    # Person-graph authoritative: recall scores graph nodes, not wiki pages.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.recall_context(db, uid, topic, max_chars=max_chars)
     try:
         snaps = list(
             db.collection("users")

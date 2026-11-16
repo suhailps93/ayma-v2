@@ -51,6 +51,37 @@ def _require_page(db, uid, page_id: str) -> tuple[object, dict]:
     return ref, (snap.to_dict() or {})
 
 
+def _graph_on() -> bool:
+    from config import CONFIG
+
+    return bool(CONFIG.person_graph_reads)
+
+
+def _section_for(page_id: str) -> str:
+    import question_tree
+
+    if page_id in question_tree.section_meta():
+        return page_id
+    cand = page_id.replace("-", "_")
+    return cand if cand in question_tree.section_meta() else "misc"
+
+
+def _graph_write_bullets(db, uid: str, section: str, body: str, page_vis: str) -> None:
+    """Parse ``body`` into its public/private bullets and make them the section's
+    editor content in the graph. ai_only spans are not persisted as new nodes
+    here (existing ayma_only / reserved nodes are left untouched — never lost,
+    never exposed); the bullet editor handles the public/private content."""
+    import person_graph_store as store
+    import story_bullets
+
+    bullets = [
+        {"text": b["text"], "visibility": b["visibility"]}
+        for b in story_bullets.parse_bullets(body or "", page_vis, page_id="")
+        if b["visibility"] in (VIS_PUBLIC, VIS_PRIVATE) and b["text"].strip()
+    ]
+    store.replace_section_bullets(db, uid, section, bullets)
+
+
 def save_section(
     db, uid: str, page_id: str, body: str, visibility=None, *,
     allow_hidden_changes: bool = False,
@@ -59,6 +90,10 @@ def save_section(
 
     Trusted scoped passage tools alone may intentionally change hidden content.
     """
+    if _graph_on():
+        page_vis = visibility if visibility in (VIS_PUBLIC, VIS_PRIVATE) else VIS_PUBLIC
+        _graph_write_bullets(db, uid, _section_for(page_id), body, page_vis)
+        return {"head_version_id": ""}
     ref, data = _require_page(db, uid, page_id)
     if not allow_hidden_changes:
         existing = parse_spans(_display_body(db, uid, page_id, data))
@@ -120,6 +155,10 @@ def create_section(
     content is the user's own, stamps ``user_updated_at`` and suppresses the
     next ingest's re-proposal, then snapshots. Returns the new page id."""
     vis = visibility if visibility in (VIS_PUBLIC, VIS_PRIVATE, VIS_AI_ONLY) else VIS_PRIVATE
+    if _graph_on():
+        page_vis = vis if vis in (VIS_PUBLIC, VIS_PRIVATE) else VIS_PRIVATE
+        _graph_write_bullets(db, uid, _section_for(page_type), body, page_vis)
+        return {"page_id": page_type.replace("_", "-"), "head_version_id": ""}
     page_id = _unique_page_id(db, uid, page_type)
     _pages_col(db, uid).document(page_id).set(
         {
@@ -141,6 +180,11 @@ def create_section(
 def set_visibility(db, uid: str, page_id: str, visibility: str) -> dict:
     if visibility not in (VIS_PUBLIC, VIS_PRIVATE):
         raise ValueError(visibility)
+    if _graph_on():
+        import person_graph_store as store
+
+        store.set_section_visibility(db, uid, _section_for(page_id), visibility)
+        return {"head_version_id": ""}
     ref, data = _require_page(db, uid, page_id)
     label = _section_title(
         page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
@@ -159,6 +203,13 @@ def remove_section(db, uid: str, page_id: str) -> dict:
     """Delete a section from the editor. ``ai_body`` is untouched — Ayma keeps
     it — and a revert to an earlier version can bring it back. The pre-delete
     state is committed to the section's history first."""
+    if _graph_on():
+        import person_graph_store as store
+
+        # Drop the section's editor-owned public/private nodes; seed answers and
+        # ayma_only/reserved nodes stay (Ayma keeps its own knowledge).
+        store.replace_section_bullets(db, uid, _section_for(page_id), [])
+        return {"deleted": True}
     ref, data = _require_page(db, uid, page_id)
     label = _section_title(
         page_id, str(data.get(F_PAGE_TYPE) or "misc"), data.get(F_TITLE) or ""
