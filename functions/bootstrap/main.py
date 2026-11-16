@@ -7540,13 +7540,29 @@ def _match_inputs_mtime(db, uid: str):
     except Exception:  # noqa: BLE001
         logger.warning("Failed to fetch profile updated_at for %s", uid, exc_info=True)
 
-    try:
-        for doc in db.collection("users").document(uid).collection("questionnaire").stream():
-            data = doc.to_dict()
-            if data and "updated_at" in data:
-                stamps.append(data.get("updated_at"))
-    except Exception:  # noqa: BLE001
-        logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
+    from config import CONFIG as _CONFIG
+
+    if _CONFIG.person_graph_reads:
+        # Graph-authoritative: profile-field and questionnaire-answer edits now
+        # land on the graph overlay, which stamps `updated_at` on every write.
+        # That single stamp captures what the questionnaire-doc scan used to, so
+        # a graph-only edit (after the writer swap) still invalidates a cached
+        # match. profile/main `updated_at` is still read above for non-tool
+        # writes (photos, preboarding).
+        try:
+            import person_graph_store as _pg_store
+
+            stamps.append(_pg_store.overlay_mtime(db, uid))
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch graph overlay mtime for %s", uid, exc_info=True)
+    else:
+        try:
+            for doc in db.collection("users").document(uid).collection("questionnaire").stream():
+                data = doc.to_dict()
+                if data and "updated_at" in data:
+                    stamps.append(data.get("updated_at"))
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
 
     return _latest_ts(*stamps)
 

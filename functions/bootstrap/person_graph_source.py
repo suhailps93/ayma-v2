@@ -57,6 +57,119 @@ def structured_qstore(graph: dict[str, pg.GraphNode]) -> dict[str, dict]:
     return out
 
 
+# The core profile fields that today's ``set_profile_field`` /
+# ``set_relationship_intent`` tools write to ``profile/main``, mapped from the
+# level-1 **seed node id** that now holds the same value in the graph (the
+# reverse of ``person_graph_migrate._PROFILE_DERIVABLE`` plus
+# ``relationship_intent``, which migration keeps on ``profile/main`` directly).
+# Once those writers swap to graph-only, these are the fields that would go
+# stale on ``profile/main``; overlaying the graph answer here keeps every
+# profile reader authoritative without changing its shape.
+_PROFILE_FIELD_NODES = {
+    "legal_first_name": "name",
+    "date_of_birth": "birthdate",
+    "gender_identity": "gender",
+    "target_match_genders": "interested_in",
+    "primary_location": "location",
+    "relationship_intent": "relationship_intent",
+}
+
+# The three taste seed nodes, mapped to ``taste_backfill``'s domain keys.
+_TASTE_FIELD_NODES = {
+    "taste_music": "music",
+    "taste_film": "film",
+    "taste_food": "food",
+}
+
+
+def profile_overlay(graph: dict[str, pg.GraphNode]) -> dict:
+    """``{profile_field: answer}`` for the core profile fields that are answered
+    on their level-1 seed node in ``graph``. A blank/unanswered node is skipped,
+    so overlaying this onto a ``profile/main`` dict only ever *replaces* a field
+    the user has actually set through the graph — never blanks one."""
+    out: dict = {}
+    for nid, field in _PROFILE_FIELD_NODES.items():
+        node = graph.get(nid)
+        if node is None:
+            continue
+        ans = getattr(node, "answer", None)
+        if ans in (None, "", [], {}):
+            continue
+        out[field] = ans
+    return out
+
+
+def hydrate_profile(db, uid: str, profile: dict) -> dict:
+    """``profile`` with the graph's core profile answers overlaid on top, so a
+    field the user edited through the graph tools takes precedence over a stale
+    ``profile/main`` value. Best-effort: on a graph read failure the profile is
+    returned unchanged (the old read path's behaviour). Caller gates on
+    ``CONFIG.person_graph_reads``."""
+    merged = dict(profile or {})
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: hydrate_profile read failed for %s", uid)
+        return merged
+    merged.update(profile_overlay(graph))
+    return merged
+
+
+def taste_values(graph: dict[str, pg.GraphNode]) -> dict[str, str]:
+    """``{domain: value}`` (music/film/food) from the three taste seed nodes of
+    ``graph`` — the graph-native replacement for ``taste_backfill._taste_values``
+    reading the questionnaire subcollection. Missing/blank → ``""``."""
+    out: dict[str, str] = {d: "" for d in _TASTE_FIELD_NODES.values()}
+    for nid, domain in _TASTE_FIELD_NODES.items():
+        node = graph.get(nid)
+        if node is None:
+            continue
+        ans = getattr(node, "answer", None)
+        out[domain] = " ".join(str(ans or "").split())
+    return out
+
+
+def questionnaire_matches(db, uid: str, qtok: set[str], scorer) -> list[dict]:
+    """Recall/fact-source matches over the graph's answered seed nodes — the
+    graph-native replacement for ``fact_source._questionnaire_matches`` reading
+    the questionnaire subcollection. A graph node carries a provenance *tag*, not
+    the verbatim chat line, so matches come back as inexact (``exact: False``,
+    empty ``quote``) exactly like a store entry with no provenance block did.
+    ``scorer(qtok, text)`` is the caller's token scorer."""
+    import question_tree
+
+    out: list[dict] = []
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: questionnaire_matches read failed for %s", uid)
+        return out
+    for nid, node in graph.items():
+        if getattr(node, "emergent", False):
+            continue
+        ans = getattr(node, "answer", None)
+        if ans in (None, ""):
+            continue
+        value = str(ans)
+        meta = question_tree.node(nid) or {}
+        label = str(meta.get("label") or nid)
+        score = scorer(qtok, f"{label} {value}")
+        if score <= 0:
+            continue
+        out.append(
+            {
+                "type": "chat",
+                "exact": False,
+                "field": label,
+                "current_value": value,
+                "quote": "",
+                "when": "",
+                "_score": score,
+            }
+        )
+    return out
+
+
 def persona(
     db, uid: str, *, public_only: bool = False, include_ayma_only: bool = False
 ) -> str:
@@ -278,10 +391,16 @@ def load_user(db, uid: str) -> tuple[dict, dict]:
         logger.exception("person_graph_source: profile read failed for %s", uid)
 
     qstore: dict = {}
+    profile = _strip_qz_mirrors(profile)
     try:
         graph = store.effective(db, uid)
         qstore = structured_qstore(graph)
+        # Graph-stored profile edits (made through the graph tools) take
+        # precedence over a stale profile/main field, so matching scores against
+        # what the user last set. Only answered fields are overlaid — a blank
+        # node never clears a profile value.
+        profile.update(profile_overlay(graph))
     except Exception:  # noqa: BLE001
         logger.exception("person_graph_source: graph read failed for %s", uid)
 
-    return _strip_qz_mirrors(profile), qstore
+    return profile, qstore

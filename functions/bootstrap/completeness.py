@@ -246,6 +246,21 @@ def _profile(db, uid: str) -> dict:
 
 
 def _questionnaire_store(db, uid: str) -> dict[str, dict]:
+    # Graph-authoritative: the recorded answers now live on their seed nodes, so
+    # `recompute` / `next_questions` read the graph (not the questionnaire
+    # subcollection the writer swap stops populating). Same ``{node_id: {value,
+    # source}}`` shape the stream produced. Flag off → today's store read.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_source
+            import person_graph_store as store
+
+            return person_graph_source.structured_qstore(store.effective(db, uid))
+        except Exception:  # noqa: BLE001
+            logger.exception("completeness: graph questionnaire read failed for %s", uid)
+            return {}
     try:
         out: dict[str, dict] = {}
         for snap in (

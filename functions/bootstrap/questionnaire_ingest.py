@@ -91,6 +91,20 @@ def _load_prompt() -> str:
 
 
 def _questionnaire_store(db, uid: str) -> dict[str, dict]:
+    # Graph-authoritative: read answered seed nodes from the graph so a
+    # session-end ingest sees the same recorded answers after the writer swap
+    # stops populating the questionnaire subcollection. Flag off → store read.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_source
+            import person_graph_store as store
+
+            return person_graph_source.structured_qstore(store.effective(db, uid))
+        except Exception:  # noqa: BLE001
+            logger.exception("questionnaire graph read failed for %s", uid)
+            return {}
     out: dict[str, dict] = {}
     try:
         for snap in (
