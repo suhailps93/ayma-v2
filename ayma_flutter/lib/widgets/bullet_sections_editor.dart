@@ -258,16 +258,23 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
       return (changed: false, kept: true);
     }
     final vis = _bullets[i].visibility;
+    final id = _bullets[i].id;
     final List<StoryBullet> replacement;
     final bool changed;
     if (_editingIsNew) {
+      // A brand-new "+" bullet has no node yet; split pieces stay id-less so the
+      // server mints a fresh node for each.
       final pieces = splitIntoBullets(_ctrl.text);
       replacement = [for (final p in pieces) StoryBullet(text: p, visibility: vis)];
       changed = !(pieces.length == 1 && pieces.first == _bullets[i].text);
     } else {
+      // An EDIT of an existing bullet keeps the node's id, so the server
+      // preserves its id + level and retires the old text to answer history
+      // instead of minting a new node (NOTE 234 leg 1).
       final text = _ctrl.text.trim();
-      replacement =
-          text.isEmpty ? const [] : [StoryBullet(text: text, visibility: vis)];
+      replacement = text.isEmpty
+          ? const []
+          : [StoryBullet(id: id, text: text, visibility: vis)];
       changed = text != _bullets[i].text;
     }
     _editing = null;
@@ -351,6 +358,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
     }
     setState(() {
       _bullets[i] = StoryBullet(
+        id: _bullets[i].id,
         text: _bullets[i].text,
         visibility: nextBulletVisibility(_bullets[i].visibility),
       );

@@ -408,6 +408,56 @@ void main() {
         ('Two.', 'private'),
       ]);
     });
+
+    // NOTE 234 leg 1: an edit must round-trip the node's id so the server
+    // preserves its identity (id + level) and retires the old text to answer
+    // history, instead of minting a new node. The editor used to drop the id on
+    // the reconstructed StoryBullet, so edits reached the server id-less.
+    testWidgets('editing an existing bullet keeps its node id in the save',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'I grew up in Lisbon.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.text('I grew up in Lisbon.'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).first, 'I grew up in Porto.');
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      final saved = api.bulletSaves.last.$2;
+      expect(saved, hasLength(1));
+      expect(saved.single.text, 'I grew up in Porto.');
+      expect(saved.single.id, 'b1',
+          reason: 'the edited bullet must carry its node id to the server');
+    });
+
+    testWidgets('flipping an existing bullet\'s visibility keeps its node id',
+        (tester) async {
+      final api = await pumpEditor(
+        tester,
+        _FakeApi(sections: [
+          _aboutMe(const [
+            StoryBullet(id: 'b1', text: 'I grew up in Lisbon.', visibility: 'public'),
+          ]),
+        ])..reflectSavesIntoSections = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pumpAndSettle();
+
+      final saved = api.bulletSaves.last.$2;
+      expect(saved, hasLength(1));
+      expect(saved.single.visibility, 'private');
+      expect(saved.single.id, 'b1',
+          reason: 'a visibility flip must not drop the node id');
+    });
   });
 
   // A chat-shared photo homed with its fact (pg_add_image): the image item
