@@ -383,6 +383,64 @@ def upsert_fact_node(
     return node_id
 
 
+def upsert_report_node(
+    db,
+    uid: str,
+    node_id: str,
+    payload: dict,
+    *,
+    label: str = "report",
+    section: str = "misc",
+) -> str:
+    """Create-or-overwrite the dedicated, Ayma-only REPORT node that carries a
+    full report's structured payload (the appearance-report dict, or a web-dive
+    digest+meta dict) as its ``answer`` — the graph home for the report screens
+    now that the ``appearance_reports`` / ``deep_dives`` collections are deleted
+    (reports-as-nodes, founder Nov 16). The report VIEW is rebuilt from this node
+    (``report_adapters`` reads ``answer`` back and reshapes identically); the
+    human findings also feed the per-section grounding nodes
+    (``emergent.skill.*``) for the person model, which own the public/match leak.
+
+    ``answer_type == "report_doc"`` marks it as non-rendering scaffolding — it is
+    never a Your Story / public / grounding bullet (:mod:`person_graph_render`
+    skips it). Ayma-only visibility + provenance ``inferred``: report-derived,
+    unconfirmed until the user confirms it in conversation (settled Nov 15 rule).
+    Idempotent by ``node_id`` (one report node per kind/key), so a re-run or a
+    correction overwrites it in place. Returns ``node_id``."""
+    if not isinstance(payload, dict):
+        raise ValueError("upsert_report_node needs a dict payload")
+    if pg.seed_node(node_id) is not None:
+        raise ValueError(f"{node_id!r} is a seed node")
+    if section not in question_tree.section_meta():
+        raise ValueError(f"unknown section {section!r} for report node")
+    overlay = load_overlay(db, uid)
+    e: dict[str, Any] = {
+        "prompt": (label or "report")[:120],
+        "section": section,
+        "level": 2,
+        "answer_type": "report_doc",
+        "answer": payload,
+        "state": NodeState.ANSWERED.value,
+        "visibility": Visibility.AYMA_ONLY.value,
+        "provenance": Provenance.INFERRED.value,
+        "updated_at": pg.now_iso(),
+    }
+    model = OverlayNode.model_validate(e)
+    overlay[node_id] = model.model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return node_id
+
+
+def report_node_payload(db, uid: str, node_id: str) -> dict:
+    """The stored payload dict of a report node (:func:`upsert_report_node`), or
+    ``{}`` when the user has no such node. The report adapters read a report view
+    straight back from here with ``person_graph_reads`` on, so the report screen
+    renders from the graph with the old collection gone."""
+    e = node_overlay_entry(db, uid, node_id)
+    ans = e.get("answer") if isinstance(e, dict) else None
+    return dict(ans) if isinstance(ans, dict) else {}
+
+
 def delete_nodes(db, uid: str, node_ids: Iterable[str]) -> int:
     """Remove emergent overlay nodes by id (no-op for a seed node or an id the
     user doesn't have). Returns the count removed. Used by the Your Story editor

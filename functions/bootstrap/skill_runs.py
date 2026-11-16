@@ -157,7 +157,25 @@ def _artifact_seen(db, uid: str, skill: str) -> bool:
     ``physical_attributes/current`` artifact also counts — a pre-migration user
     has already had their photos read."""
     if skill == DEEP_DIVE:
-        return _has_any(db, uid, "deep_dives")
+        if _has_any(db, uid, "deep_dives"):
+            return True
+        # reports-as-nodes (founder Nov 16): with person_graph_reads ON the
+        # deep_dives collection is deleted and a dive lives as an
+        # emergent.webfind.report.* graph node, so a prior run is detectable
+        # there instead. Local CONFIG import (test-patchable; see convention).
+        from config import CONFIG
+
+        if CONFIG.person_graph_reads:
+            try:
+                import person_graph_store as store
+
+                overlay = store.load_overlay(db, uid)
+                return any(
+                    str(nid).startswith("emergent.webfind.report.") for nid in overlay
+                )
+            except Exception:  # noqa: BLE001
+                return False
+        return False
     if skill == APPEARANCE:
         return (
             _doc_exists(db, uid, "appearance", "current")

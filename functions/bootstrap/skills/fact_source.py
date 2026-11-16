@@ -241,8 +241,29 @@ def _wiki_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     return out
 
 
-def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
-    out: list[dict] = []
+def _dive_docs(db, uid: str) -> list[dict]:
+    """Every stored web-search dive doc for ``uid`` — the ``deep_dives``
+    collection flag-off, else the user's ``emergent.webfind.report.*`` graph
+    nodes (reports-as-nodes, founder Nov 16: the collection is deleted when
+    ``person_graph_reads`` is ON). Each dict is the stored dive doc shape
+    (``{digest, name, created_at, ...}``)."""
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_store as store
+
+            overlay = store.load_overlay(db, uid)
+            out = []
+            for nid, entry in overlay.items():
+                if not str(nid).startswith("emergent.webfind.report."):
+                    continue
+                ans = entry.get("answer") if isinstance(entry, dict) else None
+                if isinstance(ans, dict):
+                    out.append(ans)
+            return out
+        except Exception:  # noqa: BLE001
+            return []
     try:
         docs = (
             db.collection("users")
@@ -251,9 +272,13 @@ def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
             .stream()
         )
     except Exception:  # noqa: BLE001
-        return out
-    for snap in docs:
-        data = snap.to_dict() or {}
+        return []
+    return [snap.to_dict() or {} for snap in docs]
+
+
+def _deep_dive_matches(db, uid: str, qtok: set[str]) -> list[dict]:
+    out: list[dict] = []
+    for data in _dive_docs(db, uid):
         digest = data.get("digest") or {}
         if not isinstance(digest, dict):
             continue
@@ -367,14 +392,13 @@ def _appearance_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     surfaces that existing data through the same lookup."""
     out: list[dict] = []
     try:
-        snap = (
-            db.collection("users")
-            .document(uid)
-            .collection("appearance_reports")
-            .document("current")
-            .get()
-        )
-        data = snap.to_dict() or {} if getattr(snap, "exists", False) else {}
+        # reports-as-nodes (founder Nov 16): read through ``appearance.get_report``
+        # so this resolves to the graph node with ``person_graph_reads`` ON (the
+        # ``appearance_reports`` collection is deleted) and the collection doc
+        # flag-off — same shaped face/body dict either way.
+        import appearance
+
+        data = appearance.get_report(db, uid, "current") or {}
     except Exception:  # noqa: BLE001
         return out
     if not data:
