@@ -350,3 +350,27 @@ at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
 - **7 — cutover + delete** (the wiki store itself + the prod→staging sync
   exclusion). GATED on founder post-switch re-verification; now unblocked by the
   read/write switch above.
+
+## Phase 7 — delete the old wiki store ✅ (Nov 16, staging)
+
+Scout NOTE 232 passed on build 2458 (all four graph legs; all 28 wiki md5s
+unchanged), confirming staging runs flags ON and no live reader/writer needs
+`wiki_pages`. Re-ran the reader grep against staging tip `d292ed99`: every
+`collection("wiki_pages")` hit is gated flag-on → the graph, behind the central
+ingest gate (`wiki_ingest.ingest`), disabled (`wiki_lint.lint_all`), reached
+only from a flag-off branch, or a test-only demo seeder (`practice_seed.seed`,
+no staging call site). Clean.
+
+- **Deleted (staging only):** all 174 `wiki_pages` docs across 27 users (incl.
+  `deleted_accounts/*/wiki_pages`) **recursively**, with their 178 `versions`
+  docs — 0 of each remain. The graph is untouched (368 overlay nodes, unchanged).
+  A full JSON archive (every page + its versions) was exported first.
+- **Prod→staging sync exclusion:** `scripts/sync-prod-to-staging.sh` runs a
+  **post-import purge** (`scripts/purge_staging_wiki_pages.py`) after each
+  Firestore import, since the import re-copies prod's still-live `wiki_pages`
+  (prod runs flags OFF) and managed import `--collection-ids` is include-only.
+  The purge is recursive and **staging-only** (hard project guard; refuses
+  `ayma-ai`). Prod is never touched; the import's contents are unchanged.
+- **Prod wiki_pages is untouched** — prod still reads/writes it (flags OFF), so
+  the flag-off wiki code paths stay. Phase 7 retired the *staging* data + the
+  sync re-pollution only; nothing is code-dead until prod flips.
