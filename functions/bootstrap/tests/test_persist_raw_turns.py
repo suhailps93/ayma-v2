@@ -161,7 +161,7 @@ def test_persist_and_ingest_calls_both_persist_and_wiki_ingest(monkeypatch):
     db = _FakeDb()
     calls = []
 
-    async def _fake_ingest(_db, uid, session_id, turns):
+    async def _fake_ingest(_db, uid, session_id, turns, capture_questionnaire=False):
         calls.append((uid, session_id, [t.text for t in turns]))
         return 1
 
@@ -231,7 +231,7 @@ def test_persist_and_ingest_swallows_a_raw_turns_persist_failure(monkeypatch):
     monkeypatch.setattr(post_turn, "persist_raw_turns", _boom)
     calls = []
 
-    async def _fake_ingest(_db, uid, session_id, turns):
+    async def _fake_ingest(_db, uid, session_id, turns, capture_questionnaire=False):
         calls.append((uid, session_id))
         return 0
 
@@ -322,7 +322,7 @@ def test_persist_and_ingest_flags_pending_before_ingest_and_clears_after(
     db = _FakeDb()
     seen_at_ingest = {}
 
-    async def _fake_ingest(_db, uid, session_id, turns):
+    async def _fake_ingest(_db, uid, session_id, turns, capture_questionnaire=False):
         seen_at_ingest.update(db.doc.written)
         return 1
 
