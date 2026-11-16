@@ -4432,6 +4432,9 @@ async def profiles_mini(
                 db.collection("users").document(other)
                 .collection("profile").document("main").get().to_dict()
             ) or {}
+            if _CONFIG.person_graph_reads:
+                import person_graph_source
+                prof = person_graph_source.hydrate_profile(db, other, prof)
         except Exception:  # noqa: BLE001
             return {"name": "", "photo": "", "online": False}
         photo = ""

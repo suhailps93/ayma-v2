@@ -237,9 +237,16 @@ def _profile_ref(db, uid: str):
 
 
 def _profile(db, uid: str) -> dict:
+    from config import CONFIG
+
     try:
         snap = _profile_ref(db, uid).get()
-        return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        prof = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        if CONFIG.person_graph_reads:
+            import person_graph_source
+
+            prof = person_graph_source.hydrate_profile(db, uid, prof)
+        return prof
     except Exception:  # noqa: BLE001 - a read failure just yields no derivations
         logger.exception("completeness: profile read failed for %s", uid)
         return {}

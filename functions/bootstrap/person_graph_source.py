@@ -95,7 +95,17 @@ def profile_overlay(graph: dict[str, pg.GraphNode]) -> dict:
         ans = getattr(node, "answer", None)
         if ans in (None, "", [], {}):
             continue
+        if field == "interested_in" and isinstance(ans, str):
+            ans = [p.strip() for p in ans.split(",") if p.strip()]
         out[field] = ans
+    if "emergent.profile.last_name" in graph:
+        ans = getattr(graph["emergent.profile.last_name"], "answer", None)
+        if ans not in (None, ""):
+            out["last_name"] = ans
+    if "emergent.profile.phone" in graph:
+        ans = getattr(graph["emergent.profile.phone"], "answer", None)
+        if ans not in (None, ""):
+            out["phone"] = ans
     return out
 
 

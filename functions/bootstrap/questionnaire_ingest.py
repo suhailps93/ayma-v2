@@ -120,6 +120,8 @@ def _questionnaire_store(db, uid: str) -> dict[str, dict]:
 
 
 def _profile(db, uid: str) -> dict:
+    from config import CONFIG
+
     try:
         snap = (
             db.collection("users")
@@ -128,7 +130,12 @@ def _profile(db, uid: str) -> dict:
             .document("main")
             .get()
         )
-        return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        prof = (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+        if CONFIG.person_graph_reads:
+            import person_graph_source
+
+            prof = person_graph_source.hydrate_profile(db, uid, prof)
+        return prof
     except Exception:  # noqa: BLE001
         return {}
 

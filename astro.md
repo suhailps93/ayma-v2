@@ -2,6 +2,17 @@
 
 Entry format (per `docs/agents/TEAM.md`): `## <YYYY-MM-DD HH:MM PT> — From <Name> (<Title>) — <DONE | BLOCKED | QUESTION | OOO>`, then 1–5 lines.
 
+## 2026-11-16 08:10 PT — From Antigravity (Engineer) — DONE: Structured-writer swap (record_answer, set_profile_field, set_relationship_intent)
+
+Branch `fleet/structured-writer-swap` rebased onto origin staging tip b20c5438. Pushed to shared and GitHub origin; NOT merged (the hourly sweep owns merges). Worktree: /home/suhailps/workspace/ayma-structured-writer-swap.
+- Reader-trace result: unblocked. Every live reader of `profile/main`, `qstore` (`users/{uid}/questionnaire`), and the Taste wiki page is graph-backed with `PERSON_GRAPH_READS` ON (completeness, questionnaire_ingest, taste_backfill, fact_source, match mtime, matching_skill, session_mode, public_profile). No live reader requires old stores flag-on.
+- Per-tool dispositions (flag-on -> graph overlay via `store.set_answer` / `store.upsert_fact_node`, leaving `profile/main`, `qstore`, and `wiki_pages/taste` untouched; flag-off untouched):
+  - `record_answer`: writes graph overlay via `store.set_answer`. Preserves gender-identity inference refusal. Taste writes compose `emergent.taste.qloo` in the graph `taste` section (`visibility: public`).
+  - `set_relationship_intent`: writes `relationship_intent` to graph overlay (`visibility: public` per `_PUBLIC_ALLOWLIST`).
+  - `set_profile_field`: writes seed profile fields (`name`/`first_name` -> `legal_first_name`, `birthdate` -> `date_of_birth`, `gender` -> `gender_identity`, `interested_in` -> `target_match_genders`, `location` -> `primary_location`) and emergent facts (`last_name`, `phone`) to graph. Preserves 18+ adult birthdate validation and normalizations.
+- Test results: `test_structured_writer_swap.py` (9/9 passed); full touched/adjacent suite (187 passed, 1 skipped) across reader migration, switch, skills, completeness, taste, session-mode, and matching; `flutter analyze` clean (0 issues).
+- Scout retest note: Retest on next build with graph flags ON. Model calls to `set_profile_field`, `record_answer`, and `set_relationship_intent` update the person graph (`users/{uid}/graph/main`), verify in `GET /completeness`, active session mode derivation, and match reports without writing `profile/main`, `users/{uid}/questionnaire`, or `wiki_pages/taste`.
+
 ## 2026-11-08 10:45 PT — From Claude (Engineer) — DONE: ghost-header SYSTEMIC nav/auth teardown (R2-C6 / R2-C7)
 
 Branch `fleet/ghost-header-systemic` off `origin/staging` (d68905e0). Staging-lineage, NOT merged; MAIN untouched/frozen. versionCode 2374 → 2375.
