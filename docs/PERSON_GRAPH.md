@@ -219,7 +219,17 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
   - *Like-for-like levels (§5.4):* partially satisfied today (a gate/dimension
     scores only when both users answered the node); fuller level-banding of
     graded dimensions is deferred.
-- **6b — guided flow by level; add the open "What I'm Looking For" node to seed
-  + allow-list; reports-as-views + image nodes.**
+- **6b — guided flow by level; the open "What I'm Looking For" node; reports-as-views
+  + image nodes.**
+  - *Open "What I'm looking for" node — DONE.* Seed bumped to **v8**: a level-2
+    narrative node `looking_for_description` in the `looking_for` section
+    (`question_tree.json`), the open template field §5.2 item 5 names. Added to
+    `_PUBLIC_ALLOWLIST` (`person_graph.py`) so it defaults **public** — a
+    standard user-authored dating-profile field, founder-approved alongside the
+    identity set; the user can still make it private per node. Renders in the
+    public profile when answered; migration carries it like any seed node.
+  - *Guided flow by level.* NEXT: Ayma's ask-order becomes breadth-first by
+    level (§5.2), replacing `completeness.py`'s depth-first section walk.
+  - *Reports-as-views + image nodes.* After the guided flow.
 - **7 — cutover + delete** (wiki write path, old report/assessment docs). GATED
   on founder post-switch re-verification.

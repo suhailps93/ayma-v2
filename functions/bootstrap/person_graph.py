@@ -232,6 +232,11 @@ _PUBLIC_ALLOWLIST = {
     "primary_location",
     "target_match_genders",
     "relationship_intent",
+    # The open "What I'm looking for" description (seed v8, 6b): a standard,
+    # user-authored dating-profile field — founder-approved public alongside the
+    # identity set. Its default visibility is public; the user can still make it
+    # private per node like any other.
+    "looking_for_description",
 }
 
 

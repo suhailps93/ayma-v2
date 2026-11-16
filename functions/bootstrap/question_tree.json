@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "_doc": "Person-graph seed (v7, evolved from the v6 deep-matchmaking tree). A flat array of nodes; `branch` routes them (`all` + one of casual/long_term/nikah). `level` (1/2/3 here; 4+ grown by Ayma in conversation) replaces the core/deep tier for guidance order and like-for-like matching — `tier` is retained for back-compat until consumers switch. Level 1 = the 9 pre-boarding form items; levels 2+ are learned by Ayma in conversation, never forms. Private Context is removed as a section (15 sections); its 2 nodes remap to Relationships as ayma_only. Per-node `visibility` is the common-sense default (section default_visibility is the fallback); the user can change any node. Loaded by question_tree.py / completeness.py / person_graph.py.",
   "kinds": [
     "enum",
@@ -1327,6 +1327,21 @@
       "hard_filter": true,
       "dating_relevant": true,
       "ayma_prompt": "whether they are rooted where they live, open to long-distance for a while, or would relocate (within their country or abroad) for the right person",
+      "level": 2
+    },
+    {
+      "id": "looking_for_description",
+      "tier": "core",
+      "page_type": "looking_for",
+      "branch": "all",
+      "label": "What I'm looking for",
+      "kind": "narrative",
+      "options": null,
+      "scale": null,
+      "weight": 2,
+      "hard_filter": false,
+      "dating_relevant": true,
+      "ayma_prompt": "in their own words, the kind of person and relationship they're hoping to find",
       "level": 2
     },
     {
