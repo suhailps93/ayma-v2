@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/profile_tab_screen.dart';
+import 'package:ayma_flutter/screens/report_run_flows.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/credits_balance.dart';
 import 'package:ayma_flutter/services/meta_integrations.dart';
@@ -87,7 +88,6 @@ Widget _host(ApiClient api) {
       for (final path in const [
         '/settings',
         '/settings/ayma',
-        '/skills',
         '/appearance/current',
         '/deep-dive/rep1',
         '/profile/plan',
@@ -244,8 +244,8 @@ void main() {
     expect(find.text('ROUTE /deep-dive/rep1'), findsOneWidget);
   });
 
-  testWidgets('web research opens the run screen when there is no report',
-      (tester) async {
+  testWidgets('web research runs directly (the web-search dialog) when there '
+      'is no report — no Skills menu', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -255,7 +255,10 @@ void main() {
     await tester.tap(find.text('Search the web about me'));
     await tester.pumpAndSettle();
 
-    expect(find.text('ROUTE /skills'), findsOneWidget);
+    // Goes straight to the web-search dialog (relocated from the deleted Skills
+    // menu), never through a /skills route.
+    expect(find.widgetWithText(FilledButton, 'Search'), findsOneWidget);
+    expect(find.text('ROUTE /skills'), findsNothing);
   });
 
   testWidgets('Appearance opens the last report when one exists',
@@ -272,8 +275,8 @@ void main() {
     expect(find.text('ROUTE /appearance/current'), findsOneWidget);
   });
 
-  testWidgets('Appearance opens the run screen when there is no report',
-      (tester) async {
+  testWidgets('Appearance runs directly (the pre-run sheet) when there is no '
+      'report — no Skills menu', (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -281,9 +284,16 @@ void main() {
     await tester.pumpWidget(_host(_api()));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
+    // The pre-run sheet opens as a modal bottom sheet; don't pumpAndSettle (its
+    // eligibility/thumbnail futures never settle).
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
 
-    expect(find.text('ROUTE /skills'), findsOneWidget);
+    // Goes straight to the Appearance pre-run sheet (relocated from the deleted
+    // Skills menu), never through a /skills route.
+    expect(find.byType(AppearancePreRunSheet), findsOneWidget);
+    expect(find.text('ROUTE /skills'), findsNothing);
   });
 
   testWidgets('the credits row shows the fetched balance', (tester) async {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/profile_service.dart';
 import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
@@ -50,7 +51,8 @@ class ProfileTabScreen extends StatelessWidget {
     if (!context.mounted) return;
     if (reportId.isEmpty) {
       // No report yet — run the web search (hands off to the Ayma chat).
-      await runWebSearchFromProfile(context);
+      await runWebSearchFromProfile(context,
+          profileService: ProfileService(auth: auth));
     } else {
       context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
     }
