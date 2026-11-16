@@ -116,6 +116,21 @@ def derive_for(db, uid: str, is_anonymous: bool) -> str:
     profile_snap = user_ref.collection("profile").document("main").get()
     profile = profile_snap.to_dict() if profile_snap.exists else None
 
+    # Graph-authoritative: a user who fills a required field (name / birthdate /
+    # gender / interested_in / location) through the graph tools instead of the
+    # on-screen form would otherwise leave profile/main short and stay stuck in
+    # INTERVIEW after the writer swap. Overlay the graph's answers so the mode
+    # gate sees them. Flag off → the raw profile doc, unchanged.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_source
+
+            profile = person_graph_source.hydrate_profile(db, uid, profile or {})
+        except Exception:  # noqa: BLE001 - fall back to the raw profile doc
+            pass
+
     return derive(
         is_anonymous=is_anonymous,
         profile=profile,

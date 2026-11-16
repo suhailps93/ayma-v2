@@ -61,6 +61,20 @@ def _taste_values(db, uid: str) -> dict[str, str]:
     """``{domain: value}`` for the three taste questionnaire nodes (empty string
     when a node is missing/blank). This is the authoritative taste signal —
     ``_sync_taste_page`` composes the public Taste page straight from these."""
+    # Graph-authoritative: the taste answers live on their seed nodes, so read
+    # the graph once the writer swap stops populating the questionnaire docs.
+    # Flag off → the three direct questionnaire reads, unchanged.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        try:
+            import person_graph_source
+            import person_graph_store as store
+
+            return person_graph_source.taste_values(store.effective(db, uid))
+        except Exception:  # noqa: BLE001 - a read failure just means "don't bother"
+            logger.exception("taste_backfill: graph taste read failed for %s", uid)
+            return {d: "" for d in _DOMAINS}
     qcol = db.collection("users").document(uid).collection("questionnaire")
     out: dict[str, str] = {}
     for domain, node_id in questionnaire._TASTE_DOMAIN_NODES.items():

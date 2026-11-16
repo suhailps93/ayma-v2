@@ -140,6 +140,17 @@ def _profile_matches(db, uid: str, qtok: set[str]) -> list[dict]:
 
 def _questionnaire_matches(db, uid: str, qtok: set[str]) -> list[dict]:
     out: list[dict] = []
+    # Graph-authoritative: recorded answers live on their seed nodes, so recall
+    # reads them from the graph once the writer swap empties the questionnaire
+    # subcollection. A graph node has no verbatim chat quote, so matches are
+    # inexact — the same as a store entry without a provenance block. Flag off →
+    # the questionnaire stream, unchanged.
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source
+
+        return person_graph_source.questionnaire_matches(db, uid, qtok, _score)
     try:
         import question_tree
 

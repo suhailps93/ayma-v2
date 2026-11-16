@@ -59,6 +59,27 @@ def load_overlay(db, uid: str) -> dict[str, dict]:
     return dict((data or {}).get("nodes") or {})
 
 
+def overlay_mtime(db, uid: str):
+    """The overlay document's ``updated_at`` as a timezone-aware ``datetime``,
+    or ``None`` if there is no overlay / no stamp / it can't be parsed. Every
+    graph write (``set_answer``, profile/intent edits, etc.) bumps this stamp,
+    so it is the graph-native replacement for the ``profile/main`` +
+    ``questionnaire`` ``updated_at`` signals the match-staleness check reads."""
+    from datetime import datetime
+
+    try:
+        snap = _graph_ref(db, uid).get()
+        data = snap.to_dict() if snap and snap.exists else None
+        raw = (data or {}).get("updated_at")
+        if not raw:
+            return None
+        if hasattr(raw, "isoformat") and not isinstance(raw, str):
+            return raw  # already a datetime (Firestore timestamp)
+        return datetime.fromisoformat(str(raw))
+    except Exception:  # noqa: BLE001 - a bad/absent stamp just yields no signal
+        return None
+
+
 def _save_overlay(db, uid: str, overlay: dict[str, dict]) -> None:
     """Validate the whole overlay, then persist it. Validation at the boundary
     means a malformed node is rejected before any write (design §7.3)."""
