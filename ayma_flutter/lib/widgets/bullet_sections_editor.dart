@@ -31,10 +31,14 @@ class BulletSectionsEditor extends StatefulWidget {
   State<BulletSectionsEditor> createState() => _BulletSectionsEditorState();
 }
 
-class _BulletSectionsEditorState extends State<BulletSectionsEditor> {
+class _BulletSectionsEditorState extends State<BulletSectionsEditor>
+    with AutomaticKeepAliveClientMixin {
   List<BulletSection> _sections = const [];
   bool _loading = true;
   String? _error;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -110,6 +114,7 @@ class _BulletSectionsEditorState extends State<BulletSectionsEditor> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final ac = context.ac;
     if (_loading) {
       return const Padding(
