@@ -108,6 +108,13 @@ def _answer_text(node: GraphNode) -> str:
     """A node's answer as display text. Narrative answers are the user's own
     words; a structured answer is labelled by its prompt. Meta/non-answer
     sentinels and empty values render nothing."""
+    # A report node (reports-as-nodes, founder Nov 16) carries a full report's
+    # structured payload as its ``answer`` (a dict) purely so the report screen
+    # can be rebuilt from the graph — it is scaffolding, never a prose fact, so
+    # it renders nothing in story / public / grounding / persona. The human
+    # findings reach the person model through the per-section grounding nodes.
+    if node.answer_type == "report_doc":
+        return ""
     # An image node (design §6) renders as Ayma's read of the image, never the
     # raw storage URL — the url is for display, the read is the prose fact.
     if node.answer_type == "image":

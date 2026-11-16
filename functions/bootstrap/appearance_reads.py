@@ -20,7 +20,9 @@ from appearance_storage import (
     DOC_ID,
     REPORT_DOC_ID,
     REPORTS_COLLECTION,
+    _REPORT_NODE_ID,
     _category_status,
+    _graph_reads_on,
     _report_ref,
 )
 
@@ -109,6 +111,23 @@ def get_report(db, uid: str, report_id: str) -> dict | None:
 
     shape_fn = getattr(appearance, "_shape", _shape)
     rid = (report_id or "").strip()
+
+    if _graph_reads_on():
+        # reports-as-nodes: the single report lives as the graph node now, so
+        # ``current`` (and any legacy id — there is only one report) resolves to
+        # it. ``_shape`` maps a string ``created_at`` to ``None`` (no
+        # ``keep_strings``); the node stores an ISO string, so re-attach it so
+        # the share-card version stamp still matches.
+        import person_graph_store as store
+
+        data = store.report_node_payload(db, uid, _REPORT_NODE_ID)
+        if not data:
+            return None
+        shaped = shape_fn(REPORT_DOC_ID, data)
+        if shaped.get("created_at") is None and data.get("created_at"):
+            shaped["created_at"] = str(data["created_at"])
+        return shaped
+
     try:
         col = (
             db.collection("users")
@@ -163,15 +182,29 @@ def history(db, uid: str, *, limit: int = 20) -> list[dict]:
         )
 
     try:
-        snap = ref_fn(db, uid).get()
-        if getattr(snap, "exists", False):
-            d = snap.to_dict() or {}
+        if _graph_reads_on():
+            # reports-as-nodes: the current report is the graph node, not a
+            # collection doc (which is deleted). Its ``created_at`` is an ISO
+            # string, so keep it through.
+            import person_graph_store as store
+
+            d = store.report_node_payload(db, uid, _REPORT_NODE_ID)
+            exists = bool(d)
+            row_id = REPORT_DOC_ID
+            created = iso_or_none(d.get("created_at"), keep_strings=True) if exists else None
+        else:
+            snap = ref_fn(db, uid).get()
+            exists = getattr(snap, "exists", False)
+            d = (snap.to_dict() or {}) if exists else {}
+            row_id = getattr(snap, "id", REPORT_DOC_ID)
+            created = iso_or_none(d.get("created_at")) if exists else None
+        if exists:
             attrs = d.get("attributes") or {}
             summ = str(attrs.get("summary") or "") if isinstance(attrs, dict) else ""
             rows.append(
                 {
-                    "id": snap.id,
-                    "created_at": iso_or_none(d.get("created_at")),
+                    "id": row_id,
+                    "created_at": created,
                     "has_face": section_ok_fn(d.get("face")),
                     "has_body": section_ok_fn(d.get("body")),
                     "summary": summ,

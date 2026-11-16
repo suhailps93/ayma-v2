@@ -38,6 +38,21 @@ CAT_NO_ELIGIBLE = "no_eligible_photo"
 
 _MAX_FINDING_HISTORY = 8
 
+# reports-as-nodes (founder Nov 16): with ``person_graph_reads`` ON the
+# ``appearance_reports`` collection is deleted and the ONE persistent report doc
+# lives as this Ayma-only graph node instead (``person_graph_store`` carries the
+# whole report payload as the node's ``answer``). Flag OFF is unchanged (prod
+# still runs the collection until its own cutover).
+_REPORT_NODE_ID = "emergent.appearance.report"
+
+
+def _graph_reads_on() -> bool:
+    # LOCAL import: a module-level ``from config import CONFIG`` binds the old
+    # object and isn't reachable by the test monkeypatch (codebase convention).
+    from config import CONFIG as _cfg
+
+    return bool(_cfg.person_graph_reads)
+
 
 def _axis_ran(axis) -> bool:
     """A face/body axis actually produced a real read (not a
@@ -61,6 +76,15 @@ def _category_status(
 
 
 def _report_ref(db, uid: str):
+    # Loud-fail backstop (founder Nov 16): nothing may touch the deleted
+    # ``appearance_reports`` collection while ``person_graph_reads`` is ON — the
+    # report lives as a graph node now. A forgotten flag-on path raises here
+    # (visible error) instead of silently reading an empty collection.
+    if _graph_reads_on():
+        raise RuntimeError(
+            "appearance_reports is deleted on staging and person_graph_reads is "
+            "ON — read/write the emergent.appearance.report graph node instead"
+        )
     return (
         db.collection("users")
         .document(uid)
@@ -70,6 +94,12 @@ def _report_ref(db, uid: str):
 
 
 def _read_report_doc(db, uid: str) -> dict:
+    """The stored report payload — the graph node with ``person_graph_reads`` ON
+    (the collection is gone), else the ``appearance_reports/current`` doc."""
+    if _graph_reads_on():
+        import person_graph_store as store
+
+        return store.report_node_payload(db, uid, _REPORT_NODE_ID)
     try:
         snap = _report_ref(db, uid).get()
         return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
@@ -265,16 +295,37 @@ def _persist_report(
         "category_status": category_status,
     }
     stored = False
-    try:
-        from firebase_admin import firestore
+    if _graph_reads_on():
+        # reports-as-nodes: persist the ONE report payload as the Ayma-only
+        # ``emergent.appearance.report`` graph node (the collection is deleted).
+        # A real ISO ``created_at`` (not a Firestore sentinel, which can't live
+        # inside a node's answer) stamps the version the share card curates
+        # against. The ``appearance/current`` pointer doc stays (a separate,
+        # un-deleted collection the existence checks read).
+        import person_graph as _pg
+        import person_graph_store as store
 
         payload = dict(doc)
-        payload["created_at"] = firestore.SERVER_TIMESTAMP
-        ref_fn(db, uid).set(payload)
-        stored = True
-        stamp_fn(db, uid)
-        purge_fn(db, uid)
-    except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
-        logger.exception("appearance: report store failed for %s", uid)
+        payload["created_at"] = _pg.now_iso()
+        try:
+            store.upsert_report_node(
+                db, uid, _REPORT_NODE_ID, payload, label="appearance report"
+            )
+            stored = True
+            stamp_fn(db, uid)
+        except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
+            logger.exception("appearance: report node store failed for %s", uid)
+    else:
+        try:
+            from firebase_admin import firestore
+
+            payload = dict(doc)
+            payload["created_at"] = firestore.SERVER_TIMESTAMP
+            ref_fn(db, uid).set(payload)
+            stored = True
+            stamp_fn(db, uid)
+            purge_fn(db, uid)
+        except Exception:  # noqa: BLE001 - a store failure shouldn't lose the read
+            logger.exception("appearance: report store failed for %s", uid)
     doc["id"] = REPORT_DOC_ID if stored else ""
     return doc
