@@ -221,21 +221,46 @@ class GraphNode(BaseModel):
 # --- seed construction (from the v7 tree) ---------------------------------
 
 
+# Founder-approved PUBLIC allow-list (Nov 15 2026): the standard dating-profile
+# facts that appear on the public profile. date_of_birth is public as AGE only —
+# the raw birthdate never renders (see person_graph_render). Everything not here
+# defaults private. (The open "What I'm Looking For" description node is a
+# pending Nov-15 addition; it joins this list when the looking-for flow adds it.)
+_PUBLIC_ALLOWLIST = {
+    "date_of_birth",
+    "gender_identity",
+    "primary_location",
+    "target_match_genders",
+    "relationship_intent",
+}
+
+
 def _default_visibility_for(node: dict, section_default: Visibility) -> Visibility:
-    """The node's common-sense default visibility: an explicit per-node
-    ``visibility`` in the seed wins; a ``sensitive`` node is never public;
-    otherwise the section default stands (design §3)."""
+    """The node's common-sense default visibility (design §3).
+
+    A structured personal fact is NOT public until it is explicitly opted in:
+    publishing a questionnaire answer (DOB, gender, booleans, enums, …) to the
+    public profile is a per-node decision, not a section-default fallback
+    (Scout 2449 blocker 1 — the founder reviews and approves the public set).
+    So the rule is:
+      - an explicit per-node ``visibility`` in the seed wins (the public
+        allow-list, and the sensitive overrides, live here);
+      - a ``sensitive`` node is never public;
+      - everything else defaults **private** — visible to the owner in Your
+        Story, never on the public profile, until opted in.
+    Wiki/story prose keeps its own page visibility at migration time (it does
+    not pass through this), so this changes only seed-node (questionnaire)
+    answers, which previously did not render as story/public bullets at all."""
     explicit = node.get("visibility")
     if explicit in {v.value for v in Visibility}:
         return Visibility(explicit)
+    if node.get("id") in _PUBLIC_ALLOWLIST and not node.get("sensitive"):
+        return Visibility.PUBLIC  # founder-approved public dating-profile fact
     if node.get("sensitive"):
-        # sensitive content never defaults public (bodies, etc.)
-        return (
-            Visibility.PRIVATE
-            if section_default is Visibility.PUBLIC
-            else section_default
-        )
-    return section_default
+        # sensitive content is never public; keep an even-more-private section
+        # default (e.g. ayma_only) if the section sets one.
+        return section_default if section_default is not Visibility.PUBLIC else Visibility.PRIVATE
+    return Visibility.PRIVATE
 
 
 @lru_cache(maxsize=1)

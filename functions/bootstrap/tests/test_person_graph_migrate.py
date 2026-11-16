@@ -141,6 +141,78 @@ def test_migrate_wiki_bullets_become_emergent_nodes(monkeypatch):
     assert set(mig.migrate_wiki(db, "u1")) == set(ov)
 
 
+def test_migrate_wiki_dedupes_bullets_from_duplicate_pages(monkeypatch):
+    # Scout 2449: 6 bullets rendered twice because duplicate wiki pages (same
+    # canonical section, different page_id) each produced the bullet. The graph
+    # homes a fact once — identical text in one section collapses to one node.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "family", "page_id": "family",
+             "visibility": "public", "body": "Grew up in San Jose."},
+            {"page_type": "family", "page_id": "family-roots",
+             "visibility": "public", "body": "Grew up in San Jose. Two sisters."},
+        ],
+        ai_sections=[],
+    )
+    db = FakeDb()
+    ov = mig.migrate_wiki(db, "u1")
+    texts = sorted(e["answer"] for e in ov.values())
+    assert texts == ["Grew up in San Jose.", "Two sisters."]  # no duplicate
+    # idempotent still holds with the new id basis
+    assert set(mig.migrate_wiki(db, "u1")) == set(ov)
+
+
+def test_duplicate_bullet_keeps_most_private_tag(monkeypatch):
+    # if the same text appears public on one page and private on another, the
+    # first occurrence stands and a private copy never silently becomes public.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "family", "page_id": "family",
+             "visibility": "private", "body": "A tender memory."},
+            {"page_type": "family", "page_id": "family-dup",
+             "visibility": "public", "body": "A tender memory."},
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    assert len(ov) == 1
+    assert next(iter(ov.values()))["visibility"] == Visibility.PRIVATE.value
+
+
+def test_migrate_wiki_skips_non_canonical_pages(monkeypatch):
+    # Scout 2449 blocker 4: a health/sensitive page (non-canonical page_type)
+    # is excluded by the live story (profile_bullets skips it); migration must
+    # match — it must not surface under Little Extras.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "health", "page_id": "health",
+             "visibility": "private", "body": "On a GLP-1 for weight loss."},
+            {"page_type": "interests", "page_id": "interests",
+             "visibility": "public", "body": "I love hiking."},
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    texts = [e["answer"] for e in ov.values()]
+    assert any("hiking" in t for t in texts)
+    assert not any("GLP-1" in t for t in texts)  # health page not surfaced
+    assert all(e["section"] in __import__("question_tree").section_meta() for e in ov.values())
+
+
+def test_migrate_questionnaire_skips_meta_sentinels():
+    # Scout 2449 blocker 3 at the source: a "skipped"/"addressed" questionnaire
+    # value is not an answer and must not become a node.
+    docs = {}
+    docs.update(_q("u1", "family_of_origin_narrative", value="skipped", source="stated"))
+    docs.update(_q("u1", "sibling_relationship_narrative", value="Close.", source="stated"))
+    ov = mig.migrate_questionnaire(FakeDb(docs), "u1")
+    assert "sibling_relationship_narrative" in ov
+    assert "family_of_origin_narrative" not in ov
+
+
 def test_migrate_assessment_is_ayma_only_inferred(monkeypatch):
     _patch_story(
         monkeypatch,
@@ -194,3 +266,34 @@ def test_migrate_user_writes_a_renderable_graph(monkeypatch):
     before = len(store.load_overlay(db, "u1"))
     mig.migrate_user(db, "u1", write=True)
     assert len(store.load_overlay(db, "u1")) == before
+
+
+def test_remigrate_replace_drops_stale_nodes(monkeypatch):
+    # Scout: an overlay written by the PRE-dedupe migration still holds stale
+    # duplicate ids. A re-migration with replace=True must drop them, leaving
+    # exactly the fresh (deduped) node set.
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "interests", "page_id": "interests",
+             "visibility": "public", "body": "I love hiking."},
+        ],
+        ai_sections=[],
+    )
+    db = FakeDb({("users", "u1", "profile", "main"): {"relationship_intent": "Long-term"}})
+    # a stale node id from the old id scheme, plus a legit migrated answer
+    db.docs[("users", "u1", "graph", "main")] = {
+        "nodes": {
+            "emergent.story.interests.0.stale": {
+                "prompt": "I love hiking.", "section": "interests", "level": 2,
+                "answer": "I love hiking.", "answer_type": "narrative",
+                "visibility": "public", "provenance": "imported",
+            },
+        }
+    }
+    mig.migrate_user(db, "u1", write=True, replace=True)
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.story.interests.0.stale" not in overlay  # stale id dropped
+    # exactly one hiking node remains (the fresh deduped one)
+    hiking = [k for k, v in overlay.items() if v.get("answer") == "I love hiking."]
+    assert len(hiking) == 1

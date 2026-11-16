@@ -50,6 +50,10 @@ _PROFILE_DERIVABLE = {
 
 _LITTLE_EXTRAS = "misc"
 
+# questionnaire answer values that are meta / non-answers — not real content
+# (Scout 2449 blocker 3: these leaked through as story bullets).
+_META_SENTINELS = {"skipped", "addressed", "n/a", "none", "prefer not to say", ""}
+
 
 def _emergent_id(prefix: str, *parts: str) -> str:
     h = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:8]
@@ -82,6 +86,8 @@ def migrate_questionnaire(db, uid: str) -> dict[str, dict]:
         value = data.get("value")
         if value is None or value == "":
             continue
+        if isinstance(value, str) and value.strip().lower() in _META_SENTINELS:
+            continue  # skipped/addressed/etc. is not an answer — don't surface it
         src = str(data.get("source") or "stated").lower()
         prov = Provenance.INFERRED if src == "inferred" else Provenance.STATED
         entry: dict[str, Any] = {
@@ -122,24 +128,53 @@ def migrate_profile(db, uid: str) -> dict[str, dict]:
 def migrate_wiki(db, uid: str) -> dict[str, dict]:
     """Every public/private story bullet → an emergent node homed in its
     section, keeping the bullet's visibility. Unknown sections land under Little
-    Extras. Ayma-only passages are left to :func:`migrate_assessment`."""
+    Extras. Ayma-only passages are left to :func:`migrate_assessment`.
+
+    The emergent id is derived from ``(section, normalised text)``, so the same
+    bullet reached through **duplicate wiki pages** (same canonical section,
+    different page_id) collapses to ONE node — the graph's "one home per fact"
+    rule (design §2.4), matching the dedupe the legacy ``get_bullets`` did by
+    text within a canonical page_type. On a collision the **more private**
+    visibility wins (order-independent), so a private copy never becomes
+    public."""
     import story
     import story_bullets
+
+    # publicness order: lower = more public (public < private < ayma_only)
+    _rank = {
+        Visibility.PUBLIC.value: 0,
+        Visibility.PRIVATE.value: 1,
+        Visibility.AYMA_ONLY.value: 2,
+    }
 
     out: dict[str, dict] = {}
     for sec in story.get_story(db, uid).get("sections", []):
         page_id = sec.get("page_id", "")
         if page_id in getattr(story, "REPORT_LINKED_PAGE_IDS", set()):
             continue  # report-linked pages become report-view nodes, not here
-        page_type = sec.get("page_type") or _LITTLE_EXTRAS
-        section = page_type if page_type in question_tree.section_meta() else _LITTLE_EXTRAS
+        page_type = sec.get("page_type") or ""
+        if page_type not in question_tree.section_meta():
+            # The live story only renders canonical sections (profile_bullets
+            # skips the rest — e.g. the health/sensitive page). Match it: a
+            # non-canonical page is NOT story content, so it does not surface
+            # here (Scout 2449 blocker 4). Its content is retained Ayma-only by
+            # migrate_assessment where applicable, never in Your Story/public.
+            continue
+        section = page_type
         vis = sec.get("visibility") or "private"
         bullets = story_bullets.parse_bullets(sec.get("body") or "", vis, page_id=page_id)
-        for i, b in enumerate(bullets):
+        for b in bullets:
             text = (b.get("text") or "").strip()
             if not text or b.get("visibility") == "ai_only":
                 continue
-            nid = _emergent_id("story", page_id or page_type, str(i), text)
+            # id keyed on section + normalised text → duplicate-page bullets dedupe
+            nid = _emergent_id("story", section, text.casefold())
+            vis = _GRAPH_VIS.get(b.get("visibility"), Visibility.PRIVATE.value)
+            if nid in out:
+                # same fact already homed — keep the more private visibility
+                if _rank[vis] > _rank[out[nid]["visibility"]]:
+                    out[nid]["visibility"] = vis
+                continue
             out[nid] = {
                 "prompt": text,
                 "section": section,
@@ -147,7 +182,7 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
                 "answer": text,
                 "answer_type": "narrative",
                 "state": NodeState.ANSWERED.value,
-                "visibility": _GRAPH_VIS.get(b.get("visibility"), Visibility.PRIVATE.value),
+                "visibility": vis,
                 "provenance": Provenance.IMPORTED.value,
             }
     return out
@@ -209,11 +244,22 @@ def build_overlay(db, uid: str) -> dict[str, dict]:
     return overlay
 
 
-def migrate_user(db, uid: str, *, write: bool = False) -> dict[str, dict]:
-    """Build (and optionally persist) a user's migrated overlay. Idempotent:
-    re-running overwrites by id rather than duplicating."""
+def migrate_user(
+    db, uid: str, *, write: bool = False, replace: bool = False
+) -> dict[str, dict]:
+    """Build (and optionally persist) a user's migrated overlay.
+
+    - ``write`` + ``replace=False`` (default): merge the fresh migration output
+      over whatever the overlay already holds. Idempotent within one id scheme.
+    - ``write`` + ``replace=True``: persist the fresh output as the WHOLE node
+      set, dropping any stale node (e.g. the pre-dedupe duplicate ids). Use this
+      to RE-migrate after a migration-logic change, while the graph is still
+      migration-only (pre-switch, no user edits to preserve)."""
     overlay = build_overlay(db, uid)
     pg.validate_overlay(overlay)  # never persist a malformed node
+    if write and replace:
+        store.replace_overlay(db, uid, overlay)
+        return overlay
     if write:
         existing = store.load_overlay(db, uid)
         existing.update(overlay)

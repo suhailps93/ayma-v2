@@ -37,7 +37,8 @@ def test_story_shows_public_and_private_not_ayma_only():
     # every canonical section present (empty ones included for the editor)
     assert {s["page_type"] for s in secs} >= set(question_tree.ordered_page_types())
     ident = _texts(secs, "identity")
-    assert any("1994-02-02" in t for t in ident)  # public shown
+    assert any(t.startswith("Age:") for t in ident)  # DOB shows as age
+    assert not any("1994-02-02" in t for t in ident)  # raw birthdate never shown
     assert "lean build" not in " ".join(ident)  # ayma_only never in Your Story
     fin = _texts(secs, "finances")
     assert any("freedom" in t for t in fin)  # private shown in Your Story
@@ -55,6 +56,69 @@ def test_story_narrative_is_verbatim_structured_is_labelled():
     assert "I sleep better debt-free." in fin  # narrative verbatim
     life = _texts(secs, "lifestyle")
     assert any(t.startswith("Alcohol") and "Never" in t for t in life)  # labelled
+
+
+def test_structured_values_render_humanised_not_raw():
+    # Scout 2449 blocker 2: DOB rendered as a raw Firestore timestamp and
+    # booleans as "true". Dates show a date; booleans show Yes/No.
+    g = _graph(
+        {
+            "date_of_birth": {"answer": "1993-03-05 20:00:00+00:00", "visibility": "private"},
+            "smoking_vaping": {"answer": True, "visibility": "private"},
+        }
+    )
+    secs = render.story_sections(g)["sections"]
+    ident = _texts(secs, "identity")
+    # DOB shows as a plain age number, never the raw timestamp or full date
+    assert any(t.startswith("Age:") for t in ident)
+    assert not any("20:00:00" in t or "1993-03-05" in t for t in ident)
+    life = _texts(secs, "lifestyle")
+    assert any(t.endswith(": Yes") for t in life)
+    assert not any("true" in t.lower() for t in life)
+
+
+def test_emergent_bullet_renders_verbatim_not_doubled():
+    # a migrated story bullet has prompt == answer; it must render once
+    # ("I love hiking."), never "I love hiking.: I love hiking.".
+    g = _graph(
+        {
+            "emergent.x": {
+                "prompt": "I love hiking.", "section": "interests", "level": 2,
+                "answer": "I love hiking.", "answer_type": "narrative",
+                "visibility": "public",
+            }
+        }
+    )
+    pub = render.public_sections(g)
+    interests = next(s for s in pub if s["page_type"] == "interests")
+    assert interests["bullets"] == ["I love hiking."]
+
+
+def test_no_visibility_node_defaults_private_in_render():
+    # Scout live finding: overlay nodes with NO visibility field were rendering
+    # public. A no-visibility, non-allow-list node must not appear publicly.
+    g = _graph({"childhood_hardship_narrative": {"answer": "A hard year."}})
+    pub = render.public_sections(g)
+    assert not any("hard year" in b for s in pub for b in s["bullets"])
+    # but it IS in the owner's Your Story (private shown there)
+    secs = render.story_sections(g)["sections"]
+    fam = _texts(secs, "family")
+    assert "A hard year." in fam
+
+
+def test_meta_sentinel_answers_do_not_render():
+    # Scout 2449 blocker 3: "skipped" / "addressed" placeholders are not bullets.
+    g = _graph(
+        {
+            "family_of_origin_narrative": {"answer": "skipped", "visibility": "private"},
+            "childhood_formative_narrative": {"answer": "addressed", "visibility": "private"},
+            "sibling_relationship_narrative": {"answer": "Close with my sister.", "visibility": "private"},
+        }
+    )
+    fam = _texts(render.story_sections(g)["sections"], "family")
+    assert "Close with my sister." in fam
+    assert not any(t.strip().lower() in ("skipped", "addressed") for t in fam)
+    assert not any("skipped" in t.lower() or "addressed" in t.lower() for t in fam)
 
 
 def test_story_includes_children_as_bullets():
@@ -93,7 +157,8 @@ def test_public_shows_only_public_and_drops_empty_sections():
     assert "identity" in pts
     assert "finances" not in pts  # all-private section hidden on public profile
     ident = next(s for s in pub if s["page_type"] == "identity")
-    assert any("1994-02-02" in t for t in ident["bullets"])
+    assert any(t.startswith("Age:") for t in ident["bullets"])  # age, not raw DOB
+    assert not any("1994-02-02" in t for t in ident["bullets"])
 
 
 def test_public_child_visibility_is_independent_of_parent():
@@ -116,7 +181,7 @@ def test_public_child_visibility_is_independent_of_parent():
 def test_persona_prose_owner_vs_public_vs_ayma_only():
     g = _graph(
         {
-            "date_of_birth": {"answer": "1994", "visibility": "public"},
+            "date_of_birth": {"answer": "1994-02-02", "visibility": "public"},
             "financial_security_narrative": {
                 "answer": "Private money thought.",
                 "visibility": "private",
@@ -138,7 +203,7 @@ def test_section_order_preserved_in_renders():
     g = _graph(
         {
             "financial_security_narrative": {"answer": "money", "visibility": "public"},
-            "date_of_birth": {"answer": "1994", "visibility": "public"},
+            "date_of_birth": {"answer": "1994-02-02", "visibility": "public"},
         }
     )
     pub = render.public_sections(g)
