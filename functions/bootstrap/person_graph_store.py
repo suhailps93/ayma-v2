@@ -426,43 +426,68 @@ def _is_editor_owned(node_id: str) -> bool:
     return not any(node_id.startswith(p) for p in _RESERVED_EMERGENT_PREFIXES)
 
 
+def _free_editor_id(overlay: dict[str, dict], section: str) -> str:
+    """The first unused ``emergent.editor.<section>.<n>`` id — so a new bullet
+    never collides with a preserved node that kept that id."""
+    i = 0
+    while f"emergent.editor.{section}.{i}" in overlay:
+        i += 1
+    return f"emergent.editor.{section}.{i}"
+
+
 def replace_section_bullets(
     db, uid: str, section: str, bullets: list[dict]
 ) -> list[str]:
     """The Your Story editor write-back (design §8.1): make ``bullets`` the
-    section's editor-visible content in the graph. The editor owns a section's
-    **public/private emergent** nodes — this removes those and writes one
-    ``emergent.editor.<section>.<i>`` node per bullet — while **seed** nodes
-    (structured questionnaire answers) and **ayma_only** emergent nodes
-    (steering, assessment) are left untouched, so a delete takes effect and no
-    structured fact or Ayma-only note is ever dropped by a story edit. Each
-    bullet is ``{"text", "visibility"}`` (public/private). Returns the new ids.
+    section's editor-visible content in the graph, **preserving node identity**
+    (the settled ANSWER HISTORY rule). The editor owns a section's
+    **public/private emergent** nodes; **seed** nodes (structured questionnaire
+    answers) and **ayma_only** emergent nodes (steering, assessment) are left
+    untouched, so no structured fact or Ayma-only note is ever dropped by a
+    story edit.
 
-    This closes the NOTE 230 Phase-6b write-back gap: an edited bullet now
-    round-trips into the graph-backed story/public reads instead of writing a
-    frozen wiki page."""
+    Each bullet is ``{"id"?, "text", "visibility"}``. For every incoming bullet:
+
+    * matched to an existing editor-owned node (by its ``id``, else by exact
+      text for the id-less in-chat path) → that node is **kept**: its id and
+      level are preserved, and if the text changed the **superseded text retires
+      to the node's Ayma-only dated ``history``** (never rendered in Your Story
+      or the public profile, never scored — a change of heart is itself a fact),
+      with the new text as the live answer;
+    * unmatched → a **new** ``emergent.editor.<section>.<n>`` node (new id).
+
+    An existing editor-owned node that no incoming bullet matches is **deleted**
+    (the user removed that bullet) — a delete owes no history entry. Returns the
+    section's bullet ids in order. Closes the NOTE 230 write-back gap without the
+    whole-section re-serialization Scout NOTE 232 Leg 3 flagged."""
     if section not in question_tree.section_meta():
         raise ValueError(f"unknown section {section!r}")
     overlay = load_overlay(db, uid)
-    # Drop the section's current editor-owned nodes (emergent, public/private):
-    # the migrated story bullets (``emergent.story.*``), prior editor bullets
+
+    # The section's current editor-owned nodes (emergent, public/private): the
+    # migrated story bullets (``emergent.story.*``), prior editor bullets
     # (``emergent.editor.*``) and free-form remembered facts (bare
     # ``emergent.<hex>`` loose nodes). Reserved-kind nodes (skill reports, the
     # Qloo taste node, steering, assessment, images, …) are NOT editor content
     # and are preserved even in the same section.
     editor_vis = {None, Visibility.PUBLIC.value, Visibility.PRIVATE.value}
-    for nid in [
-        n for n, e in overlay.items()
+    existing = {
+        n: e for n, e in overlay.items()
         if isinstance(e, dict)
         and pg.seed_node(n) is None
         and e.get("section") == section
         and e.get("visibility") in editor_vis
         and _is_editor_owned(n)
-    ]:
-        del overlay[nid]
+    }
+    # id-less bullets (the in-chat free-text path) match an unchanged node by its
+    # exact current text, so a reorder / visibility flip keeps the node's id.
+    by_text: dict[str, list[str]] = {}
+    for nid, e in existing.items():
+        by_text.setdefault(str(e.get("answer") or "").strip(), []).append(nid)
 
-    new_ids: list[str] = []
-    i = 0
+    consumed: set[str] = set()
+    result_ids: list[str] = []
+
     for b in bullets or []:
         text = str(b.get("text") or "").strip()
         if not text:
@@ -470,24 +495,66 @@ def replace_section_bullets(
         vis = str(b.get("visibility") or Visibility.PRIVATE.value)
         if vis not in {v.value for v in Visibility} or vis == Visibility.AYMA_ONLY.value:
             vis = Visibility.PRIVATE.value  # the editor never writes ayma_only
-        nid = f"emergent.editor.{section}.{i}"
-        overlay[nid] = OverlayNode.model_validate(
-            {
-                "prompt": text[:120],
-                "section": section,
-                "level": 2,
-                "answer_type": "narrative",
-                "answer": text,
-                "state": NodeState.ANSWERED.value,
-                "visibility": vis,
-                "provenance": Provenance.STATED.value,
-                "updated_at": pg.now_iso(),
-            }
-        ).model_dump(exclude_none=True)
-        new_ids.append(nid)
-        i += 1
+
+        bid = str(b.get("id") or "")
+        match: str | None = None
+        if bid and bid in existing and bid not in consumed:
+            match = bid
+        elif not bid:
+            for cand in by_text.get(text, []):
+                if cand not in consumed:
+                    match = cand
+                    break
+
+        if match is not None:
+            e = dict(existing[match])
+            prev = e.get("answer")
+            if prev is not None and str(prev) != text:
+                # Retire the superseded text to Ayma-only dated history on the
+                # SAME node (mirrors ``set_answer``). History is never rendered.
+                history = list(e.get("history") or [])
+                history.append(
+                    {
+                        "answer": prev,
+                        "date": pg.now_iso(),
+                        "provenance": e.get("provenance") or Provenance.STATED.value,
+                    }
+                )
+                e["history"] = history
+            e["answer"] = text
+            e["prompt"] = text[:120]
+            e["visibility"] = vis
+            e["state"] = NodeState.ANSWERED.value
+            e["updated_at"] = pg.now_iso()
+            # level, section, answer_type, provenance preserved as-is.
+            overlay[match] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+            consumed.add(match)
+            result_ids.append(match)
+        else:
+            nid = _free_editor_id(overlay, section)
+            overlay[nid] = OverlayNode.model_validate(
+                {
+                    "prompt": text[:120],
+                    "section": section,
+                    "level": 2,
+                    "answer_type": "narrative",
+                    "answer": text,
+                    "state": NodeState.ANSWERED.value,
+                    "visibility": vis,
+                    "provenance": Provenance.STATED.value,
+                    "updated_at": pg.now_iso(),
+                }
+            ).model_dump(exclude_none=True)
+            consumed.add(nid)
+            result_ids.append(nid)
+
+    # Any editor-owned node no incoming bullet matched was removed by the user.
+    for nid in existing:
+        if nid not in consumed:
+            del overlay[nid]
+
     replace_overlay(db, uid, overlay)
-    return new_ids
+    return result_ids
 
 
 def set_section_visibility(db, uid: str, section: str, visibility: Visibility | str) -> int:

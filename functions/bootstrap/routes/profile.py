@@ -125,6 +125,11 @@ async def profile_public_text_save(
 
 
 class BulletIn(BaseModel):
+    # The graph node id the client read back with this bullet (empty for a
+    # newly-added bullet). Used to preserve node identity + answer history on
+    # edit (person_graph_store.replace_section_bullets); an unknown/empty id
+    # just means "new bullet".
+    id: str = Field(default="", max_length=200)
     text: str = Field(default="", max_length=2000)
     visibility: Literal["public", "private", "ai_only"] = "public"
 
