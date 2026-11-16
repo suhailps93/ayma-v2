@@ -6579,7 +6579,13 @@ class StoryBullet {
     visibility: m['visibility'] as String? ?? 'private',
   );
 
-  Map<String, dynamic> toBody() => {'text': text, 'visibility': visibility};
+  // Includes [id] so the backend can preserve the graph node's identity and
+  // answer history across an edit (empty id = a newly-added bullet).
+  Map<String, dynamic> toBody() => {
+    'id': id,
+    'text': text,
+    'visibility': visibility,
+  };
 }
 
 /// One canonical section from `GET /profile/bullets`; [pageId] is empty and
