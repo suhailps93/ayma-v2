@@ -6,12 +6,15 @@ import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
+import 'package:ayma_flutter/services/accent_color_controller.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/biometric_consent.dart';
 import 'package:ayma_flutter/services/legal_links.dart';
+import 'package:ayma_flutter/services/profile_service.dart';
 import 'package:ayma_flutter/services/transcript_store.dart';
 import 'package:ayma_flutter/services/voice_session_controller.dart';
+import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_auth_mocks/src/mock_user_credential.dart';
@@ -103,6 +106,16 @@ class _FakeVoice extends VoiceSessionController {
     _active = false;
     notifyListeners();
   }
+}
+
+class _FakeProfiles extends ProfileService {
+  _FakeProfiles({this.remote})
+      : super(auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')));
+
+  final Color? remote;
+
+  @override
+  Future<Color?> getAccentColor() async => remote;
 }
 
 /// Ticks the two required clickwrap boxes (Terms/Privacy, face recognition).
@@ -600,6 +613,55 @@ void main() {
     expect(auth.calls, contains('signIn:a@b.com'));
     expect(find.text('SPLASH'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Password'), findsNothing);
+  });
+
+  testWidgets(
+      'signing in hydrates the accent controller with saved profile accent',
+      (tester) async {
+    final auth = _FakeAuth()..succeedSignIn = true;
+    final fakeProfiles = _FakeProfiles(remote: const Color(0xFF2D6A4F));
+    final accentController = AccentColorController(
+      initial: AymaColors.accent,
+      profileService: fakeProfiles,
+    );
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final router = GoRouter(
+      initialLocation: SignInScreen.path,
+      routes: [
+        GoRoute(
+          path: SignInScreen.path,
+          builder: (_, __) => SignInScreen(
+            auth: auth,
+            voiceController: _FakeVoice(),
+            accentController: accentController,
+            profileService: fakeProfiles,
+          ),
+        ),
+        GoRoute(
+          path: SplashScreen.path,
+          builder: (_, __) => const Text('SPLASH'),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await _acceptConsents(tester);
+    await tester.tap(find.text('Email'));
+    await tester.pump();
+
+    await tester.enterText(find.widgetWithText(TextField, 'Email'), 'a@b.com');
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Password'), 'secret1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign in'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(auth.calls, contains('signIn:a@b.com'));
+    expect(accentController.color, const Color(0xFF2D6A4F));
+    expect(find.text('SPLASH'), findsOneWidget);
   });
 
   testWidgets(

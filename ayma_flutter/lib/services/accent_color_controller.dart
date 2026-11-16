@@ -74,13 +74,14 @@ class AccentColorController extends ChangeNotifier {
     } catch (_) {/* best-effort */}
   }
 
-  /// Syncs the server-side accent colour if missing from local storage.
-  /// Intended to run in the background post-frame (N19) so network latency
-  /// never blocks startup.
-  Future<void> syncRemoteIfMissing([ProfileService? profiles]) async {
+  /// Syncs the server-side accent colour into local storage and memory.
+  /// When [force] is false (default), only syncs if local storage is missing the key.
+  /// When [force] is true (e.g. at sign-in), always checks the user's profile
+  /// doc so the user's saved accent applies immediately on first render.
+  Future<void> syncRemote({ProfileService? profiles, bool force = false}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getString(_key) != null) return;
+      if (!force && prefs.getString(_key) != null) return;
       final svc = profiles ?? _profiles;
       final remote = await svc.getAccentColor();
       if (remote != null) {
@@ -89,11 +90,25 @@ class AccentColorController extends ChangeNotifier {
         try {
           await prefs.setString(_key, _toHex(remote));
         } catch (_) {/* best-effort cache */}
+      } else if (force) {
+        if (_color != AymaColors.accent) {
+          _color = AymaColors.accent;
+          notifyListeners();
+        }
+        try {
+          await prefs.remove(_key);
+        } catch (_) {}
       }
     } catch (_) {
       // Signed out / offline / no profile doc yet — keep the default.
     }
   }
+
+  /// Syncs the server-side accent colour if missing from local storage.
+  /// Intended to run in the background post-frame (N19) so network latency
+  /// never blocks startup.
+  Future<void> syncRemoteIfMissing([ProfileService? profiles]) =>
+      syncRemote(profiles: profiles, force: false);
 
   /// Load the saved preference. Local `SharedPreferences` wins when present
   /// (fast path); otherwise, best-effort, pull the server copy so a

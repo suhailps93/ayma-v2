@@ -2,6 +2,28 @@
 
 Last updated: 2026-11-16. Update this file whenever an item changes; commit and push to main.
 
+## NOTE-236-ACCENT-HYDRATION — Accent hydration lag on fresh install (fleet/accent-hydration-lag off staging e4995d79, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
+- **Defect (Scout NOTE 236, build 2462):** After a fresh install + sign-in, the app rendered the DEFAULT pink accent (pink orb, pink Upgrade button, pink sign-in orb) even though `profile/main.ayma_accent_color` was still `#2d6a4f` (green) in Firestore. Only after a force-stop + cold relaunch did the saved green accent apply.
+- **Root Cause:**
+  1. On a fresh install, local storage (`SharedPreferences`) has no `accent_color_hex` key.
+  2. StartupDAG `N19:remote_sync` only runs `syncRemoteIfMissing()` if `user != null && !user.isAnonymous`. On fresh launch, the user is unauthenticated, so `syncRemoteIfMissing()` was skipped.
+  3. Upon sign-in on `SignInScreen` (email, Google, Apple, or phone), the screen immediately navigated to `SplashScreen.path` without hydrating or caching the user's saved accent color from their Firestore profile.
+  4. Neither `SignInScreen` nor `SplashScreen` hydrated the accent color, leaving `AccentColorController` holding the default Cherry Fuchsia pink for the entire initial session until a cold relaunch triggered `N19:remote_sync`.
+- **Fix:**
+  1. Added `syncRemote({ProfileService? profiles, bool force = false})` to `AccentColorController`, allowing explicit forced sync on sign-in (updating `_color` and caching in `SharedPreferences`, resetting to default if remote is null).
+  2. Exposed `AuthService.profileService` to access the bound profile service.
+  3. In `SignInScreen`, added `_hydrateAccent()` right after authentication in `_run` and phone `autoSignedIn`, ensuring `syncRemote(force: true)` completes and `MaterialApp` rebuilds before navigating to splash / main shell.
+  4. In `SplashScreen`, added `syncRemoteIfMissing()` in parallel with `bootstrap()` as defense-in-depth before navigating to destination routes.
+  5. In `main.dart`, hooked `syncRemote(force: isSwitch)` to `authStateChanges`.
+- **Tests:**
+  1. Added repro & regression suite `ayma_flutter/test/accent_hydration_lag_test.dart` (3 tests verifying saved green accent `#2d6a4f` applies on first render after sign-in with no relaunch, default accent on new user, and phone auto-sign-in path).
+  2. Added unit tests in `ayma_flutter/test/accent_color_controller_test.dart` (11/11 tests passed).
+  3. Added sign-in hydration test in `ayma_flutter/test/sign_in_screen_test.dart` (49/49 tests passed).
+  4. Layout matrix suite `ayma_flutter/test/layout_matrix_test.dart` (29/29 tests passed, 100% green).
+  5. `flutter analyze` 100% clean (0 issues).
+  6. Inference routing: 100% LiveKit, zero direct provider routing.
+
+
 ## NOTE-230-PHOTO-RENDER — Fix photo-reply live-render defect (fleet/note-230-photo-render off staging tip c208f451, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
 - **Defect (Scout NOTE 230):** Sending a photo in Ayma chat did not render live in the thread; view stayed stale for 3.5+ min and appeared only after a tab-switch + full-chat reopen, even though the reply was saved server-side in ~10s.
 - **Root Cause:**

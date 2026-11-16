@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/boot_config.dart';
 import '../routing/entry.dart';
+import '../services/accent_color_controller.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/biometric_consent.dart';
@@ -41,7 +42,12 @@ import 'underage_screen.dart';
 /// replace the loader. Only a genuine auth failure (401/403) routes to sign-in; a
 /// network failure never bounces a signed-in user out of their session.
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key, this.apiClient, this.auth});
+  const SplashScreen({
+    super.key,
+    this.apiClient,
+    this.auth,
+    this.accentController,
+  });
 
   static const path = '/splash';
 
@@ -77,6 +83,7 @@ class SplashScreen extends StatefulWidget {
 
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
+  final AccentColorController? accentController;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -311,7 +318,12 @@ class _SplashScreenState extends State<SplashScreen> {
       // being force-failed after a couple of seconds (the old 2500ms cap was
       // the "almost every cold open hard-fails" bug). The exponential-backoff
       // retries and the overall [startupDeadline] watchdog still bound startup.
-      final result = await widget.apiClient!.bootstrap(sessionId: '');
+      final results = await Future.wait([
+        widget.apiClient!.bootstrap(sessionId: ''),
+        (widget.accentController ?? accentColorControllerGlobal)
+            .syncRemoteIfMissing(),
+      ]);
+      final result = results[0] as BootstrapResult;
       if (!mounted) return;
       final route = await _resolveRoute(result);
       if (!mounted) return;
@@ -448,7 +460,12 @@ class _SplashScreenState extends State<SplashScreen> {
       String uid, FirebaseAuth auth, String shownRoute, GoRouter router) async {
     for (var attempt = 0; attempt < SplashScreen.maxStartupAttempts; attempt++) {
       try {
-        final result = await widget.apiClient!.bootstrap(sessionId: '');
+        final results = await Future.wait([
+          widget.apiClient!.bootstrap(sessionId: ''),
+          (widget.accentController ?? accentColorControllerGlobal)
+              .syncRemoteIfMissing(),
+        ]);
+        final result = results[0] as BootstrapResult;
         final route = await _resolveRoute(result);
         _cacheEntryRoute(uid, result, route);
         if (route != shownRoute) router.go(route);
