@@ -114,6 +114,73 @@ def test_cross_section_bullets_deduplicate_to_first_home_section():
     assert all_bullets == [("family", "Born in San Jose.")]
 
 
+def test_public_sections_preserves_family_bullets_and_single_copy_bullets():
+    # Regression test for NOTE 227: Family public bullets are rendered,
+    # cross-section duplicates render once under the primary home, and single-copy
+    # bullets in other sections are preserved.
+    nodes = {
+        # 1 private + 5 public family nodes
+        "emergent.fam_priv": {
+            "prompt": "Private family fact.", "section": "family", "level": 2,
+            "answer": "Private family fact.", "answer_type": "narrative",
+            "visibility": "private",
+        },
+        "emergent.fam_pub1": {
+            "prompt": "Talks frequently with parents.", "section": "family", "level": 2,
+            "answer": "Talks frequently with parents.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        "emergent.fam_pub2": {
+            "prompt": "Raised in a warm family.", "section": "family", "level": 2,
+            "answer": "Raised in a warm family.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        "emergent.fam_pub3": {
+            "prompt": "First to graduate college.", "section": "family", "level": 2,
+            "answer": "First to graduate college.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        "emergent.fam_pub4": {
+            "prompt": "Respects family traditions.", "section": "family", "level": 2,
+            "answer": "Respects family traditions.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        "emergent.fam_pub5": {
+            "prompt": "Deep connection inspires fatherhood.", "section": "family", "level": 2,
+            "answer": "Deep connection inspires fatherhood.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        # Duplicate of fam_pub2 homed under location
+        "emergent.loc_dup": {
+            "prompt": "Raised in a warm family.", "section": "location", "level": 2,
+            "answer": "Raised in a warm family.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+        # Single-copy bullet under goals
+        "emergent.goal1": {
+            "prompt": "Working to cultivate physical fitness.", "section": "goals", "level": 2,
+            "answer": "Working to cultivate physical fitness.", "answer_type": "narrative",
+            "visibility": "public",
+        },
+    }
+    pub = render.public_sections(_graph(nodes))
+    fam_section = next((s for s in pub if s["page_type"] == "family"), None)
+    assert fam_section is not None
+    assert len(fam_section["bullets"]) == 5
+    assert fam_section["bullets"] == [
+        "Talks frequently with parents.",
+        "Raised in a warm family.",
+        "First to graduate college.",
+        "Respects family traditions.",
+        "Deep connection inspires fatherhood.",
+    ]
+    goals_section = next((s for s in pub if s["page_type"] == "goals"), None)
+    assert goals_section is not None
+    assert goals_section["bullets"] == ["Working to cultivate physical fitness."]
+    # The duplicate in location was dropped (and since location has no other bullets, no location section)
+    assert not any(s["page_type"] == "location" for s in pub)
+
+
 def test_no_visibility_node_defaults_private_in_render():
     # Scout live finding: overlay nodes with NO visibility field were rendering
     # public. A no-visibility, non-allow-list node must not appear publicly.
