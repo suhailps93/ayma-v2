@@ -6565,18 +6565,29 @@ class ProfileProposal {
 /// One bullet of a story section. [visibility] is `public`, `private` or
 /// `ai_only` (Ayma-only — never deletable by the user).
 class StoryBullet {
-  const StoryBullet({this.id = '', required this.text, required this.visibility});
+  const StoryBullet({
+    this.id = '',
+    required this.text,
+    required this.visibility,
+    this.imageUrl = '',
+  });
 
   final String id;
   final String text;
   final String visibility;
 
+  /// A chat-shared photo homed with its fact: the Storage URL to show the photo
+  /// ([text] is Ayma's read of it). Empty for a plain text bullet.
+  final String imageUrl;
+
   bool get isAiOnly => visibility == 'ai_only';
+  bool get isImage => imageUrl.isNotEmpty;
 
   factory StoryBullet.fromMap(Map<String, dynamic> m) => StoryBullet(
     id: m['id'] as String? ?? '',
     text: m['text'] as String? ?? '',
     visibility: m['visibility'] as String? ?? 'private',
+    imageUrl: m['image_url'] as String? ?? '',
   );
 
   // Includes [id] so the backend can preserve the graph node's identity and
@@ -6632,6 +6643,7 @@ class GraphNode {
     this.visibility = '',
     this.pageType = '',
     this.subtitle = '',
+    this.imageUrl = '',
   });
 
   final String id;
@@ -6642,6 +6654,10 @@ class GraphNode {
   final String visibility;
   final String pageType;
 
+  /// For a `kind == 'image'` node: the Storage URL of the photo (the [text] is
+  /// Ayma's read of it). Empty otherwise.
+  final String imageUrl;
+
   factory GraphNode.fromMap(Map<String, dynamic> m) => GraphNode(
     id: m['id'] as String? ?? '',
     kind: m['kind'] as String? ?? '',
@@ -6650,6 +6666,7 @@ class GraphNode {
     visibility: m['visibility'] as String? ?? '',
     pageType: m['page_type'] as String? ?? '',
     subtitle: m['subtitle'] as String? ?? '',
+    imageUrl: m['image_url'] as String? ?? '',
   );
 }
 

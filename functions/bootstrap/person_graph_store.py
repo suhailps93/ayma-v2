@@ -651,6 +651,72 @@ def add_image_node(
     return nid
 
 
+def add_link(
+    db, uid: str, node_id: str, target: str, link_type: str, *, label: str | None = None
+) -> bool:
+    """Add a typed link ``node_id → target`` (design §2.4 — a reference, never a
+    copy). Only works on an overlay node (a seed node's links are fixed). No-op
+    (returns False) if the node is missing or an identical link already exists,
+    so it is safe to re-run. Returns True when a link was added."""
+    overlay = load_overlay(db, uid)
+    e = overlay.get(node_id)
+    if not isinstance(e, dict):
+        return False
+    links = list(e.get("links") or [])
+    if any(
+        isinstance(l, dict) and l.get("target") == target and l.get("type") == link_type
+        for l in links
+    ):
+        return False
+    link = {"target": target, "type": link_type}
+    if label:
+        link["label"] = label
+    links.append(link)
+    e = dict(e)
+    e["links"] = links
+    overlay[node_id] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return True
+
+
+def add_photo_fact(
+    db,
+    uid: str,
+    *,
+    image_url: str,
+    image_read: str,
+    fact_text: str,
+    visibility: Visibility | str = Visibility.PRIVATE,
+    image_node_id: str | None = None,
+) -> tuple[str, str] | None:
+    """Home a chat-shared photo **with its fact** (founder decision Nov 16:
+    "each photo sits with its fact", NOT a Photos section). Creates the fact
+    node through the existing loose-node path and an image node under it, with a
+    two-way typed link between them (a reference, never a copy):
+
+    * ``fact_text`` → a loose fact node (:func:`add_loose_node`, Little Extras /
+      ``misc``) — the fact the photo belongs to;
+    * ``image_url`` + ``image_read`` → an image node homed under that fact
+      (:func:`add_image_node`), ``elaborates`` → the fact; the fact links back
+      ``same_topic`` → the image.
+
+    Idempotent on ``image_node_id``: if that image node already exists (a retry
+    of the same photo turn), returns ``None`` and writes nothing. Returns
+    ``(fact_id, image_id)`` on a fresh home. The image's visibility is the
+    common-sense default (private); the user can change it like any node."""
+    if image_node_id and node_overlay_entry(db, uid, image_node_id):
+        return None  # already homed this photo — don't duplicate on a retry
+    fact = (fact_text or "").strip() or (image_read or "").strip() or "a photo I shared"
+    fact_id = add_loose_node(db, uid, fact)
+    image_id = add_image_node(
+        db, uid, fact_id, image_url, image_read,
+        visibility=visibility, node_id=image_node_id,
+        links=[{"target": fact_id, "type": pg.StrictLinkType.ELABORATES.value}],
+    )
+    add_link(db, uid, fact_id, image_id, pg.StrictLinkType.SAME_TOPIC.value)
+    return fact_id, image_id
+
+
 def query_nodes(
     db,
     uid: str,

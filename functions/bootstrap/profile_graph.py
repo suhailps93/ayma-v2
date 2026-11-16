@@ -47,15 +47,19 @@ def _graph_from_sections(sections: list[dict], *, owner_only: bool, center_label
         edges.append({"from": "me", "to": sec_id})
         for b in bullets:
             bid = f"b:{b['id']}"
-            nodes.append(
-                {
-                    "id": bid,
-                    "kind": "bullet",
-                    "page_type": pt,
-                    "text": b["text"],
-                    "visibility": b["visibility"],
-                }
-            )
+            node = {
+                "id": bid,
+                "kind": "bullet",
+                "page_type": pt,
+                "text": b["text"],
+                "visibility": b["visibility"],
+            }
+            # An image node carries its Storage link so the graph view can show
+            # the photo and open it (founder: each photo sits with its fact).
+            if b.get("image_url"):
+                node["kind"] = "image"
+                node["image_url"] = b["image_url"]
+            nodes.append(node)
             edges.append({"from": sec_id, "to": bid})
         out_sections.append(
             {
