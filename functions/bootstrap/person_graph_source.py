@@ -81,6 +81,43 @@ _TASTE_FIELD_NODES = {
     "taste_food": "food",
 }
 
+# The reverse of ``_PROFILE_FIELD_NODES``: a ``set_profile_field`` field → its
+# level-1 seed node id. Used so a conversational profile edit updates the seed
+# node itself (not a parallel emergent node) — keeping the graph render, the
+# matching hydration (:func:`load_user`) and ``profile/main`` consistent.
+_FIELD_TO_SEED_NODE = {field: node for node, field in _PROFILE_FIELD_NODES.items()}
+
+
+def seed_node_for_field(field: str) -> str | None:
+    """The level-1 seed node id a ``set_profile_field`` field maps to, or
+    ``None`` for a field with no seed-node home (``first_name`` / ``last_name`` /
+    ``phone``)."""
+    return _FIELD_TO_SEED_NODE.get(field)
+
+
+def completeness_qstore(graph: dict[str, pg.GraphNode]) -> dict[str, dict]:
+    """A questionnaire-store-shaped dict for **completeness / next_questions**
+    (NOT the matching scorer). Like :func:`structured_qstore` for answered seed
+    nodes, PLUS the **dealt-with** seed nodes — those in ``PREFER_NOT_TO_SAY``
+    (the user skipped / declined / "none") — as covered entries with no value.
+
+    The old questionnaire store counted a skipped/declined question as covered
+    (so completeness scored it and it was never re-asked); a pure answered-only
+    read drops those, moving the score down and re-opening the question (NOTE 233
+    defect 2). Including the dealt-with nodes here restores parity. Matching keeps
+    using :func:`structured_qstore` (answered-only), so a declined question never
+    drives a match score."""
+    out = structured_qstore(graph)
+    for nid, node in graph.items():
+        if node.emergent:
+            continue
+        if nid in out:
+            continue
+        if node.state is pg.NodeState.PREFER_NOT_TO_SAY:
+            # Covered but no content: cov 1.0 (source stated), empty known value.
+            out[nid] = {"value": None, "source": "stated"}
+    return out
+
 
 def profile_overlay(graph: dict[str, pg.GraphNode]) -> dict:
     """``{profile_field: answer}`` for the core profile fields that are answered

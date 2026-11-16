@@ -50,9 +50,15 @@ _PROFILE_DERIVABLE = {
 
 _LITTLE_EXTRAS = "misc"
 
-# questionnaire answer values that are meta / non-answers — not real content
-# (Scout 2449 blocker 3: these leaked through as story bullets).
-_META_SENTINELS = {"skipped", "addressed", "n/a", "none", "prefer not to say", ""}
+# "Dealt-with" markers: the user engaged the question (skipped it, Ayma addressed
+# it, they declined, or it's "none") — not a content answer, but the question is
+# DONE. The old questionnaire store counted these as covered (so completeness
+# scored them and next_questions never re-asked). Carry them as a covered
+# PREFER_NOT_TO_SAY node (NOTE 233 defect 2) so completeness stays stable and the
+# question isn't re-asked, while a PREFER_NOT_TO_SAY node never renders in Your
+# Story (so "skipped"/"addressed" still don't leak — Scout 2449 blocker 3). An
+# empty string carries nothing at all.
+_DEALT_WITH = {"skipped", "addressed", "n/a", "none", "prefer not to say"}
 
 
 def _emergent_id(prefix: str, *parts: str) -> str:
@@ -86,10 +92,16 @@ def migrate_questionnaire(db, uid: str) -> dict[str, dict]:
         value = data.get("value")
         if value is None or value == "":
             continue
-        if isinstance(value, str) and value.strip().lower() in _META_SENTINELS:
-            continue  # skipped/addressed/etc. is not an answer — don't surface it
         src = str(data.get("source") or "stated").lower()
         prov = Provenance.INFERRED if src == "inferred" else Provenance.STATED
+        if isinstance(value, str) and value.strip().lower() in _DEALT_WITH:
+            # Dealt-with, not content: a covered PREFER_NOT_TO_SAY node (counts in
+            # completeness, never re-asked, never rendered).
+            out[nid] = {
+                "state": NodeState.PREFER_NOT_TO_SAY.value,
+                "provenance": prov.value,
+            }
+            continue
         entry: dict[str, Any] = {
             "answer": value,
             "state": NodeState.ANSWERED.value,

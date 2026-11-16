@@ -157,6 +157,24 @@ def _bind(
             .collection("profile")
             .document("main")
         ).set(payload, merge=merge_paths)
+        # Graph-authoritative: a conversational edit to an L1 seed field must
+        # update the seed NODE itself, not leave it stale (NOTE 233 defect 3).
+        # `load_user` hydrates matching FROM the graph seed nodes and Your Story
+        # renders them, so a profile/main-only write would leave the match score
+        # and the About Me bullet on the old value. set_answer retires the prior
+        # value to the node's Ayma-only history (the settled answer-history rule).
+        try:
+            from config import CONFIG
+
+            if CONFIG.person_graph_reads:
+                import person_graph_source
+                import person_graph_store as pg_store
+
+                seed = person_graph_source.seed_node_for_field(field)
+                if seed is not None:
+                    pg_store.set_answer(db, uid, seed, normalised)
+        except Exception:  # noqa: BLE001 - best-effort, never fail the write
+            logger.exception("set_profile_field: graph seed update failed for %s", uid)
         # A preboarding field can satisfy a questionnaire node (name, DOB,
         # gender, interested_in, location) — refresh the completeness score.
         try:
