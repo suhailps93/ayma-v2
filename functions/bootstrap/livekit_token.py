@@ -254,21 +254,26 @@ def resolve_voice_agent_cloud(db, uid: str) -> str:
     return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
 
 
-# --- failure-only Cloud Run fallback for hosted dispatch (§1.1) ------------
+# --- hosted-dispatch failure DETECTION (§1.1) ------------------------------
 #
-# Founder policy (2026-11-03): GCP serves voice essentially never — only when
-# LiveKit Cloud itself is failing. A room routed to the hosted ``ayma-lk``
-# worker has exactly one failure signal worth acting on: the agent never
-# joins. :func:`watch_hosted_dispatch` polls the room briefly after creation;
-# if no agent participant appears within the window it flips the room's
-# ``voice_agent_cloud`` marker to ``cloudrun``, wakes the Cloud Run worker
-# and creates an automatic dispatch so that worker picks the room up. The
-# Cloud Run worker's ``request_fnc`` guard accepts once the marker matches
-# its runtime, and the same flip makes the hosted worker decline the room if
-# it resurfaces later, so the two never both join. Every other outcome —
-# agent joined, room closed because the caller hung up, LiveKit API
-# unreachable (the fallback rides the same API, so it could not be delivered
-# either) — leaves the room exactly as routed.
+# Founder policy: all voice runs on the LiveKit-Cloud hosted worker
+# (``ayma-lk``). The GCP Cloud Run workers (``ayma-agent`` / ``ayma-agent-staging``)
+# were DELETED on 2026-11-06 ("move voice to the hosted LiveKit worker"), so
+# there is no Cloud Run worker to fall back to. This watcher therefore only
+# DETECTS the one failure signal worth surfacing — a room routed to the hosted
+# worker where no agent participant joins within the window — and logs it, so a
+# "couldn't hear Ayma" incident leaves a server-side trail (prod feedback
+# RFLpFWkaaCuDC0ew1MUT, 2026-11-14: an active voice session produced no agent
+# speech, with no backend signal). It never flips the room's ``voice_agent_cloud``
+# marker: flipping a slow room to ``cloudrun`` used to re-dispatch to the Cloud
+# Run worker, but with that worker gone the flip only makes the hosted worker's
+# ``request_fnc`` guard DECLINE the room on any re-offer — turning a slow join
+# into permanent silence. Every other outcome — agent joined, room closed
+# because the caller hung up, LiveKit API unreachable — leaves the room exactly
+# as routed. (The per-user ``cloudrun`` opt-out and the unmarked-room guard
+# default are a separate, deliberately-tested path whose Cloud Run target is
+# also now gone; resolving them is a founder architecture decision, not this
+# watcher's job.)
 
 _HOSTED_DISPATCH_TIMEOUT_SECONDS = 15.0
 _HOSTED_DISPATCH_POLL_SECONDS = 2.0
@@ -291,9 +296,11 @@ async def _agent_joined(lk, room: str) -> bool | None:
     return any(p.kind == _AGENT_PARTICIPANT_KIND for p in resp.participants)
 
 
-async def _flip_room_to_cloudrun(lk, room: str) -> bool:
-    """Re-route ``room`` to the Cloud Run worker (see the section comment
-    above). Returns True iff the fallback dispatch was created."""
+async def _room_is_hosted_routed(lk, room: str) -> bool:
+    """True iff ``room`` still exists and its ``voice_agent_cloud`` marker is
+    ``livekit`` — i.e. the hosted worker is the one that was supposed to join.
+    A missing/``cloudrun``/unparseable marker returns False, so the watcher
+    never warns about a room the hosted worker was never meant to serve."""
     rooms = await lk.room.list_rooms(api.ListRoomsRequest(names=[room]))
     if not rooms.rooms:
         return False
@@ -301,26 +308,8 @@ async def _flip_room_to_cloudrun(lk, room: str) -> bool:
     try:
         seed = json.loads(raw) if raw else {}
     except ValueError:
-        seed = {}
-    if seed.get("voice_agent_cloud") != "livekit":
-        return False  # not a hosted-routed room (or already flipped)
-    # Final re-check: a merely-slow hosted agent that joined during the flip
-    # window must not be doubled by a Cloud Run join.
-    if await _agent_joined(lk, room):
         return False
-    seed["voice_agent_cloud"] = "cloudrun"
-    seed["cloud_fallback_reason"] = "hosted_agent_missing"
-    payload = json.dumps(seed)
-    await lk.room.update_room_metadata(
-        api.UpdateRoomMetadataRequest(room=room, metadata=payload)
-    )
-    from agent_wake import wake_agent
-
-    await asyncio.to_thread(wake_agent)
-    await lk.agent_dispatch.create_dispatch(
-        api.CreateAgentDispatchRequest(agent_name="", room=room)
-    )
-    return True
+    return seed.get("voice_agent_cloud") == "livekit"
 
 
 async def watch_hosted_dispatch(
@@ -329,9 +318,11 @@ async def watch_hosted_dispatch(
     timeout_seconds: float = _HOSTED_DISPATCH_TIMEOUT_SECONDS,
     poll_seconds: float = _HOSTED_DISPATCH_POLL_SECONDS,
 ) -> bool:
-    """Failure-only fallback for one livekit-routed room (see the section
-    comment above): returns True iff the room was re-routed to the Cloud Run
-    worker. Designed to run as a ``BackgroundTasks`` task — never raises."""
+    """Detection-only watcher for one livekit-routed room (see the section
+    comment above): returns True iff the hosted agent did not join within the
+    window (logged as a warning), False otherwise. Never changes the room and
+    never dispatches. Designed to run as a ``BackgroundTasks`` task — never
+    raises."""
     try:
         lk = api.LiveKitAPI()
     except Exception:  # noqa: BLE001 - unconfigured LiveKit: nothing to watch
@@ -345,21 +336,28 @@ async def watch_hosted_dispatch(
             except Exception:  # noqa: BLE001 - transient API error: keep waiting
                 joined = False
             if joined is None:
-                return False  # room already closed — caller gone, nothing to save
+                return False  # room already closed — caller gone, nothing to flag
             if joined:
                 return False
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(poll_seconds)
-        fired = await _flip_room_to_cloudrun(lk, room)
-        if fired:
-            logger.warning(
-                "hosted agent did not join room %s within %.0fs; "
-                "fell back to the Cloud Run worker",
-                room,
-                timeout_seconds,
-            )
-        return fired
+        # Deadline passed with no agent. Only flag rooms the hosted worker was
+        # actually meant to serve (defence-in-depth — the watcher is armed only
+        # for livekit-routed rooms), and re-check the join one last time so a
+        # merely-slow agent that arrived during this read is not falsely flagged.
+        if not await _room_is_hosted_routed(lk, room):
+            return False
+        if await _agent_joined(lk, room):
+            return False
+        logger.warning(
+            "hosted agent did not join room %s within %.0fs — caller heard no "
+            "agent audio (no Cloud Run fallback exists; hosted-only since "
+            "2026-11-06)",
+            room,
+            timeout_seconds,
+        )
+        return True
     except Exception:  # noqa: BLE001 - a watcher must never take voice down
         logger.exception("hosted-dispatch watch failed for room %s", room)
         return False

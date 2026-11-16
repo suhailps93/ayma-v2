@@ -78,21 +78,29 @@ non-failure routes to Cloud Run:
   wake), so every practice call landed on GCP. It now resolves the caller's
   cloud via the shared `livekit_token.resolve_voice_agent_cloud` — the same
   helper `/bootstrap` uses — and routes/wakes exactly like `/bootstrap`.
-- **Failure-only fallback:** there was previously NO automatic failover — if
-  the hosted worker never joined, a livekit-routed call got no agent at all.
-  `livekit_token.watch_hosted_dispatch` now watches each livekit-routed room
-  for ~15 s after creation; if no agent participant joins, it flips the
-  room's marker to `cloudrun`, wakes Cloud Run and creates an automatic
-  dispatch for that room (the marker flip also makes the hosted worker
-  decline the room if it resurfaces, so the two never both join). A flipped
-  seed gains `cloud_fallback_reason: hosted_agent_missing`, and the flip is
-  logged at WARNING in ayma-api.
+- **Failure DETECTION (was: Cloud Run fallback):** `livekit_token.watch_hosted_dispatch`
+  watches each livekit-routed room for ~15 s after creation; if no agent
+  participant joins, it logs a WARNING in ayma-api (`hosted agent did not join
+  room …`) and leaves the room untouched. It originally *flipped* the room's
+  marker to `cloudrun`, woke Cloud Run and re-dispatched — but the Cloud Run
+  workers (`ayma-agent` / `ayma-agent-staging`) were **deleted 2026-11-06**
+  ("move voice to the hosted LiveKit worker"), so the flip could only re-route
+  a slow room to a target that no longer exists AND make the hosted worker's
+  `request_fnc` guard decline the room on any re-offer — turning a slow join
+  into permanent silence. The flip was removed (prod feedback
+  RFLpFWkaaCuDC0ew1MUT, 2026-11-14: a silent-voice call that left no backend
+  trail); the watcher now only surfaces the signal for diagnosis.
 
-Net: Cloud Run now serves voice only for (a) an explicit per-user `cloudrun`
-opt-out (the dev rollback toggle — as of 2026-11-03, zero prod users carry
-any `voice_agent_cloud` pref), or (b) a room whose hosted dispatch
-demonstrably failed. The Cloud Run service stays deployed, scale-to-zero,
-as that fallback.
+Net: the hosted `ayma-lk` worker serves all voice. **Open architecture debt
+(founder decision needed):** the Nov-6 Cloud Run deletion left every remaining
+`cloudrun` dispatch path pointing at a deleted service — (a) the per-user
+`cloudrun` opt-out (`PF_AYMA_VOICE_CLOUD`), and (b) `agent._request_fnc`'s
+default of treating an **unmarked / unparseable** room as `cloudrun`, which the
+hosted worker then *declines* into silence. Since room-seeding is best-effort
+(a seed failure/race leaves the room unmarked), that default is the leading
+suspect for the no-audio incident above. Resolving it (default unmarked rooms
+to `livekit`, and retire or re-home the `cloudrun` opt-out) touches the
+corruption-sensitive dual-cloud guard and is left for a founder call.
 
 ## Firestore credential for the LiveKit-hosted agent
 
