@@ -31,6 +31,7 @@ from pathlib import Path
 from firebase_admin import firestore
 
 import gemini
+from config import CONFIG
 from transcript import ROLE_USER, Turn
 from wiki_schema import (
     is_valid_page_id,
@@ -327,6 +328,19 @@ async def ingest(
     same reason. Every other caller keeps the default.
     """
     if not uid or not turns:
+        return 0
+    # §9.5 (person-graph authoritative): the wiki STOPS being written. EVERY
+    # ingest caller lands here — the auto post-turn flush (``main._run_ingest``),
+    # the ``remember`` tool, the voice shutdown + ``/post-turn`` tail
+    # (``post_turn.persist_and_ingest``), and the nightly backfill — so this one
+    # gate stops them all (NOTE 227 split-brain: Fix 1 gated only ``_run_ingest``,
+    # and ``remember`` / ``persist_and_ingest`` still wrote wiki_pages while the
+    # flags were on). Chat facts go to the graph via the pg_* tools instead; the
+    # old wiki documents are kept READ-ONLY (deletion is Phase 7, still gated).
+    if CONFIG.person_graph_reads:
+        logger.info(
+            "person-graph authoritative — wiki ingest suppressed for %s (§9.5)", uid
+        )
         return 0
     # Requirements 3 & 4 (founder, 2026-11-14): the mandatory structured capture
     # runs FIRST and independently of whether the in-call model ever called the
