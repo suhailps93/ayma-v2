@@ -55,6 +55,25 @@ logger = logging.getLogger("ayma.deepdive")
 _MAX_CACHE_AGE_DAYS = 60
 _CACHE_COL = "deep_dives"
 
+# reports-as-nodes (founder Nov 16): with ``person_graph_reads`` ON the
+# ``deep_dives`` collection is deleted and each subject's persistent web-search
+# report lives as ONE Ayma-only graph node, ``emergent.webfind.report.<key>``,
+# carrying the whole stored dive doc (digest + meta) as its ``answer``. Flag OFF
+# is unchanged (prod still runs the collection until its own cutover).
+_WEBFIND_NODE_PREFIX = "emergent.webfind.report."
+
+
+def _graph_reads_on() -> bool:
+    # LOCAL import: a module-level ``from config import CONFIG`` binds the old
+    # object and isn't reachable by the test monkeypatch (codebase convention).
+    from config import CONFIG
+
+    return bool(CONFIG.person_graph_reads)
+
+
+def _dive_node_id(key: str) -> str:
+    return _WEBFIND_NODE_PREFIX + key
+
 
 def _cache_key(target_uid: str, name: str) -> str:
     """Stable id for a dive subject: the app uid when we have one, else a slug
@@ -67,6 +86,16 @@ def _cache_key(target_uid: str, name: str) -> str:
 
 
 def _cache_ref(db, uid: str, key: str):
+    # Loud-fail backstop (founder Nov 16): nothing may touch the deleted
+    # ``deep_dives`` collection while ``person_graph_reads`` is ON — the dive
+    # lives as a graph node now. A forgotten flag-on path raises here (visible
+    # error) instead of silently reading/writing an empty collection; every real
+    # reader/writer routes around this via ``_load_dive_doc``/``_store_dive_doc``.
+    if _graph_reads_on():
+        raise RuntimeError(
+            "deep_dives is deleted on staging and person_graph_reads is ON — "
+            "read/write the emergent.webfind.report graph node instead"
+        )
     return (
         db.collection("users")
         .document(uid)
@@ -75,9 +104,47 @@ def _cache_ref(db, uid: str, key: str):
     )
 
 
+def _load_dive_doc(db, uid: str, key: str) -> dict:
+    """The stored dive doc (graph node with ``person_graph_reads`` ON — the
+    collection is gone — else the ``deep_dives/{key}`` doc), or ``{}`` when none
+    exists. An empty dict means "no prior" (first write), same as an absent
+    doc today."""
+    if _graph_reads_on():
+        import person_graph_store as store
+
+        return store.report_node_payload(db, uid, _dive_node_id(key))
+    snap = _cache_ref(db, uid, key).get()
+    return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+
+
+def _store_dive_doc(db, uid: str, key: str, payload: dict, *, merge: bool = False) -> None:
+    """Persist the dive doc (graph node with ``person_graph_reads`` ON else the
+    collection). ``merge`` mirrors Firestore ``set(..., merge=True)``: on the
+    node path the new fields are merged over the current node payload (so a
+    dispute/correction that writes only ``{"digest", disputed_key}`` keeps the
+    rest of the stored doc)."""
+    if _graph_reads_on():
+        import person_graph_store as store
+
+        if merge:
+            current = store.report_node_payload(db, uid, _dive_node_id(key))
+            payload = {**current, **payload}
+        store.upsert_report_node(
+            db, uid, _dive_node_id(key), payload, label="web search"
+        )
+        return
+    _cache_ref(db, uid, key).set(payload, merge=merge)
+
+
 def _epoch(ts) -> float:
     try:
         return ts.timestamp()
+    except Exception:  # noqa: BLE001
+        pass
+    # The graph node stores ``created_at`` as an ISO string (a node answer can't
+    # hold a Firestore timestamp sentinel); parse it so cache-age math still works.
+    try:
+        return datetime.fromisoformat(str(ts)).timestamp()
     except Exception:  # noqa: BLE001
         return 0.0
 
@@ -97,10 +164,9 @@ def cached_dive(
     if not db or not uid or not key:
         return None
     try:
-        snap = _cache_ref(db, uid, key).get()
-        if not snap.exists:
+        data = _load_dive_doc(db, uid, key)
+        if not data:
             return None
-        data = snap.to_dict() or {}
         digest = data.get("digest")
         if not isinstance(digest, dict):
             return None
@@ -245,15 +311,26 @@ def store_dive(
     if not db or not uid or not key or not isinstance(digest, dict):
         return
     try:
-        from firebase_admin import firestore
+        # Prior read. A genuine read FAILURE refuses the write (don't merge
+        # against an empty prior and drop audits — StoreDivePriorReadError); a db
+        # we can't even address is a best-effort silent no-op (the outer except),
+        # exactly as before the collection->node switch. So the reader is built
+        # OUTSIDE the protected block (flag-off builds the collection ref here;
+        # flag-on the node reader) and only the read itself is protected.
+        if _graph_reads_on():
+            import person_graph_store as _pgstore
 
-        ref = _cache_ref(db, uid, key)
+            def _read_prior():
+                return _pgstore.report_node_payload(db, uid, _dive_node_id(key))
+        else:
+            ref = _cache_ref(db, uid, key)
+
+            def _read_prior():
+                snap = ref.get()
+                return (snap.to_dict() or {}) if getattr(snap, "exists", False) else {}
+
         try:
-            snap = ref.get()
-            if getattr(snap, "exists", False):
-                prior = snap.to_dict() or {}
-            else:
-                prior = {}
+            prior = _read_prior()
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "deep-dive prior read failed for %s/%s — refusing the write "
@@ -327,24 +404,34 @@ def store_dive(
                     )
                 ]
 
+        # Timestamps: the graph node stores ISO strings (a node answer can't
+        # hold a Firestore sentinel); the collection keeps SERVER_TIMESTAMP.
+        if _graph_reads_on():
+            import person_graph as _pg
+
+            now_stamp = _pg.now_iso()
+        else:
+            from firebase_admin import firestore
+
+            now_stamp = firestore.SERVER_TIMESTAMP
         payload = {
             "digest": digest,
             "name": digest.get("name") or name,
             "target_uid": (target_uid or "").strip(),
-            "created_at": prior.get("created_at") or firestore.SERVER_TIMESTAMP,
-            "updated_at": firestore.SERVER_TIMESTAMP,
+            "created_at": prior.get("created_at") or now_stamp,
+            "updated_at": now_stamp,
         }
-        for key in (
+        for audit_key in (
             "disputed_facts",
             "disputed_links",
             "disputed_social",
             "disputed_photos",
         ):
-            if prior.get(key):
-                payload[key] = prior[key]
+            if prior.get(audit_key):
+                payload[audit_key] = prior[audit_key]
         if prior.get("corrections"):
             payload["corrections"] = prior["corrections"]
-        ref.set(payload)
+        _store_dive_doc(db, uid, key, payload, merge=False)
     except StoreDivePriorReadError:
         raise
     except Exception:  # noqa: BLE001
@@ -452,12 +539,10 @@ def merge_confirmed_photo(db, uid: str, report_id: str, photo: dict) -> bool:
     report_id = (report_id or "").strip()
     if not db or not uid or not report_id or not isinstance(photo, dict):
         return False
-    ref = _cache_ref(db, uid, report_id)
     try:
-        snap = ref.get()
-        if not getattr(snap, "exists", False):
+        data = _load_dive_doc(db, uid, report_id)
+        if not data:
             return False
-        data = snap.to_dict() or {}
         digest = data.get("digest")
         if not isinstance(digest, dict):
             return False
@@ -467,7 +552,7 @@ def merge_confirmed_photo(db, uid: str, report_id: str, photo: dict) -> bool:
             return True
         confirmed.append(photo)
         digest["confirmed_photos"] = confirmed
-        ref.set({"digest": digest}, merge=True)
+        _store_dive_doc(db, uid, report_id, {"digest": digest}, merge=True)
         return True
     except Exception:  # noqa: BLE001
         logger.exception(
@@ -483,11 +568,8 @@ def read_dive(db, uid: str, report_id: str) -> dict | None:
     if not db or not uid or not report_id:
         return None
     try:
-        snap = _cache_ref(db, uid, report_id).get()
-        if not getattr(snap, "exists", False):
-            return None
-        data = snap.to_dict() or {}
-        if not isinstance(data.get("digest"), dict):
+        data = _load_dive_doc(db, uid, report_id)
+        if not data or not isinstance(data.get("digest"), dict):
             return None
         return data
     except Exception:  # noqa: BLE001
@@ -694,10 +776,9 @@ def disputed_facts_context(db, uid: str, name: str) -> str:
     if not db or not uid or not key:
         return ""
     try:
-        snap = _cache_ref(db, uid, key).get()
-        if not getattr(snap, "exists", False):
+        data = _load_dive_doc(db, uid, key)
+        if not data:
             return ""
-        data = snap.to_dict() or {}
         disputed = data.get("disputed_facts") or []
         claims = [
             str(d.get("claim", "")).strip()
@@ -790,11 +871,9 @@ def _dispute_entry(
     target = (target or "").strip()
     if not db or not uid or not report_id or not target:
         return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
+    data = _load_dive_doc(db, uid, report_id)
+    if not data:
         return None
-    data = snap.to_dict() or {}
     digest = data.get("digest")
     if not isinstance(digest, dict):
         return None
@@ -818,7 +897,9 @@ def _dispute_entry(
     digest[digest_key] = kept
     disputed = list(data.get(disputed_key) or [])
     disputed.append(audit(removed, target))
-    ref.set({"digest": digest, disputed_key: disputed}, merge=True)
+    _store_dive_doc(
+        db, uid, report_id, {"digest": digest, disputed_key: disputed}, merge=True
+    )
     return {"report_id": report_id, "digest": digest, disputed_key: disputed}
 
 
@@ -1125,11 +1206,9 @@ async def correct_finding(
     feedback = (feedback or "").strip()[:1000]
     if not db or not uid or not report_id or not target or not feedback:
         return None
-    ref = _cache_ref(db, uid, report_id)
-    snap = ref.get()
-    if not getattr(snap, "exists", False):
+    data = _load_dive_doc(db, uid, report_id)
+    if not data:
         return None
-    data = snap.to_dict() or {}
     digest = data.get("digest")
     if not isinstance(digest, dict):
         return None
@@ -1299,7 +1378,7 @@ async def correct_finding(
     if disputed:
         payload["disputed_facts"] = disputed
     payload.update(extra_audits)
-    ref.set(payload, merge=True)
+    _store_dive_doc(db, uid, report_id, payload, merge=True)
     return {"report_id": report_id, "digest": digest, "reply": reply, "action": action}
 
 
