@@ -278,3 +278,20 @@ def test_set_and_get_linkedin_url_round_trip():
 def test_get_linkedin_url_defaults_to_empty():
     db = FakeDb()
     assert career_timeline.get_linkedin_url(db, "u1") == ""
+
+
+def test_get_linkedin_url_falls_back_to_user_doc():
+    db = FakeDb()
+    db.docs[("users", "u1")] = {"linkedin_url": "https://www.linkedin.com/in/from-user-doc"}
+    assert career_timeline.get_linkedin_url(db, "u1") == "https://www.linkedin.com/in/from-user-doc"
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == "https://www.linkedin.com/in/from-user-doc"
+
+
+def test_get_linkedin_url_falls_back_to_supplemental():
+    db = FakeDb()
+    db.docs[("users", "u1", "questionnaire_supplemental", "linkedin-profile")] = {
+        "topic": "LinkedIn profile",
+        "value": "https://www.linkedin.com/in/daniel-reyes-ux",
+    }
+    assert career_timeline.get_linkedin_url(db, "u1") == "https://www.linkedin.com/in/daniel-reyes-ux"
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == "https://www.linkedin.com/in/daniel-reyes-ux"

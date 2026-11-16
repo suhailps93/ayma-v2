@@ -94,6 +94,26 @@ def test_emergent_bullet_renders_verbatim_not_doubled():
     assert interests["bullets"] == ["I love hiking."]
 
 
+def test_cross_section_bullets_deduplicate_to_first_home_section():
+    g = _graph(
+        {
+            "emergent.roots": {
+                "prompt": "Born in San Jose.", "section": "family", "level": 2,
+                "answer": "Born in San Jose.", "answer_type": "narrative",
+                "visibility": "public",
+            },
+            "emergent.roots_dup": {
+                "prompt": "Born in San Jose.", "section": "location", "level": 2,
+                "answer": "Born in San Jose.", "answer_type": "narrative",
+                "visibility": "public",
+            },
+        }
+    )
+    pub = render.public_sections(g)
+    all_bullets = [(s["page_type"], b) for s in pub for b in s["bullets"]]
+    assert all_bullets == [("family", "Born in San Jose.")]
+
+
 def test_no_visibility_node_defaults_private_in_render():
     # Scout live finding: overlay nodes with NO visibility field were rendering
     # public. A no-visibility, non-allow-list node must not appear publicly.

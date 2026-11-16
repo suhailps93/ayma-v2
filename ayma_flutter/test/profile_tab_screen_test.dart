@@ -206,6 +206,30 @@ void main() {
     }
   });
 
+  testWidgets('Plan row has isolated semantics from AYMA eyebrow and navigates',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final handle = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(_host(_api()));
+      await tester.pumpAndSettle();
+
+      final eyebrowSemantics = tester.getSemantics(find.text('AYMA'));
+      expect(eyebrowSemantics.flagsCollection.isHeader, isTrue);
+
+      final planFinder = find.widgetWithText(ListTile, 'Plan');
+      expect(planFinder, findsOneWidget);
+      await tester.tap(planFinder);
+      await tester.pumpAndSettle();
+      expect(find.text('ROUTE /profile/plan'), findsOneWidget);
+    } finally {
+      handle.dispose();
+    }
+  });
+
   testWidgets('web research opens the last report when one exists',
       (tester) async {
     tester.view.physicalSize = const Size(1080, 2400);

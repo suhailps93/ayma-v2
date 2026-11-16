@@ -20,11 +20,14 @@ class Eyebrow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text.toUpperCase(),
-      textAlign: textAlign,
-      style: AymaType.mono(size: 10, color: color ?? context.ac.fgMute)
-          .copyWith(letterSpacing: 2),
+    return Semantics(
+      header: true,
+      child: Text(
+        text.toUpperCase(),
+        textAlign: textAlign,
+        style: AymaType.mono(size: 10, color: color ?? context.ac.fgMute)
+            .copyWith(letterSpacing: 2),
+      ),
     );
   }
 }

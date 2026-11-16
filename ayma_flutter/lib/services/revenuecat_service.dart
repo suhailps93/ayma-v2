@@ -318,51 +318,83 @@ class RevenueCatService {
   /// SDK is disabled (the caller reports that case itself).
   String? get plansUnavailableReason => _plansUnavailableReason;
 
+  /// Whether the current [plansUnavailableReason] represents a permanent
+  /// configuration error rather than a transient connection / warmup miss.
+  bool get hasPermanentPlansError =>
+      _plansUnavailableReason ==
+          offeringsErrorReason(PurchasesErrorCode.invalidCredentialsError) ||
+      _plansUnavailableReason ==
+          offeringsErrorReason(PurchasesErrorCode.configurationError);
+
   /// The three plans from the `default` offering, each with its store price
   /// and package. A plan the offering lacks keeps its static copy and no
   /// package; when the offering can't be loaded every plan does, and
-  /// [plansUnavailableReason] says why.
+  /// [plansUnavailableReason] says why. Retries on transient store connection
+  /// errors before falling back.
   Future<List<PlanOption>> plans() async {
+    const maxRetries = 2;
+    const retryDelay = Duration(milliseconds: 500);
     await ensureReady();
     _plansUnavailableReason = null;
     if (!_configured) return fallbackPlans;
-    try {
-      final offering = (await Purchases.getOfferings()).getOffering(offeringId);
-      if (offering == null) {
-        _plansUnavailableReason = _notOffered;
-        return fallbackPlans;
-      }
-      final out = <PlanOption>[];
-      for (final f in fallbackPlans) {
-        final pkg = offering.availablePackages
-            .where(
-              (p) => p.storeProduct.identifier.split(':').first == f.productId,
-            )
-            .firstOrNull;
-        if (pkg == null) {
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final offering = (await Purchases.getOfferings()).getOffering(offeringId);
+        if (offering == null) {
+          if (attempt < maxRetries) {
+            await Future<void>.delayed(retryDelay);
+            continue;
+          }
           _plansUnavailableReason = _notOffered;
-          out.add(f);
-          continue;
+          return fallbackPlans;
         }
-        out.add(
-          PlanOption(
-            name: f.name,
-            productId: f.productId,
-            price: '${pkg.storeProduct.priceString} / month',
-            blurb: f.blurb,
-            credits: f.credits,
-            package: pkg,
-          ),
-        );
+        final out = <PlanOption>[];
+        var anyPackageMissing = false;
+        for (final f in fallbackPlans) {
+          final pkg = offering.availablePackages
+              .where(
+                (p) => p.storeProduct.identifier.split(':').first == f.productId,
+              )
+              .firstOrNull;
+          if (pkg == null) {
+            anyPackageMissing = true;
+            out.add(f);
+            continue;
+          }
+          out.add(
+            PlanOption(
+              name: f.name,
+              productId: f.productId,
+              price: '${pkg.storeProduct.priceString} / month',
+              blurb: f.blurb,
+              credits: f.credits,
+              package: pkg,
+            ),
+          );
+        }
+        if (anyPackageMissing) {
+          // If all packages are missing on an early attempt, retry as store cache may still be warming up
+          if (attempt < maxRetries && out.every((p) => p.package == null)) {
+            await Future<void>.delayed(retryDelay);
+            continue;
+          }
+          _plansUnavailableReason = _notOffered;
+        }
+        return out;
+      } on PlatformException catch (e) {
+        debugPrint('RevenueCat getOfferings failed (attempt $attempt): ${e.message}');
+        final code = PurchasesErrorHelper.getErrorCode(e);
+        final isPermanent =
+            code == PurchasesErrorCode.invalidCredentialsError ||
+            code == PurchasesErrorCode.configurationError;
+        if (isPermanent || attempt >= maxRetries) {
+          _plansUnavailableReason = offeringsErrorReason(code);
+          return fallbackPlans;
+        }
+        await Future<void>.delayed(retryDelay);
       }
-      return out;
-    } on PlatformException catch (e) {
-      debugPrint('RevenueCat getOfferings failed: ${e.message}');
-      _plansUnavailableReason = offeringsErrorReason(
-        PurchasesErrorHelper.getErrorCode(e),
-      );
-      return fallbackPlans;
     }
+    return fallbackPlans;
   }
 
   static const _notOffered =
@@ -390,53 +422,72 @@ class RevenueCatService {
   /// iOS the product needs a free introductory price and
   /// `checkTrialOrIntroductoryPriceEligibility` must say eligible.
   Future<TrialOffer?> proTrialOffer() async {
+    const maxRetries = 2;
+    const retryDelay = Duration(milliseconds: 500);
     await ensureReady();
     if (!_configured) return null;
-    try {
-      final pro = fallbackPlans.firstWhere((p) => p.name == 'Pro');
-      final offering = (await Purchases.getOfferings()).getOffering(offeringId);
-      final pkg = offering?.availablePackages
-          .where(
-            (p) => p.storeProduct.identifier.split(':').first == pro.productId,
-          )
-          .firstOrNull;
-      if (pkg == null) return null;
-      final product = pkg.storeProduct;
-      var unit = PeriodUnit.unknown;
-      var value = 0;
-      final free = product.defaultOption?.freePhase?.billingPeriod;
-      final intro = product.introductoryPrice;
-      if (free != null) {
-        unit = free.unit;
-        value = free.value;
-      } else if (intro != null && intro.price == 0) {
-        final e = await Purchases.checkTrialOrIntroductoryPriceEligibility([
-          product.identifier,
-        ]);
-        if (e[product.identifier]?.status !=
-            IntroEligibilityStatus.introEligibilityStatusEligible) {
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final pro = fallbackPlans.firstWhere((p) => p.name == 'Pro');
+        final offering = (await Purchases.getOfferings()).getOffering(offeringId);
+        if (offering == null) {
+          if (attempt < maxRetries) {
+            await Future<void>.delayed(retryDelay);
+            continue;
+          }
           return null;
         }
-        unit = intro.periodUnit;
-        value = intro.periodNumberOfUnits * (intro.cycles < 1 ? 1 : intro.cycles);
+        final pkg = offering.availablePackages
+            .where(
+              (p) => p.storeProduct.identifier.split(':').first == pro.productId,
+            )
+            .firstOrNull;
+        if (pkg == null) return null;
+        final product = pkg.storeProduct;
+        var unit = PeriodUnit.unknown;
+        var value = 0;
+        final free = product.defaultOption?.freePhase?.billingPeriod;
+        final intro = product.introductoryPrice;
+        if (free != null) {
+          unit = free.unit;
+          value = free.value;
+        } else if (intro != null && intro.price == 0) {
+          final e = await Purchases.checkTrialOrIntroductoryPriceEligibility([
+            product.identifier,
+          ]);
+          if (e[product.identifier]?.status !=
+              IntroEligibilityStatus.introEligibilityStatusEligible) {
+            return null;
+          }
+          unit = intro.periodUnit;
+          value = intro.periodNumberOfUnits * (intro.cycles < 1 ? 1 : intro.cycles);
+        }
+        if (unit == PeriodUnit.unknown || value < 1) return null;
+        return TrialOffer(
+          plan: PlanOption(
+            name: pro.name,
+            productId: pro.productId,
+            price: '${product.priceString} / month',
+            blurb: pro.blurb,
+            credits: pro.credits,
+            package: pkg,
+          ),
+          unit: unit,
+          value: value,
+        );
+      } on PlatformException catch (e) {
+        debugPrint('RevenueCat trial lookup failed (attempt $attempt): ${e.message}');
+        final code = PurchasesErrorHelper.getErrorCode(e);
+        final isPermanent =
+            code == PurchasesErrorCode.invalidCredentialsError ||
+            code == PurchasesErrorCode.configurationError;
+        if (isPermanent || attempt >= maxRetries) {
+          return null;
+        }
+        await Future<void>.delayed(retryDelay);
       }
-      if (unit == PeriodUnit.unknown || value < 1) return null;
-      return TrialOffer(
-        plan: PlanOption(
-          name: pro.name,
-          productId: pro.productId,
-          price: '${product.priceString} / month',
-          blurb: pro.blurb,
-          credits: pro.credits,
-          package: pkg,
-        ),
-        unit: unit,
-        value: value,
-      );
-    } on PlatformException catch (e) {
-      debugPrint('RevenueCat trial lookup failed: ${e.message}');
-      return null;
     }
+    return null;
   }
 
   /// Store page where a user manages or cancels a subscription, used when

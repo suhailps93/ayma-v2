@@ -165,12 +165,20 @@ def _sections_with_bullets(
     graph: dict[str, GraphNode], keep: set[str]
 ) -> dict[str, list[dict]]:
     by_section: dict[str, list[dict]] = {}
+    seen_texts: set[str] = set()
     for n in _ordered_nodes(graph):
         if not _is_renderable(n):
             continue
         bullets = _node_bullets(n, keep)
-        if bullets:
-            by_section.setdefault(n.section, []).extend(bullets)
+        deduped = []
+        for b in bullets:
+            norm = " ".join(b["text"].casefold().split())
+            if not norm or norm in seen_texts:
+                continue
+            seen_texts.add(norm)
+            deduped.append(b)
+        if deduped:
+            by_section.setdefault(n.section, []).extend(deduped)
     return by_section
 
 

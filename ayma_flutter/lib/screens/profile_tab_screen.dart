@@ -209,40 +209,43 @@ class _Group extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Eyebrow(label),
-          ),
-          Container(
-            decoration: BoxDecoration(
-              color: ac.bgElev,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: ac.lineSoft, width: 0.5),
+    return Semantics(
+      explicitChildNodes: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Eyebrow(label),
             ),
-            clipBehavior: Clip.antiAlias,
-            // Transparent Material between this colored Container and the
-            // ListTiles in `rows`: without it, ListTile's own
-            // background/ink-splash paint (which lands on the nearest
-            // Material ancestor) is hidden behind this Container's
-            // BoxDecoration — Flutter now asserts on that in debug mode.
-            child: Material(
-              type: MaterialType.transparency,
-              child: Column(
-                children: [
-                  for (var i = 0; i < rows.length; i++) ...[
-                    if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
-                    rows[i],
+            Container(
+              decoration: BoxDecoration(
+                color: ac.bgElev,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: ac.lineSoft, width: 0.5),
+              ),
+              clipBehavior: Clip.antiAlias,
+              // Transparent Material between this colored Container and the
+              // ListTiles in `rows`: without it, ListTile's own
+              // background/ink-splash paint (which lands on the nearest
+              // Material ancestor) is hidden behind this Container's
+              // BoxDecoration — Flutter now asserts on that in debug mode.
+              child: Material(
+                type: MaterialType.transparency,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < rows.length; i++) ...[
+                      if (i > 0) Divider(height: 0.5, color: ac.lineSoft),
+                      rows[i],
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -274,25 +277,28 @@ class _Item extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final tile = ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-      leading: Icon(icon, color: ac.fgDim, size: 20),
-      title: Text(label, style: AymaType.sans(size: 15, color: ac.fg)),
-      subtitle: hint == null
-          ? null
-          : Text(hint!,
-              style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (trailingBefore != null) ...[
-            trailingBefore!,
-            const SizedBox(width: 8),
+    final tile = Semantics(
+      container: true,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: Icon(icon, color: ac.fgDim, size: 20),
+        title: Text(label, style: AymaType.sans(size: 15, color: ac.fg)),
+        subtitle: hint == null
+            ? null
+            : Text(hint!,
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (trailingBefore != null) ...[
+              trailingBefore!,
+              const SizedBox(width: 8),
+            ],
+            Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
           ],
-          Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
-        ],
+        ),
+        onTap: onTap,
       ),
-      onTap: onTap,
     );
     final id = anchorId;
     if (id == null) return tile;

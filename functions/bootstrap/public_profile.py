@@ -189,18 +189,26 @@ def public_bullet_sections(db, uid: str) -> list[dict]:
     import story_bullets
 
     out: list[dict] = []
+    seen_bullets: set[str] = set()
     for sec in story.get_story(db, uid).get("sections", []):
         page_id = sec.get("page_id", "")
         if page_id in story.REPORT_LINKED_PAGE_IDS:
             continue
         vis = sec.get("visibility") or story.VIS_PRIVATE
-        bullets = [
+        raw_bullets = [
             b["text"]
             for b in story_bullets.parse_bullets(
                 sec.get("body") or "", vis, page_id=page_id
             )
             if b["visibility"] == story.VIS_PUBLIC
         ]
+        bullets = []
+        for text in raw_bullets:
+            norm = " ".join(text.casefold().split())
+            if not norm or norm in seen_bullets:
+                continue
+            seen_bullets.add(norm)
+            bullets.append(text)
         if not bullets:
             continue
         out.append(
