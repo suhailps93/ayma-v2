@@ -179,8 +179,14 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     scorer's `_typed_value` reads the same shape, so the math is unchanged — a
     full-node parity test proves old-read == graph-read on a migrated account.
     Seed weights unchanged (per-user weights are 5c).
-  - *Sims + match-report narratives.* NEXT: persona / wiki-context reads switch
-    to `person_graph_render` output (same prose shape).
+  - *Match-report narrative — DONE.* `matching_skill.score_pair` feeds each
+    user's `person_graph_source.persona(db, uid)` (public + private story prose,
+    Ayma-only excluded) in place of `read_wiki_context`; Ayma's assessment stays
+    fed separately via its digest, exactly as before. Visibility-boundary test:
+    the report input excludes Ayma-only nodes; `include_ayma_only` folds them in
+    only for Ayma's own grounding.
+  - *Sims persona.* NEXT: `practice_core` / `persona_snapshot` grounding reads
+    switch to the same persona render.
 - **5c — per-user emergent gates (§4.3).** Gate set becomes fixed gates + any
   node the user's confirmed weight pushed into the top band; like-for-like
   levels (§5.4).

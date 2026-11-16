@@ -57,6 +57,32 @@ def structured_qstore(graph: dict[str, pg.GraphNode]) -> dict[str, dict]:
     return out
 
 
+def persona(
+    db, uid: str, *, public_only: bool = False, include_ayma_only: bool = False
+) -> str:
+    """A prose render of ``uid``'s graph for a narrative consumer (sims, the
+    match report), the graph-native replacement for ``read_wiki_context`` /
+    ``public_profile.build`` prose (design §8.1). Best-effort: a read failure
+    yields ``""`` (the old reads returned ``""`` on an empty/failed wiki too).
+
+    - default → the owner's own persona (public + private), excluding Ayma-only
+      inferred nodes — matching the match report's generic wiki dump, which
+      excludes Ayma's assessment page (fed separately via its digest).
+    - ``public_only`` → another member's viewer-visible persona (public nodes).
+    - ``include_ayma_only`` → also fold in Ayma's own inferred knowledge (never
+      a viewer-facing surface)."""
+    import person_graph_render as render
+
+    try:
+        graph = store.effective(db, uid)
+    except Exception:  # noqa: BLE001
+        logger.exception("person_graph_source: persona read failed for %s", uid)
+        return ""
+    return render.persona_prose(
+        graph, public_only=public_only, include_ayma_only=include_ayma_only
+    )
+
+
 def _strip_qz_mirrors(profile: dict) -> dict:
     """The profile doc without its ``qz_*`` questionnaire mirrors, so the graph
     is the single authority for a questionnaire answer. Every other profile

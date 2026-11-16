@@ -516,9 +516,21 @@ async def score_pair(
     # is handed to the model separately below as an explicitly labeled block
     # (via its compact digest), so it is kept OUT of the generic wiki dump
     # rather than riding along unlabeled inside "WIKI A".
+    from config import CONFIG
+
     _wiki_excludes = frozenset({ai_assessment.PAGE_TYPE})
-    wiki_a = read_wiki_context(db, uid_a, exclude_page_types=_wiki_excludes)
-    wiki_b = read_wiki_context(db, uid_b, exclude_page_types=_wiki_excludes)
+    if CONFIG.person_graph_reads:
+        # Graph-native narrative (Phase 5b): each user's own persona (public +
+        # private), which excludes Ayma-only nodes — the graph counterpart of
+        # the generic wiki dump that excludes Ayma's assessment page (still fed
+        # separately via its digest below).
+        import person_graph_source
+
+        wiki_a = person_graph_source.persona(db, uid_a)
+        wiki_b = person_graph_source.persona(db, uid_b)
+    else:
+        wiki_a = read_wiki_context(db, uid_a, exclude_page_types=_wiki_excludes)
+        wiki_b = read_wiki_context(db, uid_b, exclude_page_types=_wiki_excludes)
     if not wiki_a or not wiki_b:
         raise ValueError("both users need a wiki to score compatibility")
     assess_a = ai_assessment.digest(db, uid_a)

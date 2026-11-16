@@ -146,3 +146,28 @@ def test_load_user_keeps_gate_profile_fields():
     # the scorer's gate/identity fields survive the strip
     for k in ("gender", "interested_in", "location", "relationship_intent", "completeness"):
         assert k in g_profile
+
+
+def test_persona_excludes_ayma_only_by_default_report_input():
+    # The match report's narrative input (person_graph_source.persona default)
+    # is public + private, NEVER Ayma-only — the graph counterpart of the wiki
+    # dump that excludes Ayma's assessment page.
+    import person_graph_store as store
+
+    uid, docs = _fixture()
+    db = FakeDb(docs)
+    mig.migrate_user(db, uid, write=True, replace=True)
+    parent = "attachment_style"  # a real answered seed node to hang nodes off
+    visible = store.add_node(db, uid, parent, "note", answer="VISIBLE_PRIVATE_FACT")
+    secret = store.add_node(db, uid, parent, "note", answer="ZZZ_AYMA_SECRET")
+    store.set_visibility(db, uid, secret, "ayma_only")
+
+    default = src.persona(db, uid)
+    assert "VISIBLE_PRIVATE_FACT" in default
+    assert "ZZZ_AYMA_SECRET" not in default  # ayma_only kept out of the report
+
+    with_ayma = src.persona(db, uid, include_ayma_only=True)
+    assert "ZZZ_AYMA_SECRET" in with_ayma  # folded in only for Ayma's own grounding
+
+    public = src.persona(db, uid, public_only=True)
+    assert "VISIBLE_PRIVATE_FACT" not in public  # a private note is not public
