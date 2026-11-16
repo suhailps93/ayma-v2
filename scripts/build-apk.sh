@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Build the phone APK with Sentry wired in. See docs/AGENT_HANDOFF.md §3.
 #
-#   [REVENUECAT_TEST_KEY=...] scripts/build-apk.sh [--release|--debug] [extra flutter args]
+#   [REVENUECAT_TEST_KEY=...] scripts/build-apk.sh [--release|--debug|--profile] [extra flutter args]
+#
+# --profile builds an AOT (ahead-of-time compiled) APK — real `libapp.so`, no
+# 113 MB `kernel_blob.bin` JIT kernel. Use it for the boot / first-launch gate:
+# the --debug APK is a JIT build whose slow startup trips the input-dispatch
+# watchdog on a loaded emulator (NOTE 226 — a debug-build artifact, not an app
+# bug), while --profile starts like the release build real users get. The
+# RevenueCat TEST key only activates subscriptions in --debug, so subscription
+# legs stay on the --debug APK; --profile is for boot/startup only.
 #
 # The Flutter Sentry DSN is read from Secret Manager (SENTRY_DSN_FLUTTER) at
 # build time and passed as --dart-define, so it is never written to the repo
@@ -19,7 +27,7 @@ STAGING=0
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --release|--debug) MODE="$1"; shift ;;
+    --release|--debug|--profile) MODE="$1"; shift ;;
     # --staging points the build at the ayma-staging Firebase project AND the
     # staging API base, so the installed app authenticates against staging and
     # talks to the staging backend (prod tokens are rejected by staging). It
