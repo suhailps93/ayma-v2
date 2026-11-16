@@ -1,6 +1,27 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-11-15. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-16. Update this file whenever an item changes; commit and push to main.
+
+## NOTE-230-PHOTO-RENDER — Fix photo-reply live-render defect (fleet/note-230-photo-render off staging tip c208f451, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
+- **Defect (Scout NOTE 230):** Sending a photo in Ayma chat did not render live in the thread; view stayed stale for 3.5+ min and appeared only after a tab-switch + full-chat reopen, even though the reply was saved server-side in ~10s.
+- **Root Cause:**
+  1. `ApiClient.BudgetHttpClient` throws `ApiException('Request timed out — please try again.', statusCode: 408)` on client timeout.
+  2. `_ChatScreenState._shouldReconcile` only checked `error.statusCode == null && error.message.startsWith('Network error')`. Because `statusCode == 408` is non-null and the message starts with `'Request timed out'`, `_shouldReconcile` returned `false`. `_store.dropPending()` was called immediately and toasted `Couldn't reach Ayma. Check your connection.`, dropping the pending turn from view rather than entering reconciliation.
+  3. `_reconcilePendingSend` had no foreground periodic polling loop — after the initial 3 polls over ~4s and the fallback `rec.resend()` timeout, it left the pending turn stagnant without checking history again until app resume or tab switch.
+  4. Backend `_classify_shared_photo` had no timeout guard around `face_match.classify_photo`, allowing slow/stalled face classification to block `_prepare_chat` for up to 75s.
+- **Fix:**
+  1. Updated `_shouldReconcile` in `chat_screen.dart` to recognize `error.statusCode == 408` and `error.message.startsWith('Request timed out')` as reconcilable connection-class timeouts.
+  2. Implemented foreground periodic history polling via `_reconcileTimer` in `chat_screen.dart` (polling `chatHistory` every 3s up to 20 attempts while remaining on the chat screen) to adopt the landed reply as soon as Cloud Run commits it to Firestore, resolving `_store.resolvePending` live without any tab-switch or resume required. Disposed `_reconcileTimer` on unmount.
+  3. Increased `ApiClient.chatStreamConnectTimeout` from 30s to 45s for cold-start multimodal stream requests.
+  4. Added a 8.0s timeout guard to `_classify_shared_photo` in `functions/bootstrap/main.py` so slow/hanging face classification never blocks `_prepare_chat`.
+- **Tests:**
+  1. TDD regression suite `ayma_flutter/test/chat_photo_render_reconcile_test.dart` (2 tests reproducing both defect facets, failed before fix, now passing).
+  2. Existing reconciliation suites `chat_connection_drop_reconcile_test.dart` (4 tests) and `chat_backgrounded_send_test.dart` (2 tests) green.
+  3. Layout matrix test `ayma_flutter/test/layout_matrix_test.dart` 100% green (29 tests).
+  4. `flutter analyze` 100% clean (0 issues).
+  5. Python backend tests `test_app_registry.py` and `test_face_match.py` (66 tests passed).
+  6. Zero inference rerouting: all inference flows through LiveKit.
+
 
 ## NOTE-224-OBSERVATIONS — Fix four Scout NOTE 224 defects (fleet/note-224-observations off staging tip 248aa5ab, 2026-11-15) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
 - **Defect 1 (You-tab Plan row tap didn't navigate x4):** Root caused and fixed. Batch 2449 added "My person graph" to You tab, pushing the 1-item "Ayma" (Plan) group down. Because `_Group` had a single interactive child without `explicitChildNodes: true`, Flutter accessibility coalesced the `Eyebrow('Ayma')` header and `ListTile` into one merged semantics node with bounds `[0,1977][1080,2105]`. The top half (`y < 2049`) was dead padding, so center tap at `(540, 2041)` missed the ListTile. Fixed by marking `Eyebrow` with `Semantics(header: true)`, setting `Semantics(explicitChildNodes: true)` on `_Group`, and `Semantics(container: true)` on `_Item`.
