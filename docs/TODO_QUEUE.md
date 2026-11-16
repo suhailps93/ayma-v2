@@ -2,6 +2,24 @@
 
 Last updated: 2026-11-16. Update this file whenever an item changes; commit and push to main.
 
+## NOTE-237-STORY-SCROLL-ANR — Story-scroll ANR regression on 2463 (fleet/story-scroll-anr-237 off staging 4d5de298, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
+- **Defect (Scout NOTE 237, build 2463):** ANR dialog during slow story scrolling (9 half-screen swipes at 3s pauses, first attempt after photo sends; `Waited 5001ms for MotionEvent, 12:54:40.083`), plus a second ANR trace stamped during re-run scroll. Regression vs NOTE 236 on build 2462 (zero ANR on 26 fast swipes).
+- **Root Cause:**
+  1. Commit `2279599f` rendered inline story images via bare `Image.network(b.imageUrl, width: double.infinity, fit: BoxFit.cover, errorBuilder: ...)`.
+  2. Batch 2463 (`afb161ee`) introduced `_node_order_key` in `person_graph_render.py` so image nodes homed under facts render immediately after their fact's bullet in Your Story (Milo tabby photo homed under Daniel's cat fact bullet in Little Extras).
+  3. When scrolling through Little Extras, bare `Image.network` bypassed `flutter_cache_manager` disk caching (where chat had already saved the downloaded photo), opened a cold connection, and synchronously decoded the unconstrained full-resolution original image (e.g. 12MP = ~48MB bitmap) on the UI thread without `memCacheWidth` capping.
+  4. During slow scrolling (9 swipes at 3s pauses), the main UI thread was blocked for >5001ms by image decode and texture upload, triggering Android ANR `Waited 5001ms for MotionEvent`.
+- **Fix:**
+  1. Updated `ayma_flutter/lib/widgets/ayma_photo.dart` with optional `width` and `height` properties, forwarding them to `CachedNetworkImage`, `_placeholder`, and `_fallback`.
+  2. In `ayma_flutter/lib/widgets/bullet_sections_editor.dart`, replaced bare `Image.network` with `AymaPhoto(url: b.imageUrl, width: double.infinity, height: 180, displayWidth: 400, fit: BoxFit.cover, error: const SizedBox.shrink())`, capping decode size via `memCacheWidth` and reusing disk cache from chat. Bare `Image.network` deleted.
+- **Tests:**
+  1. Added 9-swipe slow-scroll reproduction test in `ayma_flutter/test/story_scroll_test.dart` (repro fails on pre-fix bare `Image.network`, passes with `AymaPhoto` capped decode).
+  2. Updated `ayma_flutter/test/bullet_sections_editor_test.dart` to verify `AymaPhoto` rendering for inline image bullets.
+  3. Touched Flutter suites: `story_scroll_test.dart` (2/2 passed), `bullet_sections_editor_test.dart` (13/13 passed), `ayma_photo_test.dart` (5/5 passed).
+  4. Layout matrix suite `ayma_flutter/test/layout_matrix_test.dart` (29/29 passed).
+  5. `flutter analyze` 100% clean (0 issues).
+  6. Inference routing: 100% LiveKit, zero direct provider routing.
+
 ## NOTE-236-ACCENT-HYDRATION — Accent hydration lag on fresh install (fleet/accent-hydration-lag off staging e4995d79, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
 - **Defect (Scout NOTE 236, build 2462):** After a fresh install + sign-in, the app rendered the DEFAULT pink accent (pink orb, pink Upgrade button, pink sign-in orb) even though `profile/main.ayma_accent_color` was still `#2d6a4f` (green) in Firestore. Only after a force-stop + cold relaunch did the saved green accent apply.
 - **Root Cause:**

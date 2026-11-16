@@ -42,6 +42,8 @@ class AymaPhoto extends StatefulWidget {
     this.displayWidth = 1000,
     this.placeholderColor,
     this.error,
+    this.width,
+    this.height,
   });
 
   final String url;
@@ -49,6 +51,8 @@ class AymaPhoto extends StatefulWidget {
   final double displayWidth;
   final Color? placeholderColor;
   final Widget? error;
+  final double? width;
+  final double? height;
 
   /// Test seam: the cache manager backing the [CachedNetworkImage]. Production
   /// leaves this null and uses the shared [DefaultCacheManager] (the same disk
@@ -158,6 +162,8 @@ class _AymaPhotoState extends State<AymaPhoto> {
     final px = _px();
     return CachedNetworkImage(
       imageUrl: widget.url,
+      width: widget.width,
+      height: widget.height,
       cacheManager: AymaPhoto.debugCacheManager,
       fit: widget.fit,
       fadeInDuration: const Duration(milliseconds: 180),
@@ -169,11 +175,15 @@ class _AymaPhotoState extends State<AymaPhoto> {
   }
 
   Widget _placeholder(BuildContext context) => Container(
+        width: widget.width,
+        height: widget.height,
         color: widget.placeholderColor ??
             Theme.of(context).colorScheme.surfaceContainerHighest,
       );
 
   Widget _fallback(BuildContext context) => Container(
+        width: widget.width,
+        height: widget.height,
         color: widget.placeholderColor ??
             Theme.of(context).colorScheme.surfaceContainerHighest,
         alignment: Alignment.center,

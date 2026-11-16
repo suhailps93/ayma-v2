@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 import 'ask_ayma_overlay.dart';
+import 'ayma_photo.dart';
 import 'ayma_toast.dart';
 import 'bullet_visibility.dart';
 import 'overflow_guards.dart';
@@ -505,14 +506,13 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
                 if (b.isImage) ...[
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 180),
-                      child: Image.network(
-                        b.imageUrl,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                      ),
+                    child: AymaPhoto(
+                      url: b.imageUrl,
+                      width: double.infinity,
+                      height: 180,
+                      displayWidth: 400,
+                      fit: BoxFit.cover,
+                      error: const SizedBox.shrink(),
                     ),
                   ),
                   const SizedBox(height: 6),
