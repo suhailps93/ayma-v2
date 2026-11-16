@@ -3189,6 +3189,32 @@ async def _run_chat_followups(
                     caption, shot_type=shot_type, match=match
                 )
                 enriched = turns + [Turn(ROLE_USER, note)]
+                # Person-graph authoritative: home the shared photo WITH its fact
+                # (founder decision Nov 16 — image node under its fact node, not a
+                # Photos section). Deterministic: the media + Ayma's read already
+                # exist here, so the image node lands even if the model never
+                # calls a tool (NOTE 231: the photo turn created no node at all).
+                # Best-effort + idempotent; never affects the caption ingest.
+                if CONFIG.person_graph_reads:
+                    try:
+                        import hashlib
+                        import person_graph_store as pg_store
+                        from public_profile import _photo_url
+
+                        url = _photo_url(image_path) or ""
+                        if url:
+                            img_node_id = (
+                                "emergent.image."
+                                + hashlib.sha1(image_path.encode()).hexdigest()[:8]
+                            )
+                            await asyncio.to_thread(
+                                pg_store.add_photo_fact,
+                                get_db(), uid,
+                                image_url=url, image_read=note, fact_text=caption,
+                                image_node_id=img_node_id,
+                            )
+                    except Exception:  # noqa: BLE001 - graph home is best-effort
+                        logger.exception("chat photo graph-home failed for %s", uid)
         except Exception:  # noqa: BLE001
             logger.exception("chat photo caption failed for %s", uid)
     await _run_ingest(uid, session_id, enriched)

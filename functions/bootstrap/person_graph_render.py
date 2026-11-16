@@ -144,7 +144,13 @@ def _node_bullets(node: GraphNode, keep: set[str]) -> list[dict]:
     text = _answer_text(node)
     node_vis = _story_vis(node.visibility)
     if text and node_vis in keep:
-        out.append({"id": node.id, "text": text, "visibility": node_vis})
+        bullet = {"id": node.id, "text": text, "visibility": node_vis}
+        # An image node carries the Firebase Storage link so the client can show
+        # the photo itself; the bullet ``text`` is Ayma's read of it. The url is
+        # a reference the viewer opens, never the bytes.
+        if node.answer_type == "image" and isinstance(node.answer, str):
+            bullet["image_url"] = node.answer
+        out.append(bullet)
     for i, child in enumerate(node.children):
         cv = _story_vis(child.visibility)
         if child.text.strip() and cv in keep:
@@ -186,6 +192,12 @@ def _sections_with_bullets(
         bullets = _node_bullets(n, keep)
         deduped = []
         for b in bullets:
+            # An image node is distinct content (it carries a photo), never a
+            # duplicate of a text bullet — keep it even if its read matches a
+            # fact's text (e.g. the fact it is homed with).
+            if b.get("image_url"):
+                deduped.append(b)
+                continue
             norm = " ".join(b["text"].casefold().split())
             if not norm or norm in seen_texts:
                 continue

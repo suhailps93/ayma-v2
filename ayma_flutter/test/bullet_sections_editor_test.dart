@@ -409,4 +409,39 @@ void main() {
       ]);
     });
   });
+
+  // A chat-shared photo homed with its fact (pg_add_image): the image item
+  // renders with its fact, and is server-managed — never sent on a text save.
+  group('image bullet (pg_add_image)', () {
+    testWidgets('renders the photo and is excluded from the save payload',
+        (tester) async {
+      final api = _FakeApi(sections: [
+        _aboutMe(const [
+          StoryBullet(id: 'b1', text: 'Has a dog.', visibility: 'public'),
+          StoryBullet(
+            id: 'emergent.image.abc',
+            text: 'a brown dog on grass',
+            visibility: 'private',
+            imageUrl: 'https://storage/dog.jpg',
+          ),
+        ]),
+      ])..reflectSavesIntoSections = true;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: BulletSectionsEditor(api: api)),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // the image item renders with its fact
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('a brown dog on grass'), findsOneWidget);
+
+      // cycle the TEXT bullet's visibility → the save carries only the text
+      // bullet; the server-managed image bullet is never sent.
+      await tester.tap(find.byKey(const ValueKey('visibility_about_me_0')));
+      await tester.pumpAndSettle();
+      expect(api.saveSnapshots.last, [('Has a dog.', 'private')]);
+    });
+  });
 }

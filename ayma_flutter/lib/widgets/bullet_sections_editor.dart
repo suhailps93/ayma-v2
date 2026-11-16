@@ -219,6 +219,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
 
   void _startEdit(int i) {
     if (_saving) return;
+    if (_bullets[i].isImage) return;  // an image item isn't text-editable here
     setState(() {
       _editing = i;
       _editingIsNew = false;
@@ -299,10 +300,15 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
       return;
     }
     setState(() => _saving = true);
-    var ok = await widget.onSave(_bullets);
+    // Image bullets are server-managed (a chat-shared photo homed with its
+    // fact); they are shown here but never sent — the text-bullet save contract
+    // carries no image identity, so re-sending one would duplicate its read as a
+    // plain text node. The image node is preserved server-side.
+    List<StoryBullet> payload() => [for (final b in _bullets) if (!b.isImage) b];
+    var ok = await widget.onSave(payload());
     while (ok && _resaveNeeded && mounted) {
       _resaveNeeded = false;
-      ok = await widget.onSave(_bullets);
+      ok = await widget.onSave(payload());
     }
     _resaveNeeded = false;
     if (!mounted) return;
@@ -324,6 +330,7 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
   /// it. One save covers both the committed text and the new visibility.
   void _cycle(int i) {
     if (i < 0 || i >= _bullets.length) return;
+    if (_bullets[i].isImage) return;  // image-node visibility isn't changed here
     if (_editing == i) {
       final r = _foldOpenEdit();
       if (!r.kept) {
@@ -479,6 +486,24 @@ class _BulletSectionCardState extends State<BulletSectionCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // A chat-shared photo homed with its fact: show the photo above
+                // Ayma's read of it. Height-bounded + width-constrained by the
+                // Expanded, so it never overflows; a dead link renders nothing.
+                if (b.isImage) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: Image.network(
+                        b.imageUrl,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
                 if (_editing == i)
                   TextField(
                     controller: _ctrl,
