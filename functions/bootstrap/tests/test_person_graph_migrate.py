@@ -163,6 +163,24 @@ def test_migrate_wiki_dedupes_bullets_from_duplicate_pages(monkeypatch):
     assert set(mig.migrate_wiki(db, "u1")) == set(ov)
 
 
+def test_migrate_wiki_dedupes_bullets_across_different_sections(monkeypatch):
+    _patch_story(
+        monkeypatch,
+        story_sections=[
+            {"page_type": "family", "page_id": "family-roots",
+             "visibility": "public", "body": "Grew up in San Jose."},
+            {"page_type": "location", "page_id": "roots-in-san-jose",
+             "visibility": "public", "body": "Grew up in San Jose."},
+        ],
+        ai_sections=[],
+    )
+    ov = mig.migrate_wiki(FakeDb(), "u1")
+    assert len(ov) == 1
+    node = next(iter(ov.values()))
+    assert node["section"] == "family"
+    assert node["answer"] == "Grew up in San Jose."
+
+
 def test_duplicate_bullet_keeps_most_private_tag(monkeypatch):
     # if the same text appears public on one page and private on another, the
     # first occurrence stands and a private copy never silently becomes public.

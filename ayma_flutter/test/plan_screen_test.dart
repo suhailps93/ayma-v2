@@ -37,8 +37,10 @@ class _FakeRc extends RevenueCatService {
     this.trial = false,
     this.restoreOutcome = PurchaseOutcome.success,
     this.offeringFails = 0,
+    this.failCode = PurchasesErrorCode.invalidCredentialsError,
   });
   final bool on;
+  final PurchasesErrorCode failCode;
 
   /// How many [plans] calls fail to load the offering before one succeeds.
   int offeringFails;
@@ -47,6 +49,16 @@ class _FakeRc extends RevenueCatService {
 
   @override
   String? get plansUnavailableReason => _reason;
+
+  @override
+  bool get hasPermanentPlansError =>
+      _reason ==
+          RevenueCatService.offeringsErrorReason(
+              PurchasesErrorCode.invalidCredentialsError) ||
+      _reason ==
+          RevenueCatService.offeringsErrorReason(
+              PurchasesErrorCode.configurationError);
+
   final ActiveSubscription? sub;
   final bool trial;
   final PurchaseOutcome restoreOutcome;
@@ -63,9 +75,7 @@ class _FakeRc extends RevenueCatService {
     _reason = null;
     if (on && offeringFails > 0) {
       offeringFails--;
-      _reason = RevenueCatService.offeringsErrorReason(
-        PurchasesErrorCode.invalidCredentialsError,
-      );
+      _reason = RevenueCatService.offeringsErrorReason(failCode);
       return RevenueCatService.fallbackPlans;
     }
     return _loaded();
@@ -691,6 +701,18 @@ void main() {
     expect(rc.planLoads, loads + 1);
     expect(_actionEnabled(tester), isTrue);
     expect(find.text('€20,00 / month'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-action-unavailable')), findsNothing);
+  });
+
+  testWidgets('transient store miss retries before showing error', (tester) async {
+    final rc = _FakeRc(
+      offeringFails: 1,
+      failCode: PurchasesErrorCode.storeProblemError,
+    );
+    await _pump(tester, PlanScreen(service: rc, api: _api()));
+    expect(_actionLabel(tester), 'Upgrade to Pro');
+    expect(_actionEnabled(tester), isTrue);
+    expect(rc.planLoads, 2);
     expect(find.byKey(const ValueKey('plan-action-unavailable')), findsNothing);
   });
 

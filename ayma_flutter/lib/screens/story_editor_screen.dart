@@ -692,7 +692,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         const SizedBox(height: 12),
         if (t.showTimeline && t.entries.isNotEmpty)
           CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
-        else
+        else if (t.linkedinUrl.isEmpty)
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: OutlinedButton.icon(

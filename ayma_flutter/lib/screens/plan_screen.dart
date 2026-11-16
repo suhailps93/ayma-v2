@@ -254,7 +254,16 @@ class _PlanScreenState extends State<PlanScreen> {
 
   Future<List<PlanOption>> _plans() async {
     try {
-      return await _rc.plans();
+      var plans = await _rc.plans();
+      if (_rc.enabled &&
+          plans.every((p) => p.package == null) &&
+          !_rc.hasPermanentPlansError) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          plans = await _rc.plans();
+        }
+      }
+      return plans;
     } catch (_) {
       return RevenueCatService.fallbackPlans;
     }

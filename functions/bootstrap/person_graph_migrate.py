@@ -148,6 +148,7 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
     }
 
     out: dict[str, dict] = {}
+    seen_bullet_texts: dict[str, str] = {}  # norm_text -> first nid
     for sec in story.get_story(db, uid).get("sections", []):
         page_id = sec.get("page_id", "")
         if page_id in getattr(story, "REPORT_LINKED_PAGE_IDS", set()):
@@ -167,14 +168,17 @@ def migrate_wiki(db, uid: str) -> dict[str, dict]:
             text = (b.get("text") or "").strip()
             if not text or b.get("visibility") == "ai_only":
                 continue
-            # id keyed on section + normalised text → duplicate-page bullets dedupe
-            nid = _emergent_id("story", section, text.casefold())
+            norm = " ".join(text.casefold().split())
             vis = _GRAPH_VIS.get(b.get("visibility"), Visibility.PRIVATE.value)
-            if nid in out:
-                # same fact already homed — keep the more private visibility
-                if _rank[vis] > _rank[out[nid]["visibility"]]:
-                    out[nid]["visibility"] = vis
+            if norm in seen_bullet_texts:
+                existing_nid = seen_bullet_texts[norm]
+                # same fact already homed in earlier section — keep the more private visibility on the existing node
+                if _rank[vis] > _rank[out[existing_nid]["visibility"]]:
+                    out[existing_nid]["visibility"] = vis
                 continue
+
+            nid = _emergent_id("story", section, norm)
+            seen_bullet_texts[norm] = nid
             out[nid] = {
                 "prompt": text,
                 "section": section,

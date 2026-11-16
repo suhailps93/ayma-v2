@@ -159,6 +159,23 @@ def test_public_bullet_sections_empty_when_nothing_public(monkeypatch):
     assert pp.public_bullet_sections(db, "her") == []
 
 
+def test_public_bullet_sections_deduplicates_across_sections(monkeypatch):
+    db = FakeDb()
+    _setup(monkeypatch, db)
+    db.docs[("users", "her", "wiki_pages", "roots")] = {
+        "visibility": "public", "page_type": "family",
+        "ai_body": "Born in San Jose. Raised near the hills.",
+    }
+    db.docs[("users", "her", "wiki_pages", "roots_sj")] = {
+        "visibility": "public", "page_type": "location",
+        "ai_body": "Born in San Jose. Lives downtown now.",
+    }
+    sections = pp.public_bullet_sections(db, "her")
+    assert len(sections) == 2
+    assert sections[0]["bullets"] == ["Born in San Jose.", "Raised near the hills."]
+    assert sections[1]["bullets"] == ["Lives downtown now."]
+
+
 # --- online / presence ----------------------------------------------------
 # Real signal only (`last_active_at`, stamped on every authed request — same
 # 5-minute window `/profiles/mini` already uses for its own `online` flag),
