@@ -350,6 +350,15 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         .get()
         .to_dict()
     ) or {}
+    # The header's name/age/gender/location come from the graph seed nodes when
+    # reads are on — the structured-writer swap no longer writes profile/main, so
+    # a chat edit (e.g. a new city) only lands on the graph (NOTE 235 defect 1).
+    from config import CONFIG
+
+    if CONFIG.person_graph_reads:
+        import person_graph_source as pg_source
+
+        prof = pg_source.hydrate_profile(db, other_uid, prof)
     name = str(prof.get("name") or "").strip()
     if not name:
         return None
@@ -502,6 +511,12 @@ def _viewing_profile_context(db, uid: str, other: str) -> str:
             .get()
             .to_dict()
         ) or {}
+        from config import CONFIG
+
+        if CONFIG.person_graph_reads:
+            import person_graph_source as pg_source
+
+            prof = pg_source.hydrate_profile(db, other, prof)
         name = str(prof.get("name") or "").strip() or "this person"
         head = name
         loc = str(prof.get("location") or "").strip()

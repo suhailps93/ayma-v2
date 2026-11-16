@@ -19,6 +19,7 @@ Only ``visibility`` differs by source; the steps do not.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +122,48 @@ async def _caption(
 
 def _media_col(db, uid: str):
     return db.collection("users").document(uid).collection("user_media")
+
+
+def _approved_media_for_hash(db, uid: str, content_hash: str) -> dict | None:
+    """An already-approved ``user_media`` record for this exact image content on
+    this account, as a :func:`process` return dict — or ``None`` when there is
+    none. Lets a re-send of the identical photo (the client re-uploads to a fresh
+    Storage path each time) reuse the existing record instead of minting a
+    duplicate ``user_media`` doc, re-moderating and re-embedding byte-identical
+    content (NOTE 235 defect 3). Single-field query (no composite index);
+    moderation status is filtered in Python. Best-effort — any read failure
+    falls through to a normal fresh process."""
+    if not content_hash:
+        return None
+    try:
+        docs = list(
+            _media_col(db, uid)
+            .where("content_hash", "==", content_hash)
+            .limit(5)
+            .stream()
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    for snap in docs:
+        rec = snap.to_dict() or {}
+        if rec.get("moderation_status") != STATUS_APPROVED:
+            continue
+        return {
+            "media_id": snap.id,
+            "moderation_status": STATUS_APPROVED,
+            "published": True,
+            "reason": "",
+            "attributes": rec.get("attributes"),
+            # The caption/wiki fold already ran on the first send; the chat turn's
+            # own reply sees the image bytes directly, so no re-fold is owed.
+            "caption": "",
+            "face_verdict": rec.get("face_verdict") or "unknown",
+            "is_user": rec.get("is_user") or "",
+            "embedding": None,
+            "embedding_missing": False,
+            "deduped": True,
+        }
+    return None
 
 
 def caption_turn_text(caption: str, *, shot_type: str = "", match: str = "") -> str:
@@ -275,6 +318,14 @@ async def process(
     now = datetime.now(timezone.utc)
     image, mime = media_embed.download_bytes(storage_path)
 
+    # Content dedupe: an identical photo already approved on this account reuses
+    # its record (no duplicate user_media doc, no re-moderation / re-embedding of
+    # byte-identical content) — NOTE 235 defect 3.
+    content_hash = hashlib.sha256(image).hexdigest()
+    reuse = _approved_media_for_hash(db, uid, content_hash)
+    if reuse is not None:
+        return reuse
+
     verdict = await photo_moderation.moderate(image, mime, uid=uid)
     if not verdict["allowed"]:
         doc = _media_col(db, uid).document()
@@ -335,6 +386,9 @@ async def process(
         "attributes": attributes,
         "face_verdict": face_verdict,
         "is_user": is_user_val,
+        # The image-content hash, so a later re-send of the identical photo
+        # reuses this record instead of minting a duplicate (NOTE 235 defect 3).
+        "content_hash": content_hash,
         "created_at": now,
     }
     doc.set(doc_payload)
