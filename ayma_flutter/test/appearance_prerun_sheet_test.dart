@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:ayma_flutter/screens/skills_screen.dart';
+import 'package:ayma_flutter/screens/report_run_flows.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';

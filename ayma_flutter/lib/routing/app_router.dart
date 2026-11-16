@@ -38,7 +38,6 @@ import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/connect_agent_screen.dart';
-import '../screens/google_account_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
@@ -60,7 +59,6 @@ import '../screens/settings_screen.dart';
 import '../screens/shared_profile_link_screen.dart';
 import '../screens/shared_report_screen.dart';
 import '../screens/sign_in_screen.dart';
-import '../screens/skills_screen.dart';
 import '../screens/plan_screen.dart';
 import '../screens/developer_screen.dart';
 import '../screens/admin_feedback_screen.dart';
@@ -410,11 +408,6 @@ final appRouter = GoRouter(
           const NavBarShell(child: ProfileProposalsScreen()),
     ),
     GoRoute(
-      path: GoogleAccountScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: GoogleAccountScreen()),
-    ),
-    GoRoute(
       path: ConnectAgentScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: ConnectAgentScreen()),
@@ -517,10 +510,6 @@ final appRouter = GoRouter(
       path: AssistantScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: AssistantScreen()),
-    ),
-    GoRoute(
-      path: SkillsScreen.path,
-      builder: (context, state) => const NavBarShell(child: SkillsScreen()),
     ),
     GoRoute(
       path: BiometricConsentScreen.path,

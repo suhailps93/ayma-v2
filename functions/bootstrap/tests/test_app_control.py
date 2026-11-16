@@ -698,13 +698,14 @@ def test_make_livekit_tools_includes_the_voice_tools(monkeypatch):
 
 def test_open_screen_covers_every_nested_profile_and_settings_screen():
     # The bug this fixes: Ayma used to claim she could only reach 6 top-level
-    # tabs (explore/messages/profile/matches/story/settings) and didn't know
-    # she could already open Skills. Every real nested screen from the
-    # Profile hub and Settings must be a valid destination now.
+    # tabs (explore/messages/profile/matches/story/settings). Every real nested
+    # screen from the Profile hub and Settings must be a valid destination.
+    # (The Skills menu page was deleted — founder Nov 16; its two rows now
+    # resolve to their reports via my_web_research / my_appearance instead.)
     for screen in (
         "ayma", "explore", "messages", "profile", "matches", "story",
         "settings", "appearance_settings", "privacy_settings",
-        "profile_details", "photos", "skills",
+        "profile_details", "photos",
         "voice_preference", "credits", "accent_color", "notifications",
         "notification_settings", "feedback", "terms", "privacy",
         "release_notes",
@@ -767,11 +768,13 @@ def test_open_screen_opens_the_consent_page_without_touching_the_gate():
     assert db.store[_PENDING]["path"] == "/settings/biometric-consent"
 
 
-def test_open_screen_my_web_research_falls_back_to_skills_without_a_report():
+def test_open_screen_my_web_research_falls_back_to_profile_without_a_report():
     db = _acking_db()
     out = _run(app_control._bind_open_screen(db, "me")("my_web_research"))
     assert out.startswith("navigated: screen=my_web_research")
-    assert db.store[_PENDING]["path"] == "/skills"
+    # No report yet — the Skills menu page was deleted, so the fallback is the
+    # You tab where the "Search the web about me" row runs one.
+    assert db.store[_PENDING]["path"] == "/profile"
 
 
 def test_open_match_report_opens_a_scored_pair():

@@ -92,8 +92,6 @@ class ScreenContext {
         return 'Story';
       case 'matches':
         return 'New matches';
-      case 'skills':
-        return 'Skills';
       case 'photo_management':
         return 'Your photos';
       case 'deep_dive_report':

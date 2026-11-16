@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
+import '../services/profile_service.dart';
 import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
@@ -21,7 +22,7 @@ import 'feedback_screen.dart';
 import 'invite_friends_screen.dart';
 import 'instagram_screen.dart';
 import 'settings_screen.dart';
-import 'skills_screen.dart';
+import 'report_run_flows.dart';
 import 'sign_in_screen.dart';
 
 /// Profile tab (§11.3, §14.3): a hub linking to the "You" items (public
@@ -48,9 +49,13 @@ class ProfileTabScreen extends StatelessWidget {
       /* fall through to the run screen */
     }
     if (!context.mounted) return;
-    context.push(reportId.isEmpty
-        ? SkillsScreen.path
-        : '/deep-dive/${Uri.encodeComponent(reportId)}');
+    if (reportId.isEmpty) {
+      // No report yet — run the web search (hands off to the Ayma chat).
+      await runWebSearchFromProfile(context,
+          profileService: ProfileService(auth: auth));
+    } else {
+      context.push('/deep-dive/${Uri.encodeComponent(reportId)}');
+    }
   }
 
   /// Same for the Appearance report — `/appearance/current` when one exists.
@@ -63,7 +68,12 @@ class ProfileTabScreen extends StatelessWidget {
       /* fall through to the run screen */
     }
     if (!context.mounted) return;
-    context.push(hasReport ? '/appearance/current' : SkillsScreen.path);
+    if (hasReport) {
+      context.push('/appearance/current');
+    } else {
+      // No report yet — open the Appearance pre-run sheet and run it in place.
+      await runAppearanceFromPreRunSheet(context, apiClient ?? ApiClient());
+    }
   }
 
   @override

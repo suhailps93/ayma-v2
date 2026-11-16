@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 /// so after the user approves access in the externally-launched browser,
 /// they have to copy the address bar URL (or just the `code` value) back
 /// into the app themselves. Was duplicated verbatim in
-/// `google_account_screen.dart` and `instagram_screen.dart`; factored out
+/// `instagram_screen.dart`; factored out
 /// once a third call site (`sign_in_screen.dart`'s "Sign in with Instagram")
 /// needed the exact same thing.
 Future<String?> promptForOAuthCode(BuildContext context) {

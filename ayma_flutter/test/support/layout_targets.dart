@@ -23,7 +23,6 @@ import 'package:ayma_flutter/screens/feedback_screen.dart';
 import 'package:ayma_flutter/services/tour_anchors.dart';
 import 'package:ayma_flutter/services/tour_content.dart';
 import 'package:ayma_flutter/widgets/coach_mark_overlay.dart';
-import 'package:ayma_flutter/screens/google_account_screen.dart';
 import 'package:ayma_flutter/screens/instagram_screen.dart';
 import 'package:ayma_flutter/screens/invite_friends_screen.dart';
 import 'package:ayma_flutter/screens/main_shell_screen.dart';
@@ -54,7 +53,7 @@ import 'package:ayma_flutter/screens/shared_profile_link_screen.dart';
 import 'package:ayma_flutter/screens/shared_report_screen.dart';
 import 'package:ayma_flutter/screens/sign_in_critical_consent_dialog.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
-import 'package:ayma_flutter/screens/skills_screen.dart';
+import 'package:ayma_flutter/screens/report_run_flows.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/screens/person_graph_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
@@ -68,7 +67,6 @@ import 'package:ayma_flutter/services/app_context.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/services/dm_service.dart';
-import 'package:ayma_flutter/services/google_account_service.dart';
 import 'package:ayma_flutter/services/instagram_service.dart';
 import 'package:ayma_flutter/services/match_service.dart';
 import 'package:ayma_flutter/services/notification_service.dart';
@@ -217,8 +215,6 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(MyPublicProfileScreen(apiClient: api, myUid: 'me')),
     ProfileProposalsScreen.path: () =>
         shell(ProfileProposalsScreen(apiClient: api)),
-    GoogleAccountScreen.path: () =>
-        shell(GoogleAccountScreen(service: GoogleAccountService(api: api))),
     ConnectAgentScreen.path: () =>
         shell(ConnectAgentScreen(service: layoutMcpConnect())),
     InstagramScreen.path: () => shell(
@@ -276,8 +272,6 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     // not the default assistant): the platform channel is absent under
     // the layout matrix and the service degrades to exactly this.
     AssistantScreen.path: () => shell(AssistantScreen(api: api)),
-    SkillsScreen.path: () =>
-        shell(SkillsScreen(profileService: profiles, api: api)),
     BiometricConsentScreen.path: () => BiometricConsentScreen(api: api),
     BiometricInfoScreen.path: () => const BiometricInfoScreen(),
     BiometricConsentSettingsScreen.path: () => shell(

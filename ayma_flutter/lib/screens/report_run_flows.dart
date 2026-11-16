@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/api_client.dart';
-import '../services/app_context.dart';
 import '../services/chat_inbox.dart';
 import '../services/chat_service.dart';
 import '../services/profile_service.dart';
@@ -16,226 +15,85 @@ import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import 'main_shell_screen.dart';
-import 'plan_screen.dart';
-import '../widgets/ayma_back_button.dart';
 
-/// Things Ayma can do on demand about *you* — search the web, and one unified
-/// "Appearance" read of your photos (structured attributes + an honest face and
-/// physique analysis). The run screen the Profile tab's "Search the web
-/// about me" and "Appearance" rows open when there's no report yet.
+/// The two self-report RUN flows, opened directly from the Profile (You) tab
+/// rows — there is no "Skills" menu page any more (founder Nov 16: the menu was
+/// deleted; the rows go straight to the report, or to its run flow when there's
+/// no report yet).
 ///
 /// The web-search skill hands off to the Ayma chat (via [ChatInbox]) and runs
-/// there. The Appearance skill instead opens a pre-run sheet (Face/Body photo
-/// groups, per-group skip, a private Add-photo tile), then runs the analysis
-/// directly and opens the resulting report in-place — it does NOT open the chat
-/// (§ founder 2026-10-28). Photos added in the sheet are uploaded privately and
-/// folded into that run only; they are never added to the public profile grid.
-class SkillsScreen extends StatefulWidget {
-  const SkillsScreen({
-    super.key,
-    this.profileService,
-    this.api,
-  });
+/// there ([runWebSearchFromProfile]). The Appearance skill instead opens a
+/// pre-run sheet (Face/Body photo groups, per-group skip, a private Add-photo
+/// tile), then runs the analysis directly and opens the resulting report
+/// in-place — it does NOT open the chat (§ founder 2026-10-28). Photos added in
+/// the sheet are uploaded privately and folded into that run only; they are
+/// never added to the public profile grid.
 
-  static const path = '/skills';
-
-  final ProfileService? profileService;
-  final ApiClient? api;
-
-  @override
-  State<SkillsScreen> createState() => _SkillsScreenState();
-}
-
-class _SkillsScreenState extends State<SkillsScreen>
-    with ScreenContextReasserter<SkillsScreen> {
-  late final ProfileService _profiles =
-      widget.profileService ?? ProfileService();
-  late final ApiClient _api = widget.api ?? ApiClient();
-
-  ProfileData? _profile;
-
-  @override
-  void initState() {
-    super.initState();
-    reassertScreenContext();
-    _load();
+/// Hand the web search off to the Ayma chat: ask for a name + an optional hint,
+/// push a deep-dive kickoff into the chat inbox and jump to the chat shell. The
+/// Profile tab's "Search the web about me" row calls this when no web-research
+/// report exists yet. Best-effort prefills the name from the stored profile.
+Future<void> runWebSearchFromProfile(
+  BuildContext context, {
+  ProfileService? profileService,
+}) async {
+  var fullName = '';
+  try {
+    final data = await (profileService ?? ProfileService()).readProfile();
+    fullName = data?.fullName ?? '';
+  } catch (_) {
+    /* the dialog just opens with an empty name field */
   }
-
-  @override
-  void reassertScreenContext() => AppContext.instance.set(screen: 'skills');
-
-  Future<void> _load() async {
-    try {
-      final data = await _profiles.readProfile();
-      if (mounted) setState(() => _profile = data);
-    } catch (_) {
-      /* the web-search dialog just opens with an empty name field */
-    }
-  }
-
-  // --- Web search --------------------------------------------------------
-
-  Future<void> _searchWeb() async {
-    final nameCtrl = TextEditingController(text: _profile?.fullName ?? '');
-    final hintCtrl = TextEditingController();
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        title: const Text('Search the web about me'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Your name'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: hintCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Anything that helps',
-                hintText: 'add anything that helps find the right you '
-                    '(city, employer)',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Search'),
-          ),
-        ],
-      ),
-    );
-    if (go != true || !mounted) return;
-    final name = nameCtrl.text.trim();
-    final hint = hintCtrl.text.trim();
-    final label = hint.isEmpty ? name : '$name — $hint';
-    ChatInbox.instance.push(ChatKickoff.deepDive(
-      label: label.isEmpty ? 'you' : label,
-    ));
-    context.go(MainShellScreen.path);
-  }
-
-  // --- Appearance -------------------------------------------------------
-
-  /// The Appearance skill — see [runAppearanceFromPreRunSheet].
-  Future<void> _runAppearance() => runAppearanceFromPreRunSheet(context, _api);
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Scaffold(
-      appBar: AppBar(
-        leading: const AymaBackButton(),
-        title: const Text('Skills')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+  if (!context.mounted) return;
+  final nameCtrl = TextEditingController(text: fullName);
+  final hintCtrl = TextEditingController();
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      scrollable: true,
+      title: const Text('Search the web about me'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _SkillCard(
-            icon: Icons.travel_explore,
-            title: 'Search the web about me',
-            body: "Ayma looks you up online so you don't have to repeat "
-                'yourself, then confirms what she found in chat.',
-            onTap: _searchWeb,
-            history: _WebSearchReportLink(api: widget.api),
+          TextField(
+            controller: nameCtrl,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Your name'),
           ),
-          _SkillCard(
-            icon: Icons.auto_awesome_outlined,
-            title: 'Appearance',
-            body: 'A full read of your photos: your structured attributes '
-                'plus an honest face and physique analysis.',
-            onTap: _runAppearance,
-            history: _AppearanceReportLink(api: widget.api),
+          const SizedBox(height: 12),
+          TextField(
+            controller: hintCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Anything that helps',
+              hintText: 'add anything that helps find the right you '
+                  '(city, employer)',
+            ),
           ),
-          const SizedBox(height: 20),
-          Text(
-            'Each run uses credits based on the work it does — a longer '
-            'photo set or a hard-to-find name uses a bit more.',
-            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
-          ),
-          const SizedBox(height: 20),
-          _CreditsRow(api: widget.api),
         ],
       ),
-    );
-  }
-}
-
-/// A subtle, always-present credits line at the foot of the Skills screen: the
-/// live balance and a one-tap route to the reload screen, so topping up is
-/// never a hunt even when nothing is capped. Renders "Credits" (no number)
-/// until the balance loads and stays silent on error.
-class _CreditsRow extends StatefulWidget {
-  const _CreditsRow({this.api});
-
-  final ApiClient? api;
-
-  @override
-  State<_CreditsRow> createState() => _CreditsRowState();
-}
-
-class _CreditsRowState extends State<_CreditsRow> {
-  late final ApiClient _api = widget.api ?? ApiClient();
-  int? _remaining;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final u = await _api.usage();
-      if (mounted) setState(() => _remaining = u.creditsRemaining);
-    } catch (_) {
-      /* silent — the row still routes to the full screen */
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final n = _remaining;
-    return InkWell(
-      onTap: () => context.push(PlanScreen.path),
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 0),
-        child: Row(
-          children: [
-            Icon(Icons.toll_rounded,
-                size: 15, color: n == 0 ? ac.error : ac.fgMute),
-            const SizedBox(width: 8),
-            Text(
-              n == null ? 'Credits' : '$n credits left',
-              style: AymaType.sans(
-                  size: 12, color: n == 0 ? ac.errorText : ac.fgDim),
-            ),
-            const Spacer(),
-            Text('Upgrade',
-                style: AymaType.mono(size: 11, color: ac.accentText)
-                    .copyWith(letterSpacing: 0.5)),
-            Icon(Icons.chevron_right, size: 16, color: ac.accent),
-          ],
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          style: TextButton.styleFrom(minimumSize: const Size(0, 44)),
+          child: const Text('Cancel'),
         ),
-      ),
-    );
-  }
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Search'),
+        ),
+      ],
+    ),
+  );
+  if (go != true || !context.mounted) return;
+  final name = nameCtrl.text.trim();
+  final hint = hintCtrl.text.trim();
+  final label = hint.isEmpty ? name : '$name — $hint';
+  ChatInbox.instance.push(ChatKickoff.deepDive(
+    label: label.isEmpty ? 'you' : label,
+  ));
+  context.go(MainShellScreen.path);
 }
 
-/// The choice the Appearance pre-run sheet returns: which axes to run and the
-/// exact grid photos chosen for each (empty/null when that axis is skipped or
-/// has no eligible photo).
 class _AppearanceChoice {
   const _AppearanceChoice({
     required this.wantFace,
@@ -999,210 +857,3 @@ class _UploadingTile extends StatelessWidget {
   }
 }
 
-class _SkillCard extends StatelessWidget {
-  const _SkillCard({
-    required this.icon,
-    required this.title,
-    required this.body,
-    required this.onTap,
-    this.history,
-  });
-
-  final IconData icon;
-  final String title;
-  final String body;
-
-  /// Typical credit cost of running this skill once (measured from real runs).
-  final VoidCallback? onTap;
-
-  /// Optional per-skill history list, shown under the tappable header.
-  final Widget? history;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: ac.bgElev,
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          children: [
-            InkWell(
-              onTap: onTap,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(icon, color: ac.fgDim, size: 22),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(title,
-                              style: AymaType.sans(
-                                  size: 15,
-                                  weight: FontWeight.w600,
-                                  color: ac.fg)),
-                          const SizedBox(height: 4),
-                          Text(body,
-                              style: AymaType.sans(
-                                  size: 12, soft: true, color: ac.fgMute)),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: ac.accent.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text('Uses credits',
-                                style: AymaType.mono(size: 10, color: ac.fgDim)
-                                    .copyWith(letterSpacing: 0.5)),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.chevron_right, color: ac.fgMute, size: 18),
-                  ],
-                ),
-              ),
-            ),
-            if (history != null) history!,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A single "View my report" link under the Appearance card, routing to the
-/// one persistent, correctable Appearance report screen — replaces the old
-/// growing history list now that there's one evolving report per user, not a
-/// run-by-run history to browse (§ appearance redesign). Still calls
-/// `GET /appearance/history` — not to render a list, just to know whether
-/// the skill has ever produced anything to view; renders nothing while
-/// loading, on error, or when it never has.
-class _AppearanceReportLink extends StatefulWidget {
-  const _AppearanceReportLink({this.api});
-
-  final ApiClient? api;
-
-  @override
-  State<_AppearanceReportLink> createState() => _AppearanceReportLinkState();
-}
-
-class _AppearanceReportLinkState extends State<_AppearanceReportLink> {
-  late final ApiClient _api = widget.api ?? ApiClient();
-  bool _hasReport = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final rows = await _api.appearanceHistory();
-      if (mounted) setState(() => _hasReport = rows.isNotEmpty);
-    } catch (_) {
-      /* no link on failure */
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_hasReport) return const SizedBox.shrink();
-    final ac = context.ac;
-    return Column(
-      children: [
-        Divider(height: 0.5, color: ac.lineSoft),
-        InkWell(
-          onTap: () => context.push('/appearance/current'),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            child: Row(
-              children: [
-                Icon(Icons.auto_awesome_outlined, size: 15, color: ac.fgMute),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text('View my report',
-                      style: AymaType.sans(size: 12.5, color: ac.fgDim)),
-                ),
-                Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// A single "View my report" link under the "Search the web about me"
-/// card, routing to the one persistent, correctable web-search report —
-/// replaces the old single-row "latest self-dive" preview now that the report
-/// itself is the thing to open, not a summary to skim first (§ web-search
-/// redesign). Renders nothing while loading, on error, or when no self-dive
-/// has ever run.
-class _WebSearchReportLink extends StatefulWidget {
-  const _WebSearchReportLink({this.api});
-
-  final ApiClient? api;
-
-  @override
-  State<_WebSearchReportLink> createState() => _WebSearchReportLinkState();
-}
-
-class _WebSearchReportLinkState extends State<_WebSearchReportLink> {
-  late final ApiClient _api = widget.api ?? ApiClient();
-  DeepDiveMine? _result;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final r = await _api.deepDiveMine();
-      if (mounted) setState(() => _result = r);
-    } catch (_) {
-      /* no link on failure */
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final r = _result;
-    if (r == null || r.reportId.isEmpty) return const SizedBox.shrink();
-    final ac = context.ac;
-    return Column(
-      children: [
-        Divider(height: 0.5, color: ac.lineSoft),
-        InkWell(
-          onTap: () => context.push('/deep-dive/${Uri.encodeComponent(r.reportId)}'),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            child: Row(
-              children: [
-                Icon(Icons.travel_explore, size: 15, color: ac.fgMute),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text('View my report',
-                      style: AymaType.sans(size: 12.5, color: ac.fgDim)),
-                ),
-                Icon(Icons.chevron_right, size: 16, color: ac.fgMute),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
