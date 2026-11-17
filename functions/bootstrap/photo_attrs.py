@@ -317,17 +317,26 @@ def eligibility(db, uid: str) -> dict:
             person_count = 2
         else:
             person_count = 0  # unknown / untagged -> safer defaults below
+        # Nov 17 2026 founder decision (group-shot call): the selection sheet
+        # shows ONLY solo photos of the USER. A group photo, or a photo whose
+        # is_you verdict is not a confirmed match for the user, is excluded from
+        # the report entirely — not surfaced for selection at all. The verdict
+        # is the media's stored `is_user` (the same signal the image node's
+        # is_you carries: "yes" iff the face matched the account).
+        is_user = str(media.get("is_user") or "").strip().lower()
+        if multi_person or is_user != "yes":
+            continue
         # has_* stay the honest coverage signal (a real usable-for-axis photo
         # exists), feeding the add-a-photo nudges elsewhere.
         if uf:
             out["has_face_photo"] = True
         if ub:
             out["has_body_photo"] = True
-        # Surface EVERY grid photo, auto-sorted into the two buckets so the
-        # pre-run sheet shows the whole set (§ founder 2026-10-28: a photo must
-        # not be hidden just because its shot-type tag is missing/ambiguous).
-        # A photo clearly for one axis shows only there; an untagged, group, or
-        # otherwise-ambiguous photo shows in BOTH so the user can pick. A
+        # Surface every ELIGIBLE grid photo (solo + confirmed-user, per the
+        # filter above), auto-sorted into the two buckets so the pre-run sheet
+        # shows the whole eligible set. A photo clearly for one axis shows only
+        # there; an untagged (but confirmed-user, non-group) photo shows in BOTH
+        # so the user can pick. A
         # face-only crop is never offered for body, nor a body-only shot for
         # face. The user's explicit pick is honoured by :func:`appearance._pick`
         # regardless of the tag, so a freshly-added, not-yet-tagged photo is
