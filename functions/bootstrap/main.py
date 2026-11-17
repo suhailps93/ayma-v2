@@ -7562,51 +7562,12 @@ def _match_doc_is_complete(d: dict | None) -> bool:
     )
 
 
-def _latest_ts(*values):
-    """Return the newest timezone-aware datetime among args, ignoring invalid types."""
-    valid = [
-        v for v in values
-        if v is not None and not isinstance(v, str) and hasattr(v, "isoformat")
-    ]
-    return max(valid) if valid else None
-
-
-def _match_inputs_mtime(db, uid: str):
-    """Captures preference + questionnaire changes (partner age range, location, interested_in, relocation radius) so a cached match can detect stale inputs."""
-    stamps = []
-    try:
-        doc = db.collection("users").document(uid).collection("profile").document("main").get()
-        data = doc.to_dict() if doc else None
-        if data and "updated_at" in data:
-            stamps.append(data.get("updated_at"))
-    except Exception:  # noqa: BLE001
-        logger.warning("Failed to fetch profile updated_at for %s", uid, exc_info=True)
-
-    from config import CONFIG as _CONFIG
-
-    if _CONFIG.person_graph_reads:
-        # Graph-authoritative: profile-field and questionnaire-answer edits now
-        # land on the graph overlay, which stamps `updated_at` on every write.
-        # That single stamp captures what the questionnaire-doc scan used to, so
-        # a graph-only edit (after the writer swap) still invalidates a cached
-        # match. profile/main `updated_at` is still read above for non-tool
-        # writes (photos, preboarding).
-        try:
-            import person_graph_store as _pg_store
-
-            stamps.append(_pg_store.overlay_mtime(db, uid))
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to fetch graph overlay mtime for %s", uid, exc_info=True)
-    else:
-        try:
-            for doc in db.collection("users").document(uid).collection("questionnaire").stream():
-                data = doc.to_dict()
-                if data and "updated_at" in data:
-                    stamps.append(data.get("updated_at"))
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
-
-    return _latest_ts(*stamps)
+# The input-freshness helpers live in ``matching`` so the cron re-score sweep
+# can share them without an import cycle (main imports matching_cron). These
+# aliases keep the historical ``main._latest_ts`` / ``main._match_inputs_mtime``
+# names for callers and tests.
+_latest_ts = matching.latest_ts
+_match_inputs_mtime = matching.match_inputs_mtime
 
 
 def _match_doc_is_stale(db, d: dict | None, a: str, b: str) -> bool:
@@ -7686,9 +7647,15 @@ async def _match_job(uid: str, other: str, *, notify: bool = True) -> None:
         "names_in_narrative": bool(result.get("names_in_narrative")),
         "updated_at": _server_ts(),
     }
+    # The full scorer just ran, so this write IS a fresh score for the pair:
+    # ``scored_at`` must bump EVERY time (NOTE 244 residue — a re-score, the
+    # Recalculate button, or a silent stale-doc recompute used to bump only
+    # ``updated_at``, freezing ``scored_at`` at the first-ever score). Status
+    # stays first-create-only so a background recompute never flips a
+    # ``mutual_interest`` pair back to "scored".
+    payload["scored_at"] = _server_ts()
     if not ref.get().exists:
         payload["status"] = MATCH_STATUS_SCORED
-        payload["scored_at"] = _server_ts()
     ref.set(payload, merge=True)
     # This is now the authoritative score for the pair (fresh on a first
     # score, and just as authoritative again on a "Recalculate") — drop any

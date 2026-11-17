@@ -194,6 +194,46 @@ def test_match_job_clears_stale_candidates_on_recalculate(monkeypatch):
     assert ("users", "aaa", "match_candidates", "bbb") not in db.docs
 
 
+def test_match_job_bumps_scored_at_on_recalculate_of_existing_pair(monkeypatch):
+    """NOTE 244 residue: re-scoring an EXISTING pair (the Recalculate button,
+    or a silent stale-doc recompute) must bump ``scored_at`` every time. It
+    used to be written only when the doc did not yet exist, so a re-score moved
+    ``updated_at`` but left ``scored_at`` frozen at the first-ever score — the
+    founder's pair sat 18 days stale while its report prose kept updating. The
+    re-score must also NOT flip a ``mutual_interest`` pair back to ``scored``
+    or drop ``accepted_by`` (first-create-only status, merge write)."""
+    db = FakeDb()
+    match_id = sorted_pair_key("bbb", "aaa")
+    both = sorted(("bbb", "aaa"))
+    db.docs[("matches", match_id)] = {
+        "uids": both,
+        "score": 0.59,
+        "status": "mutual_interest",
+        "accepted_by": both,
+        "scored_at": "OLD",
+        "updated_at": "OLD",
+    }
+
+    async def _no_notify(*a, **k):
+        return None
+
+    monkeypatch.setattr(main.matching_skill, "score_pair", _fake_score_factory(0.12))
+    monkeypatch.setattr(main.notifications_triggers, "notify_skill_done", _no_notify)
+    monkeypatch.setattr(main, "_profile_full_name", lambda _u: "Them")
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    monkeypatch.setattr(main, "_server_ts", lambda: "TS")
+
+    # notify=False mirrors the silent stale-doc recompute path.
+    asyncio.run(main._match_job("bbb", "aaa", notify=False))
+
+    doc = db.docs[("matches", match_id)]
+    assert doc["score"] == 0.12          # the fresh score landed
+    assert doc["scored_at"] == "TS"      # bumped — no longer the frozen "OLD"
+    assert doc["updated_at"] == "TS"
+    assert doc["status"] == "mutual_interest"  # not flipped back to "scored"
+    assert doc["accepted_by"] == both          # preserved by the merge write
+
+
 def test_match_job_drops_a_match_card_into_the_chat(monkeypatch):
     """Founder bug 2026-10-26: a finished match only pushed a notification
     ("Your match with Dillu Shakeeb is ready — 1%"), it never reached the

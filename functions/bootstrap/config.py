@@ -95,6 +95,12 @@ class Config:
     cron_score_top_k: int
     """Lighter pools for the scheduled two-pass matching cron (§5.3)."""
 
+    cron_rescore_budget: int
+    """Max EXISTING pairs the daily cron re-scores per run when their inputs
+    changed since they were last scored (§5.3). ``score_pair`` charges
+    inference, so this hard-caps worst-case spend; ``0`` disables the
+    re-score sweep entirely (opt-out)."""
+
     rate_matching: str
     """Rate limit for ``POST /run-matching`` / ``/check-compatibility`` (§10.4)."""
 
@@ -1289,6 +1295,7 @@ def _load() -> Config:
         match_candidate_pool=int(os.getenv("MATCH_CANDIDATE_POOL", "200")),
         cron_candidate_pool=int(os.getenv("CRON_CANDIDATE_POOL", "50")),
         cron_score_top_k=int(os.getenv("CRON_SCORE_TOP_K", "5")),
+        cron_rescore_budget=int(os.getenv("CRON_RESCORE_BUDGET", "25")),
         rate_matching=os.getenv("RATE_MATCHING", "6/minute"),
         cron_secret=os.getenv("CRON_SECRET", ""),
         dev_view_emails=_csv("DEV_VIEW_EMAILS", "suhailps@gmail.com", lower=True),
