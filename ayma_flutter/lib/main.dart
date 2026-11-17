@@ -14,6 +14,7 @@ import 'core/dag/startup_nodes.dart';
 import 'core/session_teardown.dart';
 import 'routing/app_router.dart';
 import 'screens/assistant_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
 import 'services/assistant_service.dart';
 import 'services/auth_service.dart';
@@ -75,11 +76,18 @@ Future<void> main() async {
   setupAuthDeepLinkDrain();
   unawaited(loadBuildAwareness());
   unawaited(InstallReferrerService.instance.checkInstallReferrer());
-  // Ask for OS location permission at start, the same way the app asks for
-  // notification permission (push.syncToken on auth). Granting it here does
-  // NOT enable "Date moments" — the Privacy toggle is the opt-in; this only
-  // means the prompt is behind us when a user turns the feature on.
-  unawaited(const LocationService().ensurePermission());
+  // Ask for OS location permission — but NEVER inside the cold-start window.
+  // Firing the system permission dialog while the first frame is still
+  // settling (worst on a truly cold fresh-install launch, when ART is still
+  // compiling the baseline profile) drops a modal window onto an already
+  // stalled main thread — compounding an "input dispatching timed out" ANR —
+  // and pauses MainActivity behind the dialog, where a memory-pressured
+  // process is silently reaped, so the app vanishes to the launcher with no
+  // process and no FATAL (NOTE 239 Leg 4). Gate the ask on the splash's first
+  // paint plus a short settle so the dialog only ever appears once the app is
+  // idle and interactive. Granting it does NOT enable "Date moments" — the
+  // Privacy toggle is the opt-in; this only gets the prompt behind us.
+  unawaited(askStartupLocationPermission());
 
   String? lastKnownUid;
   FirebaseAuth.instance.authStateChanges().listen((user) {
@@ -138,6 +146,34 @@ Future<void> main() async {
   unawaited(AssistantService.instance.bindSummons(
     onSummon: (_) => navigateToRoute(AssistantScreen.path),
   ));
+}
+
+/// Settle after the splash's first paint before the startup
+/// location-permission prompt, so the OS dialog never collides with the
+/// cold-start stall window (NOTE 239 Leg 4). Overridable from tests.
+@visibleForTesting
+Duration startupLocationAskSettle = const Duration(seconds: 3);
+
+/// First-paint gate for the startup location ask: the splash's presented-first
+/// -frame signal, bounded so a wedged frame pipeline never starves the prompt
+/// forever (it just proceeds).
+Future<void> _defaultWaitFirstPaint() => SplashFirstPaint.done
+    .timeout(const Duration(seconds: 12), onTimeout: () {});
+
+/// Ask for OS location permission at startup, but only once the first frame is
+/// presented and the app has settled — never inside the cold-start window,
+/// where a modal permission dialog compounds the input-dispatch ANR and leaves
+/// the paused process open to an OS reap (NOTE 239 Leg 4). The ask itself still
+/// never throws (see [LocationService.ensurePermission]).
+@visibleForTesting
+Future<void> askStartupLocationPermission({
+  Future<bool> Function()? ask,
+  Future<void> Function()? waitFirstPaint,
+  Future<void> Function(Duration)? settle,
+}) async {
+  await (waitFirstPaint ?? _defaultWaitFirstPaint)();
+  await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskSettle);
+  await (ask ?? const LocationService().ensurePermission)();
 }
 
 /// Runs a pre-first-frame startup step under a hard deadline.
