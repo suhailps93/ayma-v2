@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:ayma_flutter/models/living_report.dart';
+import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
@@ -175,27 +176,21 @@ class _FakeApi extends ApiClient {
   @override
   Future<List<BulletSection>> profileBullets() async {
     calls.add('bullets_get');
-    return bulletSections ??
-        const [
-          BulletSection(
-            pageType: 'career',
-            title: 'Career',
-            subtitle: 'What drives me at work',
-            order: 1,
-            pageId: 'career',
-            bullets: [
-              StoryBullet(
-                  id: 'a',
-                  text: 'I lead the analytics team in Lisbon.',
-                  visibility: 'public'),
-              StoryBullet(
-                  id: 'b',
-                  text: 'Wants to move into product.',
-                  visibility: 'ai_only'),
-            ],
-          ),
-          BulletSection(pageType: 'hobbies', title: 'Hobbies', order: 2),
-        ];
+    return bulletSections ?? const [];
+  }
+
+  /// The Node-Visualiser story tree the body now renders (2o). Empty by
+  /// default so the appearance / photos / web tests see a clean story body;
+  /// the narrative test sets a populated tree.
+  GraphTree storyTree = GraphTree.fromMap(const {
+    'surface': 'story',
+    'sections': [],
+  });
+
+  @override
+  Future<GraphTree> graphTree({String? uid, String surface = 'story'}) async {
+    calls.add('graph_tree:$surface');
+    return storyTree;
   }
 
   @override
@@ -631,17 +626,42 @@ void main() {
   });
 
   testWidgets(
-      'Story: the bullet editor renders every canonical section, empty ones '
-      'included, with title, subtitle and a visibility control per bullet',
+      'Story: the narrative renders through the Node-Visualiser — section '
+      'title + its public node bullet, ai_only filtered, no legacy career block',
       (tester) async {
-    final api = _FakeApi();
+    final api = _FakeApi()
+      // The story tree the backend serves for this surface: the public career
+      // bullet only (ai_only is filtered server-side, so it never arrives).
+      ..storyTree = GraphTree.fromMap(const {
+        'surface': 'story',
+        'sections': [
+          {
+            'page_type': 'career',
+            'title': 'Career',
+            'order': 1,
+            'nodes': [
+              {
+                'id': 'career_0',
+                'section': 'career',
+                'label': 'Career',
+                'text': 'I lead the analytics team in Lisbon.',
+                'answer_type': 'text',
+                'level': 1,
+                'visibility': 'public',
+                'subtree_visibility': 'public',
+              }
+            ],
+          }
+        ],
+      });
     await _pumpWithRouter(tester, api);
 
-    expect(api.calls, contains('bullets_get'));
+    expect(api.calls, contains('graph_tree:story'));
     expect(find.text('Career'), findsOneWidget);
-    expect(find.text('What drives me at work'), findsOneWidget);
     expect(find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
-    expect(find.text('Hobbies'), findsOneWidget);
+    // Each node is a single tappable row (tap → node chat window, where the
+    // visibility / delete / chat-to-edit actions now live).
+    expect(find.byKey(const Key('node_row_career_0')), findsOneWidget);
     // Regression (founder-found Nov 16 2026): Career is the graph section ONLY.
     // The legacy career-timeline subsystem rendered a SECOND, duplicate numbered
     // "CAREER & EDUCATION" block (+ an "Add your LinkedIn" nudge) below it — both
@@ -649,58 +669,9 @@ void main() {
     expect(find.textContaining('CAREER & EDUCATION'), findsNothing);
     expect(find.text('Add your LinkedIn profile'), findsNothing);
     expect(find.byKey(const ValueKey('add_linkedin')), findsNothing);
-    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
-    // Ayma-only is NEVER shown in Your Story (founder order, Nov 15 2026): the
-    // seeded ai_only career bullet is filtered out, so only the public bullet
-    // remains (index 0) with its visibility + delete + per-bullet chat controls.
-    expect(find.text('Ayma-only'), findsNothing);
+    // Ayma-only is never shown in Your Story (founder order, Nov 15 2026): the
+    // filtered tree carries no ai_only node, so its text never appears.
     expect(find.text('Wants to move into product.'), findsNothing);
-    expect(find.byKey(const ValueKey('delete_career_1')), findsNothing);
-    expect(find.byKey(const ValueKey('visibility_career_0')), findsOneWidget);
-    expect(find.byKey(const ValueKey('delete_career_0')), findsOneWidget);
-    // Every bullet has an easy way to chat with Ayma about just that point.
-    expect(find.byKey(const ValueKey('chat_career_0')), findsOneWidget);
-  });
-
-  testWidgets(
-      'Story: "+" on an empty section creates it, splitting two sentences '
-      'into two bullets', (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    final add = find.byKey(const ValueKey('add_bullet_hobbies'));
-    await tester.ensureVisible(add);
-    await tester.tap(add);
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).last, 'I climb. I bake.');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-
-    expect(api.bulletCreates, hasLength(1));
-    expect(api.bulletCreates.single.$1, 'hobbies');
-    expect(api.bulletCreates.single.$2.map((b) => b.text),
-        ['I climb.', 'I bake.']);
-  });
-
-  testWidgets('Story: tapping a bullet visibility cycles it and saves',
-      (tester) async {
-    final api = _FakeApi();
-    await _pumpWithRouter(tester, api);
-
-    final vis = find.byKey(const ValueKey('visibility_career_0'));
-    await tester.ensureVisible(vis);
-    await tester.tap(vis);
-    await tester.pumpAndSettle();
-
-    expect(api.bulletSaves, hasLength(1));
-    expect(api.bulletSaves.single.$1, 'career');
-    expect(api.bulletSaves.single.$2.first.visibility, 'private'); // public->private
-    // Ayma-only bullets are filtered from the editor and never sent (the
-    // backend preserves them); the save carries only visible bullets.
-    expect(
-      api.bulletSaves.single.$2.map((b) => b.visibility),
-      isNot(contains('ai_only')),
-    );
   });
 
   testWidgets(
@@ -882,15 +853,36 @@ void main() {
   });
 
   testWidgets('the Photos section renders before narrative sections', (tester) async {
-    final api = _FakeApi()..photos = mixedSourcePhotos();
+    final api = _FakeApi()
+      ..photos = mixedSourcePhotos()
+      // A narrative section in the Node-Visualiser tree to sit below Photos.
+      ..storyTree = GraphTree.fromMap(const {
+        'surface': 'story',
+        'sections': [
+          {
+            'page_type': 'career',
+            'title': 'Career',
+            'order': 1,
+            'nodes': [
+              {
+                'id': 'career_0',
+                'section': 'career',
+                'label': 'Career',
+                'text': 'I lead the analytics team in Lisbon.',
+                'answer_type': 'text',
+                'level': 1,
+                'visibility': 'public',
+                'subtree_visibility': 'public',
+              }
+            ],
+          }
+        ],
+      });
     silenceImageLoadErrors();
 
     await _pumpWithRouter(tester, api);
 
     final photosTop = tester.getTopLeft(find.text('01  PHOTOS')).dy;
-    // Exact match, not `textContaining` — the standalone "CAREER & EDUCATION"
-    // section (§ Living Report migration) now also contains the substring
-    // "CAREER", so a loose match here would hit two widgets.
     final careerTop = tester.getTopLeft(find.text('Career')).dy;
     expect(photosTop, lessThan(careerTop));
   });
@@ -1068,7 +1060,10 @@ void main() {
     // The previous account's cover must be GONE — only B's own clean empty
     // state, never A's "N topics / N photos" ghost stacked on top.
     expect(find.text('Your Story'), findsNothing);
-    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
+    expect(
+        find.text(
+            'Share something in a chat with Ayma and your story fills in here.'),
+        findsOneWidget);
   });
 
   testWidgets(
@@ -1081,58 +1076,49 @@ void main() {
 
     // No cover block (no "Your Story" / topics / photos), just the empty state.
     expect(find.text('Your Story'), findsNothing);
-    expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
+    expect(
+        find.text(
+            'Share something in a chat with Ayma and your story fills in here.'),
+        findsOneWidget);
   });
 
   testWidgets(
-      'Story: opening My story with duplicated pageTypes (demo-test1 shape) '
-      'renders bullet editor cleanly with no duplicate key crash or error card',
+      'Story: a tree with duplicated pageTypes (demo-test1 shape) renders '
+      'through the Node-Visualiser with no duplicate-key crash or error card',
       (tester) async {
+    Map<String, dynamic> sec(String pt, String title, int order, String nid,
+            String text) =>
+        {
+          'page_type': pt,
+          'title': title,
+          'order': order,
+          'nodes': [
+            {
+              'id': nid,
+              'section': pt,
+              'label': title,
+              'text': text,
+              'answer_type': 'text',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+            }
+          ],
+        };
     final api = _FakeApi()
-      ..bulletSections = const [
-        BulletSection(
-          pageType: 'dealbreakers',
-          title: 'Core Non-Negotiables',
-          pageId: 'core-non-negotiables',
-          order: 3,
-          bullets: [
-            StoryBullet(
-                id: 'b1', text: 'Must want children.', visibility: 'private'),
-          ],
-        ),
-        BulletSection(
-          pageType: 'dealbreakers',
-          title: 'Non-Negotiables',
-          pageId: 'dealbreakers',
-          order: 3,
-          bullets: [
-            StoryBullet(
-                id: 'b2', text: 'Never smoke.', visibility: 'public'),
-          ],
-        ),
-        BulletSection(
-          pageType: 'family',
-          title: 'Family',
-          pageId: 'family',
-          order: 7,
-          bullets: [
-            StoryBullet(
-                id: 'b3', text: 'Close to parents.', visibility: 'public'),
-          ],
-        ),
-        BulletSection(
-          pageType: 'family',
-          title: 'Family 2',
-          pageId: 'family-2',
-          order: 7,
-          bullets: [
-            StoryBullet(
-                id: 'b4', text: 'Brother in Chicago.', visibility: 'public'),
-          ],
-        ),
-      ];
+      ..storyTree = GraphTree.fromMap({
+        'surface': 'story',
+        'sections': [
+          sec('dealbreakers', 'Core Non-Negotiables', 3, 'b1',
+              'Must want children.'),
+          sec('dealbreakers', 'Non-Negotiables', 3, 'b2', 'Never smoke.'),
+          sec('family', 'Family', 7, 'b3', 'Close to parents.'),
+          sec('family', 'Family 2', 7, 'b4', 'Brother in Chicago.'),
+        ],
+      });
     await _pumpWithRouter(tester, api);
 
+    expect(tester.takeException(), isNull);
     expect(find.text('Something didn\'t load'), findsNothing);
     expect(find.text('Could not load your story'), findsNothing);
     expect(find.text('Core Non-Negotiables'), findsOneWidget);

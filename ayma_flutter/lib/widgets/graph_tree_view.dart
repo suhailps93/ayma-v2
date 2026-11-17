@@ -57,12 +57,20 @@ class GraphTreeView extends StatefulWidget {
   State<GraphTreeView> createState() => GraphTreeViewState();
 }
 
-class GraphTreeViewState extends State<GraphTreeView> {
+class GraphTreeViewState extends State<GraphTreeView>
+    with AutomaticKeepAliveClientMixin {
   late final ApiClient _api = widget.api ?? ApiClient();
 
   GraphTree? _tree;
   bool _loading = true;
   bool _error = false;
+
+  // Survive flings when embedded in a scrolling host (e.g. Your Story's outer
+  // ListView): without this the widget is destroyed + re-fetched on every
+  // scroll-in during a rapid fling, the re-fetch-storm ANR (NOTE 232) the old
+  // BulletSectionsEditor hit and fixed the same way.
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -109,6 +117,7 @@ class GraphTreeViewState extends State<GraphTreeView> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // AutomaticKeepAliveClientMixin
     final ac = context.ac;
     if (_loading) {
       return const Padding(

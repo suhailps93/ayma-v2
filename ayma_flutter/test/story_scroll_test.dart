@@ -1,16 +1,19 @@
-/// Regression test for Scout NOTE 232 / Board row 306:
+/// Regression test for Scout NOTE 232 / 237 / Board row 306:
 /// Rapid story flings (26-swipe loop at 0.5s intervals) previously triggered an
-/// Android input dispatching timeout (ANR) because [BulletSectionsEditor] was
-/// repeatedly destroyed and re-instantiated by [ListView], causing re-fetch storms
-/// and synchronous rebuilding of 15 canonical sections and >300 widgets during
-/// active fling animations.
+/// Android input dispatching timeout (ANR) because the Story body renderer was
+/// repeatedly destroyed and re-instantiated by [ListView], causing re-fetch
+/// storms and synchronous rebuilding of the whole story during active fling
+/// animations.
 ///
-/// With [AutomaticKeepAliveClientMixin] on [_BulletSectionsEditorState], the editor
-/// is preserved across flings, fetching exactly once and avoiding main-thread frame stalls.
+/// The body is now the shared [GraphTreeView] Node-Visualiser (2o), which — like
+/// the old editor — uses [AutomaticKeepAliveClientMixin], so it is preserved
+/// across flings, fetches the tree exactly once, and avoids main-thread stalls.
+/// The image node still renders through [AymaPhoto] with a capped decode.
 library;
 
 import 'dart:io';
 
+import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
@@ -61,40 +64,52 @@ class _FakeApi extends ApiClient {
 
   final List<String> calls = [];
 
+  // The Story body now renders the Node-Visualiser tree (2o). A tall tree (15
+  // sections, 6 nodes each) so there is real scroll, and the last section
+  // ("Little Extras") holds the Milo fact node with an inline IMAGE child node.
   @override
-  Future<List<BulletSection>> profileBullets() async {
-    calls.add('bullets_get');
-    return [
-      for (var i = 0; i < 15; i++)
-        BulletSection(
-          pageType: i == 14 ? 'misc' : 'sec_$i',
-          title: i == 14 ? 'Little Extras' : 'Section $i',
-          subtitle: 'Subtitle for section $i',
-          order: i,
-          pageId: i == 14 ? 'misc' : 'sec_$i',
-          bullets: [
-            for (var b = 0; b < (i == 14 ? 2 : 6); b++)
-              StoryBullet(
-                id: 'b_${i}_$b',
-                text: 'This is bullet $b in section $i with some narrative text.',
-                visibility: b % 2 == 0 ? 'public' : 'private',
-              ),
-            if (i == 14) ...[
-              const StoryBullet(
-                id: 'fact_milo',
-                text: 'Daniel has a brown tabby cat named Milo',
-                visibility: 'private',
-              ),
-              const StoryBullet(
-                id: 'emergent.image.f3fa7d90',
-                text: 'Milo the brown tabby cat',
-                visibility: 'private',
-                imageUrl: 'https://storage/milo.jpg',
-              ),
+  Future<GraphTree> graphTree({String? uid, String surface = 'story'}) async {
+    calls.add('graph_tree_get');
+    Map<String, dynamic> node(String id, String text,
+            {String answerType = 'text',
+            String imageUrl = '',
+            List<Map<String, dynamic>> children = const []}) =>
+        {
+          'id': id,
+          'section': 'sec',
+          'label': '',
+          'text': text,
+          'answer_type': answerType,
+          'image_url': imageUrl,
+          'image_read': answerType == 'image' ? text : '',
+          'level': 1,
+          'visibility': 'private',
+          'subtree_visibility': 'private',
+          'children': children,
+        };
+    return GraphTree.fromMap({
+      'surface': 'story',
+      'sections': [
+        for (var i = 0; i < 15; i++)
+          {
+            'page_type': i == 14 ? 'misc' : 'sec_$i',
+            'title': i == 14 ? 'Little Extras' : 'Section $i',
+            'order': i,
+            'nodes': [
+              for (var b = 0; b < (i == 14 ? 1 : 6); b++)
+                node('b_${i}_$b',
+                    'This is bullet $b in section $i with some narrative text.'),
+              if (i == 14)
+                node('fact_milo', 'Daniel has a brown tabby cat named Milo',
+                    children: [
+                      node('emergent.image.f3fa7d90', 'Milo the brown tabby cat',
+                          answerType: 'image',
+                          imageUrl: 'https://storage/milo.jpg'),
+                    ]),
             ],
-          ],
-        ),
-    ];
+          },
+      ],
+    });
   }
 
   @override
@@ -159,8 +174,10 @@ void main() {
       times.add(sw.elapsedMilliseconds);
     }
 
-    final bulletFetches = api.calls.where((c) => c.contains('bullets')).length;
-    expect(bulletFetches, 1, reason: 'profileBullets must not re-fetch repeatedly during rapid flings');
+    final treeFetches = api.calls.where((c) => c.contains('graph_tree')).length;
+    expect(treeFetches, 1,
+        reason: 'the story tree must not re-fetch repeatedly during rapid '
+            'flings (GraphTreeView keep-alive)');
     // Verify all flings completed
     expect(times.length, 26);
   });
@@ -189,10 +206,10 @@ void main() {
       }
     });
 
-    // Keep-alive invariant: must not re-fetch bullets during slow scrolling
-    final bulletFetches = api.calls.where((c) => c.contains('bullets')).length;
-    expect(bulletFetches, 1,
-        reason: 'profileBullets must not re-fetch during slow scroll passes');
+    // Keep-alive invariant: must not re-fetch the tree during slow scrolling
+    final treeFetches = api.calls.where((c) => c.contains('graph_tree')).length;
+    expect(treeFetches, 1,
+        reason: 'the story tree must not re-fetch during slow scroll passes');
 
     // Milo fact bullet and its inline image bullet are present in the story
     final factFinder = find.text('Daniel has a brown tabby cat named Milo');
@@ -213,7 +230,9 @@ void main() {
         reason: 'Story image bullet must use AymaPhoto, not bare Image.network');
 
     final photo = tester.widget<AymaPhoto>(photoFinder);
-    expect(photo.displayWidth, lessThanOrEqualTo(400),
+    // The Node-Visualiser caps the image-node decode at 480 (still bounded —
+    // the point is a capped, not a full-resolution, decode).
+    expect(photo.displayWidth, lessThanOrEqualTo(480),
         reason: 'decode width must be capped to prevent main-thread stall');
 
     final cached = tester.widget<CachedNetworkImage>(
@@ -223,6 +242,6 @@ void main() {
     );
     expect(cached.memCacheWidth, isNotNull,
         reason: 'memCacheWidth must be set to prevent full-resolution decode');
-    expect(cached.memCacheWidth!, lessThanOrEqualTo(400 * 4));
+    expect(cached.memCacheWidth!, lessThanOrEqualTo(480 * 4));
   });
 }
