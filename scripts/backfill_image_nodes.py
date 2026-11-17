@@ -93,49 +93,71 @@ async def _collect(db, uid: str) -> list[dict]:
     return out
 
 
-async def run(uid: str, *, dry_run: bool) -> dict:
-    import person_graph_store as pg_store
-    import photo_notes
-
-    from google.cloud import firestore as gcf
-    db = gcf.Client()
-    if getattr(db, "project", "") != _ALLOWED_PROJECT:
-        _die(f"active project is {db.project!r}, refusing (expected {_ALLOWED_PROJECT!r})")
-
-    photos = await _collect(db, uid)
-    notes = photo_notes.all_notes(db, uid)
-
-    created = carried = generated = 0
+def plan(photos: list[dict], reads_by_url: dict[str, str]) -> dict:
+    """Pure counts for the dry-run (no I/O): one node per photo; a photo with
+    an existing read is carried over, one without needs a generated read."""
+    nodes = carried = generated = 0
     for ph in photos:
-        url = ph["url"]
-        note = notes.get(photo_notes.photo_id(url), {})
-        read = str(note.get("context") or "").strip()
-        is_you = pg_store.is_you_from_verdict(str(note.get("is_user") or ""))
-        if read:
+        nodes += 1
+        if (reads_by_url.get(ph["url"], "") or "").strip():
             carried += 1
         else:
             generated += 1
-            if not dry_run:
-                try:
-                    import photo_pipeline
-                    read = await photo_pipeline.caption_url(db, uid, url) or ""
-                except Exception:  # noqa: BLE001
-                    read = ""
-        nid = "emergent.image." + _content_hash(None, url)
-        created += 1
-        if not dry_run:
-            try:
-                pg_store.add_photo_fact(
-                    db, uid, image_url=url, image_read=read,
-                    fact_text=read or "a photo", image_node_id=nid,
-                    is_you=is_you, source_kind=ph["source_kind"],
-                    source_ref=ph["source_ref"],
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"  (home failed for {url[:60]}: {exc})")
+    return {
+        "photos": len(photos),
+        "nodes": nodes,
+        "reads_carried_over": carried,
+        "reads_generated": generated,
+    }
 
-    return {"photos": len(photos), "nodes": created,
-            "reads_carried_over": carried, "reads_generated": generated}
+
+async def run(uid: str, *, dry_run: bool, db=None, caption_fn=None) -> dict:
+    """[db]/[caption_fn] are injectable for tests; production builds the real,
+    staging-guarded Firestore client and the real vision caption."""
+    import person_graph_store as pg_store
+    import photo_notes
+
+    if db is None:
+        from google.cloud import firestore as gcf
+        db = gcf.Client()
+        if getattr(db, "project", "") != _ALLOWED_PROJECT:
+            _die(f"active project is {db.project!r}, refusing (expected {_ALLOWED_PROJECT!r})")
+    if caption_fn is None:
+        import photo_pipeline
+
+        async def caption_fn(url: str) -> str:  # noqa: E306
+            return await photo_pipeline.caption_from_url(url, uid=uid)
+
+    photos = await _collect(db, uid)
+    notes = photo_notes.all_notes(db, uid)
+    reads_by_url = {
+        ph["url"]: str(notes.get(photo_notes.photo_id(ph["url"]), {}).get("context") or "")
+        for ph in photos
+    }
+    counts = plan(photos, reads_by_url)
+    if dry_run:
+        return counts
+
+    for ph in photos:
+        url = ph["url"]
+        note = notes.get(photo_notes.photo_id(url), {})
+        read = (str(note.get("context") or "")).strip()
+        if not read:
+            try:
+                read = await caption_fn(url) or ""
+            except Exception:  # noqa: BLE001
+                read = ""
+        try:
+            pg_store.add_photo_fact(
+                db, uid, image_url=url, image_read=read,
+                fact_text=read or "a photo",
+                image_node_id="emergent.image." + _content_hash(None, url),
+                is_you=pg_store.is_you_from_verdict(str(note.get("is_user") or "")),
+                source_kind=ph["source_kind"], source_ref=ph["source_ref"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"  (home failed for {url[:60]}: {exc})")
+    return counts
 
 
 def main() -> None:

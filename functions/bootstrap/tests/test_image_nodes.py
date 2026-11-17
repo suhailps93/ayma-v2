@@ -120,3 +120,32 @@ def test_image_nodes_for_view_public_only_filters_private():
     store.set_visibility(db, "u1", "emergent.image.bbbb", "public")
     rows = store.image_nodes_for_view(db, "u1", public_only=True)
     assert [r["url"] for r in rows] == ["https://cdn/pub.jpg"]
+
+
+def test_photo_nodes_for_view_maps_node_rows_to_the_strip_shape(monkeypatch):
+    """main._photo_nodes_for_view maps the graph image-node rows to the Photos
+    strip shape: source_kind→source, read→context, is_you→is_user (unknown
+    blanked), node id preserved for the owner actions."""
+    import main
+
+    rows = [
+        {"id": "emergent.image.a", "url": "https://cdn/a.jpg", "read": "a portrait",
+         "is_you": "yes", "source_kind": "profile_grid", "source_ref": "",
+         "source_created_at": "2026-02-01T00:00:00Z", "visibility": "public"},
+        {"id": "emergent.image.b", "url": "https://cdn/b.jpg", "read": "",
+         "is_you": "unknown", "source_kind": "appearance_report", "source_ref": "R1",
+         "source_created_at": "2026-01-01T00:00:00Z", "visibility": "private"},
+    ]
+    monkeypatch.setattr(main, "get_db", lambda: object())
+    import person_graph_store as pg_store
+    monkeypatch.setattr(pg_store, "image_nodes_for_view", lambda db, uid: rows)
+
+    out = main._photo_nodes_for_view("u1")
+    assert out[0]["id"] == "emergent.image.a"
+    assert out[0]["source"] == "profile"  # profile_grid -> profile
+    assert out[0]["context"] == "a portrait"  # read -> context
+    assert out[0]["is_user"] == "yes"  # verdict -> is_user
+    assert out[0]["visibility"] == "public"
+    assert out[1]["source"] == "appearance"  # appearance_report -> appearance
+    assert out[1]["is_user"] == ""  # "unknown" blanked for the view
+    assert out[1]["source_page"] == "R1"

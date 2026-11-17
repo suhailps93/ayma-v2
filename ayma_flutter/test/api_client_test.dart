@@ -809,30 +809,40 @@ void main() {
     expect(r.usageCapped, isTrue);
   });
 
-  test('aiNotes() returns the wiki text and every photo Ayma has', () async {
+  test('photoNodes() returns every photo Ayma has, node-driven', () async {
     final client = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
       httpClient: MockClient(
-        (req) async => http.Response(
-          jsonEncode({
-            'text': '## Career\n\nBody',
-            'photos': [
-              {'url': 'https://cdn/p1.jpg', 'source': 'profile'},
-              {'url': 'https://cdn/c1.jpg', 'source': 'chat'},
-              {'url': '', 'source': 'chat'},
-            ],
-          }),
-          200,
-        ),
+        (req) async {
+          expect(req.url.path, '/story/photos');
+          return http.Response(
+            jsonEncode({
+              'photos': [
+                {
+                  'id': 'emergent.image.a',
+                  'url': 'https://cdn/p1.jpg',
+                  'source': 'profile',
+                  'context': 'a portrait',
+                  'is_user': 'yes',
+                  'visibility': 'public',
+                },
+                {'id': 'emergent.image.b', 'url': 'https://cdn/c1.jpg', 'source': 'chat'},
+                {'id': 'emergent.image.c', 'url': '', 'source': 'chat'},
+              ],
+            }),
+            200,
+          );
+        },
       ),
     );
 
-    final n = await client.aiNotes();
-    expect(n.text, '## Career\n\nBody');
-    expect(n.photos, hasLength(2)); // the url-less row is dropped
-    expect(n.photos.first.url, 'https://cdn/p1.jpg');
-    expect(n.photos.first.source, 'profile');
-    expect(n.photos.last.source, 'chat');
+    final photos = await client.photoNodes();
+    expect(photos, hasLength(2)); // the url-less row is dropped
+    expect(photos.first.id, 'emergent.image.a');
+    expect(photos.first.context, 'a portrait'); // Ayma's read, from the node
+    expect(photos.first.isUser, 'yes'); // the verdict, from the node
+    expect(photos.first.visibility, 'public');
+    expect(photos.last.source, 'chat');
   });
 
   test('promoteWikiPage() POSTs /wiki/promote with the page type', () async {
@@ -1486,27 +1496,23 @@ void main() {
       expect(callCount, 2);
     });
 
-    test('photoPublish respects longTimeout over interactiveTimeout', () async {
-      var received = false;
+    test('photo node actions post the node id to the node endpoints', () async {
+      final paths = <String>[];
       final mockHttp = MockClient((request) async {
-        if (request.url.path == '/wiki/photo-publish') {
-          // Stalls past a 40ms interactive timeout but within 200ms longTimeout
-          await Future.delayed(const Duration(milliseconds: 80));
-          received = true;
-          return http.Response('{"published": true}', 200);
-        }
-        return http.Response('{}', 200);
+        paths.add('${request.url.path}:${request.body}');
+        return http.Response('{"ok": true}', 200);
       });
-
       final client = ApiClient(
         httpClient: mockHttp,
         auth: MockFirebaseAuth(signedIn: true),
-        interactiveTimeout: const Duration(milliseconds: 40),
-        longTimeout: const Duration(milliseconds: 200),
       );
 
-      await client.photoPublish('https://example.com/p.jpg', source: 'chat');
-      expect(received, isTrue);
+      await client.deletePhotoNode('emergent.image.abc');
+      await client.setPhotoNodeVisibility('emergent.image.abc', 'public');
+      expect(paths[0], contains('/story/photo/delete'));
+      expect(paths[0], contains('emergent.image.abc'));
+      expect(paths[1], contains('/story/photo/visibility'));
+      expect(paths[1], contains('public'));
     });
 
     // SWEEP451-M1: every match report showed "Couldn't load this report."

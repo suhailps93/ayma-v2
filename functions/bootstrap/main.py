@@ -3968,9 +3968,9 @@ async def deep_dive_mine(uid: str = Depends(require_uid)) -> dict[str, object]:
     under the "Search the web about me" skill card.
 
     A self dive is stored keyed by the caller's *name* (``target_uid=""``),
-    never by uid — the same lookup ``_ai_view_photos`` uses for a self dive's
-    web photos, after a bug there once looked it up by uid and silently found
-    nothing. Mirrors that here rather than re-introducing it.
+    never by uid — after a bug once looked it up by uid for a self dive's web
+    photos and silently found nothing. Mirrors the name-keyed lookup here
+    rather than re-introducing it.
 
     ``{"exists": false}`` when the caller has no name on their profile yet, or
     has never run a self dive.
@@ -5740,136 +5740,96 @@ async def wiki_promote(
     return {"promoted": promoted}
 
 
-def _ai_view_photos(uid: str) -> list[dict[str, object]]:
-    """Every photo Ayma holds of the caller: their profile-grid photos
-    (``source: "profile"``), any image they've sent in the Ayma chat
-    (``source: "chat"``), then face-verified photos Ayma has found of them on
-    the open web during a "search me" deep dive (``source: "web"``). De-duped
-    by URL only — the same photo under two URLs shows twice (content dedupe
-    went away with stored face embeddings; see
-    ``photo_notes.classify_and_dedupe``), capped at 60.
+# The graph image node's ``source_kind`` → the photo view's ``source`` vocab.
+_NODE_SOURCE_TO_VIEW = {
+    "profile_grid": "profile",
+    "chat": "chat",
+    "web": "web",
+    "appearance_report": "appearance",
+}
 
-    Each carries its stable ``id``, any note the user or Ayma has written
-    (``context``), and ``is_user`` — Ayma's own face-match verdict, computed
-    (and cached) here rather than asked of the user. Deleting a photo doesn't
-    drop it from this list: it comes back with ``deleted: true`` instead, so
-    the client can move it under AI notes ("deleted by you") rather than
-    losing it — the record it came from (grid entry / chat message / dive)
-    stays untouched either way. A photo superseded by "Make public" (the
-    original chat/web copy, once its promoted twin exists) really does drop
-    out — that one isn't a user-visible delete.
-    """
-    from firebase_admin import firestore
 
-    import photo_notes
-    from public_profile import _photo_url
+def _photo_nodes_for_view(uid: str) -> list[dict[str, object]]:
+    """The Story Photos strip, sourced from the graph IMAGE NODES (founder Nov
+    16 — "images are nodes"). Each row renders straight from the node: the
+    Storage ``url``, Ayma's ``read`` (``context``), her face-match verdict
+    (``is_user``), where it came from (``source``/``source_page``), the node id
+    (``id`` — content-hash keyed, so a read never orphans when a URL rotates),
+    and ``visibility`` for the owner actions. Replaces the URL-hash
+    ``photo_notes`` assembly (``_ai_view_photos``) that orphaned on token
+    rotation and timed out (Scout NOTE 248: 408 on /wiki/ai-view)."""
+    import person_graph_store as pg_store
 
-    db = get_db()
-    notes = photo_notes.all_notes(db, uid)
-    candidates: list[dict[str, object]] = []
-    seen: set[str] = set()
-
-    def _add(
-        url: str, source: str, *, source_page: str = "",
-        embedding: list[float] | None = None,
-    ) -> None:
-        if not url or url in seen or len(candidates) >= 90:
-            return
-        seen.add(url)
-        note = notes.get(photo_notes.photo_id(url), {})
-        if note.get("status") == "superseded":
-            return
-        entry: dict[str, object] = {
-            "id": photo_notes.photo_id(url),
-            "url": url,
-            "source": source,
-            "context": note.get("context", ""),
-            "is_user": note.get("is_user", ""),
-            "deleted": note.get("status") == "deleted",
-            "_embedding": embedding if embedding is not None else note.get("embedding"),
-        }
-        if source_page:
-            entry["source_page"] = source_page
-        candidates.append(entry)
-
-    try:
-        prof = schema.profile_doc(db, uid).get().to_dict() or {}
-    except Exception:  # noqa: BLE001
-        prof = {}
-    try:
-        for m in photo_notes.profile_photo_media(db, uid, prof):
-            _add(m["url"], "profile", embedding=m.get("embedding"))
-    except Exception:  # noqa: BLE001
-        logger.warning("ai-view: profile photos failed for %s", uid)
-
-    try:
-        msgs = list(
-            db.collection("users")
-            .document(uid)
-            .collection("chat_messages")
-            .order_by("created_at", direction=firestore.Query.DESCENDING)
-            .limit(200)
-            .stream()
+    rows = pg_store.image_nodes_for_view(get_db(), uid)
+    out: list[dict[str, object]] = []
+    for r in rows:
+        out.append(
+            {
+                "id": r["id"],
+                "url": r["url"],
+                "source": _NODE_SOURCE_TO_VIEW.get(r["source_kind"], "chat"),
+                "context": r["read"],
+                "is_user": r["is_you"] if r["is_you"] != "unknown" else "",
+                "source_page": r["source_ref"],
+                "visibility": r["visibility"],
+                "deleted": False,
+            }
         )
-    except Exception:  # noqa: BLE001
-        msgs = []
-    for snap in msgs:
-        path = str((snap.to_dict() or {}).get("image_path") or "").strip()
-        if path:
-            _add(_photo_url(path) or "", "chat")
+    return out
+
+
+@app.get("/story/photos")
+async def story_photos(uid: str = Depends(require_uid)) -> dict[str, object]:
+    """Every photo Ayma holds of the caller, for the Your Story Photos strip —
+    node-driven (see :func:`_photo_nodes_for_view`)."""
+    photos = await asyncio.to_thread(_photo_nodes_for_view, uid)
+    return {"photos": photos}
+
+
+class PhotoNodeRequest(BaseModel):
+    node_id: str = Field(min_length=1, max_length=128)
+
+
+class PhotoNodeVisibilityRequest(BaseModel):
+    node_id: str = Field(min_length=1, max_length=128)
+    visibility: str = Field(pattern=r"^(public|private|ayma_only)$")
+
+
+@app.post("/story/photo/delete")
+async def story_photo_delete(
+    req: PhotoNodeRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Delete a photo from Your Story — removes its graph IMAGE node (keyed by
+    node id, never the rotating URL)."""
+    import person_graph_store as pg_store
+
+    removed = await asyncio.to_thread(
+        pg_store.delete_nodes, get_db(), uid, [req.node_id]
+    )
+    return {"ok": True, "removed": removed}
+
+
+@app.post("/story/photo/visibility")
+async def story_photo_visibility(
+    req: PhotoNodeVisibilityRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Make a photo public / private / Ayma-only — the image node's visibility
+    (founder: "make public/private = node visibility")."""
+    import person_graph_store as pg_store
 
     try:
-        import deep_dive
-
-        # A self dive is stored keyed by name (target_uid="" — see the
-        # deep-dive endpoint/skill, which always pass "" for is_self), never
-        # by the caller's own uid. Looking it up by uid here silently missed
-        # every self dive's web photos.
-        report_id = deep_dive.dive_report_id(
-            name=deep_dive.profile_full_name(db, uid)
+        await asyncio.to_thread(
+            pg_store.set_visibility, get_db(), uid, req.node_id, req.visibility
         )
-        dive = deep_dive.read_dive(db, uid, report_id)
-        digest = (dive or {}).get("digest") if dive else None
-        for img in (digest or {}).get("web_images") or []:
-            if isinstance(img, dict) and img.get("verified"):
-                _add(
-                    str(img.get("url") or ""), "web",
-                    source_page=str(img.get("source_page") or ""),
-                )
-    except Exception:  # noqa: BLE001
-        logger.warning("ai-view: web photos failed for %s", uid)
-
-    # A deleted photo that's no longer found live (e.g. a removed profile
-    # photo) has to be recovered from its own note — it's the only place its
-    # URL still exists.
-    for note in notes.values():
-        url = str(note.get("url") or "")
-        if note.get("status") == "deleted" and url and url not in seen:
-            _add(url, note.get("source") or "chat")
-
-    out = photo_notes.classify_and_dedupe(db, uid, candidates)
-    return out[:60]
-
-
-@app.get("/wiki/ai-view")
-async def wiki_ai_view(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Debug: the compiled wiki context Ayma reads about the caller, verbatim
-    (every page's ``ai_body``), plus every photo Ayma has of them. Temporary —
-    remove before launch."""
-    text = await asyncio.to_thread(read_wiki_context, get_db(), uid)
-    photos = await asyncio.to_thread(_ai_view_photos, uid)
-    return {"text": text or "", "photos": photos}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "visibility": req.visibility}
 
 
 class PhotoNoteRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2000)
     context: str | None = Field(default=None, max_length=2000)
     is_user: str | None = Field(default=None, max_length=8)
-
-
-class PhotoActionRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=2000)
-    source: str = Field(default="", max_length=16)
 
 
 @app.put("/wiki/photo-note")
@@ -5888,46 +5848,6 @@ async def wiki_photo_note(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, **note}
-
-
-@app.post("/wiki/photo-hide")
-async def wiki_photo_hide(
-    req: PhotoActionRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Take a photo out of "photos Ayma has" — the profile-grid copy, if any,
-    is soft-removed the same way any profile-photo delete works; Ayma keeps
-    the underlying record either way."""
-    import photo_notes
-
-    try:
-        await asyncio.to_thread(
-            photo_notes.hide_photo, get_db(), uid, req.url, source=req.source
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
-
-
-@app.post("/wiki/photo-publish")
-async def wiki_photo_publish(
-    req: PhotoActionRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Promote a chat or web photo onto the public profile grid — runs the
-    same moderation + embedding pipeline as any profile upload."""
-    import photo_notes
-
-    try:
-        result = await photo_notes.publish_photo(
-            get_db(), uid, req.url, source=req.source
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - moderation/embed/storage failure
-        logger.exception("photo-publish failed for %s", uid)
-        raise HTTPException(
-            status_code=502, detail=f"Couldn't publish that photo: {exc}"
-        ) from exc
-    return {"ok": True, **result}
 
 
 @app.post("/wiki/reset")
