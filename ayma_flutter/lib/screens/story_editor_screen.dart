@@ -120,6 +120,7 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
         photo: p,
         onHide: () => _hidePhoto(p),
         onPublish: () => _publishPhoto(p),
+        onMakePrivate: () => _makePhotoPrivate(p),
         onChat: () => _openChatForPhoto(p),
       ),
     );
@@ -135,6 +136,12 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
     await _notesApi.setPhotoNodeVisibility(p.id, 'public');
     await _loadPhotos();
     _toast('Added to your public profile', kind: AymaToastKind.success);
+  }
+
+  Future<void> _makePhotoPrivate(AiNotePhoto p) async {
+    await _notesApi.setPhotoNodeVisibility(p.id, 'private');
+    await _loadPhotos();
+    _toast('Made that photo private', kind: AymaToastKind.success);
   }
 
   Future<void> _openChatForPhoto(AiNotePhoto p) async {

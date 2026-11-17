@@ -32,6 +32,35 @@ def is_linkedin_url(url: str) -> bool:
     return bool(_LINKEDIN_RE.match((url or "").strip()))
 
 
+# Node id of the Career LinkedIn button in the Node-Visualiser tree (stable so
+# a re-fetch keys onto the same node). The Career "special visualiser" is just
+# the Career graph section + this public LinkedIn link node on top (NOTE 250 §3).
+LINKEDIN_NODE_ID = "career.linkedin"
+
+
+def linkedin_link_node(db, uid: str) -> dict | None:
+    """A `link` node (Contract 1 — the P0 link kind) for ``uid``'s LinkedIn, or
+    ``None`` when none is on file. Injected at the top of the Career section of
+    the story / public-profile tree so the Career visualiser renders the public
+    LinkedIn button. Public: a LinkedIn URL is public professional info."""
+    url = get_linkedin_url(db, uid)
+    if not url:
+        return None
+    return {
+        "id": LINKEDIN_NODE_ID,
+        "section": "career",
+        "label": "LinkedIn",
+        "text": "LinkedIn",
+        "answer_type": "link",
+        "link_url": url,
+        "link_platform": "linkedin",
+        "level": 1,
+        "visibility": "public",
+        "subtree_visibility": "public",
+        "editable": False,
+    }
+
+
 def get_linkedin_url(db, uid: str) -> str:
     """The user's own LinkedIn URL, if they've given Ayma one. Best-effort —
     a read failure reads as "none on file", never an error."""

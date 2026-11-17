@@ -89,12 +89,17 @@ class PhotoDetailSheet extends StatefulWidget {
     required this.photo,
     required this.onHide,
     required this.onPublish,
+    required this.onMakePrivate,
     required this.onChat,
   });
 
   final AiNotePhoto photo;
   final Future<void> Function() onHide;
   final Future<void> Function() onPublish;
+
+  /// Flip a public image node back to private (NOTE 250 item 4). Keyed by the
+  /// image NODE, like [onPublish].
+  final Future<void> Function() onMakePrivate;
   final VoidCallback onChat;
 
   @override
@@ -104,7 +109,19 @@ class PhotoDetailSheet extends StatefulWidget {
 class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
   String? _acting;
 
-  Future<void> _run(String which, Future<void> Function() action) async {
+  /// The image NODE's own visibility, updated in place on a flip so the label
+  /// + the Make public/private button read the node, never the stale snapshot
+  /// or the parent fact's source (NOTE 250 item 4).
+  late String _visibility = widget.photo.visibility;
+
+  /// [newVisibility] non-null = a visibility flip: reflect it in place and keep
+  /// the sheet open (so the label updates); null = a terminal action (delete),
+  /// which pops.
+  Future<void> _run(
+    String which,
+    Future<void> Function() action, {
+    String? newVisibility,
+  }) async {
     if (_acting != null) return;
     setState(() => _acting = which);
     try {
@@ -118,7 +135,38 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
     } finally {
       if (mounted) setState(() => _acting = null);
     }
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    if (newVisibility != null) {
+      setState(() => _visibility = newVisibility);
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// Delete must ALWAYS confirm first — a photo image node must never be
+  /// removed by a single tap (NOTE 250 item 2, founder order Nov 15).
+  Future<void> _confirmDelete() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete photo'),
+        content: const Text('Delete this photo? This removes it everywhere.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _run('hide', widget.onHide);
   }
 
   @override
@@ -126,16 +174,25 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
     final ac = context.ac;
     final p = widget.photo;
     final edge = photoEdgeColor(context, p);
-    final label = switch (p.source) {
-      'profile' => 'Public — on your profile',
-      'chat' => 'Private — shared in chat',
-      _ => 'AI only — Ayma found this online',
+    // The visibility label reads the image NODE's own visibility (updated in
+    // place on a flip), not the ingestion source — a chat photo made public
+    // must read "Public", never a stale "Private — shared in chat" (item 4).
+    final label = switch (_visibility) {
+      'public' => 'Public — on your profile',
+      'ayma_only' => 'AI only — Ayma found this online',
+      _ => 'Private — only you and Ayma',
     };
+    // The verdict matches the node state: is_you unknown with a real read means
+    // Ayma DID look and couldn't confirm identity — never "hasn't checked yet"
+    // (NOTE 250 item 4). "hasn't checked" only when there is no read at all.
     final isUserLabel = switch (p.isUser) {
       'yes' => 'Ayma thinks this is you',
       'no' => "Ayma doesn't think this is you",
-      _ => "Ayma hasn't checked yet",
+      _ => p.context.isNotEmpty
+          ? "Ayma read this but couldn't confirm it's you"
+          : "Ayma hasn't checked yet",
     };
+    final isPublic = _visibility == 'public';
     final busy = _acting != null;
     return SafeArea(
       child: SingleChildScrollView(
@@ -201,7 +258,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
                 children: [
                   const AymaWingLoader(size: 16, showLabel: false),
                   const SizedBox(width: 8),
-                  Text(_acting == 'publish' ? 'Publishing…' : 'Deleting…',
+                  Text(_acting == 'hide' ? 'Deleting…' : 'Updating…',
                       style: AymaType.sans(size: 13, color: ac.fgMute)),
                 ],
               )
@@ -209,21 +266,32 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
               Row(children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _run('hide', widget.onHide),
+                    key: const Key('photo_delete'),
+                    onPressed: _confirmDelete,
                     icon: const Icon(Icons.delete_outline, size: 18),
                     label: const Text('Delete'),
                   ),
                 ),
-                if (!p.isProfile) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _run('publish', widget.onPublish),
-                      icon: const Icon(Icons.public, size: 18),
-                      label: const Text('Make public'),
-                    ),
-                  ),
-                ],
+                const SizedBox(width: 8),
+                // Reads the NODE's current visibility: Make private when public,
+                // Make public otherwise (NOTE 250 item 4).
+                Expanded(
+                  child: isPublic
+                      ? OutlinedButton.icon(
+                          key: const Key('photo_make_private'),
+                          onPressed: () => _run('private', widget.onMakePrivate,
+                              newVisibility: 'private'),
+                          icon: const Icon(Icons.lock_outline, size: 18),
+                          label: const Text('Make private'),
+                        )
+                      : OutlinedButton.icon(
+                          key: const Key('photo_make_public'),
+                          onPressed: () => _run('publish', widget.onPublish,
+                              newVisibility: 'public'),
+                          icon: const Icon(Icons.public, size: 18),
+                          label: const Text('Make public'),
+                        ),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: AskAymaAction(

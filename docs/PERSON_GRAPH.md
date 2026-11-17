@@ -527,3 +527,58 @@ media / report id or source page, `source_created_at` the first-ingest time).
 All four are gated on `person_graph_reads` and best-effort (a graph-home failure
 never undoes a stored photo / report / dive). Tests:
 `tests/test_image_node_ingestion.py` (8).
+
+## Report → Node-Visualiser tree (2o P0, Nov 17 2026)
+
+The blocker for migrating the report screens off `LivingReportView`: a report
+lived as ONE opaque `report_doc` node (scores/findings only the block renderer
+could read). P0 makes a report a NODE TREE, and teaches the node model +
+visualiser the report node kinds.
+
+- **Node kinds** (`models/story_node.dart` + `widgets/node_visualiser.dart`):
+  - **stat** (`answer_type == "stat"`): a numeric SCORE/STAT → label + value
+    digit + banded `ScoreBar` (green/amber/red) + `stat_basis` line; a
+    non-numeric value is a CONFIDENCE band → a coloured pill, no bar.
+  - **link** (`answer_type == "link"`): `link_url` + `link_platform`; the row
+    tap opens the URL.
+  - **candidate** (`answer_type == "candidate"`): a pending reverse-image-search
+    photo with "This is me" / "Not me" (shown only when the host wires
+    `onCandidateVerdict`; the deep-dive report will, P2).
+  - image / text / standard-field nodes are unchanged.
+- **Backend adapter** (`report_tree.py`): `report_node_tree(db, type, id,
+  viewer_uid)` reuses `report_hub.get_report` (the exact `{title, sections,
+  meta}` block model the `/report/{type}/{id}` endpoint serves, owner/permission
+  checks included) and converts each block to a node, so EVERY report type works
+  — `match` included, which has no node in any person graph. Served at
+  **`GET /report/{type}/{id}/tree`** (same 403/404 semantics as the block
+  reader); client `ApiClient.reportTree(type, id)` → `GraphTree`.
+- Report nodes are display-only: visibility is always `public`, `editable`
+  carries the block's own flag. Tests: `tests/test_report_tree.py` (9),
+  `test/node_visualiser_test.dart` (+3). Next: P2/P3 point the appearance /
+  deep-dive / match screens at `reportTree` + `GraphTreeView`, deleting
+  `LivingReportView` + those screens' old bodies in the same change (P6).
+
+## NOTE 250 visualiser follow-ups (Nov 17 2026)
+
+Refinements on the adopted visualiser surfaces:
+- **Visibility on structured level-1 nodes** — `set_visibility[_cascade]` already
+  accepts a seed node with no overlay entry (it writes a sparse `{visibility}`
+  overlay that merges over the seed), so the Make public/private bubble flips a
+  structured field ("Gender identity") the same as any node. Pinned by
+  `tests/test_note250_visualiser.py`.
+- **Delete always confirms** — the Photos-strip `PhotoDetailSheet` Delete button
+  now shows a confirmation dialog before removing the image node (the node chat
+  window already did), so no photo/bullet is deleted by a single tap.
+- **Career LinkedIn button** — `career_timeline.linkedin_link_node(db, uid)`
+  returns a public `link` node (the P0 link kind) built from the profile doc's
+  `linkedin_url`; `routes/profile._inject_linkedin_button` prepends it to the
+  Career section of the story / public-profile tree (adding the section if the
+  person has no other public career nodes). Renders as the LinkedIn button via
+  the shared NodeVisualiser link row (work-outline glyph, taps open).
+- **Photo view reads the node** — `PhotoDetailSheet`'s visibility label now reads
+  the image node's own `visibility` (not the ingestion source / a stale
+  snapshot) and updates in place on a flip; it offers Make private when the node
+  is public; and the is-you verdict says "Ayma read this but couldn't confirm
+  it's you" (never "hasn't checked yet") when the node is `is_you: unknown` but
+  carries a real image read. The node chat window's image context card applies
+  the same two rules.

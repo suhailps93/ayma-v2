@@ -326,7 +326,13 @@ class _ContextCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          NodeVisibilityBullet(visibility: node.subtreeVisibility, size: 14),
+          // An image node's own visibility (not the subtree's) is what the
+          // Make public/private bubble flips, so the dot must read the node
+          // itself, never the parent fact's colour (NOTE 250 item 4).
+          NodeVisibilityBullet(
+              visibility:
+                  node.isImage ? node.visibility : node.subtreeVisibility,
+              size: 14),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -346,7 +352,7 @@ class _ContextCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.bodyMedium),
                   const SizedBox(height: 4),
                   Text(
-                    _isYouLine(node.isYou) +
+                    _isYouLine(node.isYou, node.imageRead) +
                         (node.sourceKind.isNotEmpty
                             ? '  •  from ${_sourceLabel(node.sourceKind)}'
                             : ''),
@@ -374,10 +380,14 @@ class _ContextCard extends StatelessWidget {
     );
   }
 
-  static String _isYouLine(String isYou) => switch (isYou) {
+  // is_you unknown WITH a real read means Ayma looked and couldn't confirm
+  // identity — never imply she hasn't checked when a read exists (NOTE 250 §4).
+  static String _isYouLine(String isYou, String imageRead) => switch (isYou) {
         'yes' => 'This looks like you',
         'no' => 'This does not look like you',
-        _ => 'Unconfirmed whether this is you',
+        _ => imageRead.trim().isNotEmpty
+            ? "Ayma read this but couldn't confirm it's you"
+            : "Ayma hasn't checked whether this is you",
       };
 
   static String _sourceLabel(String kind) => switch (kind) {
