@@ -1,14 +1,9 @@
-// AppearanceReportScreen is now a thin wrapper: an AppBar plus the ONE
-// shared [LivingReportView] renderer (§ generic reports), fetching
-// `GET /report/appearance/{uid}` — `report_hub.resolve_owner` treats
-// "appearance"'s `{report_id}` as the subject's own uid (there is only ever
-// one current report), so this screen resolves to the signed-in uid
-// ([myUid] here, injected for the test) rather than the (possibly stale)
-// [reportId] constructor arg. Per-block tap/section/report tier behavior,
-// quick actions, multi-select, and the sentence long-press guard are all
-// covered once, generically, in `living_report_view_test.dart` — this file
-// only proves the screen wires the right report type/id and shows the
-// fetched content.
+// AppearanceReportScreen (2o P2): an AppBar + the shareable card (fed by the
+// block report via GET /report/appearance/{uid}) + the full report BODY, which
+// now renders through the shared GraphTreeView Node-Visualiser via
+// GET /report/appearance/{uid}/tree. This file proves the screen fetches both
+// and shows the body's node content; node rendering itself is covered in
+// node_visualiser_test.dart.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
@@ -22,18 +17,61 @@ import 'package:http/http.dart' as http;
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 
-Map<String, dynamic> _block(String id, String type, {String text = '', bool editable = true}) => {
-      'block_id': id,
-      'type': type,
-      'editable': editable,
+Map<String, dynamic> _textNode(String id, String text) => {
+      'id': id,
+      'section': 'appearance',
+      'label': '',
       'text': text,
+      'answer_type': 'text',
+      'level': 1,
+      'visibility': 'public',
+      'subtree_visibility': 'public',
     };
 
-ApiClient _api({String? requirePath}) {
+/// The node tree the body renders (a text node for the attribute value + the
+/// face status line).
+Map<String, dynamic> _tree() => {
+      'surface': 'report',
+      'title': 'Appearance',
+      'sections': [
+        {
+          'page_type': 'attributes',
+          'title': 'Attributes',
+          'order': 0,
+          'nodes': [_textNode('attr', 'Brown')],
+        },
+        {
+          'page_type': 'face',
+          'title': 'Face',
+          'order': 1,
+          'nodes': [
+            _textNode('face_status', 'Add a face photo to get a Face report.')
+          ],
+        },
+      ],
+    };
+
+/// The block report the shareable card reads (no scores → no card shown).
+Map<String, dynamic> _blockReport() => {
+      'title': 'Appearance',
+      'sections': [
+        {
+          'heading': 'Attributes',
+          'blocks': [
+            {'block_id': 'attr:eye_color', 'type': 'attribute',
+             'editable': true, 'label': 'Eyes', 'value': 'Brown'},
+          ],
+        },
+      ],
+      'meta': {'owner_uid': 'u1', 'viewer_can_edit': true,
+               'created_at': null, 'updated_at': null},
+    };
+
+ApiClient _api({List<String>? seen}) {
   final mockHttp = MockClient((request) async {
-    if (request.url.path == '/appearance/eligibility') {
-      // Empty groups -> the pre-run sheet shows the add-the-missing-kind
-      // prompts (and no network thumbnails, so the sheet settles cleanly).
+    final path = request.url.path;
+    seen?.add(path);
+    if (path == '/appearance/eligibility') {
       return http.Response(
         jsonEncode({'face': const [], 'body': const [],
             'has_face_photo': false, 'has_body_photo': false}),
@@ -41,41 +79,13 @@ ApiClient _api({String? requirePath}) {
         headers: const {'content-type': 'application/json; charset=utf-8'},
       );
     }
-    if (requirePath != null) {
-      expect(request.url.path, requirePath);
+    if (path.endsWith('/tree') && path.contains('/report/appearance/')) {
+      return http.Response(jsonEncode(_tree()), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
     }
-    if (request.url.path.startsWith('/report/appearance/')) {
-      return http.Response(
-        jsonEncode({
-          'title': 'Appearance',
-          'sections': [
-            {
-              'heading': 'Attributes',
-              'blocks': [
-                {
-                  'block_id': 'attr:eye_color',
-                  'type': 'attribute',
-                  'editable': true,
-                  'label': 'Eyes',
-                  'value': 'Brown',
-                },
-              ],
-            },
-            {
-              'heading': 'Face',
-              'blocks': [_block('face:status', 'section_head', text: 'Add a face photo to get a Face report.', editable: false)],
-            },
-          ],
-          'meta': {
-            'owner_uid': 'u1',
-            'viewer_can_edit': true,
-            'created_at': null,
-            'updated_at': null,
-          },
-        }),
-        200,
-        headers: const {'content-type': 'application/json; charset=utf-8'},
-      );
+    if (path.startsWith('/report/appearance/')) {
+      return http.Response(jsonEncode(_blockReport()), 200,
+          headers: const {'content-type': 'application/json; charset=utf-8'});
     }
     return http.Response('{}', 200);
   });
@@ -83,21 +93,26 @@ ApiClient _api({String? requirePath}) {
 }
 
 void main() {
-  testWidgets('fetches GET /report/appearance/{uid} and renders it',
+  testWidgets('fetches the appearance tree + card report and renders the body',
       (tester) async {
+    final seen = <String>[];
     await tester.pumpWidget(MaterialApp(
       home: AppearanceReportScreen(
         reportId: 'stale-marker-id',
         myUid: 'u1',
-        apiClient: _api(requirePath: '/report/appearance/u1'),
+        apiClient: _api(seen: seen),
       ),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Appearance'), findsWidgets); // AppBar + report title
+    expect(find.text('Appearance'), findsWidgets); // AppBar
+    // The body renders the node tree.
     expect(find.text('Brown'), findsOneWidget);
     expect(find.textContaining('Add a face photo to get a Face report.'),
         findsOneWidget);
+    // Both the body tree and the card's block report were fetched, by uid.
+    expect(seen, contains('/report/appearance/u1/tree'));
+    expect(seen, contains('/report/appearance/u1'));
   });
 
   testWidgets('Re-run opens the Appearance pre-run sheet (Face/Body groups)',
@@ -117,8 +132,6 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Re-run'));
-    // Open the sheet and let its eligibility load (no pumpAndSettle so a loaded
-    // thumbnail's CachedNetworkImage can't block settling).
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
@@ -126,7 +139,6 @@ void main() {
     expect(find.text('Face analysis'), findsOneWidget);
     expect(find.text('Body analysis'), findsOneWidget);
     expect(find.text('Run analysis'), findsOneWidget);
-    // Both groups empty here -> each prompts to add the missing kind.
     expect(find.text('Add a photo that clearly shows your face.'),
         findsOneWidget);
     expect(find.text('Add a full-body photo for a body report.'),
@@ -135,15 +147,17 @@ void main() {
 
   testWidgets('falls back to reportId when no signed-in uid is available',
       (tester) async {
+    final seen = <String>[];
     await tester.pumpWidget(MaterialApp(
       home: AppearanceReportScreen(
         reportId: 'fallback-id',
         myUid: '',
-        apiClient: _api(requirePath: '/report/appearance/fallback-id'),
+        apiClient: _api(seen: seen),
       ),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Brown'), findsOneWidget);
+    expect(seen, contains('/report/appearance/fallback-id/tree'));
   });
 
   testWidgets(
@@ -157,11 +171,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Idle: the Re-run icon is shown, no updating banner.
     expect(find.byTooltip('Re-run'), findsOneWidget);
     expect(find.text('Updating your report…'), findsNothing);
 
-    // A background run starts -> the control spins and the banner appears.
     ReportEvents.instance.started('appearance');
     await tester.pump();
     expect(find.byTooltip('Running your analysis…'), findsOneWidget);
@@ -169,23 +181,33 @@ void main() {
     expect(find.text('Updating your report…'), findsOneWidget);
     expect(find.byType(AymaWingLoader), findsWidgets);
 
-    // The run lands -> back to the idle Re-run control, banner gone.
     ReportEvents.instance.stopped('appearance');
     await tester.pump();
     expect(find.byTooltip('Re-run'), findsOneWidget);
     expect(find.text('Updating your report…'), findsNothing);
   });
 
-  testWidgets('shows a retry message when the report fails to load',
-      (tester) async {
-    final mockHttp = MockClient((request) async => http.Response('nope', 404));
-    final api =
-        ApiClient(httpClient: mockHttp, auth: MockFirebaseAuth(signedIn: true));
+  testWidgets('a real load failure (500) shows Retry', (tester) async {
+    final fail = ApiClient(
+        httpClient: MockClient((r) async => http.Response('nope', 500)),
+        auth: MockFirebaseAuth(signedIn: true));
     await tester.pumpWidget(MaterialApp(
-      home: AppearanceReportScreen(reportId: 'a0', myUid: 'u1', apiClient: api),
+      home: AppearanceReportScreen(reportId: 'a0', myUid: 'u1', apiClient: fail),
     ));
     await tester.pumpAndSettle();
-    expect(find.textContaining("Couldn't load that report"), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
+  });
+
+  testWidgets('a 404 (no report yet) shows the empty message, not an error',
+      (tester) async {
+    final none = ApiClient(
+        httpClient: MockClient((r) async => http.Response('{}', 404)),
+        auth: MockFirebaseAuth(signedIn: true));
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(reportId: 'a0', myUid: 'u1', apiClient: none),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('No appearance report yet.'), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
   });
 }

@@ -412,6 +412,7 @@ class NodeVisualiserSection extends StatelessWidget {
     this.isOwner = true,
     this.onChatToEdit,
     this.onImageTap,
+    this.onCandidateVerdict,
   });
 
   final GraphTreeSection section;
@@ -421,6 +422,7 @@ class NodeVisualiserSection extends StatelessWidget {
   final bool isOwner;
   final void Function(StoryNode node)? onChatToEdit;
   final void Function(StoryNode node)? onImageTap;
+  final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
 
   @override
   Widget build(BuildContext context) {
@@ -447,6 +449,7 @@ class NodeVisualiserSection extends StatelessWidget {
             isOwner: isOwner,
             onChatToEdit: onChatToEdit,
             onImageTap: onImageTap,
+            onCandidateVerdict: onCandidateVerdict,
           ),
       ],
     );

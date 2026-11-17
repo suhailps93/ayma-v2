@@ -7,7 +7,8 @@ import '../services/deep_dive_activity.dart';
 import '../theme.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
-import '../widgets/living_report_view.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/report_progress.dart';
@@ -20,27 +21,18 @@ import '../widgets/ayma_back_button.dart';
 /// gets a read-only render; correction quick-actions are owner-only, per
 /// `meta.viewer_can_edit`).
 ///
-/// Body is the ONE shared [LivingReportView] renderer (§ generic reports) —
-/// summary sentences, facts, social links, photos found online, and (for the
-/// owner) pending reverse-image-search candidates ("Photos to confirm" —
-/// this screen is now their ONLY home; see `photo_candidates_screen.dart`'s
-/// removal) all come from the same `GET /report/deep_dive/{id}` block read.
+/// Body is the shared [GraphTreeView] Node-Visualiser (2o P2) via
+/// `GET /report/deep_dive/{id}/tree` — summary sentences, facts, social links,
+/// photos found online, and (for the owner) pending reverse-image-search
+/// candidates ("Photos to confirm" — this screen is their ONLY home) all render
+/// as nodes. A candidate's "This is me" / "Not me" routes through
+/// `onCandidateVerdict` → the report's own confirm/reject quick action, then
+/// reloads the body.
 ///
-/// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the
-/// AppBar actions below are the only bespoke chrome this screen keeps
-/// (metadata the block model has no field for), and they must never grow
-/// into re-displaying content a block already renders.
-///
-/// The AppBar's "Search again" action needs a couple of fields the block
-/// model doesn't carry (who the dive is about, for `targetUid`) — those
-/// still come from the existing dedicated `deepDiveReport` read, fetched
-/// alongside purely for that metadata; the render itself never uses it.
-/// "Ask Ayma" needs none of it — it reopens the SAME in-place chat modal
-/// [LivingReportView]'s own report title opens on tap (via
-/// `LivingReportViewState.askAymaAboutReport`, reached through a
-/// `GlobalKey`), scoped to this whole report, rather than the old pattern of
-/// pushing a pre-composed message into the main chat tab and navigating
-/// there.
+/// The AppBar actions are the only bespoke chrome this screen keeps. "Search
+/// again" needs a couple of fields the tree doesn't carry (who the dive is
+/// about, for `targetUid`) — those still come from the dedicated
+/// `deepDiveReport` read, fetched alongside purely for that metadata.
 class DeepDiveReportScreen extends StatefulWidget {
   const DeepDiveReportScreen({super.key, required this.reportId, this.apiClient});
 
@@ -56,15 +48,13 @@ class DeepDiveReportScreen extends StatefulWidget {
 class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
   late final ApiClient _api = widget.apiClient ?? ApiClient();
 
-  /// AppBar-action metadata only — the render itself comes entirely from
-  /// [LivingReportView]'s own `GET /report/deep_dive/{id}` fetch.
+  /// AppBar-action metadata only — the render comes entirely from the body's
+  /// own `GET /report/deep_dive/{id}/tree` fetch.
   DeepDiveReport? _meta;
   bool _reRunning = false;
 
-  /// Lets the AppBar's "Ask Ayma" action reuse [LivingReportView]'s own
-  /// report-scoped chat modal (see its `askAymaAboutReport`) instead of a
-  /// second, one-off mechanism.
-  final _reportKey = GlobalKey<LivingReportViewState>();
+  /// Lets a re-run reload the Node-Visualiser body in place.
+  final _reportKey = GlobalKey<GraphTreeViewState>();
 
   bool _wasSearching = false;
 
@@ -192,6 +182,27 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
     }
   }
 
+  /// "This is me" / "Not me" on a pending reverse-image-search candidate —
+  /// routed to the report's own confirm/reject quick action, then the body is
+  /// reloaded so the resolved candidate drops out.
+  Future<void> _onCandidateVerdict(StoryNode node, bool isMe) async {
+    try {
+      await _api.correctReport(
+        'deep_dive',
+        widget.reportId,
+        blockIds: [node.id],
+        scope: 'block',
+        message: isMe ? 'this is me' : 'not me',
+      );
+      _reportKey.currentState?.reload();
+    } catch (_) {
+      if (mounted) {
+        AymaToast.show(context, "Couldn't update that — try again.",
+            kind: AymaToastKind.error);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final meta = _meta;
@@ -240,11 +251,16 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                 ? const Center(
                     child: AymaWingLoader(lines: AymaLoaderLines.deepDive),
                   )
-                : LivingReportView(
+                // The body renders through the shared Node-Visualiser (2o P2).
+                : GraphTreeView(
                     key: _reportKey,
+                    surface: NodeVisualiserSurface.report,
                     reportType: 'deep_dive',
                     reportId: widget.reportId,
-                    apiClient: _api,
+                    api: _api,
+                    // "This is me" / "Not me" on a pending web-image candidate
+                    // routes to the report's own confirm/reject, then reloads.
+                    onCandidateVerdict: _onCandidateVerdict,
                     // A clean 404 means no dive has ever been run for this
                     // subject — an empty state with a "Run web search" action, not
                     // the "Couldn't load" error a real fetch failure gets.

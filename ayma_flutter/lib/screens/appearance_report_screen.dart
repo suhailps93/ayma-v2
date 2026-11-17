@@ -18,7 +18,8 @@ import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
-import '../widgets/living_report_view.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import 'report_run_flows.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
@@ -28,18 +29,18 @@ import 'report_run_flows.dart';
 /// Re-opened from an `[appearance:<id>]` chat marker, the chat report card,
 /// or the Skills screen's "View my report" link.
 ///
-/// The full report is the ONE shared [LivingReportView] renderer (§ generic
-/// reports), embedded (`shrinkWrap`) so the whole screen scrolls as one
-/// region. `report_hub.resolve_owner` treats "appearance"'s `{report_id}` as
-/// the subject's own uid (there is only ever one current Appearance report
-/// per user) — [reportId] (an older, possibly-stale marker id from before
-/// that convergence) is kept only as a fallback for the rare case the caller
-/// can't be resolved to a signed-in uid.
+/// The full report body renders through the shared [GraphTreeView]
+/// Node-Visualiser (2o P2) via `GET /report/appearance/{uid}/tree`.
+/// `report_hub.resolve_owner` treats "appearance"'s `{report_id}` as the
+/// subject's own uid (there is only ever one current Appearance report per
+/// user) — [reportId] (an older, possibly-stale marker id from before that
+/// convergence) is kept only as a fallback for the rare case the caller can't
+/// be resolved to a signed-in uid.
 ///
-/// GUARDRAIL (see `living_report_view.dart`'s file doc): the card is a share
-/// artifact built from the report's own blocks, not a second renderer of
-/// them; it is only offered when both scores exist, and never shows
-/// recommendations or anything but strengths.
+/// The shareable card stays a share artifact built from the report's own
+/// blocks (fetched with `_loadCard` → `GET /report/appearance/{uid}`, refreshed
+/// whenever the body reloads), not a second renderer of them; it is only
+/// offered when both scores exist, and never shows recommendations.
 class AppearanceReportScreen extends StatefulWidget {
   const AppearanceReportScreen({
     super.key,
@@ -74,6 +75,12 @@ class AppearanceReportScreen extends StatefulWidget {
 class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     with ScreenContextReasserter<AppearanceReportScreen> {
   AppearanceCardData? _card;
+
+  /// The Node-Visualiser body; reloaded when a re-run lands so both it and the
+  /// shareable card refresh together (the card reloads via its onLoaded).
+  final GlobalKey<GraphTreeViewState> _bodyKey =
+      GlobalKey<GraphTreeViewState>();
+  bool _wasRunning = false;
 
   /// The version stamp (the report's `created_at`) of the exact run
   /// currently on screen, captured with the card in [_onReport]. A
@@ -127,7 +134,26 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   /// Rebuilds the screen when an appearance run starts/stops so the Re-run
   /// control and the "Updating…" banner reflect the live run state.
   void _onReportEvents() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final running = ReportEvents.instance.isRunning('appearance');
+    final justFinished = _wasRunning && !running;
+    _wasRunning = running;
+    setState(() {});
+    // A re-run landed: reload the body, which refreshes the card via onLoaded.
+    if (justFinished) _bodyKey.currentState?.reload();
+  }
+
+  /// Load the shareable card's data from the block report (the card stays on
+  /// the block model; the body renders the node tree). Fired by the body's
+  /// onLoaded so the two are always in step. No report yet → the card hides.
+  Future<void> _loadCard(String uid) async {
+    try {
+      final report = await _api.getReport('appearance', uid);
+      if (mounted) await _onReport(report);
+    } catch (_) {
+      // No report yet or a fetch failure: the body's own empty/error state
+      // covers it; the card simply doesn't show.
+    }
   }
 
   @override
@@ -449,18 +475,18 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
             ),
             if (card.nextSteps.isNotEmpty) _NextSteps(steps: card.nextSteps),
           ],
-          LivingReportView(
-            // Stable key so toggling the card block above (removing the last
-            // photo) never shifts this view's slot and remounts it — a remount
-            // would refetch and reset the card's in-session hidden set,
-            // flashing removed photos back.
-            key: const ValueKey('appearanceFullReport'),
+          // The full report body renders through the shared Node-Visualiser
+          // (2o P2), replacing the old block renderer. The shareable card above
+          // keeps its own block-model fetch (_loadCard) — fired whenever this
+          // tree (re)loads, so the two stay in step on a re-run.
+          GraphTreeView(
+            key: _bodyKey,
+            surface: NodeVisualiserSurface.report,
             reportType: 'appearance',
             reportId: uid,
-            apiClient: widget.apiClient,
-            shrinkWrap: true,
-            hideBlock: AppearanceCardData.isRecommendation,
-            onLoaded: _onReport,
+            api: widget.apiClient,
+            emptyMessage: 'No appearance report yet.',
+            onLoaded: (_) => _loadCard(uid),
           ),
         ],
       ),
