@@ -42,8 +42,11 @@ class AppearanceCardData {
   static const maxPhotos = 4;
   static const maxStandOuts = 4;
 
-  /// Every analysed photo available to the card, ordered best/most-relevant
-  /// first: the face photo, then the body photo(s), then the rest.
+  /// The SELECTED analysed photos available to the card, ordered best/most-
+  /// relevant first: the Face read's source photo(s), then the Body read's.
+  /// The Attributes read's whole-grid photos are deliberately excluded — the
+  /// card shows only what the user selected for an axis (founder defect Nov 16
+  /// 2026).
   final List<CardPhoto> pool;
 
   /// Ids ([CardPhoto.id]) the user has removed from the card. Card-only — the
@@ -56,8 +59,8 @@ class AppearanceCardData {
       if (!hidden.contains(p.id)) p,
   ].take(maxPhotos).toList();
 
-  /// Face photo first, then the body photo(s), then other analysed photos;
-  /// never more than [maxPhotos]. Derived from [visible].
+  /// Face photo(s) first, then the body photo(s); never more than [maxPhotos].
+  /// Derived from [visible].
   List<String> get photoUrls => [for (final p in visible) p.url];
 
   /// Accessibility label per visible photo, parallel to [photoUrls].
@@ -110,10 +113,16 @@ class AppearanceCardData {
 
     final pool = <CardPhoto>[];
     final seen = <String>{};
+    // Card pool = the SELECTED photos only: the Face read's source photo(s),
+    // then the Body read's. The Attributes read always analyses the WHOLE grid
+    // (§ founder: "Include ALL pictures used for the aggregate"), so its photos
+    // include ones the user never selected for any axis — they must NOT reach
+    // the shareable card (founder defect Nov 16 2026; photo-selection class,
+    // ref Nov 2 #27). The Attributes section still renders its own whole-grid
+    // `attr:photos` block below the card; it just no longer feeds the card.
     const kinds = {
       'face:': 'Your face photo',
       'body:': 'Your body photo',
-      'attr:': 'Your photo',
     };
     for (final prefix in kinds.keys) {
       for (final b in blocks) {

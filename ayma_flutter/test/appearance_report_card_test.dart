@@ -76,10 +76,36 @@ Map<String, dynamic> _b(String id, String type, [Map<String, dynamic>? f]) => {
   ...?f,
 };
 
+/// A Face/Body axis's selected source-photo block(s), exactly as
+/// `report_adapters._source_photo_blocks` emits them: a single `photo` block
+/// for one selected photo (url `https://x/<prefix>.jpg`), a `photo_grid` for
+/// several (`https://x/<prefix>0.jpg` …). These are the ONLY photos that may
+/// feed the shareable card.
+List<Map<String, dynamic>> _axisPhotoBlocks(String prefix, int n) {
+  if (n <= 0) return [];
+  if (n == 1) {
+    return [
+      _b('$prefix:photo', 'photo', {'url': 'https://x/$prefix.jpg'}),
+    ];
+  }
+  return [
+    _b('$prefix:photos', 'photo_grid', {
+      'photos': [
+        for (var i = 0; i < n; i++) {'url': 'https://x/$prefix$i.jpg'},
+      ],
+    }),
+  ];
+}
+
 /// An Appearance report shaped exactly like `report_adapters.appearance_blocks`.
+/// [facePhotos] / [bodyPhotos] size each axis's SELECTED source photos (the
+/// card pool); [attrPhotos] sizes the Attributes whole-grid photos, which must
+/// never reach the card.
 Map<String, dynamic> _report({
   bool bodyScore = true,
   int attrPhotos = 4,
+  int facePhotos = 1,
+  int bodyPhotos = 1,
   String faceStrength = 'Full eyebrows',
 }) => {
   'title': 'Appearance',
@@ -130,7 +156,7 @@ Map<String, dynamic> _report({
           'label': 'Worst feature',
           'value': 'Under-eyes',
         }),
-        _b('face:photo', 'photo', {'url': 'https://x/face.jpg'}),
+        ..._axisPhotoBlocks('face', facePhotos),
       ],
     },
     {
@@ -162,7 +188,7 @@ Map<String, dynamic> _report({
           'label': 'Estimated body fat range',
           'value': '20-24%',
         }),
-        _b('body:photo', 'photo', {'url': 'https://x/body.jpg'}),
+        ..._axisPhotoBlocks('body', bodyPhotos),
       ],
     },
   ],
@@ -171,8 +197,14 @@ Map<String, dynamic> _report({
 
 LivingReport _living(Map<String, dynamic> m) => LivingReport.fromMap(m);
 
-AppearanceCardData _data({List<String>? standOuts}) {
-  final d = AppearanceCardData.fromReport(_living(_report()))!;
+AppearanceCardData _data({
+  List<String>? standOuts,
+  int facePhotos = 1,
+  int bodyPhotos = 1,
+}) {
+  final d = AppearanceCardData.fromReport(
+    _living(_report(facePhotos: facePhotos, bodyPhotos: bodyPhotos)),
+  )!;
   if (standOuts == null) return d;
   return AppearanceCardData(
     pool: d.pool,
@@ -269,17 +301,41 @@ void main() {
   tearDown(() => AymaPhoto.debugCacheManager = null);
 
   group('AppearanceCardData', () {
-    test('caps photos at four, face photo first, no duplicates', () {
-      final d = AppearanceCardData.fromReport(_living(_report(attrPhotos: 6)))!;
+    test('caps photos at four, face photos first, no duplicates', () {
+      // Card pool = SELECTED face+body photos only; the Attributes whole grid
+      // (attrPhotos: 6) must not feed it.
+      final d = AppearanceCardData.fromReport(
+        _living(_report(facePhotos: 3, bodyPhotos: 3, attrPhotos: 6)),
+      )!;
       expect(d.photoUrls, hasLength(AppearanceCardData.maxPhotos));
-      expect(d.photoUrls.first, 'https://x/face.jpg');
-      expect(d.photoUrls[1], 'https://x/body.jpg');
-      expect(d.photoUrls.toSet(), hasLength(4));
+      expect(d.photoUrls.first, 'https://x/face0.jpg'); // face read's photos first
+      expect(d.photoUrls, contains('https://x/body0.jpg')); // then the body read's
+      expect(d.photoUrls.toSet(), hasLength(4)); // no duplicates
       expect(d.photoLabels.first, 'Your face photo');
+      // No Attributes photo ever reaches the card pool (founder defect Nov 16).
+      expect(
+        d.pool.map((p) => p.url),
+        everyElement(isNot(startsWith('https://x/attr'))),
+      );
     });
 
     test('fewer photos: only what exists', () {
       final d = AppearanceCardData.fromReport(_living(_report(attrPhotos: 0)))!;
+      expect(d.photoUrls, ['https://x/face.jpg', 'https://x/body.jpg']);
+    });
+
+    test('attributes photos never feed the card, even with no face/body spare',
+        () {
+      // The founder repro: a single face + single body selected, but the
+      // Attributes read analysed the whole grid. The card shows exactly the
+      // two selected photos — never the attributes-only ones.
+      final d = AppearanceCardData.fromReport(
+        _living(_report(facePhotos: 1, bodyPhotos: 1, attrPhotos: 4)),
+      )!;
+      expect(d.pool.map((p) => p.url), [
+        'https://x/face.jpg',
+        'https://x/body.jpg',
+      ]);
       expect(d.photoUrls, ['https://x/face.jpg', 'https://x/body.jpg']);
     });
 
@@ -324,7 +380,9 @@ void main() {
     testWidgets('shows both scores, four photos, positive findings only', (
       tester,
     ) async {
-      await tester.pumpWidget(_card(_data(), photos: 4));
+      await tester.pumpWidget(
+        _card(_data(facePhotos: 3, bodyPhotos: 3), photos: 4),
+      );
       expect(find.text('6.3'), findsOneWidget);
       expect(find.text('4.2'), findsOneWidget);
       expect(find.text('FACE'), findsOneWidget);
@@ -344,7 +402,9 @@ void main() {
     });
 
     testWidgets('never more than four photo frames', (tester) async {
-      await tester.pumpWidget(_card(_data(), photos: 6));
+      await tester.pumpWidget(
+        _card(_data(facePhotos: 4, bodyPhotos: 2), photos: 6),
+      );
       expect(_photoImages, findsNWidgets(4));
     });
 
@@ -560,31 +620,43 @@ void main() {
   });
 
   group('remove from card (model)', () {
-    // A report whose analysed-photo pool has `poolSize` photos: face.jpg,
-    // body.jpg, then attr photos.
+    // A card pool with `poolSize` SELECTED photos — the face read's photos
+    // (face0, face1, …) then the body read's (body.jpg). The Attributes
+    // whole-grid photos (attrPhotos) are present in the report but must NEVER
+    // enter the card pool (founder defect Nov 16 2026), so the pool is sized
+    // from face+body only.
     AppearanceCardData data(int poolSize) => AppearanceCardData.fromReport(
-      _living(_report(attrPhotos: (poolSize - 2).clamp(0, 99))),
+      _living(_report(
+        facePhotos: poolSize - 1,
+        bodyPhotos: 1,
+        attrPhotos: 4,
+      )),
     )!;
 
     test('visible is the pool minus hidden, capped at four', () {
       final d = data(6);
       expect(d.pool, hasLength(6));
       expect(d.visible.map((p) => p.url), [
-        'https://x/face.jpg',
-        'https://x/body.jpg',
-        'https://x/attr0.jpg',
-        'https://x/attr1.jpg',
+        'https://x/face0.jpg',
+        'https://x/face1.jpg',
+        'https://x/face2.jpg',
+        'https://x/face3.jpg',
       ]);
+      // Attributes photos are not pooled.
+      expect(
+        d.pool.map((p) => p.url),
+        everyElement(isNot(startsWith('https://x/attr'))),
+      );
     });
 
     test('removing a shown photo slides in the next pooled one', () {
-      final d = data(5); // one spare beyond the four shown
+      final d = data(5); // face0..face3 shown, body.jpg is the one spare
       final removed = d.visible.first.id;
       final after = d.withHidden({removed});
       expect(after.visible, hasLength(4)); // still four — the spare filled in
       expect(after.visible.map((p) => p.id), isNot(contains(removed)));
-      // The previously-unshown fifth photo is now on the card.
-      expect(after.visible.map((p) => p.url), contains('https://x/attr2.jpg'));
+      // The previously-unshown pooled photo (the body read's) is now on the card.
+      expect(after.visible.map((p) => p.url), contains('https://x/body.jpg'));
     });
 
     test('pool exhausted: removing shrinks the card', () {
@@ -742,9 +814,13 @@ void main() {
     testWidgets('remove persists the hidden id and offers Undo', (
       tester,
     ) async {
-      // Pool of five, four shown; removing one slides the fifth in, persists
-      // the removed id, and offers Undo which persists the empty list again.
-      final posted = await pump(tester, _report(attrPhotos: 3));
+      // Card pool of five selected photos (face0..face3 + body), four shown;
+      // removing one slides the fifth in, persists the removed id, and offers
+      // Undo which persists the empty list again.
+      final posted = await pump(
+        tester,
+        _report(facePhotos: 4, bodyPhotos: 1, attrPhotos: 3),
+      );
       expect(_screenPhotoImages, findsNWidgets(4));
 
       await tester.tap(find.byKey(const ValueKey('reportCardRemove0')));
@@ -764,7 +840,7 @@ void main() {
         'image)', (tester) async {
       // The report meta already hides body.jpg: the card never shows it, so
       // neither does the PNG rendered from the same visible set.
-      final rep = _report(attrPhotos: 2);
+      final rep = _report(facePhotos: 3, bodyPhotos: 1, attrPhotos: 2);
       rep['meta'] = {
         'owner_uid': 'u1',
         'viewer_can_edit': true,
@@ -772,7 +848,7 @@ void main() {
       };
       await pump(tester, rep);
       expect(find.byType(AppearanceReportCard), findsOneWidget);
-      // Four analysed photos, one hidden -> three on the card.
+      // Four selected card photos, one hidden -> three on the card.
       expect(_screenPhotoImages, findsNWidgets(3));
     });
 

@@ -183,6 +183,29 @@ def _source_photo_blocks(id_prefix: str, paths) -> list[dict]:
     ]
 
 
+def _card_photo_pool(data) -> list[str]:
+    """The shareable card's photo pool: the Face and Body reads' selected
+    ``source_photos`` ONLY, deduped and order-preserved — NEVER the Attributes
+    read's whole-grid pool. Mirrors :meth:`AppearanceCardData.fromReport`'s
+    face→body card pool so the card-hidden ids a run persists are scoped to
+    exactly the photos the card can show. The Attributes read always analyses
+    the whole grid (§ founder: "Include ALL pictures used for the aggregate"),
+    so :func:`appearance_reads.analysed_photo_ids` includes photos the user
+    never selected for any axis; letting those feed the card showed the founder
+    photos he never picked (Nov 16 2026; photo-selection class, ref Nov 2 #27).
+    The full Attributes photo grid still renders in its own report section — it
+    just no longer feeds the card."""
+    out: list[str] = []
+    for key in ("face", "body"):
+        rec = data.get(key) if isinstance(data, dict) else None
+        paths = rec.get("source_photos") if isinstance(rec, dict) else None
+        for p in paths or []:
+            s = str(p or "").strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
 def _attribute_blocks(record: dict | None) -> list[dict]:
     """``attr:<field>`` attribute blocks for every KNOWN field in a
     ``physical_attributes``-shaped ``record`` (``{field: {value, source,
@@ -251,7 +274,13 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
     # re-analysed out of the pool) self-heal by intersecting with the live
     # pool. Surfaced in the report meta (`report_hub.get_report`) so the card
     # builder and the exported share image both honour it.
-    pool = appearance.analysed_photo_ids(db, uid, data=data)
+    #
+    # The pool here is the CARD pool — the Face+Body selected photos only, the
+    # same set `AppearanceCardData.fromReport` draws from — NOT the whole
+    # analysed set (`analysed_photo_ids` folds in the Attributes whole-grid
+    # photos). Scoping the hidden ids to the card pool keeps the meta aligned
+    # with what the card can actually show (founder defect Nov 16 2026).
+    pool = _card_photo_pool(data)
     # ``read_card_hidden`` is version-scoped (see ``appearance_reads``): it
     # only returns a list curated against THIS report version, so a stale
     # list from an older run can no longer suppress the current run's

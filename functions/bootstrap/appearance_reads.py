@@ -252,10 +252,14 @@ def history(db, uid: str, *, limit: int = 20) -> list[dict]:
 def _pool_from_data(data: dict | None) -> list[str]:
     """The ordered pool of Storage paths that fed the caller's Appearance
     report — the face photo(s) first, then the body photo(s), then the
-    Attributes grid — deduped, order preserved. This is exactly the pool the
-    report card draws its up-to-four photos from (same order as
-    ``AppearanceCardData.fromReport``), and the set a hidden-photo id must
-    belong to."""
+    Attributes grid — deduped, order preserved. This is the set a hidden-photo
+    id must belong to (any analysed photo may be hidden).
+
+    NOTE: this is the WHOLE analysed set, not the card pool. The shareable card
+    shows only the SELECTED face+body photos (``report_adapters._card_photo_pool``
+    / ``AppearanceCardData.fromReport``) — never the Attributes whole-grid
+    photos, which include ones the user didn't select for any axis (founder
+    defect Nov 16 2026)."""
     out: list[str] = []
     for key in ("face", "body", "attributes"):
         rec = data.get(key) if isinstance(data, dict) else None
