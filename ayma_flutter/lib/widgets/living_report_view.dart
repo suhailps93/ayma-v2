@@ -270,6 +270,15 @@ class LivingReportViewState extends State<LivingReportView>
   };
 
   @override
+  void didUpdateWidget(LivingReportView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reportId != widget.reportId ||
+        oldWidget.reportType != widget.reportType) {
+      _load();
+    }
+  }
+
+  @override
   void initState() {
     super.initState();
     reassertScreenContext();

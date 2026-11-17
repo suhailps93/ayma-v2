@@ -36,8 +36,16 @@ class ReportCache {
   static const _bootPrefix = 'boot_route:';
   static const _bootConfigPrefix = 'boot_config:';
 
-  static String _reportKey(String uid, String reportType, String reportId) =>
-      '$_reportPrefix$uid:$reportType:$reportId';
+  static String _reportKey(String uid, String reportType, String reportId) {
+    // NOTE 250 Leg 1: for appearance reports, there is only ever one current report
+    // per user. Whether requested via the user's uid, 'current', or a run id like
+    // 'Vo2iuT4', normalize to the user's uid so read and write hit the same cache
+    // entry and a fresh re-run result overwrites stale cache.
+    final effectiveId = (reportType == 'appearance' && uid.isNotEmpty)
+        ? uid
+        : reportId;
+    return '$_reportPrefix$uid:$reportType:$effectiveId';
+  }
 
   static String _bootKey(String uid) => '$_bootPrefix$uid';
   static String _bootConfigKey(String uid) => '$_bootConfigPrefix$uid';

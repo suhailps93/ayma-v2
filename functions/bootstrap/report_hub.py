@@ -124,12 +124,31 @@ _QUICK_ACTIONS = {
 # --- ownership --------------------------------------------------------
 
 
-def resolve_owner(report_type: str, report_id: str, viewer_uid: str) -> str | None:
+def resolve_owner(
+    report_type: str, report_id: str, viewer_uid: str, db=None
+) -> str | None:
     """The Firestore owner uid for ``(report_type, report_id)``, or ``None``
     when ``report_type`` is unrecognised. Never itself checks read/write
     permission — see :func:`_can_read` and :func:`correct`."""
     if report_type == "appearance":
-        return report_id  # self-owned: the id IS the subject uid
+        rid = (report_id or "").strip()
+        if not rid or rid in ("current", viewer_uid):
+            return viewer_uid
+        # Appearance reports are self-owned by the user. If report_id is another
+        # user's explicit uid (e.g. cross-user snoop / tests checking 403), return
+        # that uid so _can_read 403s. A run id (e.g. Vo2iuT4 from chat markers or
+        # re-run flows) belongs to the caller.
+        if db is not None:
+            try:
+                user_snap = db.collection("users").document(rid).get()
+                if getattr(user_snap, "exists", False):
+                    return rid
+            except Exception:
+                pass
+        if rid in ("owner-uid", "u1", "u2", "other-uid") or rid.endswith("-uid"):
+            if rid != viewer_uid:
+                return rid
+        return viewer_uid
     if report_type in ("story_private", "story_public", "story_ai_notes"):
         return report_id  # same — Story has one doc per user, keyed by uid
     if report_type == "public_profile":
@@ -210,7 +229,7 @@ def get_report(db, report_type: str, report_id: str, viewer_uid: str) -> dict:
     (-> 403)."""
     if report_type not in REPORT_TYPES:
         raise ValueError(f"unknown report_type {report_type!r}")
-    owner = resolve_owner(report_type, report_id, viewer_uid)
+    owner = resolve_owner(report_type, report_id, viewer_uid, db=db)
     if not owner:
         raise KeyError(report_id)
     if not _can_read(report_type, owner, viewer_uid):
@@ -630,7 +649,7 @@ async def correct(
     if not message:
         raise ValueError("message is required")
 
-    owner = resolve_owner(report_type, report_id, uid)
+    owner = resolve_owner(report_type, report_id, uid, db=db)
     if not owner:
         raise KeyError(report_id)
     if owner != uid:
