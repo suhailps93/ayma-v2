@@ -32,13 +32,18 @@ reading other apps.
    never written to disk, never logged), launches `MainActivity`,
    and finishes. Dart consumes the snapshot once over the
    `ayma/assistant` channel.
-5. **Ayma's surface.** `AssistantScreen` (`/assistant`) opens already
-   knowing the screen: it names the foreground app, shows the
-   screenshot thumbnail, describes the screen locally, and answers
-   questions through `POST /chat` using the same screen-context
-   params as in-app screens (`screen = "external_app"`,
-   `screen_visible` = the hierarchy text). The screenshot bytes
-   themselves never leave the device in V1.
+5. **Ayma activates (voice).** A summon ACTIVATES Ayma the way a real
+   default assistant does: `main._activateAymaFromSummon` folds the
+   captured foreground screen into `AppContext` (`screen =
+   "external_app"`, with the foreground app + hierarchy text), lands
+   on the home surface (`MainShellScreen`), and starts Ayma's voice
+   session (`AymaSession.instance.voice.start()`) — so a long-press
+   Home begins a voice call over whatever app is on screen. A summon
+   NEVER lands on the in-app assistant **settings** screen (founder
+   defect Nov 17); that screen (`AssistantScreen`, `/assistant`) is
+   reachable only from Settings → Ayma Assistant. The captured screen
+   context rides the voice call so Ayma already knows what the user was
+   looking at; the screenshot bytes never leave the device in V1.
 6. **Guidance continues.** "Guide me on this screen" stores the
    screen as the live `AppContext` and returns to the main chat /
    voice surface, so a voice call or chat turn there starts from this

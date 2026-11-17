@@ -14,10 +14,13 @@ import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
 import 'core/session_teardown.dart';
 import 'routing/app_router.dart';
-import 'screens/assistant_screen.dart';
+import 'screens/main_shell_screen.dart';
 import 'screens/splash_screen.dart';
 import 'services/accent_color_controller.dart';
+import 'services/app_context.dart';
+import 'services/assist_context.dart';
 import 'services/assistant_service.dart';
+import 'services/ayma_session.dart';
 import 'services/auth_service.dart';
 import 'services/auth_session_state.dart';
 import 'services/deep_link_queue.dart';
@@ -159,14 +162,36 @@ Future<void> main() async {
     authService: AuthService.instance,
   ));
 
-  // Default-assistant summons (Android Assist API): a summon that
-  // launched or relaunched MainActivity lands here — the capture is
-  // held by AssistantService and the assistant surface opens on it.
-  // The router's auth redirect still applies, so a signed-out summon
-  // goes to sign-in first and the capture waits in the session store.
+  // Default-assistant summons (Android Assist API): a long-press Home /
+  // assistant gesture ACTIVATES Ayma — it starts a voice session over the
+  // foreground app, the way a real default assistant summons. It must NEVER
+  // land on the in-app assistant settings screen (founder defect Nov 17). The
+  // router's auth redirect still applies, so a signed-out summon goes to
+  // sign-in first (voice simply doesn't start until there's a session).
   unawaited(AssistantService.instance.bindSummons(
-    onSummon: (_) => navigateToRoute(AssistantScreen.path),
+    onSummon: _activateAymaFromSummon,
   ));
+}
+
+/// Activate Ayma for a default-assistant summon: fold the captured foreground
+/// screen into [AppContext] so the call opens knowing what the user was looking
+/// at, land on the home surface (not the assistant settings screen), and start
+/// Ayma's voice session.
+void _activateAymaFromSummon(AssistCapture capture) {
+  final snap = capture.snapshot;
+  if (snap.hasScreenContent) {
+    AppContext.instance.set(
+      screen: 'external_app',
+      subjectName: snap.friendlyAppName,
+      note: snap.foregroundPackage,
+      detail: snap.detailSummary(),
+    );
+  }
+  navigateToRoute(MainShellScreen.path);
+  // Enable voice mode + activate Ayma. start() is idempotent (a no-op if a
+  // call is already live) and self-contained; never let a start failure (e.g.
+  // a summon before sign-in) throw out of this fire-and-forget path.
+  unawaited(AymaSession.instance.voice.start().catchError((Object _) {}));
 }
 
 /// Settle after the splash's first paint before the startup
