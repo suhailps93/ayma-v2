@@ -301,6 +301,21 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     - *Adapters* emit `{title, sections:[{heading, blocks}]}`; block types
       text/fact/attribute/photo/link/stat (`report_blocks.py`). Render-from-nodes
       must reproduce these block shapes from the migrated nodes.
+  - *Render-from-nodes switch (2o P0–P3) — SHIPPED.* `report_tree.report_node_tree`
+    (`GET /report/{type}/{id}/tree`) converts any report's blocks to a
+    Node-Visualiser node tree (SCORE/STAT, CONFIDENCE, CANDIDATE, LINK, image,
+    text), reusing `report_hub.get_report` so every type keeps its owner/
+    permission checks (match stays owner-only + read-only; a non-participant's
+    tree 404s, never the score). The report screens render that tree through the
+    shared `GraphTreeView`: **appearance + deep-dive (P2)** and now **match
+    (P3)** — `match_report_screen.dart`'s body is `GraphTreeView(reportType:
+    'match')` and the old `LivingReportView` match body was deleted. The match
+    top-line score is a percent STRING ("52%"); `report_tree._percent_value`
+    parses it to a numeric 0..100 ScoreBar so the headline score gets the same
+    banded graphic its sub-dimensions do. The two-person avatar row, Taste-match
+    card, and Recalculate/Share chrome stay bespoke, fed by the separate
+    `GET /match/{id}` fetch. (Story-public / public-profile / shared reports —
+    P5 — still on `LivingReportView`.)
 ## Read/write switch FINISHED (Nov 16) — staging code no longer reads or writes wiki_pages (flag-on)
 
 Branch `fleet/graph-read-write-switch`. With `PERSON_GRAPH_READS` on, every live

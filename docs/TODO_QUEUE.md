@@ -1,6 +1,14 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-11-16. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-17. Update this file whenever an item changes; commit and push to main.
+
+## 2o P3 — Match report renders through the Node-Visualiser; old match renderer deleted (fleet/match-node-visualiser off staging b6ebafd4, 2026-11-17) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
+- **Goal (row 2o P3, founder deletion order):** rebuild the Match screen so the match report body renders as a node tree through the shared `GraphTreeView` — the SAME pattern P2 used for appearance + deep-dive — and DELETE the old match body renderer in the same change.
+- **Change:** `match_report_screen.dart`'s body was `LivingReportView(reportType:'match')`; now `GraphTreeView(surface: report, reportType:'match', reportId: matchId)` via `GET /report/match/{id}/tree`. The LivingReportView import + embed (the old match body renderer) were deleted. The two-person avatar row, Taste-match card, and Recalculate/Share AppBar chrome stay bespoke, still fed by the separate `GET /match/{id}` fetch (`MatchReport`/`MatchReportCache`); the body no longer reads that fetch.
+- **Backend (one small, generic change):** `report_tree._block_to_nodes` now parses a percent-string stat value ("52%", how `match_blocks` stores the top-line "Match score") into a numeric 0..100 ScoreBar via `_percent_value`, so the headline score gets the same banded graphic its sub-dimensions do (founder: "the match report must not lose its graphics"). Non-numeric CONFIDENCE words still render as band pills. The owner-only + read-only + non-participant-404 semantics were already correct (`report_hub`/`report_tree` reuse `get_report`) — verified end to end, no auth change.
+- **Privacy:** match is owner-only + read-only; a non-participant's `.../tree` 404s (`resolve_owner` → None → KeyError → 404), never the score; no correction/edit path (match is algorithmic). Regression-tested both sides.
+- **Tests:** `test_report_tree.py` (percent-string → ScoreBar; non-participant match tree → KeyError/404), rewritten `match_report_screen_test.dart` (14 cases: tree render, banded ScoreBars, read-only node sheet no `/correct`, recalc reloads the tree, non-participant tree-404 → empty state never a score, taste card, auto-recovery). `flutter analyze` = 0; layout matrix + app_registry green. `matches_screen.dart` is a list (no body renderer) — left unchanged.
+
 
 ## NOTE-237-STORY-SCROLL-ANR — Story-scroll ANR regression on 2463 (fleet/story-scroll-anr-237 off staging 4d5de298, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
 - **Defect (Scout NOTE 237, build 2463):** ANR dialog during slow story scrolling (9 half-screen swipes at 3s pauses, first attempt after photo sends; `Waited 5001ms for MotionEvent, 12:54:40.083`), plus a second ANR trace stamped during re-run scroll. Regression vs NOTE 236 on build 2462 (zero ANR on 26 fast swipes).
