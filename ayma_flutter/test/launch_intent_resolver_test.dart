@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ayma_flutter/core/dag/launch_intent_resolver.dart';
 import 'package:ayma_flutter/core/dag/startup_dag.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,6 +91,46 @@ void main() {
         dag.nodes['N12:destination_routing']!.dependencies,
         contains('N11:revenuecat_init'),
       );
+    });
+
+    group('resolveForStartup (restore-splash-slow)', () {
+      test(
+          'returns IconLaunchIntent within the bound when extraction hangs — '
+          'so a slow getInitialMessage/platform-channel call cannot gate the '
+          'first frame', () async {
+        final sw = Stopwatch()..start();
+        // A getter that never completes stands in for a hung
+        // getInitialMessage()/native channel at cold start.
+        final intent = await LaunchIntentResolver.resolveForStartup(
+          timeout: const Duration(milliseconds: 200),
+          fcmPayloadGetter: () => Completer<Map<String, dynamic>?>().future,
+          nativeChannelGetter: () => Completer<String?>().future,
+        );
+        sw.stop();
+        expect(intent, isA<IconLaunchIntent>());
+        // Must resolve on ~the bound, never block indefinitely on the hung call.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+      });
+
+      test('still classifies a real deep link that resolves within the bound',
+          () async {
+        final intent = await LaunchIntentResolver.resolveForStartup(
+          fcmPayloadGetter: () async => {'deep_link': 'plan'},
+          nativeChannelGetter: () async => null,
+        );
+        expect(intent, isA<PaywallDeepLinkIntent>());
+        expect((intent as PaywallDeepLinkIntent).targetPath,
+            equals('/profile/plan'));
+      });
+
+      test('falls back to IconLaunchIntent when there is no launch payload',
+          () async {
+        final intent = await LaunchIntentResolver.resolveForStartup(
+          fcmPayloadGetter: () async => null,
+          nativeChannelGetter: () async => null,
+        );
+        expect(intent, isA<IconLaunchIntent>());
+      });
     });
   });
 }

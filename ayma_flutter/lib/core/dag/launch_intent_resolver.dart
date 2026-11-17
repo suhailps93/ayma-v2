@@ -89,6 +89,27 @@ class LaunchIntentResolver {
     return classify(data);
   }
 
+  /// The startup-time launch-intent resolution `main()` runs BEFORE the first
+  /// frame (to tune the DAG's routing edges). [extract] awaits
+  /// `getInitialMessage()` and a native platform-channel call, either of which
+  /// can be slow or hang on a cold start — and this is the only unbounded await
+  /// on the pre-`runApp` path, so a hang here delays the first frame itself.
+  /// This bounds it with a hard deadline and falls back to the normal
+  /// icon-launch intent, so the first frame can never wait on it. Deep-link
+  /// routing is unaffected: N12:destination_routing routes from N6's re-resolved
+  /// intent (which carries the identical bound), not from this value — this only
+  /// promotes a DAG edge (e.g. a paywall deep link waiting on RevenueCat init).
+  static Future<LaunchIntent> resolveForStartup({
+    Duration timeout = const Duration(seconds: 1),
+    Future<Map<String, dynamic>?> Function()? fcmPayloadGetter,
+    Future<String?> Function()? nativeChannelGetter,
+  }) {
+    return extract(
+      fcmPayloadGetter: fcmPayloadGetter,
+      nativeChannelGetter: nativeChannelGetter,
+    ).timeout(timeout, onTimeout: () => const IconLaunchIntent());
+  }
+
   static LaunchIntent classify(Map<String, dynamic> data) {
     var deepLink = data['deep_link'] as String?;
     final type = data['type'] as String?;
