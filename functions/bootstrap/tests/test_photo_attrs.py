@@ -204,18 +204,19 @@ def test_eligibility_groups_grid_photos_by_axis(monkeypatch):
     import public_profile
 
     monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    # All confirmed-user (is_user "yes") solo photos — the only ones surfaced.
     docs = {
         ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
         ("users", "u1", "user_media", "m1"): {
-            "storage_path": "p1.jpg",
+            "storage_path": "p1.jpg", "is_user": "yes",
             "attributes": {"usable_for_face": True, "usable_for_body": False},
         },
         ("users", "u1", "user_media", "m2"): {
-            "storage_path": "p2.jpg",
+            "storage_path": "p2.jpg", "is_user": "yes",
             "attributes": {"usable_for_face": False, "usable_for_body": True},
         },
         ("users", "u1", "user_media", "m3"): {
-            "storage_path": "p3.jpg",
+            "storage_path": "p3.jpg", "is_user": "yes",
             "attributes": {"usable_for_face": True, "usable_for_body": True},
         },
     }
@@ -234,7 +235,7 @@ def test_eligibility_empty_body_group_when_only_a_face_photo(monkeypatch):
     docs = {
         ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
         ("users", "u1", "user_media", "m1"): {
-            "storage_path": "p1.jpg",
+            "storage_path": "p1.jpg", "is_user": "yes",
             "attributes": {"usable_for_face": True, "usable_for_body": False},
         },
     }
@@ -251,12 +252,14 @@ def test_eligibility_surfaces_untagged_photos_in_both_buckets(monkeypatch):
     import public_profile
 
     monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    # An untagged (but confirmed-user, non-group) photo must still not be hidden.
     docs = {
         ("users", "u1", "profile", "main"): {"photos": [{"media_id": "m1"}]},
-        # m1 untagged (no attributes yet), m2 a clear face-only shot.
-        ("users", "u1", "user_media", "m1"): {"storage_path": "p1.jpg"},
+        # m1 untagged (no attributes yet), m2 a clear face-only shot — both the user.
+        ("users", "u1", "user_media", "m1"): {
+            "storage_path": "p1.jpg", "is_user": "yes"},
         ("users", "u1", "user_media", "m2"): {
-            "storage_path": "p2.jpg",
+            "storage_path": "p2.jpg", "is_user": "yes",
             "attributes": {"usable_for_face": True, "usable_for_body": False},
         },
     }
@@ -270,6 +273,51 @@ def test_eligibility_surfaces_untagged_photos_in_both_buckets(monkeypatch):
 
 def _elig_by_id(out, axis):
     return {e["media_id"]: e for e in out[axis]}
+
+
+def test_eligibility_excludes_group_and_non_user_photos(monkeypatch):
+    # Nov 17 group-shot decision: only solo photos CONFIRMED to be the user are
+    # surfaced; a group photo or a photo that is not of them is excluded from the
+    # report entirely.
+    monkeypatch.setattr(
+        photo_attrs, "_grid_media_ids",
+        lambda prof: ["me", "group", "notme", "unknown"],
+    )
+    import public_profile
+
+    monkeypatch.setattr(public_profile, "_photo_url", lambda sp: f"https://cdn/{sp}")
+    attrs = {"shot_type": "face", "usable_for_face": True, "usable_for_body": False}
+    docs = {
+        ("users", "u1", "profile", "main"): {},
+        ("users", "u1", "user_media", "me"): {
+            "storage_path": "a", "is_user": "yes", "attributes": attrs},
+        ("users", "u1", "user_media", "group"): {
+            "storage_path": "b", "is_user": "yes",
+            "attributes": {**attrs, "shot_type": "group"}},
+        ("users", "u1", "user_media", "notme"): {
+            "storage_path": "c", "is_user": "no", "attributes": attrs},
+        ("users", "u1", "user_media", "unknown"): {
+            "storage_path": "d", "is_user": "", "attributes": attrs},
+    }
+    out = photo_attrs.eligibility(_Db(docs), "u1")
+    ids = {e["media_id"] for e in out["face"]} | {e["media_id"] for e in out["body"]}
+    assert ids == {"me"}  # only the confirmed-user solo photo
+
+
+def test_eligibility_keeps_removed_from_public_photos_in_the_pool():
+    # Part 1 (removed-from-public STAYS in the pool): the sheet reads
+    # analysis_photo_entries, which includes PF_HIDDEN_PHOTOS. A confirmed-user
+    # hidden photo is still offered for selection.
+    import public_profile
+    import schema
+
+    prof = {
+        schema.PF_PHOTOS: [{"media_id": "pub", "order": 0}],
+        schema.PF_HIDDEN_PHOTOS: [{"media_id": "hidden", "order": 0}],
+    }
+    # analysis_photo_entries includes both (public first).
+    ids = [e["media_id"] for e in schema.analysis_photo_entries(prof)]
+    assert "hidden" in ids and "pub" in ids
 
 
 def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
@@ -290,7 +338,7 @@ def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
     docs = {
         ("users", "u1", "profile", "main"): {"photos": [{"media_id": "solo_face"}]},
         ("users", "u1", "user_media", "solo_face"): {
-            "storage_path": "p1.jpg",
+            "storage_path": "p1.jpg", "is_user": "yes",
             "attributes": {
                 "shot_type": "face",
                 "usable_for_face": True,
@@ -298,7 +346,7 @@ def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
             },
         },
         ("users", "u1", "user_media", "solo_body"): {
-            "storage_path": "p2.jpg",
+            "storage_path": "p2.jpg", "is_user": "yes",
             "attributes": {
                 "shot_type": "full_body",
                 "usable_for_face": False,
@@ -306,36 +354,35 @@ def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
             },
         },
         ("users", "u1", "user_media", "solo_full"): {
-            "storage_path": "p3.jpg",
+            "storage_path": "p3.jpg", "is_user": "yes",
             "attributes": {
                 "shot_type": "full_body",
                 "usable_for_face": True,
                 "usable_for_body": True,
             },
         },
+        # A group photo — even one the user is in — is EXCLUDED from the sheet
+        # entirely (Nov 17 decision), never surfaced for selection.
         ("users", "u1", "user_media", "couple_face"): {
-            "storage_path": "p4.jpg",
+            "storage_path": "p4.jpg", "is_user": "yes",
             "attributes": {
                 "shot_type": "group",
                 "usable_for_face": False,
                 "usable_for_body": False,
             },
         },
-        ("users", "u1", "user_media", "untagged"): {"storage_path": "p5.jpg"},
+        # Untagged but confirmed-user — still surfaced (not pre-checked).
+        ("users", "u1", "user_media", "untagged"): {
+            "storage_path": "p5.jpg", "is_user": "yes"},
     }
     out = photo_attrs.eligibility(_Db(docs), "u1")
     face = _elig_by_id(out, "face")
     body = _elig_by_id(out, "body")
 
-    # Bug 1: a multi-person photo is NEVER auto-selected, in either axis — even
-    # though it is still surfaced in both buckets so the user could pick it.
-    assert "couple_face" in face and "couple_face" in body
-    assert face["couple_face"]["multi_person"] is True
-    assert face["couple_face"]["person_count"] == 2
-    assert face["couple_face"]["auto_select"] is False
-    assert body["couple_face"]["auto_select"] is False
+    # Nov 17: a group photo is EXCLUDED from both axes — not just un-pre-checked.
+    assert "couple_face" not in face and "couple_face" not in body
 
-    # Bug 2: a face-only / no-body photo is not even surfaced for body, and a
+    # A face-only / no-body photo is not even surfaced for body, and a
     # body-only / no-face photo is not surfaced for face.
     assert "solo_face" not in body
     assert "solo_body" not in face
@@ -350,8 +397,8 @@ def test_eligibility_auto_select_rules_by_shot_type(monkeypatch):
     assert face["solo_full"]["auto_select"] is True
     assert body["solo_full"]["auto_select"] is True
 
-    # Defensive: an untagged photo is surfaced (both buckets) but never
-    # pre-checked, since we can't verify it is solo + the right type.
+    # An untagged (confirmed-user, non-group) photo is surfaced in both buckets
+    # but never pre-checked, since we can't verify it is solo + the right type.
     assert "untagged" in face and "untagged" in body
     assert face["untagged"]["auto_select"] is False
     assert body["untagged"]["auto_select"] is False
