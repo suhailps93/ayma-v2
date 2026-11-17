@@ -249,20 +249,23 @@ class _FakeApi extends ApiClient {
     return aiSections;
   }
 
+  bool failPhotos = false;
+
   @override
-  Future<AiNotes> aiNotes() async {
+  Future<List<AiNotePhoto>> photoNodes() async {
     calls.add('photos');
-    return AiNotes(text: '', photos: photos);
+    if (failPhotos) throw StateError('photos unavailable');
+    return photos;
   }
 
   @override
-  Future<void> photoHide(String url, {required String source}) async {
-    calls.add('photo_hide:$url:$source');
+  Future<void> deletePhotoNode(String nodeId) async {
+    calls.add('photo_delete:$nodeId');
   }
 
   @override
-  Future<void> photoPublish(String url, {required String source}) async {
-    calls.add('photo_publish:$url:$source');
+  Future<void> setPhotoNodeVisibility(String nodeId, String visibility) async {
+    calls.add('photo_visibility:$nodeId:$visibility');
   }
 
   @override
@@ -821,6 +824,61 @@ void main() {
     expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
     expect(find.textContaining('DELETED BY YOU'), findsNothing);
     expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
+  });
+
+  // NOTE 248: the strip is node-driven now. A previously-described photo must
+  // show Ayma's read (from the node), never "Ayma hasn't described this photo
+  // yet" (the URL-hash read-orphaning bug).
+  testWidgets('a described photo shows its read from the node, not the '
+      '"hasn\'t described" fallback', (tester) async {
+    final api = _FakeApi()
+      ..photos = const [
+        AiNotePhoto(
+          id: 'emergent.image.leaf',
+          url: 'https://example.com/leaf.jpg',
+          source: 'chat',
+          context: 'A close-up of a green leaf.',
+          isUser: 'no',
+        ),
+      ];
+    silenceImageLoadErrors();
+    await _pumpWithRouter(tester, api);
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('A close-up of a green leaf.'), findsOneWidget);
+    expect(find.textContaining("hasn't described this photo yet"), findsNothing);
+  });
+
+  // NOTE 248 (the 408 that silently rendered 0 PHOTOS): the node-driven strip
+  // has a real empty state and a real error+retry state — never a silent 0.
+  testWidgets('the Photos strip shows a real EMPTY state when there are no '
+      'photos', (tester) async {
+    final api = _FakeApi()..photos = const []; // loads, resolves empty
+    await _pumpWithRouter(tester, api);
+
+    expect(find.textContaining('No photos yet'), findsOneWidget);
+  });
+
+  testWidgets('the Photos strip shows an ERROR + retry state when the load '
+      'fails (never a silent 0)', (tester) async {
+    final api = _FakeApi()..failPhotos = true;
+    await _pumpWithRouter(tester, api);
+
+    expect(find.textContaining("Couldn't load your photos"), findsOneWidget);
+    expect(find.byKey(const ValueKey('photos_retry')), findsOneWidget);
+
+    // Retry recovers once the load succeeds.
+    api.failPhotos = false;
+    api.photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+    await tester.tap(find.byKey(const ValueKey('photos_retry')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining("Couldn't load your photos"), findsNothing);
+    expect(find.text('A few glimpses into my world.'), findsOneWidget);
   });
 
   testWidgets('the Photos section renders before narrative sections', (tester) async {

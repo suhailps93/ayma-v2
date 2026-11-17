@@ -171,10 +171,17 @@ def _node_text(node, kind: str) -> str:
 
 def _open_target(nid: str, node, kind: str) -> dict | None:
     if kind == "image":
+        # The node-driven photo viewer renders all of this straight from the
+        # node (founder Nov 16): the is-you verdict, where it came from, and
+        # Ayma's read.
         return {
             "type": "image",
             "url": getattr(node, "answer", None) or "",
             "read": getattr(node, "image_read", None) or "",
+            "is_you": getattr(node, "is_you", None) or "unknown",
+            "source_kind": getattr(node, "source_kind", None) or "",
+            "source_ref": getattr(node, "source_ref", None) or "",
+            "source_created_at": getattr(node, "source_created_at", None) or "",
         }
     if nid.startswith(_APPEARANCE_PREFIX):
         # The Appearance report is a single current node; the client opens the

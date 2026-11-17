@@ -76,6 +76,8 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   ApiClient get _notesApi;
 
   List<AiNotePhoto> _photos = const [];
+  bool _photosLoaded = false; // false until the first node-driven load resolves
+  bool _photosError = false; // the load failed → show a retry, never a silent 0
   DeepDiveReport? _webFindingsReport;
   String? _webFindingsLoadedFor;
 
@@ -85,11 +87,20 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
       _photos.where((p) => !p.deleted).toList();
 
   Future<void> _loadPhotos() async {
+    if (mounted) setState(() => _photosError = false);
     try {
-      final notes = await _notesApi.aiNotes();
-      if (mounted) setState(() => _photos = notes.photos);
+      final photos = await _notesApi.photoNodes();
+      if (mounted) {
+        setState(() {
+          _photos = photos;
+          _photosLoaded = true;
+        });
+      }
     } catch (e) {
-      debugPrint('[story] aiNotes (photos) failed: $e');
+      // Surface a real error/retry state — never a silent catch that renders
+      // "0 PHOTOS" with no signal (Scout NOTE 248).
+      debugPrint('[story] photoNodes failed: $e');
+      if (mounted) setState(() => _photosError = true);
     }
   }
 
@@ -114,13 +125,13 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   }
 
   Future<void> _hidePhoto(AiNotePhoto p) async {
-    await _notesApi.photoHide(p.url, source: p.source);
+    await _notesApi.deletePhotoNode(p.id); // keyed by the node id, not the URL
     await _loadPhotos();
     _toast('Removed that photo', kind: AymaToastKind.success);
   }
 
   Future<void> _publishPhoto(AiNotePhoto p) async {
-    await _notesApi.photoPublish(p.url, source: p.source);
+    await _notesApi.setPhotoNodeVisibility(p.id, 'public');
     await _loadPhotos();
     _toast('Added to your public profile', kind: AymaToastKind.success);
   }
@@ -452,13 +463,31 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           webFindsCount: _webFindingsReport?.facts.length,
           showLearningBanner: anyAiUpdate,
         ),
-        if (photos.isNotEmpty) ...[
+        // The Photos strip, node-driven. Never a silent 0 (Scout NOTE 248): a
+        // failed load shows a retry, and an empty-but-loaded state says so.
+        if (_photosError) ...[
+          () { num++; return const SizedBox.shrink(); }(),
+          _PhotosSectionNote(
+            number: num,
+            message: "Couldn't load your photos.",
+            onRetry: _loadPhotos,
+          ),
+          _sectionDivider(),
+        ] else if (photos.isNotEmpty) ...[
           () { num++; return const SizedBox.shrink(); }(),
           _PhotosSection(
             number: num,
             photos: photos,
             groups: photoGroupsForView,
             onOpen: _openPhotoDetail,
+          ),
+          _sectionDivider(),
+        ] else if (_photosLoaded) ...[
+          () { num++; return const SizedBox.shrink(); }(),
+          _PhotosSectionNote(
+            number: num,
+            message:
+                'No photos yet — share one in a chat with Ayma and it shows up here.',
           ),
           _sectionDivider(),
         ],
@@ -883,6 +912,48 @@ class _Stat extends StatelessWidget {
 // render is decided by the caller (`_content()`): the Story shows
 // profile/chat/web (never deleted); Ayma's Notes is the only surface that
 // ever shows the deleted group.
+
+/// The Photos section's empty / error state — a real, visible signal (never a
+/// silent "0 PHOTOS"). Shows a retry when [onRetry] is given (load failed).
+class _PhotosSectionNote extends StatelessWidget {
+  const _PhotosSectionNote({
+    required this.number,
+    required this.message,
+    this.onRetry,
+  });
+
+  final int number;
+  final String message;
+  final Future<void> Function()? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('${number.toString().padLeft(2, '0')}  PHOTOS',
+            style: AymaType.mono(size: 11, color: ac.accentText)
+                .copyWith(letterSpacing: 2)),
+        const SizedBox(height: 12),
+        Text(message, style: AymaType.sans(size: 14, color: ac.fgMute)),
+        if (onRetry != null) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: OutlinedButton.icon(
+              key: const ValueKey('photos_retry'),
+              onPressed: () => onRetry!(),
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(64, 44)),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
 
 /// The numbered "01 PHOTOS" section used in the Story document.
 class _PhotosSection extends StatelessWidget {

@@ -120,6 +120,32 @@ async def _caption(
     return (result or {}).get("text", "").strip() if isinstance(result, dict) else ""
 
 
+async def caption_from_url(
+    url: str,
+    *,
+    uid: str | None = None,
+    match: str = "",
+    source: str = "",
+) -> str:
+    """Public: Ayma's read of a photo given its Storage URL — resolves the URL
+    to its storage object, downloads the bytes, and runs the vision caption
+    (:func:`_caption`). Used by the image-node backfill's generate-read case
+    (a photo with no read anywhere). Returns ``""`` on any failure (a non-owner
+    URL, a missing object, a model error) rather than raising."""
+    import media_embed
+    import photo_notes
+
+    path = photo_notes.resolve_storage_path(url)
+    if not path:
+        return ""
+    try:
+        raw, mime = await asyncio.to_thread(media_embed.download_bytes, path)
+    except Exception:  # noqa: BLE001
+        logger.exception("caption_from_url: download failed for %s", url[:80])
+        return ""
+    return await _caption(raw, mime, match=match, source=source, uid=uid)
+
+
 def _media_col(db, uid: str):
     return db.collection("users").document(uid).collection("user_media")
 

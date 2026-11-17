@@ -641,6 +641,57 @@ def set_section_visibility(db, uid: str, section: str, visibility: Visibility | 
     return changed
 
 
+def image_nodes_for_view(db, uid: str, *, public_only: bool = False) -> list[dict]:
+    """Every graph IMAGE node for the photo view, newest first. Each row carries
+    what the viewer renders straight from the node — the Storage ``url``, Ayma's
+    ``read`` (``image_read``), the structured ``is_you`` verdict, and the SOURCE
+    provenance (``source_kind``/``source_ref``/``source_created_at``) — plus the
+    node ``id`` (content-hash keyed) and ``visibility`` for the owner actions.
+    This is the node-driven replacement for the legacy ``photo_notes`` assembly
+    (which keyed by URL hash and orphaned on token rotation). ``public_only``
+    returns just the public images (the public profile)."""
+    eff = effective(db, uid)
+    rows: list[dict] = []
+    for nid, node in eff.items():
+        if getattr(node, "answer_type", None) != "image":
+            continue
+        url = str(getattr(node, "answer", "") or "")
+        if not url:
+            continue
+        vis = getattr(node, "visibility", None)
+        vis_s = vis.value if hasattr(vis, "value") else str(vis or "private")
+        if public_only and vis_s != "public":
+            continue
+        rows.append(
+            {
+                "id": nid,
+                "url": url,
+                "read": str(getattr(node, "image_read", "") or ""),
+                "is_you": str(getattr(node, "is_you", "") or "unknown") or "unknown",
+                "source_kind": str(getattr(node, "source_kind", "") or ""),
+                "source_ref": str(getattr(node, "source_ref", "") or ""),
+                "source_created_at": str(getattr(node, "source_created_at", "") or ""),
+                "visibility": vis_s,
+            }
+        )
+    rows.sort(key=lambda r: r["source_created_at"], reverse=True)
+    return rows
+
+
+def is_you_from_verdict(verdict: str | None) -> str:
+    """Map a face-match verdict (photo_pipeline ``face_verdict`` — "of user" /
+    "other" / "unknown", or a bare "yes"/"no") to the structured image-node
+    ``is_you`` field ("yes" / "no" / "unknown"). Unknown/blank → "unknown"."""
+    v = (verdict or "").strip().lower()
+    if not v or v in ("unknown", "unsure", "maybe"):
+        return "unknown"
+    if v in ("yes", "you", "self") or "user" in v or "of user" in v:
+        return "yes"
+    if v == "no" or "other" in v or "not you" in v or "someone else" in v:
+        return "no"
+    return "unknown"
+
+
 def add_image_node(
     db,
     uid: str,
@@ -652,13 +703,29 @@ def add_image_node(
     section: str | None = None,
     links: list[dict] | None = None,
     node_id: str | None = None,
+    is_you: str = "",
+    source_kind: str = "",
+    source_ref: str = "",
+    source_created_at: str | None = None,
 ) -> str:
-    """Create an emergent IMAGE node under ``parent_id`` (design §6, "images are
-    nodes"): an ``answer_type == "image"`` node whose ``answer`` holds the
-    Firebase Storage ``image_url`` and ``image_read`` holds Ayma's read of the
-    image (who/what is in it). Private by default; ``links`` (typed related
-    links, §2.4) connect it to the fact nodes it belongs to — a reference, never
-    a copy. Returns the new node's id."""
+    """Create-or-update an emergent IMAGE node under ``parent_id`` (design §6,
+    "images are nodes"): an ``answer_type == "image"`` node whose ``answer``
+    holds the Firebase Storage ``image_url`` and ``image_read`` holds Ayma's
+    read of the image. Also carries the structured face-match verdict
+    (``is_you`` — "yes"/"no"/"unknown") and the SOURCE provenance
+    (``source_kind`` ∈ chat|appearance_report|profile_grid|web, ``source_ref``
+    the conversation/report id, ``source_created_at`` the first-ingest time) —
+    distinct from the epistemic ``provenance``. Private by default; ``links``
+    (typed related links, §2.4) connect it to the fact/report nodes it belongs
+    to — a reference, never a copy.
+
+    **UPSERT on ``node_id``** (which the callers key by image CONTENT hash, so a
+    re-ingest of the same bytes lands on the same node): if that image node
+    already exists it is UPDATED in place — never duplicated — preserving the
+    user's own visibility choice, the original ``source_created_at``, prior
+    links, and any good prior verdict/source the new call leaves blank. Raises
+    only if ``node_id`` collides with a seed node or a non-image overlay node.
+    Returns the node id."""
     overlay = load_overlay(db, uid)
     parent = pg.seed_node(parent_id)
     if parent is not None:
@@ -684,24 +751,61 @@ def add_image_node(
         raise ValueError(f"invalid visibility {vis!r}")
 
     nid = node_id or f"emergent.image.{secrets.token_hex(4)}"
-    if nid in overlay or pg.seed_node(nid) is not None:
+    raw_existing = overlay.get(nid)
+    prev = (
+        raw_existing
+        if isinstance(raw_existing, dict) and raw_existing.get("answer_type") == "image"
+        else None
+    )
+    # Collision with a seed node, or a non-image overlay node, is a real error.
+    if pg.seed_node(nid) is not None or (raw_existing is not None and prev is None):
         raise ValueError(f"node id {nid!r} already exists")
 
+    now = pg.now_iso()
+    base = prev or {}
+    # A stored overlay value may be an enum (model_dump python mode) or a plain
+    # string — normalise before reuse so an upsert doesn't re-serialize
+    # "Visibility.PRIVATE".
+    prev_vis_raw = base.get("visibility")
+    prev_vis = (
+        prev_vis_raw.value if hasattr(prev_vis_raw, "value")
+        else (str(prev_vis_raw) if prev_vis_raw else "")
+    )
+    read = (image_read or "").strip() or str(base.get("image_read") or "")
     e: dict[str, Any] = {
-        "prompt": (image_read or "image").strip()[:120] or "image",
+        "prompt": (read or "image").strip()[:120] or "image",
         "section": sec,
         "level": int(parent_level) + 1,
         "parent": parent_id,
         "answer_type": "image",
         "answer": image_url,
-        "image_read": image_read,
+        "image_read": read,
         "state": NodeState.ANSWERED.value,
-        "visibility": vis,
+        # Keep the user's own visibility choice on a re-ingest; use the passed
+        # default only when the node is brand new.
+        "visibility": prev_vis or vis,
         "provenance": Provenance.STATED.value,
-        "updated_at": pg.now_iso(),
+        "updated_at": now,
+        # First-ingest time is sticky; never reset on a later re-ingest.
+        "source_created_at": source_created_at or str(base.get("source_created_at") or now),
     }
-    if links:
-        e["links"] = links
+    # Prefer a fresh non-empty verdict/source; otherwise keep any prior value.
+    is_you_v = (is_you or str(base.get("is_you") or "")).strip()
+    if is_you_v:
+        e["is_you"] = is_you_v
+    source_kind_v = (source_kind or str(base.get("source_kind") or "")).strip()
+    if source_kind_v:
+        e["source_kind"] = source_kind_v
+    source_ref_v = (source_ref or str(base.get("source_ref") or "")).strip()
+    if source_ref_v:
+        e["source_ref"] = source_ref_v
+    # Merge links (preserve existing, add any new — a reference, never a copy).
+    merged_links = [l for l in (base.get("links") or []) if isinstance(l, dict)]
+    for l in links or []:
+        if l not in merged_links:
+            merged_links.append(l)
+    if merged_links:
+        e["links"] = merged_links
 
     model = OverlayNode.model_validate(e)
     overlay[nid] = model.model_dump(exclude_none=True)
@@ -746,6 +850,10 @@ def add_photo_fact(
     fact_text: str,
     visibility: Visibility | str = Visibility.PRIVATE,
     image_node_id: str | None = None,
+    is_you: str = "",
+    source_kind: str = "chat",
+    source_ref: str = "",
+    source_created_at: str | None = None,
 ) -> tuple[str, str] | None:
     """Home a chat-shared photo **with its fact** (founder decision Nov 16:
     "each photo sits with its fact", NOT a Photos section). Creates the fact
@@ -758,17 +866,37 @@ def add_photo_fact(
       (:func:`add_image_node`), ``elaborates`` → the fact; the fact links back
       ``same_topic`` → the image.
 
-    Idempotent on ``image_node_id``: if that image node already exists (a retry
-    of the same photo turn), returns ``None`` and writes nothing. Returns
-    ``(fact_id, image_id)`` on a fresh home. The image's visibility is the
+    The image node carries the face-match verdict (``is_you``) and SOURCE
+    provenance (``source_kind``/``source_ref``/``source_created_at``).
+
+    On ``image_node_id`` (content-hash keyed): if that image node already exists
+    (same bytes re-shared), it is UPDATED in place — a fresher read/verdict is
+    written, no duplicate fact is minted — and ``None`` is returned. Returns
+    ``(fact_id, image_id)`` only on a fresh home. The image's visibility is the
     common-sense default (private); the user can change it like any node."""
-    if image_node_id and node_overlay_entry(db, uid, image_node_id):
-        return None  # already homed this photo — don't duplicate on a retry
+    existing = (
+        node_overlay_entry(db, uid, image_node_id) if image_node_id else None
+    )
+    if existing:
+        # Re-share of the same bytes: refresh the image node in place under its
+        # existing parent fact (don't mint a duplicate fact node).
+        parent_id = str(existing.get("parent") or "")
+        if parent_id:
+            add_image_node(
+                db, uid, parent_id, image_url, image_read,
+                visibility=visibility, node_id=image_node_id,
+                is_you=is_you, source_kind=source_kind, source_ref=source_ref,
+                source_created_at=source_created_at,
+                links=[{"target": parent_id, "type": pg.StrictLinkType.ELABORATES.value}],
+            )
+        return None
     fact = (fact_text or "").strip() or (image_read or "").strip() or "a photo I shared"
     fact_id = add_loose_node(db, uid, fact)
     image_id = add_image_node(
         db, uid, fact_id, image_url, image_read,
         visibility=visibility, node_id=image_node_id,
+        is_you=is_you, source_kind=source_kind, source_ref=source_ref,
+        source_created_at=source_created_at,
         links=[{"target": fact_id, "type": pg.StrictLinkType.ELABORATES.value}],
     )
     add_link(db, uid, fact_id, image_id, pg.StrictLinkType.SAME_TOPIC.value)

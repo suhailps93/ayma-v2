@@ -4,6 +4,7 @@
 // that the renderer handles every new node kind without breaking.
 import 'package:ayma_flutter/screens/person_graph_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/widgets/photo_gallery.dart' show PhotoViewer;
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +61,44 @@ class _FakeApi extends ApiClient {
   _FakeApi() : super(auth: MockFirebaseAuth(signedIn: true));
   @override
   Future<PersonGraph> profileGraph({String? uid}) async => _graph();
+}
+
+/// A graph with ONLY an image node under one hub — so a grid of taps can only
+/// ever land on the person / section / image node (no report node that would
+/// need a router), isolating the image-node → viewer hit path.
+PersonGraph _imageOnlyGraph() => PersonGraph.fromMap({
+      'center': {'id': 'me', 'label': 'You'},
+      'sections': const [],
+      'nodes': [
+        {'id': 'me', 'kind': 'person', 'label': 'You'},
+        {'id': 'sec:identity', 'kind': 'section', 'label': 'Identity'},
+        {
+          'id': 'emergent.image.p1',
+          'kind': 'image',
+          'label': 'Photo',
+          'text': 'A man smiling outdoors',
+          'image_url': 'https://cdn/p1.jpg',
+          'visibility': 'public',
+          'open': {
+            'type': 'image',
+            'url': 'https://cdn/p1.jpg',
+            'read': 'A man smiling outdoors',
+            'is_you': 'yes',
+            'source_kind': 'chat',
+            'source_ref': 'sess-7',
+          },
+        },
+      ],
+      'edges': [
+        {'from': 'me', 'to': 'sec:identity'},
+        {'from': 'sec:identity', 'to': 'emergent.image.p1'},
+      ],
+    });
+
+class _ImageOnlyApi extends ApiClient {
+  _ImageOnlyApi() : super(auth: MockFirebaseAuth(signedIn: true));
+  @override
+  Future<PersonGraph> profileGraph({String? uid}) async => _imageOnlyGraph();
 }
 
 GraphNode _node(Map<String, dynamic> open) =>
@@ -120,5 +159,40 @@ void main() {
     expect(find.text('Report'), findsOneWidget);
     expect(find.text('Photo'), findsOneWidget);
     expect(find.text("Ayma's read"), findsOneWidget);
+  });
+
+  // Scout NOTE 248: tapping an image node on the person graph did NOTHING — the
+  // tap→node hit-test ran in the wrong coordinate space under the
+  // InteractiveViewer transform, so taps missed every node. The fix maps the
+  // viewport tap into scene coordinates (TransformationController.toScene)
+  // before hit-testing. This proves a tap that lands on the image node opens
+  // the node-driven PhotoViewer (with the node's read/verdict/source).
+  testWidgets('tapping the image node opens the node-driven photo viewer',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: PersonGraphScreen(api: _ImageOnlyApi()),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final canvas = tester.getRect(find.byType(PersonGraphScreen));
+    // The exact leaf position comes from a phyllotaxis spiral; sweep the canvas
+    // on a 22px grid (finger radius is 26px, so this leaves no gap) until a tap
+    // lands on the image node and the node-driven viewer opens. A dead hit-test
+    // (the Scout NOTE 248 bug) opens nothing at any point.
+    var opened = false;
+    for (var y = canvas.top + 60; y < canvas.bottom - 8 && !opened; y += 22) {
+      for (var x = canvas.left + 8; x < canvas.right - 8 && !opened; x += 22) {
+        await tester.tapAt(Offset(x, y));
+        await tester.pump();
+        if (find.byType(PhotoViewer).evaluate().isNotEmpty) {
+          opened = true;
+        }
+      }
+    }
+    expect(opened, isTrue,
+        reason: 'a tap on the image node must open the photo viewer');
+    // The viewer surfaces the node's read (its is-you verdict + source + read).
+    expect(find.textContaining('A man smiling'), findsOneWidget);
   });
 }

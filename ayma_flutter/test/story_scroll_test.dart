@@ -114,21 +114,17 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<AiNotes> aiNotes() async {
-    return AiNotes(
-      text: 'Sample notes',
-      photos: [
-        for (var i = 0; i < 18; i++)
-          AiNotePhoto(
-            id: 'p_$i',
-            url: 'https://example.com/photo_$i.jpg',
-            source: i < 6 ? 'profile' : (i < 12 ? 'chat' : 'web'),
-            isUser: 'yes',
-          ),
-      ],
-    );
+  Future<List<AiNotePhoto>> photoNodes() async {
+    return [
+      for (var i = 0; i < 18; i++)
+        AiNotePhoto(
+          id: 'emergent.image.p_$i',
+          url: 'https://example.com/photo_$i.jpg',
+          source: i < 6 ? 'profile' : (i < 12 ? 'chat' : 'web'),
+          isUser: 'yes',
+        ),
+    ];
   }
-
 }
 
 void main() {

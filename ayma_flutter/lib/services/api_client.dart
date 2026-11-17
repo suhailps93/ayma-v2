@@ -2215,80 +2215,61 @@ class ApiClient {
     });
   }
 
-  /// `GET /wiki/ai-view` — the compiled wiki context Ayma reads about the
-  /// caller, verbatim, plus every photo Ayma holds of them (debug).
-  Future<AiNotes> aiNotes() async {
-    final r = await _http.get(_uri('/wiki/ai-view'), headers: await _headers());
+  /// `GET /story/photos` — every photo Ayma holds of the caller, for the Your
+  /// Story Photos strip, sourced from the graph IMAGE NODES (founder Nov 16:
+  /// "images are nodes"). Each [AiNotePhoto] renders straight from its node —
+  /// `url`, Ayma's read (`context`), her verdict (`isUser`), the source, and
+  /// the node id (`id`, content-hash keyed). This replaced the URL-hash
+  /// `/wiki/ai-view` read that orphaned reads and timed out (NOTE 248).
+  Future<List<AiNotePhoto>> photoNodes() async {
+    final r = await _http.get(_uri('/story/photos'), headers: await _headers());
     if (r.statusCode != 200) {
-      throw ApiException(
-        'ai notes failed.',
-        statusCode: r.statusCode,
-        body: r.body,
-      );
+      throw ApiException('photos failed.', statusCode: r.statusCode, body: r.body);
     }
     final m = jsonDecode(r.body) as Map<String, dynamic>;
-    return AiNotes(
-      text: m['text'] as String? ?? '',
-      photos: (m['photos'] as List? ?? const [])
-          .whereType<Map>()
-          .map(
-            (e) => AiNotePhoto(
-              id: e['id'] as String? ?? '',
-              url: e['url'] as String? ?? '',
-              source: e['source'] as String? ?? '',
-              context: e['context'] as String? ?? '',
-              isUser: e['is_user'] as String? ?? '',
-              sourcePage: e['source_page'] as String? ?? '',
-              deleted: e['deleted'] as bool? ?? false,
-            ),
-          )
-          .where((p) => p.url.isNotEmpty)
-          .toList(),
-    );
+    return (m['photos'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (e) => AiNotePhoto(
+            id: e['id'] as String? ?? '',
+            url: e['url'] as String? ?? '',
+            source: e['source'] as String? ?? '',
+            context: e['context'] as String? ?? '',
+            isUser: e['is_user'] as String? ?? '',
+            sourcePage: e['source_page'] as String? ?? '',
+            visibility: e['visibility'] as String? ?? 'private',
+            deleted: e['deleted'] as bool? ?? false,
+          ),
+        )
+        .where((p) => p.url.isNotEmpty)
+        .toList();
   }
 
-  /// `POST /wiki/photo-hide` — the gallery's "Delete": takes the photo out of
-  /// view (and off the public grid, if it was a profile photo). Ayma keeps
-  /// the underlying record. Enforces the interactive timeout budget (≤8s).
-  Future<void> photoHide(String url, {required String source}) async {
+  /// `POST /story/photo/delete` — "Delete": removes the photo's graph IMAGE
+  /// node (keyed by [nodeId], never the rotating URL).
+  Future<void> deletePhotoNode(String nodeId) async {
     final r = await _post(
-      _uri('/wiki/photo-hide'),
-      body: jsonEncode({'url': url, 'source': source}),
+      _uri('/story/photo/delete'),
+      body: jsonEncode({'node_id': nodeId}),
       timeout: interactiveTimeout,
     );
     if (r.statusCode != 200) {
-      throw ApiException(
-        'Could not remove that photo.',
-        statusCode: r.statusCode,
-        body: r.body,
-      );
+      throw ApiException('Could not remove that photo.',
+          statusCode: r.statusCode, body: r.body);
     }
   }
 
-  /// `POST /wiki/photo-publish` — "Make public": promotes a chat or web photo
-  /// onto the public profile grid, through the same moderation every profile
-  /// upload goes through. Throws with the reason if it doesn't clear
-  /// moderation. This runs moderation + a face-embed + captioning pass
-  /// server-side (several sequential model calls), so it's given the extended
-  /// [longTimeout] budget.
-  Future<void> photoPublish(String url, {required String source}) async {
+  /// `POST /story/photo/visibility` — "Make public / private": the image node's
+  /// visibility (founder: make public/private = node visibility).
+  Future<void> setPhotoNodeVisibility(String nodeId, String visibility) async {
     final r = await _post(
-      _uri('/wiki/photo-publish'),
-      body: jsonEncode({'url': url, 'source': source}),
-      timeout: longTimeout,
+      _uri('/story/photo/visibility'),
+      body: jsonEncode({'node_id': nodeId, 'visibility': visibility}),
+      timeout: interactiveTimeout,
     );
     if (r.statusCode != 200) {
-      throw ApiException(
-        'Could not publish that photo.',
-        statusCode: r.statusCode,
-        body: r.body,
-      );
-    }
-    final m = jsonDecode(r.body) as Map<String, dynamic>;
-    if (m['published'] != true) {
-      throw ApiException(
-        (m['reason'] as String?) ?? "That photo didn't clear moderation.",
-      );
+      throw ApiException('Could not update that photo.',
+          statusCode: r.statusCode, body: r.body);
     }
   }
 
@@ -5852,7 +5833,8 @@ class QuestionnaireTree {
       );
 }
 
-/// One photo Ayma holds of the user, from `GET /wiki/ai-view`.
+/// One photo Ayma holds of the user, from the graph image nodes
+/// (`GET /story/photos`).
 class AiNotePhoto {
   const AiNotePhoto({
     required this.url,
@@ -5861,12 +5843,16 @@ class AiNotePhoto {
     this.context = '',
     this.isUser = '',
     this.sourcePage = '',
+    this.visibility = 'private',
     this.deleted = false,
   });
 
-  /// Stable id (a hash of the URL) — used to address this exact photo for
-  /// notes / hide / publish without the caller needing its own id scheme.
+  /// The graph image node's id (content-hash keyed) — addresses this exact
+  /// photo for delete / visibility without relying on the rotating URL.
   final String id;
+
+  /// The node's visibility: `private` | `public` | `ayma_only`.
+  final String visibility;
 
   final String url;
 
@@ -5892,23 +5878,17 @@ class AiNotePhoto {
 
   bool get isProfile => source == 'profile';
 
-  AiNotePhoto copyWith({String? context, String? isUser}) => AiNotePhoto(
+  AiNotePhoto copyWith({String? context, String? isUser, String? visibility}) =>
+      AiNotePhoto(
     id: id,
     url: url,
     source: source,
     context: context ?? this.context,
     isUser: isUser ?? this.isUser,
     sourcePage: sourcePage,
+    visibility: visibility ?? this.visibility,
     deleted: deleted,
   );
-}
-
-/// The AI-notes debug view: the compiled wiki text plus every photo Ayma has.
-class AiNotes {
-  const AiNotes({required this.text, this.photos = const []});
-
-  final String text;
-  final List<AiNotePhoto> photos;
 }
 
 class VoicePresets {
@@ -6557,6 +6537,9 @@ class GraphNode {
     this.imageUrl = '',
     this.openType = '',
     this.openId = '',
+    this.isYou = '',
+    this.sourceKind = '',
+    this.sourceRef = '',
   });
 
   final String id;
@@ -6566,6 +6549,14 @@ class GraphNode {
   final String text;
   final String visibility;
   final String pageType;
+
+  /// Image-node fields rendered by the node-driven photo viewer (founder Nov
+  /// 16): the face-match verdict ("yes"/"no"/"unknown"), and where the image
+  /// came from (`sourceKind` ∈ chat|appearance_report|profile_grid|web, with
+  /// `sourceRef` the conversation/report id). Empty on non-image nodes.
+  final String isYou;
+  final String sourceKind;
+  final String sourceRef;
 
   /// For a `kind == 'image'` node: the Storage URL of the photo (the [text] is
   /// Ayma's read of it). Empty otherwise.
@@ -6593,6 +6584,9 @@ class GraphNode {
       imageUrl: m['image_url'] as String? ?? '',
       openType: open?['type'] as String? ?? '',
       openId: open?['id'] as String? ?? '',
+      isYou: open?['is_you'] as String? ?? '',
+      sourceKind: open?['source_kind'] as String? ?? '',
+      sourceRef: open?['source_ref'] as String? ?? '',
     );
   }
 }
