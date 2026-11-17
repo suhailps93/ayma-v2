@@ -196,6 +196,35 @@ async def profile_graph_mine(uid: str = Depends(require_uid)) -> dict[str, objec
     return await asyncio.to_thread(profile_graph.get_graph, get_db(), uid)
 
 
+# The two /profile/graph/tree routes MUST be registered BEFORE the
+# /profile/graph/{target_uid} catch-all below. FastAPI matches in registration
+# order, so "/profile/graph/tree" otherwise binds target_uid="tree" and returns
+# the flat public graph for a nonexistent user — every self tree request got a
+# 115-byte centre-only payload and Your Story / the person graph rendered empty
+# (build 2487 founder defect). Specific paths before the catch-all parameter.
+# (_tree_payload / _inject_linkedin_button are defined below; resolved at call
+# time, so forward reference is fine.)
+@router.get("/profile/graph/tree")
+async def profile_graph_tree(
+    surface: str = "story", uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The caller's person graph as a Node-Visualiser tree (one payload for Your
+    Story / reports / graph-detail). ``surface`` ∈ story|report|graphDetail
+    selects the owner visibility set; AI-only nodes are included per the
+    developer flag (``graph_show_ai_only``)."""
+    sfc = surface if surface in {"story", "report", "graphDetail"} else "story"
+    return await asyncio.to_thread(_tree_payload, uid, sfc)
+
+
+@router.get("/profile/graph/tree/{target_uid}")
+async def profile_graph_tree_other(
+    target_uid: str, uid: str = Depends(require_adult_uid)
+) -> dict[str, object]:
+    """Another member's person graph as a Node-Visualiser tree — public nodes
+    only, never private or AI-only (the public profile surface)."""
+    return await asyncio.to_thread(_tree_payload, target_uid.strip(), "publicProfile")
+
+
 @router.get("/profile/graph/{target_uid}")
 async def profile_graph_other(
     target_uid: str, uid: str = Depends(require_adult_uid)
@@ -262,27 +291,6 @@ def _inject_linkedin_button(uid: str, surface: str, tree: dict) -> None:
         )
     except Exception:  # noqa: BLE001 - the button is best-effort, never 500s a tree
         pass
-
-
-@router.get("/profile/graph/tree")
-async def profile_graph_tree(
-    surface: str = "story", uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """The caller's person graph as a Node-Visualiser tree (one payload for Your
-    Story / reports / graph-detail). ``surface`` ∈ story|report|graphDetail
-    selects the owner visibility set; AI-only nodes are included per the
-    developer flag (``graph_show_ai_only``)."""
-    sfc = surface if surface in {"story", "report", "graphDetail"} else "story"
-    return await asyncio.to_thread(_tree_payload, uid, sfc)
-
-
-@router.get("/profile/graph/tree/{target_uid}")
-async def profile_graph_tree_other(
-    target_uid: str, uid: str = Depends(require_adult_uid)
-) -> dict[str, object]:
-    """Another member's person graph as a Node-Visualiser tree — public nodes
-    only, never private or AI-only (the public profile surface)."""
-    return await asyncio.to_thread(_tree_payload, target_uid.strip(), "publicProfile")
 
 
 @router.post("/profile/graph/node/{node_id}/visibility")
