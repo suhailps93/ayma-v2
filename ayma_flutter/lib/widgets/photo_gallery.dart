@@ -246,24 +246,34 @@ class PhotoViewer extends StatelessWidget {
     required this.url,
     this.isUser = '',
     this.caption = '',
+    this.source = '',
   });
 
   final String url;
+
+  /// The face-match verdict ("yes"/"no"/"unknown"/"").
   final String isUser;
 
-  /// An optional caption shown over the photo — used by the person graph to
-  /// surface Ayma's read of a photo node.
+  /// Ayma's read of the photo (the image node's `image_read`).
   final String caption;
+
+  /// Where the photo came from (the image node's source provenance label).
+  final String source;
 
   @override
   Widget build(BuildContext context) {
-    final note = caption.isNotEmpty
-        ? caption
-        : switch (isUser) {
-            'yes' => 'Ayma thinks this is you',
-            'no' => "Ayma doesn't think this is you",
-            _ => '',
-          };
+    // Node-driven overlay (founder Nov 16): the is-you verdict, the source, and
+    // Ayma's read — all shown together, each from the image node.
+    final verdict = switch (isUser) {
+      'yes' => 'Ayma thinks this is you',
+      'no' => "Ayma doesn't think this is you",
+      _ => '',
+    };
+    final note = [
+      if (verdict.isNotEmpty) verdict,
+      if (source.isNotEmpty) source,
+      if (caption.isNotEmpty) caption,
+    ].join('\n');
     return Dialog(
       backgroundColor: Colors.black,
       insetPadding: const EdgeInsets.all(16),

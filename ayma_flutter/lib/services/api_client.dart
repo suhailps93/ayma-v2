@@ -6557,6 +6557,9 @@ class GraphNode {
     this.imageUrl = '',
     this.openType = '',
     this.openId = '',
+    this.isYou = '',
+    this.sourceKind = '',
+    this.sourceRef = '',
   });
 
   final String id;
@@ -6566,6 +6569,14 @@ class GraphNode {
   final String text;
   final String visibility;
   final String pageType;
+
+  /// Image-node fields rendered by the node-driven photo viewer (founder Nov
+  /// 16): the face-match verdict ("yes"/"no"/"unknown"), and where the image
+  /// came from (`sourceKind` ∈ chat|appearance_report|profile_grid|web, with
+  /// `sourceRef` the conversation/report id). Empty on non-image nodes.
+  final String isYou;
+  final String sourceKind;
+  final String sourceRef;
 
   /// For a `kind == 'image'` node: the Storage URL of the photo (the [text] is
   /// Ayma's read of it). Empty otherwise.
@@ -6593,6 +6604,9 @@ class GraphNode {
       imageUrl: m['image_url'] as String? ?? '',
       openType: open?['type'] as String? ?? '',
       openId: open?['id'] as String? ?? '',
+      isYou: open?['is_you'] as String? ?? '',
+      sourceKind: open?['source_kind'] as String? ?? '',
+      sourceRef: open?['source_ref'] as String? ?? '',
     );
   }
 }

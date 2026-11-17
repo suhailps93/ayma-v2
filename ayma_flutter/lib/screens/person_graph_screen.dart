@@ -91,7 +91,12 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
       if (n.imageUrl.isNotEmpty) {
         showDialog<void>(
           context: context,
-          builder: (_) => PhotoViewer(url: n.imageUrl, caption: n.text),
+          builder: (_) => PhotoViewer(
+            url: n.imageUrl,
+            caption: n.text, // Ayma's read, from the node
+            isUser: n.isYou, // the face-match verdict, from the node
+            source: _imageSourceLabel(n.sourceKind),
+          ),
         );
       }
       return;
@@ -281,18 +286,26 @@ class _GraphBodyState extends State<_GraphBody> {
             builder: (context, c) {
               final size = Size(c.maxWidth, c.maxHeight);
               final layout = _NeuralLayout(widget.graph, size);
+              // The tap handler sits ABOVE the InteractiveViewer and maps the
+              // viewport tap into scene coordinates via the transformation
+              // controller (`toScene`), so a node is hit correctly at ANY pan /
+              // zoom. (Previously the GestureDetector was the InteractiveViewer's
+              // child, so its localPosition space was ambiguous under the
+              // transform and taps on image/report nodes missed entirely —
+              // Scout NOTE 248: tapping a photo node did nothing.)
               return ClipRect(
-                child: InteractiveViewer(
-                  transformationController: _tc,
-                  minScale: 0.5,
-                  maxScale: 6,
-                  boundaryMargin: const EdgeInsets.all(120),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (d) {
-                      final hit = layout.hit(d.localPosition);
-                      if (hit != null) widget.onTapNode(hit);
-                    },
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (d) {
+                    final scene = _tc.toScene(d.localPosition);
+                    final hit = layout.hit(scene);
+                    if (hit != null) widget.onTapNode(hit);
+                  },
+                  child: InteractiveViewer(
+                    transformationController: _tc,
+                    minScale: 0.5,
+                    maxScale: 6,
+                    boundaryMargin: const EdgeInsets.all(120),
                     child: SizedBox(
                       width: size.width,
                       height: size.height,
@@ -380,6 +393,16 @@ class _DetailPanel extends StatelessWidget {
 /// centre, sections on a ring, and each section's leaves spiralled around their
 /// hub (a phyllotaxis spiral so dense clusters never overlap). The whole thing
 /// is scaled to fit [size]; InteractiveViewer zooms in for detail.
+/// A human label for where an image node came from (its `source_kind`), shown
+/// in the node-driven photo viewer.
+String _imageSourceLabel(String sourceKind) => switch (sourceKind) {
+      'chat' => 'Shared in a chat with Ayma',
+      'appearance_report' => 'From an appearance report',
+      'profile_grid' => 'From your profile photos',
+      'web' => 'Found on the web',
+      _ => '',
+    };
+
 class _NeuralLayout {
   _NeuralLayout(this.graph, this.size) {
     final byId = {for (final n in graph.nodes) n.id: n};

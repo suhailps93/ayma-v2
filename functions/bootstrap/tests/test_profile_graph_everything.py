@@ -73,11 +73,12 @@ def test_owner_graph_surfaces_every_store_node_with_open_targets():
     img = nodes["emergent.image.photo1"]
     assert img["kind"] == "image"
     assert img["image_url"] == "https://cdn/p1.jpg"
-    assert img["open"] == {
-        "type": "image",
-        "url": "https://cdn/p1.jpg",
-        "read": "A man smiling outdoors.",
-    }
+    assert img["open"]["type"] == "image"
+    assert img["open"]["url"] == "https://cdn/p1.jpg"
+    assert img["open"]["read"] == "A man smiling outdoors."
+    # The open target also carries the node's verdict + source for the viewer.
+    assert "is_you" in img["open"]
+    assert "source_kind" in img["open"]
 
     # Each node hangs off a section hub reachable from the centre.
     edge_pairs = {(e["from"], e["to"]) for e in g["edges"]}

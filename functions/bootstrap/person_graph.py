@@ -190,6 +190,17 @@ class OverlayNode(BaseModel):
     # node, ``answer`` holds the Firebase Storage link and ``image_read`` holds
     # Ayma's read of the image (who/what is in it). Never set on a text node.
     image_read: Optional[str] = None
+    # Image-node verdict + SOURCE provenance (founder Nov 16 2026). ``is_you`` is
+    # the structured face-match verdict ("yes"/"no"/"unknown"), written at
+    # ingestion — NOT folded into prose. The source axis is DISTINCT from the
+    # epistemic ``provenance`` (stated/inferred/imported) above: ``source_kind``
+    # ∈ chat|appearance_report|profile_grid|web records WHERE the image came
+    # from, ``source_ref`` the conversation/session or report id ("" if none),
+    # ``source_created_at`` the ISO time it was first ingested. Only on image nodes.
+    is_you: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_ref: Optional[str] = None
+    source_created_at: Optional[str] = None
 
 
 class GraphNode(BaseModel):
@@ -222,7 +233,14 @@ class GraphNode(BaseModel):
     updated_at: Optional[str] = None
     # image nodes (design §6): ``answer`` = Firebase Storage link,
     # ``image_read`` = Ayma's read of the image. Only on ``answer_type=="image"``.
+    # ``is_you`` = face-match verdict; ``source_kind``/``source_ref``/
+    # ``source_created_at`` = where the image came from (distinct from the
+    # epistemic ``provenance`` axis). See OverlayNode for the field contract.
     image_read: Optional[str] = None
+    is_you: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_ref: Optional[str] = None
+    source_created_at: Optional[str] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -387,6 +405,14 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.updated_at = o.updated_at
     if o.image_read is not None:
         base.image_read = o.image_read
+    if o.is_you is not None:
+        base.is_you = o.is_you
+    if o.source_kind is not None:
+        base.source_kind = o.source_kind
+    if o.source_ref is not None:
+        base.source_ref = o.source_ref
+    if o.source_created_at is not None:
+        base.source_created_at = o.source_created_at
     return base
 
 

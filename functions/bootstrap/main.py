@@ -3205,11 +3205,17 @@ async def _run_chat_followups(
                                 "emergent.image."
                                 + hashlib.sha1(img_bytes).hexdigest()[:8]
                             )
+                            # Structured is-you verdict on the node (founder Nov
+                            # 16: a real field, not just folded into the caption
+                            # prose) from the face-match result, plus the chat
+                            # source provenance (which conversation it came from).
                             await asyncio.to_thread(
                                 pg_store.add_photo_fact,
                                 get_db(), uid,
-                                image_url=url, image_read=note, fact_text=caption,
+                                image_url=url, image_read=caption, fact_text=caption,
                                 image_node_id=img_node_id,
+                                is_you=pg_store.is_you_from_verdict(match),
+                                source_kind="chat", source_ref=session_id,
                             )
                     except Exception:  # noqa: BLE001 - graph home is best-effort
                         logger.exception("chat photo graph-home failed for %s", uid)
