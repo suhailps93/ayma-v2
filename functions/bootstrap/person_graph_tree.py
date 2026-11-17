@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import person_graph_index as index_mod
 import person_graph_render as render
 import question_tree
 from person_graph import GraphNode, Visibility
@@ -65,6 +66,54 @@ def _keep_set(surface: str, *, include_ayma_only: bool) -> set[str]:
     if include_ayma_only and surface in _OWNER_SURFACES:
         keep.add("ayma_only")
     return keep
+
+
+# --- zero-duplicates render guarantee (founder build 2488) -----------------
+#
+# A section must NEVER show the same fact twice. Two suppression rules, applied
+# as the tree is built, so the guarantee holds even if a write path once minted
+# a restating node:
+#
+#  1. STANDARD restatement — when a standard fact renders as its labelled row,
+#     any OTHER node in the same section whose text restates that fact (the bare
+#     value, or "<label>: <value>") is suppressed; the standard row survives.
+#  2. EXACT duplicate — a node (or child bullet) whose normalized text was
+#     already emitted earlier in the walk is suppressed.
+#
+# Both are SURFACE-AWARE: a standard fact only suppresses a restatement on a
+# surface where that standard row itself renders (its visibility is in ``keep``),
+# so suppressing a bullet can never make the only copy of a fact disappear — and
+# a private value is never pulled onto the public surface, nor vice-versa.
+
+
+def _standard_facts_by_section(
+    graph: dict[str, GraphNode], keep: set[str]
+) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    """``{section: [(value_norm, labelvalue_tokens), ...]}`` for the STANDARD
+    nodes that actually render on this surface (visibility in ``keep`` and a
+    non-empty value) — the facts whose restatements get suppressed."""
+    out: dict[str, list[tuple[str, frozenset[str]]]] = {}
+    for n in graph.values():
+        if not n.standard or _vis(n) not in keep:
+            continue
+        value_norm, lv_tokens = render.standard_fact_forms(n)
+        if not value_norm and not lv_tokens:
+            continue
+        out.setdefault(n.section, []).append((value_norm, lv_tokens))
+    return out
+
+
+def _restates_standard(
+    text: str, section: str, std_by_section: dict[str, list[tuple[str, frozenset[str]]]]
+) -> bool:
+    """True when ``text`` restates any rendering standard fact in ``section``."""
+    forms = std_by_section.get(section)
+    if not forms or not text:
+        return False
+    for value_norm, lv_tokens in forms:
+        if render.text_restates_standard_fact(value_norm, lv_tokens, text):
+            return True
+    return False
 
 
 def _children_of(graph: dict[str, GraphNode]) -> dict[str, list[str]]:
@@ -128,9 +177,16 @@ def _build_node(
     adj: dict[str, list[str]],
     keep: set[str],
     seen: set[str],
+    std_by_section: dict[str, list[tuple[str, frozenset[str]]]],
+    seen_texts: set[str],
 ) -> Optional[dict]:
     """Render one node + its descendants, filtered to ``keep``. Returns None when
-    neither the node nor any descendant survives the visibility filter."""
+    neither the node nor any descendant survives the visibility filter.
+
+    ``std_by_section`` / ``seen_texts`` drive the zero-duplicates guarantee: a
+    non-standard node whose text restates a rendering standard fact, or whose
+    normalized text already appeared earlier in the walk, has its OWN line
+    suppressed (its distinct children, if any, still render)."""
     if node.id in seen:
         return None
     seen.add(node.id)
@@ -138,6 +194,20 @@ def _build_node(
     own_vis = _vis(node)
     text = render.node_display_text(node)
     is_image = node.answer_type == "image"
+    norm = index_mod.normalize_text(text)
+
+    own_renderable = bool(text) or is_image
+    own_kept = own_vis in keep and own_renderable
+    # Zero-duplicates: never suppress a standard labelled row (it is the keeper);
+    # suppress a non-standard node that restates a standard fact rendering in the
+    # same section, or whose text was already emitted (exact duplicate).
+    if own_kept and not node.standard and not is_image:
+        if _restates_standard(text, node.section, std_by_section) or (
+            norm and norm in seen_texts
+        ):
+            own_kept = False
+    if own_kept and norm:
+        seen_texts.add(norm)  # register BEFORE children, so the row wins over its restatements
 
     # child NODES (parent links) rendered recursively, in fixed order
     child_nodes = sorted(
@@ -146,34 +216,41 @@ def _build_node(
     )
     children: list[dict] = []
     for c in child_nodes:
-        built = _build_node(c, graph, adj, keep, seen)
+        built = _build_node(c, graph, adj, keep, seen, std_by_section, seen_texts)
         if built is not None:
             children.append(built)
 
     # child BULLETS (ChildBullet text leaves) carry their own visibility
     for i, cb in enumerate(node.children):
         cb_vis = _VIS_STR.get(cb.visibility, "private")
-        if cb.text.strip() and cb_vis in keep:
-            children.append(
-                {
-                    "id": f"{node.id}#c{i}",
-                    "section": node.section,
-                    "label": "",
-                    "text": cb.text.strip(),
-                    "answer_type": "text",
-                    "level": node.level + 1,
-                    "visibility": cb_vis,
-                    "subtree_visibility": cb_vis,
-                    "standard": False,
-                    "standard_label": None,
-                    "standard_order": None,
-                    "editable": cb_vis != "ayma_only",
-                    "children": [],
-                }
-            )
+        cb_text = cb.text.strip()
+        if not cb_text or cb_vis not in keep:
+            continue
+        cb_norm = index_mod.normalize_text(cb_text)
+        if _restates_standard(cb_text, node.section, std_by_section) or (
+            cb_norm and cb_norm in seen_texts
+        ):
+            continue  # a child bullet that restates a standard fact / exact dup
+        if cb_norm:
+            seen_texts.add(cb_norm)
+        children.append(
+            {
+                "id": f"{node.id}#c{i}",
+                "section": node.section,
+                "label": "",
+                "text": cb_text,
+                "answer_type": "text",
+                "level": node.level + 1,
+                "visibility": cb_vis,
+                "subtree_visibility": cb_vis,
+                "standard": False,
+                "standard_label": None,
+                "standard_order": None,
+                "editable": cb_vis != "ayma_only",
+                "children": [],
+            }
+        )
 
-    own_renderable = bool(text) or is_image
-    own_kept = own_vis in keep and own_renderable
     if not own_kept and not children:
         return None
 
@@ -181,7 +258,7 @@ def _build_node(
         "id": node.id,
         "section": node.section,
         "label": node.standard_field_label or (node.prompt if node.emergent else node.prompt),
-        "text": text,
+        "text": text if own_kept else "",  # a suppressed line shows nothing, children remain
         "answer_type": node.answer_type or "text",
         "level": node.level,
         "visibility": own_vis,
@@ -233,8 +310,10 @@ def node_tree(
     drop_report = surface in (SURFACE_STORY, SURFACE_PUBLIC)
     adj = _children_of(graph)
     child_ids = {c for cs in adj.values() for c in cs}
+    std_by_section = _standard_facts_by_section(graph, keep)
 
     seen: set[str] = set()
+    seen_texts: set[str] = set()  # zero-duplicates: normalized texts already emitted
     by_section: dict[str, list[dict]] = {}
     roots = sorted(
         (n for nid, n in graph.items() if nid not in child_ids),
@@ -243,7 +322,7 @@ def node_tree(
     for n in roots:
         if drop_report and render.node_page_type(n) in render._REPORT_PAGE_TYPES:
             continue
-        built = _build_node(n, graph, adj, keep, seen)
+        built = _build_node(n, graph, adj, keep, seen, std_by_section, seen_texts)
         if built is not None:
             by_section.setdefault(n.section, []).append(built)
 

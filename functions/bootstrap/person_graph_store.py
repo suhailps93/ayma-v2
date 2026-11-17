@@ -155,6 +155,36 @@ def _dedupe_collapse_id(
         return None
 
 
+def _standard_restatement_id(
+    db, uid: str, text: str, section: str | None
+) -> Optional[str]:
+    """The id of a STANDARD node whose fact ``text`` restates — so a free-minting
+    path reuses it instead of creating a second node that only re-states a
+    labelled identity fact (Age / Gender / Ethnic origin / … — founder build
+    2488). ALWAYS ON (not flag-gated): minting a restatement of a standard fact
+    is never correct, and the match is high-precision (bare value or the exact
+    label+value tokens). Best-effort — any failure returns ``None`` and never
+    blocks a write. Searches the node's section first, then the whole graph (an
+    identity fact can be restated from a loose node homed in ``misc``)."""
+    try:
+        import person_graph_render as _render
+
+        graph = effective(db, uid)
+    except Exception:  # noqa: BLE001 - prevention is best-effort, never blocks
+        return None
+    if section is not None:
+        hit = _render.standard_restatement_id(graph, text, section)
+        if hit is not None:
+            return hit
+    for sec in {n.section for n in graph.values() if getattr(n, "standard", False)}:
+        if sec == section:
+            continue
+        hit = _render.standard_restatement_id(graph, text, sec)
+        if hit is not None:
+            return hit
+    return None
+
+
 @dataclass(frozen=True)
 class ConflictFinding:
     """A new fact that CONTRADICTS an existing node (write-time conflict raising,
@@ -336,6 +366,9 @@ def add_node(
     # existing node reuses it instead of minting a duplicate (answer-bearing
     # nodes only — a bare structural label is never collapsed).
     if node_id is None and answer is not None:
+        hit = _standard_restatement_id(db, uid, str(answer), section=sec)
+        if hit is not None:
+            return hit  # restates a standard fact — reuse it, never mint a duplicate
         hit = _dedupe_collapse_id(db, uid, str(answer), section=sec)
         if hit is not None:
             return hit
@@ -415,8 +448,12 @@ def add_loose_node(
         raise ValueError("add_loose_node needs a non-empty fact")
     if section not in question_tree.section_meta():
         raise ValueError(f"unknown section {section!r} for loose node")
-    # Write-time prevention: an exact restatement reuses the existing node.
+    # Write-time prevention: a restatement of a standard fact, or an exact
+    # restatement of any node, reuses the existing node instead of minting one.
     if node_id is None:
+        hit = _standard_restatement_id(db, uid, fact, section=section)
+        if hit is not None:
+            return hit
         hit = _dedupe_collapse_id(db, uid, fact, section=section)
         if hit is not None:
             return hit
@@ -794,6 +831,23 @@ def replace_section_bullets(
         raise ValueError(f"unknown section {section!r}")
     overlay = load_overlay(db, uid)
 
+    # Zero-duplicates write-time prevention (founder build 2488): the editor
+    # write-back must NEVER mint an editor node that merely restates a STANDARD
+    # fact (the labelled row the standard node already owns) — the gap that let
+    # the editor import create ``emergent.editor.identity.*`` duplicates of Age /
+    # Ethnic origin / Interested-in. A standard fact renders into the editor's
+    # bullet list, the client sends it back, and (its id being a SEED id, not an
+    # editor-owned one) it never matched an existing editor node, so a new node
+    # was minted. We build the standard facts once from the same overlay and drop
+    # any incoming bullet that only restates one (a matched legacy restatement is
+    # left unconsumed, so the cleanup below deletes it).
+    import person_graph_render as _render
+
+    try:
+        _graph = pg.effective_graph(overlay, intent=_stored_intent(db, uid))
+    except Exception:  # noqa: BLE001 - prevention is best-effort, never blocks a save
+        _graph = {}
+
     # The section's current editor-owned nodes (emergent, public/private): the
     # migrated story bullets (``emergent.story.*``), prior editor bullets
     # (``emergent.editor.*``) and free-form remembered facts (bare
@@ -821,6 +875,11 @@ def replace_section_bullets(
     for b in bullets or []:
         text = str(b.get("text") or "").strip()
         if not text:
+            continue
+        # A bullet that only restates a standard fact already in the graph is
+        # dropped — never stored as a second node (zero-duplicates). A matched
+        # legacy restatement is left unconsumed below and so deleted.
+        if _graph and _render.standard_restatement_id(_graph, text, section) is not None:
             continue
         vis = str(b.get("visibility") or Visibility.PRIVATE.value)
         if vis not in {v.value for v in Visibility} or vis == Visibility.AYMA_ONLY.value:

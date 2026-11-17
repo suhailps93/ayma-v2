@@ -60,6 +60,141 @@ def test_tree_renders_standard_first_then_conversational():
     assert ident["nodes"][0]["standard_label"] == "Name"
 
 
+# --- zero-duplicates render guarantee (founder build 2488) -----------------
+
+
+def _norm(t):
+    import person_graph_index as index_mod
+
+    return index_mod.normalize_text(t)
+
+
+def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
+    """Founder build 2488: his About Me showed Ethnic origin x2, Age x2, and
+    Gender/Location/Interested-in restated as plain bullets. The same fact lived
+    in a standard node AND an editor/story node restating it. The render MUST
+    show each standard fact exactly once (the labelled row), dropping every
+    restating bullet, in the fixed order — and no section repeats a fact."""
+    # a DOB whose age the "Age: N" bullet restates (computed, not hardcoded)
+    overlay = {
+        "legal_first_name": {"answer": "Arun", "state": "answered"},
+        "date_of_birth": {"answer": "1993-06-15", "state": "answered"},
+        "gender_identity": {"answer": "Male", "state": "answered", "visibility": "public"},
+        "primary_location": {"answer": "San Jose", "state": "answered", "visibility": "public"},
+        "target_match_genders": {"answer": ["Women"], "state": "answered", "visibility": "public"},
+        "ethnic_cultural_origin": {"answer": "South Asian", "state": "answered"},
+    }
+    g = _graph(overlay)
+    age = g["date_of_birth"].answer and __import__("person_graph_render").node_display_text(
+        g["date_of_birth"]
+    )
+    # the restating editor/story bullets the import minted today (all in identity)
+    overlay.update(
+        {
+            "emergent.editor.identity.11": {
+                "prompt": "Ethnic and cultural origin: South Asian",
+                "section": "identity", "level": 2, "answer_type": "narrative",
+                "answer": "Ethnic and cultural origin: South Asian",
+                "state": "answered", "visibility": "private",
+            },
+            "emergent.editor.identity.4": {
+                "prompt": f"Age: {age}", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": f"Age: {age}",
+                "state": "answered", "visibility": "private",
+            },
+            "emergent.editor.identity.7": {
+                "prompt": "Interested in: Women", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "Interested in: Women",
+                "state": "answered", "visibility": "public",
+            },
+            "emergent.story.identity.0": {
+                "prompt": "Gender: Male", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "Gender: Male",
+                "state": "answered", "visibility": "public",
+            },
+            "emergent.story.identity.1": {
+                "prompt": "South Asian", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "South Asian",
+                "state": "answered", "visibility": "private",
+            },
+            # a genuinely DISTINCT fact must survive (not over-suppressed)
+            "emergent.story.identity.2": {
+                "prompt": "Grew up in Chennai", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "Grew up in Chennai",
+                "state": "answered", "visibility": "public",
+            },
+        }
+    )
+    g = _graph(overlay)
+    t = tree.node_tree(g, surface="story")
+    ident = next(s for s in t["sections"] if s["page_type"] == "identity")
+
+    # the six standard fields render, each exactly once, in canonical order
+    std = [n for n in ident["nodes"] if n["standard"]]
+    assert [n["standard_label"] for n in std] == [
+        "Name", "Age", "Gender", "Location", "Interested in", "Ethnic & cultural origin",
+    ]
+
+    # every restating emergent node is suppressed (no surviving text); the
+    # distinct fact survives. The standard rows keep the BARE value as their text
+    # (the client prepends the label), so "South Asian" appears once — as the row.
+    surviving_ids = {n["id"] for n in ident["nodes"] if n["text"]}
+    for dup_id in (
+        "emergent.editor.identity.11",  # "Ethnic and cultural origin: South Asian"
+        "emergent.editor.identity.4",   # "Age: N"
+        "emergent.editor.identity.7",   # "Interested in: Women"
+        "emergent.story.identity.0",    # "Gender: Male"
+        "emergent.story.identity.1",    # bare "South Asian"
+    ):
+        assert dup_id not in surviving_ids, f"{dup_id} restatement not suppressed"
+    assert "emergent.story.identity.2" in surviving_ids  # the distinct fact survives
+    texts = [n["text"] for n in ident["nodes"] if n["text"]]
+    assert texts.count("South Asian") == 1  # only the standard Ethnic row
+
+    # no section repeats a fact: no normalized text appears twice anywhere
+    def _all_texts(nodes):
+        for n in nodes:
+            if n.get("text"):
+                yield _norm(n["text"])
+            yield from _all_texts(n.get("children", []))
+
+    for s in t["sections"]:
+        norms = list(_all_texts(s["nodes"]))
+        assert len(norms) == len(set(norms)), f"section {s['page_type']} repeats a fact"
+
+
+def test_public_surface_keeps_fact_when_standard_row_is_private():
+    """Privacy: suppression is surface-aware. ``ethnic_cultural_origin`` defaults
+    PRIVATE, so it does not render on the public profile; a PUBLIC bullet that
+    restates it must therefore NOT be suppressed there (else the fact vanishes
+    from the public surface). On the owner surface the standard row renders, so
+    the restatement is suppressed there."""
+    overlay = {
+        "ethnic_cultural_origin": {"answer": "South Asian", "state": "answered"},  # private
+        "emergent.editor.identity.0": {
+            "prompt": "Ethnic and cultural origin: South Asian",
+            "section": "identity", "level": 2, "answer_type": "narrative",
+            "answer": "Ethnic and cultural origin: South Asian",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    g = _graph(overlay)
+    pub = tree.node_tree(g, surface="publicProfile")
+    pub_ident = next((s for s in pub["sections"] if s["page_type"] == "identity"), None)
+    assert pub_ident is not None
+    pub_texts = [n["text"] for n in pub_ident["nodes"] if n["text"]]
+    # the public bullet is the ONLY public copy of the fact — it must survive
+    assert "Ethnic and cultural origin: South Asian" in pub_texts
+
+    story = tree.node_tree(g, surface="story")
+    s_ident = next(s for s in story["sections"] if s["page_type"] == "identity")
+    # on the owner surface the standard row renders, so the restatement is dropped
+    s_texts = [n["text"] for n in s_ident["nodes"] if n["text"]]
+    assert "Ethnic and cultural origin: South Asian" not in s_texts
+    assert any(n["standard"] and n["standard_label"] == "Ethnic & cultural origin"
+               for n in s_ident["nodes"])
+
+
 # --- visibility filtering: story vs public ---------------------------------
 
 
