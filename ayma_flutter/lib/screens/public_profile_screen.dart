@@ -26,6 +26,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../models/story_node.dart';
 import '../widgets/graph_tree_view.dart';
+import '../widgets/node_visualiser.dart';
 import '../widgets/out_of_credits.dart';
 import 'voice_call_screen.dart';
 
@@ -741,12 +742,25 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                   ? fallback
                   : GestureDetector(
                       onTap: _openFullscreen,
+                      // 2o P4 — each carousel page renders through the ONE
+                      // shared Node-Visualiser image-node renderer
+                      // ([NodeImage], fill mode), replacing the bespoke raw
+                      // AymaPhoto that used to sit here. The photos stay the
+                      // profile's own curated set (public reads `photos`
+                      // only), wrapped as minimal image nodes; tapping still
+                      // opens this carousel's own fullscreen viewer
+                      // (_openFullscreen), per NodeVisualiser's onImageTap
+                      // contract ("the carousel passes its own viewer").
                       child: PageView.builder(
                         controller: _controller,
                         onPageChanged: (i) => setState(() => _page = i),
                         itemCount: photos.length,
-                        itemBuilder: (_, i) => AymaPhoto(
-                          url: photos[i],
+                        itemBuilder: (_, i) => NodeImage(
+                          node: StoryNode.image(
+                            id: 'carousel_$i',
+                            imageUrl: photos[i],
+                          ),
+                          fill: true,
                           displayWidth: 900,
                           error: fallback,
                         ),

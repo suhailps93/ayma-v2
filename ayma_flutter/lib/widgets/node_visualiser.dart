@@ -189,36 +189,7 @@ class NodeVisualiser extends StatelessWidget {
     );
   }
 
-  Widget _imageContent(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: AspectRatio(
-              aspectRatio: 1,
-              child: AymaPhoto(
-                key: Key('node_image_${node.id}'),
-                url: node.imageUrl,
-                displayWidth: 480,
-              ),
-            ),
-          ),
-        ),
-        if (node.imageRead.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              node.imageRead,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-      ],
-    );
-  }
+  Widget _imageContent(BuildContext context) => NodeImage(node: node);
 
   // --- report node kinds (2o P0) ---
 
@@ -441,6 +412,88 @@ class NodeVisualiserSection extends StatelessWidget {
             isOwner: isOwner,
             onImageTap: onImageTap,
             onCandidateVerdict: onCandidateVerdict,
+          ),
+      ],
+    );
+  }
+}
+
+/// The ONE renderer for a person-graph IMAGE node's photo (2o — no parallel
+/// image renderers). The inline [NodeVisualiser] uses it bounded (a 240px
+/// square with Ayma's read caption below, tap handled by the enclosing node
+/// row); the profile photo carousel (2o P4) uses it [fill] — a full-bleed
+/// cover page, no caption, tap routed to the carousel's own fullscreen viewer.
+/// One widget renders the image in both places, so a photo never has a second
+/// bespoke renderer to drift from.
+class NodeImage extends StatelessWidget {
+  const NodeImage({
+    super.key,
+    required this.node,
+    this.fill = false,
+    this.onTap,
+    this.error,
+    this.displayWidth = 480.0,
+  });
+
+  /// The image node to render ([StoryNode.isImage] is expected true).
+  final StoryNode node;
+
+  /// Full-bleed cover (the carousel hero page) instead of the bounded 240px
+  /// inline image with Ayma's read caption below it.
+  final bool fill;
+
+  /// What tapping the image does. Null leaves taps to an enclosing handler
+  /// (the inline node row). The carousel passes its own fullscreen viewer.
+  final VoidCallback? onTap;
+
+  /// Fallback painted when the photo cannot decode (the carousel passes its
+  /// seed gradient).
+  final Widget? error;
+
+  final double displayWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    if (fill) {
+      final photo = AymaPhoto(
+        key: Key('node_image_${node.id}'),
+        url: node.imageUrl,
+        displayWidth: displayWidth,
+        error: error,
+      );
+      return onTap == null
+          ? photo
+          : GestureDetector(onTap: onTap, child: photo);
+    }
+    final bounded = ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 240, maxHeight: 240),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: AymaPhoto(
+            key: Key('node_image_${node.id}'),
+            url: node.imageUrl,
+            displayWidth: displayWidth,
+            error: error,
+          ),
+        ),
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        onTap == null
+            ? bounded
+            : GestureDetector(onTap: onTap, child: bounded),
+        if (node.imageRead.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              node.imageRead,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
       ],
     );

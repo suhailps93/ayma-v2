@@ -124,6 +124,28 @@ class StoryNode {
 
   final List<StoryNode> children;
 
+  /// A minimal image node wrapping an already-curated photo URL — the profile
+  /// photo carousel's pages (2o P4). The carousel's photos come from the
+  /// profile's own curated set (public reads `photos` only), not the graph
+  /// tree, so no read / is-you / provenance travels with them; the node exists
+  /// only so the carousel renders each photo through the ONE shared
+  /// [StoryNode]-based image-node renderer ([NodeImage]) instead of a bespoke
+  /// second image widget.
+  factory StoryNode.image({required String id, required String imageUrl}) =>
+      StoryNode(
+        id: id,
+        section: '',
+        label: '',
+        text: '',
+        answerType: 'image',
+        level: 1,
+        visibility: NodeVis.public,
+        subtreeVisibility: NodeVis.public,
+        standard: false,
+        editable: false,
+        imageUrl: imageUrl,
+      );
+
   bool get isImage => answerType == 'image' && imageUrl.isNotEmpty;
   bool get isStat => answerType == 'stat';
   bool get isLink => answerType == 'link';
