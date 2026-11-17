@@ -134,6 +134,14 @@ class AccentColorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reverts a live [preview] back to [saved] WITHOUT persisting anything —
+  /// the exact restore the Accent Color picker performs when the user leaves
+  /// without pressing "Use this color". A cancelled preview writes nothing to
+  /// `SharedPreferences` or Firestore; it only repaints everywhere
+  /// `context.ac.accent` is read. A no-op when [saved] already matches the
+  /// current colour (e.g. the pick was committed before leaving).
+  void cancelPreview(Color saved) => preview(saved);
+
   /// Sets the accent colour, notifies listeners (live repaint everywhere
   /// `context.ac.accent` is read — a no-op if [preview] already applied this
   /// exact colour), then persists — local first (fast), Firestore

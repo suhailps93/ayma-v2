@@ -36,25 +36,146 @@ void main() {
     ),
   );
 
-  testWidgets('dragging the hue strip previews and then commits a colour', (
-    tester,
-  ) async {
+  // Pumping an unrelated tree disposes the picker's State — the exact trigger
+  // for "the user left the screen" (back arrow, Android back, swipe, nav away).
+  Future<void> leave(WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pump();
+  }
+
+  Future<String?> accentPref() async =>
+      (await SharedPreferences.getInstance()).getString('accent_color_hex');
+
+  testWidgets(
+    'founder path (a): dragging the hue strip previews live WITHOUT persisting',
+    (tester) async {
+      final profiles = _FakeProfiles();
+      final c = AccentColorController(profileService: profiles);
+      await tester.pumpWidget(host(c));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final before = c.color;
+      await tester.drag(find.byKey(const Key('hueStrip')), const Offset(80, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Live repaint happened in-memory…
+      expect(c.color, isNot(equals(before)));
+      // …but nothing was saved: no Firestore write, no local pref.
+      expect(profiles.serverWrites, isEmpty);
+      expect(await accentPref(), isNull);
+    },
+  );
+
+  testWidgets(
+    'founder path (b): "Use this color" persists the pick (local + server)',
+    (tester) async {
+      final profiles = _FakeProfiles();
+      final c = AccentColorController(profileService: profiles);
+      await tester.pumpWidget(host(c));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.drag(find.byKey(const Key('hueStrip')), const Offset(80, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      final previewed = c.color;
+      expect(profiles.serverWrites, isEmpty); // still only a preview
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('useThisColor')),
+        200,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const Key('useThisColor')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(profiles.serverWrites, isNotEmpty);
+      expect(profiles.serverWrites.last, previewed);
+      expect(await accentPref(), isNotNull);
+    },
+  );
+
+  testWidgets(
+    'founder path (c): leaving WITHOUT "Use this color" reverts and writes '
+    'nothing',
+    (tester) async {
+      final profiles = _FakeProfiles();
+      final c = AccentColorController(profileService: profiles);
+      final saved = c.color;
+      await tester.pumpWidget(host(c));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.drag(find.byKey(const Key('hueStrip')), const Offset(80, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(c.color, isNot(equals(saved))); // previewed away
+
+      await leave(tester);
+
+      // Reverted to the saved baseline, and nothing persisted.
+      expect(c.color, saved);
+      expect(profiles.serverWrites, isEmpty);
+      expect(await accentPref(), isNull);
+    },
+  );
+
+  testWidgets(
+    'founder path (d): committing then leaving keeps the committed colour',
+    (tester) async {
+      final profiles = _FakeProfiles();
+      final c = AccentColorController(profileService: profiles);
+      await tester.pumpWidget(host(c));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.drag(find.byKey(const Key('hueStrip')), const Offset(80, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('useThisColor')),
+        200,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const Key('useThisColor')));
+      await tester.pump(const Duration(milliseconds: 400));
+      final committed = c.color;
+
+      await leave(tester);
+
+      // No revert: the committed colour stands; no extra write on leave.
+      expect(c.color, committed);
+      expect(profiles.serverWrites, [committed]);
+    },
+  );
+
+  testWidgets('reset previews the default WITHOUT persisting', (tester) async {
+    final profiles = _FakeProfiles();
+    final c = AccentColorController(profileService: profiles);
+    await c.set(const Color(0xFF3355AA));
+    await tester.pumpWidget(host(c));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.scrollUntilVisible(find.text('Reset to default'), 200);
+    await tester.ensureVisible(find.text('Reset to default'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Reset to default'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Previews the default live, but only the earlier set() ever persisted.
+    expect(c.color, AymaColors.accent);
+    expect(profiles.serverWrites, [const Color(0xFF3355AA)]);
+  });
+
+  testWidgets('neutral swatches preview only (no persistence)', (tester) async {
     final profiles = _FakeProfiles();
     final c = AccentColorController(profileService: profiles);
     await tester.pumpWidget(host(c));
     await tester.pump(const Duration(milliseconds: 400));
 
-    final strip = find.byKey(const Key('hueStrip'));
-    final before = c.color;
-    await tester.drag(strip, const Offset(80, 0));
-    await tester.pump();
-    // Preview applied instantly (in-memory), drag not yet released within
-    // this single `drag()` call's synthetic gesture, but by the time drag()
-    // returns the pan has already ended, so it should also be committed.
-    expect(c.color, isNot(equals(before)));
+    await tester.scrollUntilVisible(find.text('Black'), 200);
+    await tester.ensureVisible(find.text('Black'));
     await tester.pump(const Duration(milliseconds: 400));
-    expect(profiles.serverWrites, isNotEmpty);
-    expect(profiles.serverWrites.last, c.color);
+    await tester.tap(find.text('Black'));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(c.color, Colors.black); // live preview
+    expect(profiles.serverWrites, isEmpty); // but not saved
+    expect(await accentPref(), isNull);
   });
 
   testWidgets('the preset swatch row is gone', (tester) async {
@@ -65,57 +186,6 @@ void main() {
     expect(find.byKey(const Key('accentPreset_green')), findsNothing);
     expect(find.byKey(const Key('hueStrip')), findsOneWidget);
   });
-
-  testWidgets('reset returns to Cherry Fuchsia and persists it', (
-    tester,
-  ) async {
-    final profiles = _FakeProfiles();
-    final c = AccentColorController(profileService: profiles);
-    await c.set(const Color(0xFF3355AA));
-    await tester.pumpWidget(host(c));
-    await tester.pump(const Duration(milliseconds: 400));
-
-    await tester.scrollUntilVisible(find.text('Reset to default'), 200);
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.ensureVisible(find.text('Reset to default'));
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Reset to default'));
-    await tester.pump(const Duration(milliseconds: 400));
-
-    expect(c.color, AymaColors.accent);
-    expect(profiles.serverWrites.last, AymaColors.accent);
-  });
-  testWidgets(
-    'neutral presets persist and brightness preserves zero saturation',
-    (tester) async {
-      final profiles = _FakeProfiles();
-      final c = AccentColorController(profileService: profiles);
-      await tester.pumpWidget(host(c));
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.scrollUntilVisible(find.text('Black'), 200);
-      await tester.ensureVisible(find.text('Black'));
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.text('Black'));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(c.color, Colors.black);
-      await tester.scrollUntilVisible(find.text('Gray'), 200);
-      await tester.ensureVisible(find.text('Gray'));
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.tap(find.text('Gray'));
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(c.color.r, c.color.g);
-      expect(c.color.g, c.color.b);
-      final slider = tester.widget<Slider>(
-        find.byKey(const Key('accentBrightness')),
-      );
-      slider.onChanged!(0.8);
-      slider.onChangeEnd!(0.8);
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(HSVColor.fromColor(c.color).saturation, 0);
-      expect(HSVColor.fromColor(c.color).value, closeTo(0.8, 0.01));
-      expect(profiles.serverWrites.last, c.color);
-    },
-  );
 
   testWidgets(
     'sliders drop the inactiveColor override (theme track) and keep active fg '

@@ -4,9 +4,16 @@ import '../services/accent_color_controller.dart';
 import '../theme.dart';
 import '../widgets/ayma_orb.dart';
 import '../widgets/ayma_primitives.dart';
+import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_back_button.dart';
 
 /// Live accent controls with hue, saturation, brightness and neutral shortcuts.
+///
+/// Founder model (Nov 17): every in-picker change is a live **preview** only —
+/// the whole app re-themes in real time as the user drags, but nothing is
+/// saved. "Use this color" is the ONLY action that persists the pick. Leaving
+/// the screen without pressing it reverts the app to the previously-saved
+/// accent and writes nothing.
 class AccentColorScreen extends StatefulWidget {
   const AccentColorScreen({super.key, this.controller});
 
@@ -23,9 +30,32 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
       widget.controller ?? accentColorControllerGlobal;
 
   late HSVColor _color = HSVColor.fromColor(_accent.color);
+
+  /// The accent to restore on a non-committed leave: the colour that was saved
+  /// when the picker opened, advanced to each committed pick. On a live preview
+  /// the controller drifts away from this; `dispose` restores it unless the
+  /// pick was committed (then it already equals the controller colour).
+  late Color _savedColor;
+
   double get _hue => _color.hue;
 
   Color get _selected => _color.toColor();
+
+  @override
+  void initState() {
+    super.initState();
+    // Capture the saved baseline BEFORE any preview mutates the controller.
+    _savedColor = _accent.color;
+  }
+
+  @override
+  void dispose() {
+    // Every exit path (back arrow, Android back, swipe, nav away) disposes this
+    // State. Revert the live preview to the saved baseline WITHOUT persisting;
+    // a committed pick already equals the baseline, so this is a no-op then.
+    _accent.cancelPreview(_savedColor);
+    super.dispose();
+  }
 
   void _onDrag(BuildContext context, Offset localPosition, double width) {
     final t = (localPosition.dx / width).clamp(0.0, 1.0);
@@ -35,11 +65,22 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
     _accent.preview(_selected);
   }
 
-  void _commit() => _accent.set(_selected);
+  /// The ONLY persist path: saves the previewed pick (local + Firestore
+  /// best-effort) and advances the revert baseline so leaving keeps it.
+  Future<void> _useThisColor() async {
+    final saved = _selected;
+    await _accent.set(saved);
+    _savedColor = saved;
+    if (!mounted) return;
+    AymaToast.show(context, 'Accent colour saved',
+        kind: AymaToastKind.success);
+    Navigator.of(context).maybePop();
+  }
 
-  void _reset() {
+  /// Preview the default accent (no persist — only "Use this color" saves).
+  void _resetPreview() {
     setState(() => _color = HSVColor.fromColor(AymaColors.accent));
-    _accent.resetToDefault();
+    _accent.preview(AymaColors.accent);
   }
 
   void _adjust(HSVColor color) {
@@ -47,10 +88,8 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
     _accent.preview(_selected);
   }
 
-  void _neutral(double brightness) {
-    _adjust(_color.withSaturation(0).withValue(brightness));
-    _commit();
-  }
+  void _neutral(double brightness) =>
+      _adjust(_color.withSaturation(0).withValue(brightness));
 
   @override
   Widget build(BuildContext context) {
@@ -63,8 +102,9 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [
           Text(
-            'Drag to pick a colour — it applies everywhere Ayma shows '
-            'accent, live, and stays your default.',
+            'Drag to preview a colour live everywhere Ayma shows accent. '
+            'Tap "Use this color" to save it — leave without saving and your '
+            'previous colour comes back.',
             style: AymaType.sans(size: 13, soft: true, color: ac.fgDim),
           ),
           const SizedBox(height: 24),
@@ -85,8 +125,6 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
               return GestureDetector(
                 onPanStart: (d) => _onDrag(context, d.localPosition, width),
                 onPanUpdate: (d) => _onDrag(context, d.localPosition, width),
-                onPanEnd: (_) => _commit(),
-                onPanCancel: _commit,
                 child: SizedBox(
                   height: 56,
                   width: double.infinity,
@@ -107,7 +145,6 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             value: _color.saturation,
             label: '${(_color.saturation * 100).round()}%',
             onChanged: (v) => _adjust(_color.withSaturation(v)),
-            onChangeEnd: (_) => _commit(),
           ),
           Text('Brightness', style: AymaType.sans(color: ac.fg)),
           Slider(
@@ -116,7 +153,6 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             value: _color.value,
             label: '${(_color.value * 100).round()}%',
             onChanged: (v) => _adjust(_color.withValue(v)),
-            onChangeEnd: (_) => _commit(),
           ),
           Wrap(
             spacing: 12,
@@ -145,10 +181,12 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
             animation: _accent,
             builder: (context, _) => Row(
               children: [
+                // The real save action doubles as the live accent sample.
                 Expanded(
                   child: FilledButton(
-                    onPressed: () {},
-                    child: const Text('Sample button'),
+                    key: const Key('useThisColor'),
+                    onPressed: _useThisColor,
+                    child: const Text('Use this color'),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -169,7 +207,7 @@ class _AccentColorScreenState extends State<AccentColorScreen> {
           const SizedBox(height: 32),
           Center(
             child: OutlinedButton.icon(
-              onPressed: _reset,
+              onPressed: _resetPreview,
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text('Reset to default'),
             ),
