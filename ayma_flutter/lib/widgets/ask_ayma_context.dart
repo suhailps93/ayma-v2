@@ -44,14 +44,16 @@ enum AskAymaOrigin {
   /// a non-owner can edit someone else's report).
   reportView,
 
-  /// "Chat about it" on a person-graph NODE (any surface — Your Story, public
-  /// profile, a report, the image carousel, the graph tap-detail). Carries
-  /// [nodeId]; the server resolves the whole node + what's connected to it via
-  /// the single graph lookup (`graph_node_id` → `_graph_node_context`). The
-  /// node renders as the persistent context card above the composer (text, or
-  /// for an image node the image + its read + is-you verdict). Free-text chat
-  /// about the node — the owner actions stay as bubbles on the node sheet, so
-  /// no quick-action chips here. Turns save to the one main conversation.
+  /// A tap on a person-graph NODE (any surface — Your Story, public profile, a
+  /// report, the image carousel, the graph tap-detail) opens the real partial
+  /// chat directly. Carries [nodeId]; the server resolves the whole node + what's
+  /// connected to it via the single graph lookup (`graph_node_id` →
+  /// `_graph_node_context`). The node renders as the persistent context card
+  /// above the composer (text, or for an image node the image + its read +
+  /// is-you verdict). Free-text chat about the node — no canned quick-suggestion
+  /// chips; the owner actions ride inside this same chat as the pinned
+  /// `scopedActions` bubble row instead (see `node_chat_window.dart`). Turns save
+  /// to the one main conversation.
   graphNode,
 }
 
@@ -230,7 +232,7 @@ List<String> quickSuggestionsFor(AskAymaContext ctx) => switch (ctx.origin) {
   // Read-only Q&A about someone else's report: no chips at all — see
   // [AskAymaOrigin.reportView]'s doc.
   AskAymaOrigin.reportView => const [],
-  // "Chat about it" on a graph node is free-text chat; the owner actions live
-  // as bubbles on the node sheet, so no quick-action chips here.
+  // A graph-node tap opens free-text chat; the owner actions ride inside the
+  // same chat as the pinned `scopedActions` bubble row, so no canned chips here.
   AskAymaOrigin.graphNode => const [],
 };

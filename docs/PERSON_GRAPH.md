@@ -701,8 +701,8 @@ Refinements on the adopted visualiser surfaces:
   structured field ("Gender identity") the same as any node. Pinned by
   `tests/test_note250_visualiser.py`.
 - **Delete always confirms** — the Photos-strip `PhotoDetailSheet` Delete button
-  now shows a confirmation dialog before removing the image node (the node chat
-  window already did), so no photo/bullet is deleted by a single tap.
+  now shows a confirmation dialog before removing the image node (the node chat's
+  Delete bubble already did), so no photo/bullet is deleted by a single tap.
 - **Career LinkedIn button** — `career_timeline.linkedin_link_node(db, uid)`
   returns a public `link` node (the P0 link kind) built from the profile doc's
   `linkedin_url`; `routes/profile._inject_linkedin_button` prepends it to the
@@ -714,8 +714,8 @@ Refinements on the adopted visualiser surfaces:
   snapshot) and updates in place on a flip; it offers Make private when the node
   is public; and the is-you verdict says "Ayma read this but couldn't confirm
   it's you" (never "hasn't checked yet") when the node is `is_you: unknown` but
-  carries a real image read. The node chat window's image context card applies
-  the same two rules.
+  carries a real image read. The node chat's image context card (`_NodeImageAttach`)
+  applies the same two rules.
 
 ## P4 carousel — one image-node renderer (Nov 17 2026)
 
@@ -773,7 +773,8 @@ there is no career date schema and none is added.
   timeline-style date beside an entry **only** when `dated` is non-empty;
   undated entries list with no date. No date is invented, no node migrated.
 - **Editing reuses the generic paths**: each entry is a real `NodeVisualiser`, so
-  tap-to-edit opens the same node chat window and drives the same
+  a tap opens the same partial node chat directly (the owner actions ride inside
+  it as the `NodeActionBubbles` row) and drives the same
   `/profile/graph/node/{id}/{visibility,text,add-child,delete}` endpoints as the
   generic Node-Visualiser — no duplicate edit path. Per-node visibility is
   respected: a public-tree viewer (the public-profile surface) only ever sees

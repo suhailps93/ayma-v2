@@ -157,8 +157,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     headline: 'See yourself as a graph',
     subtitle: 'Open My person graph — everything Ayma knows, wired like a '
         'neural network. Pinch to zoom; tap a report or photo to open it, or '
-        'tap any node and "Chat about it" to talk to Ayma with that node '
-        'pinned to the chat.',
+        'tap any node to chat with Ayma about it — the node is pinned to the '
+        'chat, with make-public/private, edit and delete right there.',
     icon: Icons.hub_outlined,
     anchorId: TourAnchors.profileGraphRow,
     tab: 3,

@@ -1,8 +1,12 @@
 import 'dart:io';
 
 import 'package:ayma_flutter/models/story_node.dart';
+import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
+import 'package:ayma_flutter/services/ayma_session.dart';
+import 'package:ayma_flutter/widgets/ask_ayma_context.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
+import 'package:ayma_flutter/widgets/node_chat_window.dart';
 import 'package:ayma_flutter/widgets/node_visualiser.dart';
 import 'package:file/file.dart' as fs;
 import 'package:file/local.dart';
@@ -120,6 +124,10 @@ Widget _host(Widget child, {ThemeData? theme}) => MaterialApp(
     );
 
 void main() {
+  // The partial node chat is the one shared ChatScreen against the session
+  // store; seed it so opening the overlay never reaches for server history.
+  setUp(() => AymaSession.instance.store.seed(const []));
+
   testWidgets('nested tree indents children by level', (tester) async {
     final tree = _node(
       id: 'root',
@@ -203,8 +211,10 @@ void main() {
     expect(find.text('Public root'), findsOneWidget);
   });
 
-  testWidgets('tap opens chat window; Make public wires the real action',
-      (tester) async {
+  testWidgets(
+      'REGRESSION (founder path): one tap on a Story node opens the partial '
+      'chat directly with the node attached, no intermediate "Chat about it" '
+      'card, owner bubbles inside the chat', (tester) async {
     final api = _FakeApi();
     final node = _node(id: 'n1', text: 'A fact', vis: NodeVis.private);
     await tester.pumpWidget(_host(
@@ -217,33 +227,26 @@ void main() {
     await tester.tap(find.byKey(const Key('node_row_n1')));
     await tester.pumpAndSettle();
 
+    // Straight into the REAL partial Ayma chat (the one shared ChatScreen),
+    // scoped to this node — not an intermediate card.
+    expect(find.byType(ChatScreen), findsOneWidget);
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.askAymaContext?.origin, AskAymaOrigin.graphNode);
+    expect(chat.askAymaContext?.nodeId, 'n1');
+    // The node is pinned as the persistent context card above the composer.
+    expect(find.text('A fact'), findsWidgets);
+    // The deleted intermediate card's "Chat about it" bubble/step is gone.
+    expect(find.byKey(const Key('bubble_chat_about')), findsNothing);
+    expect(find.text('Chat about it'), findsNothing);
+    // Owner actions ride inside the chat as the pinned bubble row.
     expect(find.byKey(const Key('bubble_visibility')), findsOneWidget);
     expect(find.byKey(const Key('bubble_delete')), findsOneWidget);
-    // private node → bubble offers "Make public"
-    await tester.tap(find.byKey(const Key('bubble_visibility')));
-    await tester.pumpAndSettle();
-    expect(api.visibilitySet, [('n1', NodeVis.public)]);
   });
 
-  testWidgets('every owner surface shows "Chat about it"; a non-editable '
-      'report node shows it but no edit bubbles', (tester) async {
-    // Editable story node: chat-about rides alongside the edit bubbles.
+  testWidgets('read-only surfaces expose NO edit bubbles on a node tap',
+      (tester) async {
+    // Non-editable report node (owner): chat opens, but no edit bubbles.
     final api = _FakeApi();
-    final story = _node(id: 's1', text: 'A fact', vis: NodeVis.private);
-    await tester.pumpWidget(_host(
-      NodeVisualiser(
-          node: story, surface: NodeVisualiserSurface.story, api: api),
-    ));
-    await tester.tap(find.byKey(const Key('node_row_s1')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('bubble_chat_about')), findsOneWidget);
-    expect(find.byKey(const Key('bubble_visibility')), findsOneWidget);
-    // dismiss the sheet
-    Navigator.of(tester.element(find.byKey(const Key('bubble_chat_about'))))
-        .pop();
-    await tester.pumpAndSettle();
-
-    // Non-editable report node: "Chat about it" still works; no edit bubbles.
     final report = _node(
         id: 'r1', text: 'Reported insight', vis: NodeVis.public,
         editable: false);
@@ -253,56 +256,14 @@ void main() {
     ));
     await tester.tap(find.byKey(const Key('node_row_r1')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('bubble_chat_about')), findsOneWidget);
+    expect(find.byType(ChatScreen), findsOneWidget);
     expect(find.byKey(const Key('bubble_visibility')), findsNothing);
     expect(find.byKey(const Key('bubble_delete')), findsNothing);
-    // never a dead "Ask Ayma about this" with no action
-    expect(find.text('Ask Ayma about this'), findsNothing);
+    expect(find.byKey(const Key('bubble_chat_about')), findsNothing);
   });
 
-  testWidgets('delete names the children count and wires the real delete',
+  testWidgets('public-profile non-owner node tap exposes no edit bubbles',
       (tester) async {
-    final api = _FakeApi()..deleteCountToReturn = 2;
-    final node = _node(id: 'p', text: 'Parent', vis: NodeVis.private);
-    await tester.pumpWidget(_host(
-      NodeVisualiser(
-        node: node,
-        surface: NodeVisualiserSurface.story,
-        api: api,
-      ),
-    ));
-    await tester.tap(find.byKey(const Key('node_row_p')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('bubble_delete')));
-    await tester.pumpAndSettle();
-    // confirmation names the 2 children
-    expect(find.textContaining('2 lines'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-    await tester.pumpAndSettle();
-    expect(api.deleted, ['p']);
-  });
-
-  testWidgets('add a line wires add-child to this node', (tester) async {
-    final api = _FakeApi();
-    final node = _node(id: 'p', text: 'Parent', vis: NodeVis.private);
-    await tester.pumpWidget(_host(
-      NodeVisualiser(
-        node: node,
-        surface: NodeVisualiserSurface.story,
-        api: api,
-      ),
-    ));
-    await tester.tap(find.byKey(const Key('node_row_p')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('bubble_add_child')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'A new detail');
-    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
-    await tester.pumpAndSettle();
-    expect(api.addChildCalls, [('p', 'A new detail')]);
-  });
-
-  testWidgets('public profile node has no owner action bubbles', (tester) async {
     final api = _FakeApi();
     final node = _node(id: 'n', text: 'Public fact', vis: NodeVis.public);
     await tester.pumpWidget(_host(
@@ -315,8 +276,87 @@ void main() {
     ));
     await tester.tap(find.byKey(const Key('node_row_n')));
     await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
     expect(find.byKey(const Key('bubble_delete')), findsNothing);
     expect(find.byKey(const Key('bubble_visibility')), findsNothing);
+  });
+
+  testWidgets('nodeHasOwnerActions gates the edit bubbles', (tester) async {
+    final editable = _node(id: 'a', text: 'x');
+    final readonly = _node(id: 'b', text: 'x', editable: false);
+    // Owner + editable + an editing surface → bubbles.
+    expect(
+        nodeHasOwnerActions(editable, NodeVisualiserSurface.story, true), isTrue);
+    expect(nodeHasOwnerActions(editable, NodeVisualiserSurface.report, true),
+        isTrue);
+    expect(nodeHasOwnerActions(editable, NodeVisualiserSurface.graphDetail, true),
+        isTrue);
+    // Public profile, non-owner, or non-editable → none.
+    expect(
+        nodeHasOwnerActions(editable, NodeVisualiserSurface.publicProfile, true),
+        isFalse);
+    expect(
+        nodeHasOwnerActions(editable, NodeVisualiserSurface.story, false), isFalse);
+    expect(nodeHasOwnerActions(readonly, NodeVisualiserSurface.story, true),
+        isFalse);
+  });
+
+  testWidgets('bubble: Make public wires the real action + fires onChanged',
+      (tester) async {
+    final api = _FakeApi();
+    var changed = 0;
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(id: 'n1', text: 'A fact', vis: NodeVis.private),
+        api: api,
+        onChanged: () => changed++,
+      ),
+    ));
+    // private node → bubble offers "Make public"
+    expect(find.text('Make public'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('bubble_visibility')));
+    await tester.pumpAndSettle();
+    expect(api.visibilitySet, [('n1', NodeVis.public)]);
+    expect(changed, 1);
+    // label flips after the toggle
+    expect(find.text('Make private'), findsOneWidget);
+  });
+
+  testWidgets('bubble: delete names the children count and wires the real '
+      'delete + fires onChanged', (tester) async {
+    final api = _FakeApi()..deleteCountToReturn = 2;
+    var changed = 0;
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(id: 'p', text: 'Parent', vis: NodeVis.private),
+        api: api,
+        onChanged: () => changed++,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_delete')));
+    await tester.pumpAndSettle();
+    // confirmation names the 2 children
+    expect(find.textContaining('2 lines'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    expect(api.deleted, ['p']);
+    expect(changed, 1);
+  });
+
+  testWidgets('bubble: add a line wires add-child to this node', (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(id: 'p', text: 'Parent', vis: NodeVis.private),
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_add_child')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'A new detail');
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(api.addChildCalls, [('p', 'A new detail')]);
   });
 
   testWidgets('image node embeds inline; tap opens its context', (tester) async {
@@ -345,7 +385,11 @@ void main() {
 
     await tester.tap(find.byKey(const Key('node_row_img1')));
     await tester.pumpAndSettle();
-    // the node chat window's context card shows the read + is-you verdict.
+    // Straight into the partial chat, scoped to the image node.
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.askAymaContext?.origin, AskAymaOrigin.graphNode);
+    expect(chat.askAymaContext?.nodeImageUrl, 'https://x/p.jpg');
+    // the chat's pinned image context card shows the read + is-you verdict.
     // (the read also appears inline under the image, so it is present twice.)
     expect(find.text('A person smiling'), findsNWidgets(2));
     expect(find.textContaining('looks like you'), findsOneWidget);

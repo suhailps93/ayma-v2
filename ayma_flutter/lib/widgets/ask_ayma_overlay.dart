@@ -45,6 +45,7 @@ Future<void> showAskAymaOverlay(
   required AskAymaContext ctx,
   VoidCallback? onExchange,
   TranscriptStore? transcriptStore,
+  Widget? scopedActions,
   @visibleForTesting ApiClient? voiceApiClient,
   @visibleForTesting VoiceTransport Function()? voiceTransportFactory,
 }) async {
@@ -60,6 +61,7 @@ Future<void> showAskAymaOverlay(
       apiClient: api,
       transcriptStore: transcriptStore ?? AymaSession.instance.store,
       askAymaContext: ctx,
+      scopedActions: scopedActions,
       onExchange: onExchange,
       voiceApiClient: voiceApiClient,
       voiceTransportFactory: voiceTransportFactory,

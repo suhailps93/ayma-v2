@@ -10,15 +10,16 @@
 ///  - FIXED ORDER + STANDARD fields: the backend tree already orders standard
 ///    (known structured) children first; a standard node renders as a labelled
 ///    field ("Name: …") rather than raw bullet text.
-///  - IMAGE nodes render inline under their parent; tapping one opens its node
-///    context (read + is-you verdict + source) in the node chat window.
+///  - IMAGE nodes render inline under their parent; tapping one opens the
+///    partial node chat with its context (image + read + is-you verdict).
 ///  - VISIBILITY colours: every bullet is coloured by its (subtree) visibility
 ///    — green public, yellow private, AI-only third, split for a mixed subtree.
 ///  - VISIBILITY FILTER: the public-profile surface renders public nodes only;
 ///    every other (owner) surface renders what the tree carries.
-///  - TAP-TO-CHAT: tapping a node opens the partial docked chat window with the
-///    node as context; the owner action bubbles live there. The bullets stay
-///    clean — no per-bullet icon buttons.
+///  - TAP-TO-CHAT: tapping a node opens the partial docked chat window directly
+///    (no intermediate card) with the node as context; the owner action bubbles
+///    live inside that chat. The bullets stay clean — no per-bullet icon
+///    buttons.
 library;
 
 import 'package:flutter/material.dart';
@@ -96,14 +97,17 @@ class NodeVisualiser extends StatelessWidget {
       onImageTap!(node);
       return;
     }
-    final changed = await showNodeChatWindow(
+    // Straight to the real partial Ayma chat — no intermediate card (founder
+    // Nov 17). The node is attached as the context card; the owner action
+    // bubbles ride inside the chat and fire [onChanged] on each change.
+    await showNodeChat(
       context,
       node: node,
       surface: surface,
       api: api,
       isOwner: isOwner,
+      onChanged: onChanged,
     );
-    if (changed) onChanged?.call();
   }
 
   @override
