@@ -117,6 +117,7 @@ class ChatScreen extends StatefulWidget {
     this.pageContext,
     this.scrollController,
     this.askAymaContext,
+    this.scopedActions,
     this.onExchange,
     this.onGoToMainChat,
     this.voiceApiClient,
@@ -224,6 +225,15 @@ class ChatScreen extends StatefulWidget {
   /// business changing what the rest of the app thinks the current screen
   /// or kickoff is).
   final AskAymaContext? askAymaContext;
+
+  /// Only meaningful alongside [askAymaContext]: an action-bubble row pinned
+  /// above the composer for the whole session (e.g. a graph node's owner
+  /// actions — make public/private, edit, add a line, delete). Null leaves the
+  /// scoped turn as plain context-card-plus-composer Q&A. Rendered in the
+  /// reliable above-composer slot (the docked body's bare `Expanded` doesn't
+  /// take taps on-device — Scout NOTE 219 leg b), same place the quick chips
+  /// pin, so its taps always land.
+  final Widget? scopedActions;
 
   /// Only meaningful alongside [askAymaContext]: fires after every reply
   /// Ayma gives while this screen is open (not just once at the end) so the
@@ -3623,6 +3633,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            // Scoped action bubbles (e.g. a graph node's owner
+                            // actions) pin above the composer for the whole
+                            // session — the reliable tap region, same as the
+                            // chips below.
+                            if (widget.scopedActions != null)
+                              Padding(
+                                key: const ValueKey('askAymaScopedActions'),
+                                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                                child: widget.scopedActions!,
+                              ),
                             if (suggestions.isNotEmpty &&
                                 (partialSheet || _store.turns.isNotEmpty))
                               Padding(

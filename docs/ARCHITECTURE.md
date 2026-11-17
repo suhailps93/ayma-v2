@@ -499,20 +499,28 @@ reroute to work around an empty response.
   still surfaces its honest error + Retry. (Same FAMILY as the guided-tour tap and scroll-ack bugs — a voice-mode
   action commits but a bounded client wait elapses/the ack races — though those live on the `app_commands` ack layer
   (`_await_ack` + `firestore.rules`), while this one is the direct report-correct HTTP path.)
-- *"Chat about it" on a person-graph node (the partial Ayma window)*: every node, on every owner surface (Your Story,
-  the owner's public profile, any report, the image carousel, the person-graph tap-detail), has a **"Chat about it"**
-  bubble in its node sheet (`node_chat_window.dart`, `bubble_chat_about`, gated by `_canChat` — shown on every owner
-  surface, including non-editable report nodes, not just editable ones). It closes the sheet and opens the REAL
-  half-screen docked chat (`showNodeChat` → `showAskAymaOverlay`, the one shared `ChatScreen`), with the node pinned as
-  the persistent context card above the composer for the whole session (text node → its quote card; image node →
-  `_NodeImageAttach`: the photo + its read + is-you verdict). The tap carries `AskAymaOrigin.graphNode` + `nodeId`
-  only; the server resolves the WHOLE node + everything connected to it on every message through the single graph
-  lookup (`chat_screen` → `graph_node_id` → `main._graph_node_context` → `person_graph_store.graph_lookup(node_id=…)`),
-  injected into the `story_context` chain like every other scoped origin. Turns save to the one main conversation — no
-  silo. This replaced the old person-graph `onChatToEdit` host-hook loop-back (deleted across `node_visualiser.dart` /
-  `graph_tree_view.dart` / `person_graph_screen.dart`) and unified the photo-strip "Chat about it"
-  (`story_editor_screen._openChatForPhoto`) onto the same window, so no bubble on any surface closes the sheet and does
-  nothing.
+- *Tapping a person-graph node (the partial Ayma window — direct, no intermediate card)*: tapping any node, on any
+  surface (Your Story, the owner's public profile, any report, the image carousel, the person-graph tap-detail), opens
+  the REAL half-screen docked chat **immediately** — `NodeVisualiser._openChat` → `showNodeChat` → `showAskAymaOverlay`,
+  the one shared `ChatScreen` (founder build 2488: the old intermediate "Chat about it" card — `showNodeChatWindow` /
+  `_NodeChatSheet` / the `bubble_chat_about` bubble — is **deleted**; the tap no longer lands on a card that then opens
+  the chat). The node is pinned as the persistent context card above the composer for the whole session (text node →
+  its quote card; image node → `_NodeImageAttach`: the photo + its read + is-you verdict). The tap carries
+  `AskAymaOrigin.graphNode` + `nodeId` only; the server resolves the WHOLE node + everything connected to it on every
+  message through the single graph lookup (`chat_screen` → `graph_node_id` → `main._graph_node_context` →
+  `person_graph_store.graph_lookup(node_id=…)`), injected into the `story_context` chain like every other scoped origin.
+  Turns save to the one main conversation — no silo.
+  - **Owner actions ride INSIDE the chat as a pinned bubble row** (`NodeActionBubbles` in `node_chat_window.dart`,
+    passed to `ChatScreen` as `scopedActions` and rendered above the composer — the reliable tap region, same slot as
+    the quick chips): **Make public/private** (with the subtree cascade, `graphNodeSetVisibility`), **Edit manually**
+    (`graphSetNodeText`), **Add a line** (`graphAddChild`), **Delete** (children-count confirmation, `graphDeleteNode`;
+    also closes the chat since the node is gone). Each fires the host's `onChanged` so the tree refetches. The bubbles
+    show only when `nodeHasOwnerActions(node, surface, isOwner)` — owner + editable node + an editing surface (Story /
+    report / graph-detail); the owner's public profile, a non-editable report node, and any non-owner view get the
+    context card + composer as read-only Q&A, **never an edit bubble**. "Chat to edit" is the chat itself (type in the
+    composer); there is no separate chat bubble.
+  - The photo-strip "Chat about it" (`story_editor_screen._openChatForPhoto`) stays unified onto the same window
+    (`AskAymaOrigin.graphNode` with the photo as an image node).
 - *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
   before queueing the job. The job meters the spend exactly once inside `deep_dive.run` (never on the delivery retry,
   so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the **card** is
