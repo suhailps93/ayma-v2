@@ -73,13 +73,27 @@ class _FakeApi extends ApiClient {
         ? await _runGate.future
         : const AppearanceReportResult(
             usageCapped: false, reportId: 'rid', report: null);
+    if (!gated) {
+      // Non-gated = the node is written by the time the POST returns (no lag).
+      currentReportId = result.reportId;
+    }
     runCompleted = true;
     return result;
   }
 
-  /// Resolves a [gated] run — stands in for the server finishing the report.
-  void completeRun() => _runGate.complete(const AppearanceReportResult(
-      usageCapped: false, reportId: 'rid', report: null));
+  /// Resolves a [gated] run as SUCCESS, with the node written on completion (no
+  /// lag): the current-report read immediately returns the new [reportId].
+  void completeRun([String reportId = 'rid']) {
+    currentReportId = reportId;
+    _runGate.complete(
+        AppearanceReportResult(usageCapped: false, reportId: reportId, report: null));
+  }
+
+  /// Resolves a [gated] run as SUCCESS but with the node write LAGGING the POST
+  /// response (NOTE 247): the POST returns [reportId] while the current-report
+  /// read still returns the OLD id until the test flips [currentReportId].
+  void completeRunLagged(String reportId) => _runGate.complete(
+      AppearanceReportResult(usageCapped: false, reportId: reportId, report: null));
 }
 
 /// A fake PRIVATE upload channel. The real [ChatService.uploadImage] writes to
@@ -540,6 +554,75 @@ void main() {
     expect(ReportEvents.instance.revisionFor('appearance'), startRev + 1,
         reason: 'the open report view was told to re-fetch the landed run');
     expect(find.textContaining('ready'), findsOneWidget);
+  });
+
+  testWidgets(
+      'NOTE 247 Leg 1: a FAST build whose POST succeeds BEFORE the node write '
+      'lands must not refresh (or toast) until the new run is readable',
+      (tester) async {
+    // The race: on a fast build the POST returns success ~2s before the node is
+    // written, so firing the refresh on POST success re-fetches the OLD run and
+    // — completed() fires only once — then sits stale for minutes. The refresh
+    // + "ready" toast must wait for the POSTED run to actually be readable.
+    final api = _FakeApi(_eligWith(face: 1, body: 1), gated: true)
+      ..currentReportId = 'old';
+    final startRev = ReportEvents.instance.revisionFor('appearance');
+
+    final router = GoRouter(
+      initialLocation: '/start',
+      routes: [
+        GoRoute(
+          path: '/start',
+          builder: (c, s) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => runAppearanceFromPreRunSheet(
+                  c,
+                  api,
+                  landingPollInterval: const Duration(milliseconds: 10),
+                  landingPollTimeout: const Duration(seconds: 2),
+                ),
+                child: const Text('go'),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    await tester.tap(find.text('go'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet + eligibility
+    expect(find.text('Run analysis'), findsOneWidget);
+
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet gone -> run in flight
+    expect(api.runCalls, 1);
+
+    // The POST succeeds and returns the new run's id — but the node write LAGS,
+    // so the current-report read still returns 'old' for now.
+    api.completeRunLagged('new');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    // The refresh must NOT have fired yet, and "ready" must NOT have shown —
+    // the node isn't readable. (On the old code completed() + the toast fire
+    // immediately on POST success, so both of these would already be true.)
+    expect(ReportEvents.instance.revisionFor('appearance'), startRev,
+        reason: 'no refresh before the posted run is readable');
+    expect(find.text('Your Appearance report is ready.'), findsNothing,
+        reason: 'the ready toast must not fire before the node is readable');
+
+    // The node write lands: the current read now returns the posted run.
+    api.currentReportId = 'new';
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(ReportEvents.instance.revisionFor('appearance'), startRev + 1,
+        reason: 'the view refreshes once the posted run is readable');
+    expect(find.text('Your Appearance report is ready.'), findsOneWidget);
   });
 
   testWidgets(
