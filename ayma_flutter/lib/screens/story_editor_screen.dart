@@ -12,6 +12,7 @@ import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../models/story_node.dart';
 import '../widgets/ask_ayma_overlay.dart';
+import '../widgets/bullet_visibility_legend.dart';
 import '../widgets/graph_tree_view.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/out_of_credits.dart';
@@ -493,7 +494,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       // never talked to Ayma can still fill in every section.
       return ListView(
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 48),
-        children: [editor],
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: BulletVisibilityLegend(),
+          ),
+          editor,
+        ],
       );
     }
 
@@ -507,6 +514,12 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     return ListView(
       padding: const EdgeInsets.fromLTRB(24, 4, 24, 48),
       children: [
+        // A one-line key for the coloured visibility bullets below (founder,
+        // build 2488) — reuses the exact bullet dots so it never drifts.
+        const Padding(
+          padding: EdgeInsets.only(bottom: 10),
+          child: BulletVisibilityLegend(),
+        ),
         _StoryCover(
           title: 'Your Story',
           subtitle: 'A living portrait, written by Ayma.',
