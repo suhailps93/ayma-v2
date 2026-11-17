@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
@@ -9,21 +10,28 @@ import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/bullet_visibility.dart';
+import '../widgets/node_visualiser.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/photo_gallery.dart';
+import 'person_graph_layout.dart';
 
-/// "My person graph" — a neural-network-style map of EVERYTHING the graph store
+/// "My person graph" — a live, force-directed map of EVERYTHING the graph store
 /// holds about the person (founder direction, Nov 16 2026). The person is the
-/// central neuron; each section is a hub neuron; every leaf node — story
+/// largest node at the centre; sections are the next tier; every leaf — story
 /// bullets, the Appearance and web-findings reports, photos, skills and Ayma's
-/// assessment — is a smaller neuron clustered around its hub, wired by glowing
-/// synapses. Pinch to zoom and pan the whole web. Tapping a node opens its
-/// report or photo, or shows its detail; tapping a hub focuses its cluster.
+/// assessment — is a smaller node whose SIZE encodes its depth and whose COLOUR
+/// encodes its TYPE. The whole web settles live under link springs + node
+/// repulsion, fits the screen, then stops. Pinch to zoom, two-finger-drag to
+/// pan; a single-finger tap or drag (scrub) opens the node under the finger in
+/// the visualiser below. Tapping lights up a node's ancestors, descendants and
+/// related nodes; the rest dims.
 /// [uid] shows another member's graph (public nodes only); null is the
 /// signed-in user's own.
-/// The route a tappable REPORT node pushes when opened, or null when the node
-/// isn't a pushable report (images open a [PhotoViewer] dialog instead; every
-/// other node just shows its detail). Pure so the routing is unit-testable.
+
+/// The route a tappable REPORT node pushes when its full content is opened, or
+/// null when the node isn't a pushable report (images open a [PhotoViewer]
+/// dialog instead; every other node just shows its detail in the visualiser).
+/// Pure so the routing is unit-testable.
 String? graphOpenRoute(GraphNode n) => switch (n.openType) {
       'appearance_report' =>
         '/appearance/${n.openId.isEmpty ? 'current' : n.openId}',
@@ -44,28 +52,16 @@ class PersonGraphScreen extends StatefulWidget {
 }
 
 class _PersonGraphScreenState extends State<PersonGraphScreen>
-    with ScreenContextReasserter<PersonGraphScreen>, SingleTickerProviderStateMixin {
+    with ScreenContextReasserter<PersonGraphScreen> {
   late final ApiClient _api = widget.api ?? ApiClient();
   PersonGraph? _graph;
   String? _error;
-  String? _selected; // the selected/focused node id
-  late final AnimationController _pulse;
 
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2600),
-    )..repeat(reverse: true);
     reassertScreenContext();
     unawaited(_load());
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
   }
 
   @override
@@ -82,31 +78,6 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
     } catch (e) {
       if (mounted) setState(() => _error = "Couldn't load the graph.");
     }
-  }
-
-  void _onTapNode(GraphNode n) {
-    // A photo node opens the viewer; a report node pushes its report route;
-    // everything else focuses and shows its detail.
-    if (n.openType == 'image') {
-      if (n.imageUrl.isNotEmpty) {
-        showDialog<void>(
-          context: context,
-          builder: (_) => PhotoViewer(
-            url: n.imageUrl,
-            caption: n.text, // Ayma's read, from the node
-            isUser: n.isYou, // the face-match verdict, from the node
-            source: _imageSourceLabel(n.sourceKind),
-          ),
-        );
-      }
-      return;
-    }
-    final route = graphOpenRoute(n);
-    if (route != null) {
-      context.push(route);
-      return;
-    }
-    setState(() => _selected = _selected == n.id ? null : n.id);
   }
 
   @override
@@ -132,7 +103,7 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_error!, style: AymaType.sans(size: 14, color: ac.errorText)),
+                  Text(_error!, style: AymaType.sans(size: 14, color: ac.error)),
                   const SizedBox(height: 12),
                   FilledButton(
                     onPressed: _load,
@@ -144,12 +115,7 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
             )
           : g == null
               ? const Center(child: CircularProgressIndicator())
-              : _GraphBody(
-                  graph: g,
-                  selected: _selected,
-                  pulse: _pulse,
-                  onTapNode: _onTapNode,
-                ),
+              : _GraphBody(key: ValueKey(identityHashCode(g)), graph: g),
     );
   }
 
@@ -169,8 +135,9 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
                   style: AymaType.serif(size: 18, color: ac.fg)),
               const SizedBox(height: 4),
               Text(
-                'Everything Ayma holds about you, wired together. Pinch to zoom, '
-                'drag to pan. Tap a report or photo to open it.',
+                'Everything Ayma holds about you, wired together. Node size is '
+                'depth, colour is type. Pinch to zoom, two fingers to pan. Tap '
+                'or drag across a node to inspect it below.',
                 style: AymaType.sans(size: 13, color: ac.fgDim),
               ),
               const SizedBox(height: 14),
@@ -192,13 +159,13 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
 
 List<(String, Color)> _legendKinds(AymaTokens ac) => [
       ('You', ac.accent),
-      ('Section', _GraphColors.section(ac)),
-      ('Fact', bulletVisibilityColor(ac, 'public')),
-      ('Report', _GraphColors.report),
-      ('Photo', _GraphColors.image),
-      ('Skill', _GraphColors.skill),
-      ("Ayma's read", _GraphColors.assess),
-      ('Taste', _GraphColors.taste),
+      ('Section', GraphTypeColors.section(ac)),
+      ('Fact', GraphTypeColors.fact),
+      ('Report', GraphTypeColors.report),
+      ('Photo', GraphTypeColors.image),
+      ('Skill', GraphTypeColors.skill),
+      ("Ayma's read", GraphTypeColors.assess),
+      ('Taste', GraphTypeColors.taste),
     ];
 
 class _LegendDot extends StatelessWidget {
@@ -211,7 +178,10 @@ class _LegendDot extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 12, height: 12, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 6),
         Text(label, style: AymaType.sans(size: 12, color: ac.fgDim)),
       ],
@@ -219,9 +189,10 @@ class _LegendDot extends StatelessWidget {
   }
 }
 
-/// Fixed accent colours for the node kinds — tuned to read on the dark neural
-/// canvas in both app themes.
-class _GraphColors {
+/// Colour by TYPE for the graph (founder, Nov 17 2026: graph colour = type,
+/// distinct from the visualiser where bullet colour = visibility). Facts carry
+/// a dedicated type colour — the graph never colours a node by its visibility.
+class GraphTypeColors {
   static const report = Color(0xFFE0A33E); // amber
   static const image = Color(0xFF4FC3D6); // cyan
   static const skill = Color(0xFF9B7BE0); // violet
@@ -229,6 +200,7 @@ class _GraphColors {
   static const taste = Color(0xFF6FBF73); // green
   static const steering = Color(0xFFE08A5B); // orange
   static const interaction = Color(0xFF5B8AE0); // blue
+  static const fact = Color(0xFF7E8CA8); // steel — a plain story fact
   static Color section(AymaTokens ac) => ac.accent;
 
   static Color forNode(AymaTokens ac, GraphNode n) => switch (n.kind) {
@@ -241,380 +213,783 @@ class _GraphColors {
         'taste' => taste,
         'steering' => steering,
         'interaction' => interaction,
-        _ => bulletVisibilityColor(ac, n.visibility),
+        _ => fact,
       };
 }
 
+/// The live graph: force simulation + fit + gestures + the visualiser below.
 class _GraphBody extends StatefulWidget {
-  const _GraphBody({
-    required this.graph,
-    required this.selected,
-    required this.pulse,
-    required this.onTapNode,
-  });
-
+  const _GraphBody({super.key, required this.graph});
   final PersonGraph graph;
-  final String? selected;
-  final Animation<double> pulse;
-  final void Function(GraphNode node) onTapNode;
 
   @override
   State<_GraphBody> createState() => _GraphBodyState();
 }
 
-class _GraphBodyState extends State<_GraphBody> {
-  final TransformationController _tc = TransformationController();
+class _GraphBodyState extends State<_GraphBody>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  late final GraphSim _sim;
+  late final Map<String, GraphNode> _byId;
+  late final Map<String, int> _levels;
+  final Map<String, Set<String>> _childrenOf = {};
+  final Map<String, Set<String>> _parentsOf = {};
+  final ValueNotifier<int> _repaint = ValueNotifier(0);
+  final ViewTransform _view = ViewTransform.identity();
+
+  Size _viewport = Size.zero;
+  bool _userAdjusted = false; // once the user zooms/pans, auto-fit stops
+  bool _reduceMotion = false;
+
+  GraphNode? _selected;
+  Set<String> _highlight = const {};
+
+  // Filters: hidden node kinds and hidden depth buckets.
+  final Set<String> _hiddenKinds = {};
+  final Set<int> _hiddenLevels = {};
+  late final List<String> _kinds; // distinct kinds present, stable order
+  late final List<int> _depths; // distinct depths present, ascending
+
+  // Gesture bookkeeping.
+  bool _multi = false;
+  bool _multiInit = false;
+  ViewTransform _startView = ViewTransform.identity();
+  double _startGestureScale = 1;
+  Offset _startFocalScene = Offset.zero;
+  Offset _downPos = Offset.zero;
+  double _maxMove = 0;
+
+  static const double _minScale = 0.05;
+  static const double _maxScale = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _byId = {for (final n in widget.graph.nodes) n.id: n};
+    for (final (f, t) in widget.graph.edges) {
+      if (_byId.containsKey(f) && _byId.containsKey(t)) {
+        (_childrenOf[f] ??= {}).add(t);
+        (_parentsOf[t] ??= {}).add(f);
+      }
+    }
+    _levels = _computeLevels();
+    _kinds = _distinctKinds();
+    _depths = (_levels.values.toSet().toList()..sort());
+
+    final simNodes = [
+      for (final n in widget.graph.nodes)
+        SimNode(id: n.id, level: _levels[n.id] ?? 2),
+    ];
+    _sim = GraphSim(
+      nodes: simNodes,
+      edges: widget.graph.edges,
+      centerId: _rootId(),
+    );
+
+    _ticker = createTicker(_onTick);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+      if (_reduceMotion) {
+        _sim.settle();
+        _fitToVisible();
+        _repaint.value++;
+      } else {
+        _ticker.start();
+      }
+    });
+  }
 
   @override
   void dispose() {
-    _tc.dispose();
+    _ticker.dispose();
+    _repaint.dispose();
     super.dispose();
   }
+
+  String? _rootId() {
+    if (widget.graph.centerId.isNotEmpty &&
+        _byId.containsKey(widget.graph.centerId)) {
+      return widget.graph.centerId;
+    }
+    return widget.graph.nodes
+        .where((n) => n.kind == 'person')
+        .map((n) => n.id)
+        .firstOrNull;
+  }
+
+  /// BFS depth from the person/centre over undirected edges. Unreached nodes
+  /// fall back to a sensible depth by kind.
+  Map<String, int> _computeLevels() {
+    final root = _rootId();
+    final level = <String, int>{};
+    if (root != null) {
+      level[root] = 0;
+      final q = <String>[root];
+      var head = 0;
+      while (head < q.length) {
+        final cur = q[head++];
+        final d = level[cur]!;
+        for (final nb in [
+          ...?_childrenOf[cur],
+          ...?_parentsOf[cur],
+        ]) {
+          if (!level.containsKey(nb)) {
+            level[nb] = d + 1;
+            q.add(nb);
+          }
+        }
+      }
+    }
+    for (final n in widget.graph.nodes) {
+      level.putIfAbsent(
+          n.id,
+          () => switch (n.kind) {
+                'person' => 0,
+                'section' => 1,
+                _ => 2,
+              });
+    }
+    return level;
+  }
+
+  List<String> _distinctKinds() {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final n in widget.graph.nodes) {
+      final k = n.kind.isEmpty ? 'fact' : n.kind;
+      if (seen.add(k)) out.add(k);
+    }
+    return out;
+  }
+
+  void _onTick(Duration _) {
+    _sim.step();
+    if (!_userAdjusted) _fitToVisible();
+    _repaint.value++;
+    if (_sim.isSettled) {
+      _ticker.stop();
+      if (!_userAdjusted) _fitToVisible();
+      _repaint.value++;
+    }
+  }
+
+  /// Fit the currently visible nodes into the viewport with padding.
+  void _fitToVisible() {
+    if (_viewport.width <= 0 || _viewport.height <= 0) return;
+    final visible = _sim.nodes.where((s) => _passesFilter(s.id)).toList();
+    final bounds = graphBounds(visible.isEmpty ? _sim.nodes : visible);
+    final fit = fitToViewport(bounds, _viewport);
+    _view.scale = fit.scale;
+    _view.offset = fit.offset;
+  }
+
+  bool _passesFilter(String id) {
+    final n = _byId[id];
+    if (n == null) return false;
+    final k = n.kind.isEmpty ? 'fact' : n.kind;
+    if (_hiddenKinds.contains(k)) return false;
+    if (_hiddenLevels.contains(_levels[id] ?? 2)) return false;
+    return true;
+  }
+
+  // --- selection + highlight -------------------------------------------------
+
+  void _select(GraphNode? n) {
+    if (n?.id == _selected?.id) return;
+    setState(() {
+      _selected = n;
+      _highlight = n == null ? const {} : _highlightSet(n.id);
+    });
+  }
+
+  /// The lit set on tap: the node, its ancestors, its descendants and its
+  /// related nodes. Related links arrive with Track D (row 2p); until then the
+  /// set is ancestors + descendants.
+  Set<String> _highlightSet(String id) {
+    final out = <String>{id};
+    // Ancestors.
+    final up = <String>[id];
+    var h = 0;
+    while (h < up.length) {
+      for (final p in _parentsOf[up[h]] ?? const <String>{}) {
+        if (out.add(p)) up.add(p);
+      }
+      h++;
+    }
+    // Descendants.
+    final down = <String>[id];
+    h = 0;
+    while (h < down.length) {
+      for (final c in _childrenOf[down[h]] ?? const <String>{}) {
+        if (out.add(c)) down.add(c);
+      }
+      h++;
+    }
+    out.addAll(_relatedOf(id));
+    return out;
+  }
+
+  /// Related (cross-link) nodes — populated once Track D adds related links to
+  /// the payload. Empty for now so highlighting is ancestors + descendants.
+  Set<String> _relatedOf(String id) => const {};
+
+  // --- hit testing -----------------------------------------------------------
+
+  GraphNode? _hitTest(Offset viewportPoint) {
+    final scene = _view.toScene(viewportPoint);
+    // Touch tolerance (~22 logical px) expressed in scene units.
+    final tol = 22 / _view.scale;
+    GraphNode? best;
+    var bestD = double.infinity;
+    for (final s in _sim.nodes) {
+      if (!_passesFilter(s.id)) continue;
+      final d = (s.pos - scene).distance;
+      final reach = math.max(s.radius, tol);
+      if (d > reach) continue;
+      // Nearer wins; on a near tie prefer the smaller (leaf) node so a leaf
+      // sitting over a hub stays reachable.
+      if (d < bestD - 0.5 ||
+          (d < bestD + 0.5 && best != null && s.radius < _radiusOf(best))) {
+        bestD = d;
+        best = _byId[s.id];
+      }
+    }
+    return best;
+  }
+
+  double _radiusOf(GraphNode n) => nodeRadiusForLevel(_levels[n.id] ?? 2);
+
+  // --- gestures --------------------------------------------------------------
+
+  void _onScaleStart(ScaleStartDetails d) {
+    _multi = false;
+    _multiInit = false;
+    _downPos = d.localFocalPoint;
+    _maxMove = 0;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
+    _maxMove = math.max(_maxMove, (d.localFocalPoint - _downPos).distance);
+    if (d.pointerCount >= 2) {
+      _multi = true;
+      _userAdjusted = true;
+      if (!_multiInit) {
+        _multiInit = true;
+        _startView = ViewTransform(_view.scale, _view.offset);
+        _startGestureScale = d.scale == 0 ? 1 : d.scale;
+        _startFocalScene = _startView.toScene(d.localFocalPoint);
+      }
+      final factor = d.scale / _startGestureScale;
+      final newScale =
+          (_startView.scale * factor).clamp(_minScale, _maxScale).toDouble();
+      _view.scale = newScale;
+      // Keep the scene point under the (moving) focal fixed — this folds the
+      // two-finger pan and the pinch zoom into one transform.
+      _view.offset = d.localFocalPoint - _startFocalScene * newScale;
+      _repaint.value++;
+    } else if (!_multi) {
+      // Single finger: scrub. Never pans. The node under the finger opens.
+      final hit = _hitTest(d.localFocalPoint);
+      if (hit != null) _select(hit);
+    }
+  }
+
+  void _onScaleEnd(ScaleEndDetails d) {
+    if (!_multi && _maxMove < 18) {
+      // A clean single-finger tap: open the node, or clear on empty space.
+      _select(_hitTest(_downPos));
+    }
+    _multi = false;
+    _multiInit = false;
+  }
+
+  void _resetFit() {
+    setState(() {
+      _userAdjusted = false;
+      _fitToVisible();
+      _repaint.value++;
+    });
+  }
+
+  void _toggleKind(String k) {
+    setState(() {
+      if (!_hiddenKinds.remove(k)) _hiddenKinds.add(k);
+      _fitToVisible();
+      _repaint.value++;
+    });
+  }
+
+  void _toggleLevel(int lvl) {
+    setState(() {
+      if (!_hiddenLevels.remove(lvl)) _hiddenLevels.add(lvl);
+      _fitToVisible();
+      _repaint.value++;
+    });
+  }
+
+  // --- open full content -----------------------------------------------------
+
+  void _openFull(GraphNode n) {
+    if (n.openType == 'image') {
+      if (n.imageUrl.isNotEmpty) {
+        showDialog<void>(
+          context: context,
+          builder: (_) => PhotoViewer(url: n.imageUrl, caption: n.text),
+        );
+      }
+      return;
+    }
+    final route = graphOpenRoute(n);
+    if (route != null) context.push(route);
+  }
+
+  // --- build -----------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    final sel = widget.selected == null
-        ? null
-        : widget.graph.nodes.where((n) => n.id == widget.selected).firstOrNull;
-
-    return Column(
-      children: [
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, c) {
-              final size = Size(c.maxWidth, c.maxHeight);
-              final layout = _NeuralLayout(widget.graph, size);
-              // The tap handler sits ABOVE the InteractiveViewer and maps the
-              // viewport tap into scene coordinates via the transformation
-              // controller (`toScene`), so a node is hit correctly at ANY pan /
-              // zoom. (Previously the GestureDetector was the InteractiveViewer's
-              // child, so its localPosition space was ambiguous under the
-              // transform and taps on image/report nodes missed entirely —
-              // Scout NOTE 248: tapping a photo node did nothing.)
-              return ClipRect(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapUp: (d) {
-                    final scene = _tc.toScene(d.localPosition);
-                    final hit = layout.hit(scene);
-                    if (hit != null) widget.onTapNode(hit);
-                  },
-                  child: InteractiveViewer(
-                    transformationController: _tc,
-                    minScale: 0.5,
-                    maxScale: 6,
-                    boundaryMargin: const EdgeInsets.all(120),
-                    child: SizedBox(
-                      width: size.width,
-                      height: size.height,
-                      child: RepaintBoundary(
-                        child: AnimatedBuilder(
-                          animation: widget.pulse,
-                          builder: (context, _) => CustomPaint(
-                            size: size,
-                            painter: _NeuralPainter(
-                              layout: layout,
-                              ac: ac,
-                              selected: widget.selected,
-                              pulse: reduceMotion ? 0.5 : widget.pulse.value,
-                              animate: !reduceMotion,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+    // ChromeColumn caps the filter bar and the visualiser panel at their share
+    // of the height and scrolls them in a short window, so the three stacked
+    // regions can never add up past the column (layout matrix: 300px split,
+    // text 2.0, keyboard up). The canvas keeps at least a quarter of the space.
+    return ChromeColumn(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      headerShare: 0.3,
+      footerShare: 0.45,
+      header: [
+        _FilterBar(
+          kinds: _kinds,
+          depths: _depths,
+          hiddenKinds: _hiddenKinds,
+          hiddenLevels: _hiddenLevels,
+          onToggleKind: _toggleKind,
+          onToggleLevel: _toggleLevel,
+          onFit: _resetFit,
+        ),
+      ],
+      body: LayoutBuilder(
+        builder: (context, c) {
+          final size = Size(c.maxWidth, c.maxHeight);
+          if (size != _viewport) {
+            _viewport = size;
+            // Fit as soon as the viewport is known (and on size changes, until
+            // the user takes over).
+            if (!_userAdjusted) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                _fitToVisible();
+                _repaint.value++;
+              });
+            }
+          }
+          return ClipRect(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onScaleStart: _onScaleStart,
+              onScaleUpdate: _onScaleUpdate,
+              onScaleEnd: _onScaleEnd,
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  size: size,
+                  painter: _GraphPainter(
+                    sim: _sim,
+                    view: _view,
+                    byId: _byId,
+                    adjacency: _childrenOf,
+                    ac: ac,
+                    selectedId: _selected?.id,
+                    highlight: _highlight,
+                    passes: _passesFilter,
+                    repaint: _repaint,
                   ),
                 ),
-              );
-            },
-          ),
+              ),
+            ),
+          );
+        },
+      ),
+      footer: [
+        _VisualiserPanel(
+          node: _selected,
+          color: _selected == null
+              ? ac.accent
+              : GraphTypeColors.forNode(ac, _selected!),
+          onOpenFull: _openFull,
         ),
-        if (sel != null && !sel.isOpenable) _DetailPanel(node: sel),
       ],
     );
   }
 }
 
-class _DetailPanel extends StatelessWidget {
-  const _DetailPanel({required this.node});
-  final GraphNode node;
+/// The always-visible one-tap filter controls: a type chip per kind present and
+/// a depth chip per level present, plus a Fit button. Tapping a chip hides that
+/// type/level (and its edges); tapping again restores it. Horizontal scroll so
+/// it never overflows at small widths or large text scales.
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({
+    required this.kinds,
+    required this.depths,
+    required this.hiddenKinds,
+    required this.hiddenLevels,
+    required this.onToggleKind,
+    required this.onToggleLevel,
+    required this.onFit,
+  });
+
+  final List<String> kinds;
+  final List<int> depths;
+  final Set<String> hiddenKinds;
+  final Set<int> hiddenLevels;
+  final void Function(String) onToggleKind;
+  final void Function(int) onToggleLevel;
+  final VoidCallback onFit;
+
+  static String _kindLabel(String k) => switch (k) {
+        'person' => 'You',
+        'section' => 'Sections',
+        'bullet' => 'Facts',
+        'fact' => 'Facts',
+        'report' => 'Reports',
+        'image' => 'Photos',
+        'skill' => 'Skills',
+        'assess' => "Ayma's read",
+        'taste' => 'Taste',
+        'steering' => 'Steering',
+        'interaction' => 'Chats',
+        _ => k.isEmpty ? 'Other' : '${k[0].toUpperCase()}${k.substring(1)}',
+      };
+
+  static String _depthLabel(int d) => switch (d) {
+        0 => 'Person',
+        1 => 'Sections',
+        _ => 'L$d',
+      };
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final isFact = node.kind == 'bullet' || node.kind == 'image';
-    final color = isFact
-        ? bulletVisibilityColor(ac, node.visibility)
-        : _GraphColors.forNode(ac, node);
-    final body = node.text.isNotEmpty ? node.text : node.label;
+    Widget chip(String label, Color color, bool on, VoidCallback onTap) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: FilterChip(
+          label: Text(label),
+          selected: on,
+          showCheckmark: false,
+          avatar: CircleAvatar(backgroundColor: color, radius: 6),
+          labelStyle: AymaType.sans(
+              size: 12, color: on ? ac.fg : ac.fgMute),
+          backgroundColor: ac.bgCard,
+          selectedColor: color.withValues(alpha: 0.18),
+          side: BorderSide(color: on ? color.withValues(alpha: 0.5) : ac.lineSoft),
+          onSelected: (_) => onTap(),
+        ),
+      );
+    }
+
     return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 180),
       decoration: BoxDecoration(
-        color: ac.bgCard,
-        border: Border(top: BorderSide(color: ac.lineSoft)),
+        color: ac.bg,
+        border: Border(bottom: BorderSide(color: ac.lineSoft)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
       child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    node.label.isEmpty ? node.kind : node.label,
-                    style: AymaType.sans(size: 13, color: ac.fgDim),
-                  ),
-                ),
-                if (node.visibility.isNotEmpty) ...[
-                  Icon(bulletVisibilityIcon(node.visibility), size: 13, color: color),
-                  const SizedBox(width: 4),
-                  Text(bulletVisibilityLabel(node.visibility),
-                      style: AymaType.sans(size: 12, color: color)),
-                ],
-              ],
+            TextButton.icon(
+              onPressed: onFit,
+              icon: const Icon(Icons.fit_screen_outlined, size: 18),
+              label: const Text('Fit'),
+              style: TextButton.styleFrom(
+                foregroundColor: ac.fgDim,
+                visualDensity: VisualDensity.compact,
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(body, style: AymaType.sans(size: 15, color: ac.fg)),
+            const SizedBox(width: 4),
+            for (final k in kinds)
+              chip(_kindLabel(k), _kindColor(ac, k), !hiddenKinds.contains(k),
+                  () => onToggleKind(k)),
+            if (depths.length > 1) ...[
+              const SizedBox(width: 4),
+              for (final d in depths)
+                chip(_depthLabel(d), ac.fgMute, !hiddenLevels.contains(d),
+                    () => onToggleLevel(d)),
+            ],
           ],
         ),
       ),
     );
   }
+
+  static Color _kindColor(AymaTokens ac, String k) => switch (k) {
+        'person' => ac.accent,
+        'section' => GraphTypeColors.section(ac),
+        'report' => GraphTypeColors.report,
+        'image' => GraphTypeColors.image,
+        'skill' => GraphTypeColors.skill,
+        'assess' => GraphTypeColors.assess,
+        'taste' => GraphTypeColors.taste,
+        'steering' => GraphTypeColors.steering,
+        'interaction' => GraphTypeColors.interaction,
+        _ => GraphTypeColors.fact,
+      };
 }
 
-/// Positions every node in the pixel space of [size]: the person at the
-/// centre, sections on a ring, and each section's leaves spiralled around their
-/// hub (a phyllotaxis spiral so dense clusters never overlap). The whole thing
-/// is scaled to fit [size]; InteractiveViewer zooms in for detail.
-/// A human label for where an image node came from (its `source_kind`), shown
-/// in the node-driven photo viewer.
-String _imageSourceLabel(String sourceKind) => switch (sourceKind) {
-      'chat' => 'Shared in a chat with Ayma',
-      'appearance_report' => 'From an appearance report',
-      'profile_grid' => 'From your profile photos',
-      'web' => 'Found on the web',
-      _ => '',
-    };
+/// The node visualiser below the graph — swaps its [node] as the finger taps or
+/// scrubs. Hosts Track B's [NodeVisualiser] (Contract 3). An openable node
+/// (report / photo) gets an "Open" affordance that pushes the full content.
+class _VisualiserPanel extends StatelessWidget {
+  const _VisualiserPanel({
+    required this.node,
+    required this.color,
+    required this.onOpenFull,
+  });
 
-class _NeuralLayout {
-  _NeuralLayout(this.graph, this.size) {
-    final byId = {for (final n in graph.nodes) n.id: n};
-    final person = graph.nodes.where((n) => n.kind == 'person').firstOrNull;
-    final sections = graph.nodes.where((n) => n.kind == 'section').toList();
+  final GraphNode? node;
+  final Color color;
+  final void Function(GraphNode) onOpenFull;
 
-    // hub -> its leaf node ids (from the hub->leaf edges).
-    final children = <String, List<String>>{};
-    for (final (from, to) in graph.edges) {
-      if (byId[from]?.kind == 'section' &&
-          byId[to] != null &&
-          byId[to]!.kind != 'section') {
-        (children[from] ??= []).add(to);
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final media = MediaQuery.of(context);
+    final n = node;
+    if (n == null) {
+      return Container(
+        width: double.infinity,
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + media.padding.bottom),
+        decoration: BoxDecoration(
+          color: ac.bgCard,
+          border: Border(top: BorderSide(color: ac.lineSoft)),
+        ),
+        child: Text(
+          'Tap or drag across a node to inspect it here.',
+          style: AymaType.sans(size: 13, color: ac.fgMute),
+        ),
+      );
+    }
+    final panelMax = math.min(320.0, media.size.height * 0.4);
+    return Container(
+      width: double.infinity,
+      constraints: BoxConstraints(maxHeight: panelMax),
+      decoration: BoxDecoration(
+        color: ac.bgCard,
+        border: Border(top: BorderSide(color: ac.lineSoft)),
+      ),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + media.padding.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                  width: 10,
+                  height: 10,
+                  decoration:
+                      BoxDecoration(color: color, shape: BoxShape.circle)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  n.label.isEmpty ? n.kind : n.label,
+                  style: AymaType.sans(size: 12, color: ac.fgDim),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (n.visibility.isNotEmpty) ...[
+                Icon(bulletVisibilityIcon(n.visibility),
+                    size: 13, color: bulletVisibilityColor(ac, n.visibility)),
+                const SizedBox(width: 4),
+                Text(bulletVisibilityLabel(n.visibility),
+                    style: AymaType.sans(
+                        size: 12, color: bulletVisibilityColor(ac, n.visibility))),
+              ],
+              if (n.isOpenable)
+                TextButton(
+                  onPressed: () => onOpenFull(n),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(48, 36),
+                  ),
+                  child: const Text('Open'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: SingleChildScrollView(
+              child: NodeVisualiser(
+                node: n,
+                surface: NodeVisualiserSurface.graph,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Paints the force-directed web in viewport space (scene points are mapped
+/// through [view]). Edges are gentle, stably-arced splines so near-parallel
+/// edges from a shared parent separate instead of stacking. Highlighted nodes
+/// and their edges glow; the rest dims when something is selected. Repaints are
+/// driven by [repaint] (the physics ticker), so frames cost no widget rebuild.
+class _GraphPainter extends CustomPainter {
+  _GraphPainter({
+    required this.sim,
+    required this.view,
+    required this.byId,
+    required this.adjacency,
+    required this.ac,
+    required this.selectedId,
+    required this.highlight,
+    required this.passes,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final GraphSim sim;
+  final ViewTransform view;
+  final Map<String, GraphNode> byId;
+
+  /// Directed adjacency (parent -> children) for drawing edges.
+  final Map<String, Set<String>> adjacency;
+  final AymaTokens ac;
+  final String? selectedId;
+  final Set<String> highlight;
+  final bool Function(String) passes;
+
+  bool get _dimming => selectedId != null;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = ac.bg);
+
+    final posById = {for (final s in sim.nodes) s.id: s};
+
+    // Edges first (dim pass, then lit pass on top).
+    for (final pass in const [false, true]) {
+      for (final s in sim.nodes) {
+        final from = s.id;
+        for (final to in adjacency[from] ?? const <String>{}) {
+          if (!passes(from) || !passes(to)) continue;
+          final lit = highlight.contains(from) && highlight.contains(to);
+          if (lit != pass) continue;
+          final a = posById[from];
+          final b = posById[to];
+          if (a == null || b == null) continue;
+          _paintEdge(canvas, from, to, view.toViewport(a.pos),
+              view.toViewport(b.pos), lit);
+        }
       }
     }
 
-    final center = Offset(size.width / 2, size.height / 2);
-    final span = math.min(size.width, size.height);
-    final hubR = span * 0.30;
-    const golden = 2.399963; // golden angle (rad)
-
-    if (person != null) pos[person.id] = center;
-
-    for (var i = 0; i < sections.length; i++) {
-      final a = -math.pi / 2 + 2 * math.pi * i / math.max(sections.length, 1);
-      final s = sections[i];
-      final hub = center + Offset(math.cos(a), math.sin(a)) * hubR;
-      pos[s.id] = hub;
-      final kids = children[s.id] ?? const [];
-      // Leaf spiral radius scales with the cluster size so big sections spread
-      // out instead of piling up.
-      final leafStep = span * 0.028;
-      final leafBase = span * 0.055;
-      for (var k = 0; k < kids.length; k++) {
-        final la = a + golden * (k + 1);
-        final lr = leafBase + leafStep * math.sqrt(k + 1);
-        pos[kids[k]] = hub + Offset(math.cos(la), math.sin(la)) * lr;
-      }
+    // Nodes (dim first, lit on top, the selected node last with a ring).
+    for (final s in sim.nodes) {
+      if (!passes(s.id)) continue;
+      if (s.id == selectedId) continue;
+      final lit = !_dimming || highlight.contains(s.id);
+      if (lit) continue;
+      _paintNode(canvas, s, false);
     }
-
-    // Draw every edge whose endpoints both landed.
-    for (final (f, t) in graph.edges) {
-      if (pos.containsKey(f) && pos.containsKey(t)) edges.add((f, t));
+    for (final s in sim.nodes) {
+      if (!passes(s.id)) continue;
+      if (s.id == selectedId) continue;
+      final lit = !_dimming || highlight.contains(s.id);
+      if (!lit) continue;
+      _paintNode(canvas, s, true);
     }
-    // Clamp into the canvas with a small margin so nothing paints off-edge.
-    final m = span * 0.03;
-    for (final e in pos.entries) {
-      pos[e.key] = Offset(
-        e.value.dx.clamp(m, size.width - m),
-        e.value.dy.clamp(m, size.height - m),
+    final sel = selectedId == null ? null : posById[selectedId];
+    if (sel != null && passes(sel.id)) {
+      _paintNode(canvas, sel, true);
+      final c = view.toViewport(sel.pos);
+      final r = sel.radius * view.scale + 5;
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = ac.fg.withValues(alpha: 0.9)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
       );
     }
   }
 
-  final PersonGraph graph;
-  final Size size;
-  final Map<String, Offset> pos = {};
-  final List<(String, String)> edges = [];
-
-  double radiusFor(GraphNode n) => switch (n.kind) {
-        'person' => 17,
-        'section' => 10,
-        'report' => 8,
-        'image' => 8,
-        _ => 6,
-      };
-
-  /// The node nearest [p] within a finger-sized radius (leaves win ties so a
-  /// leaf on top of a hub is still reachable).
-  GraphNode? hit(Offset p) {
-    GraphNode? best;
-    var bestD = 26.0;
-    for (final n in graph.nodes) {
-      final o = pos[n.id];
-      if (o == null) continue;
-      final d = (o - p).distance;
-      final within = d < bestD || (best != null && d < bestD + 6 && n.kind != 'section' && best.kind == 'section');
-      if (within) {
-        bestD = d;
-        best = n;
-      }
-    }
-    return best;
-  }
-}
-
-class _NeuralPainter extends CustomPainter {
-  _NeuralPainter({
-    required this.layout,
-    required this.ac,
-    required this.selected,
-    required this.pulse,
-    required this.animate,
-  });
-
-  final _NeuralLayout layout;
-  final AymaTokens ac;
-  final String? selected;
-  final double pulse; // 0..1
-  final bool animate;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Deep neural backdrop (consistent in light + dark) with a soft centre glow.
-    final bgRect = Offset.zero & size;
-    canvas.drawRect(
-      bgRect,
-      Paint()
-        ..shader = const RadialGradient(
-          colors: [Color(0xFF131A2E), Color(0xFF070A12)],
-          radius: 0.9,
-        ).createShader(bgRect),
-    );
-
-    final byId = {for (final n in layout.graph.nodes) n.id: n};
-    final sel = selected;
-    final selNeighbours = <String>{};
-    if (sel != null) {
-      selNeighbours.add(sel);
-      for (final (f, t) in layout.edges) {
-        if (f == sel) selNeighbours.add(t);
-        if (t == sel) selNeighbours.add(f);
-      }
-    }
-
-    // Synapses.
-    for (final (f, t) in layout.edges) {
-      final pa = layout.pos[f];
-      final pb = layout.pos[t];
-      if (pa == null || pb == null) continue;
-      final incident = sel != null && (f == sel || t == sel);
-      final ca = _GraphColors.forNode(ac, byId[f]!);
-      final cb = _GraphColors.forNode(ac, byId[t]!);
-      final paint = Paint()
-        ..strokeWidth = incident ? 1.6 : 0.8
-        ..shader = LinearGradient(colors: [
-          ca.withValues(alpha: incident ? 0.75 : 0.16),
-          cb.withValues(alpha: incident ? 0.75 : 0.16),
-        ]).createShader(Rect.fromPoints(pa, pb));
-      canvas.drawLine(pa, pb, paint);
-
-      // A faint signal travelling the selected node's synapses.
-      if (incident && animate) {
-        final tphase = pulse;
-        final p = Offset.lerp(pa, pb, tphase)!;
-        canvas.drawCircle(p, 2.2, Paint()..color = cb.withValues(alpha: 0.9));
-      }
-    }
-
-    // Neurons.
-    for (final n in layout.graph.nodes) {
-      final c = layout.pos[n.id];
-      if (c == null) continue;
-      final color = _GraphColors.forNode(ac, n);
-      final r = layout.radiusFor(n);
-      final focused = sel == null || selNeighbours.contains(n.id);
-      final dim = sel != null && !focused;
-      final coreColor = dim ? color.withValues(alpha: 0.28) : color;
-
-      // Breathing halo.
-      final haloT = animate ? (0.5 + 0.5 * pulse) : 0.75;
-      final haloAlpha = (dim ? 0.05 : 0.18) * haloT;
-      canvas.drawCircle(c, r * (1.9 + 0.4 * haloT), Paint()..color = color.withValues(alpha: haloAlpha));
-
-      // Core, with a kind glyph.
-      _paintNode(canvas, n, c, r, coreColor);
-
-      if (n.id == sel) {
-        canvas.drawCircle(
-          c,
-          r + 5,
-          Paint()
-            ..color = Colors.white
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2,
-        );
-      }
-    }
+  void _paintEdge(
+      Canvas canvas, String from, String to, Offset pa, Offset pb, bool lit) {
+    final ca = GraphTypeColors.forNode(ac, byId[from]!);
+    final cb = GraphTypeColors.forNode(ac, byId[to]!);
+    final alpha = lit ? 0.8 : (_dimming ? 0.05 : 0.22);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = lit ? 2.0 : 1.0
+      ..shader = LinearGradient(colors: [
+        ca.withValues(alpha: alpha),
+        cb.withValues(alpha: alpha),
+      ]).createShader(Rect.fromPoints(pa, pb));
+    // Gentle, stable arc so near-parallel edges from a shared parent separate.
+    final mid = Offset.lerp(pa, pb, 0.5)!;
+    final d = pb - pa;
+    final len = d.distance;
+    if (len < 1e-3) return;
+    final perp = Offset(-d.dy, d.dx) / len;
+    final h = (from.hashCode ^ (to.hashCode * 31)) & 0x3ff;
+    final signed = (h / 1023.0) * 2 - 1; // -1..1, stable per edge
+    final bow = (len * 0.14 * signed).clamp(-30.0, 30.0);
+    final control = mid + perp * bow;
+    final path = Path()
+      ..moveTo(pa.dx, pa.dy)
+      ..quadraticBezierTo(control.dx, control.dy, pb.dx, pb.dy);
+    canvas.drawPath(path, paint);
   }
 
-  void _paintNode(Canvas canvas, GraphNode n, Offset c, double r, Color color) {
+  void _paintNode(Canvas canvas, SimNode s, bool lit) {
+    final n = byId[s.id];
+    if (n == null) return;
+    final base = GraphTypeColors.forNode(ac, n);
+    final color = lit ? base : base.withValues(alpha: 0.25);
+    final c = view.toViewport(s.pos);
+    final r = s.radius * view.scale;
+
+    // Soft halo for the lit/selected nodes.
+    if (lit) {
+      canvas.drawCircle(
+          c, r * 1.9, Paint()..color = base.withValues(alpha: 0.14));
+    }
+
     final fill = Paint()..color = color;
     switch (n.kind) {
       case 'report':
-        // A filled ring — a "report" glyph.
-        canvas.drawCircle(c, r, Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.4);
+        canvas.drawCircle(
+            c,
+            r,
+            Paint()
+              ..color = color
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = math.max(1.4, r * 0.28));
         canvas.drawCircle(c, r * 0.42, fill);
-        return;
+        break;
       case 'image':
-        // A rounded square — a "photo" glyph.
         final rect = RRect.fromRectAndRadius(
           Rect.fromCenter(center: c, width: r * 1.7, height: r * 1.7),
           Radius.circular(r * 0.45),
         );
         canvas.drawRRect(rect, fill);
-        return;
+        break;
       case 'person':
         canvas.drawCircle(c, r, fill);
-        canvas.drawCircle(c, r * 0.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
-        return;
+        canvas.drawCircle(
+            c, r * 0.5, Paint()..color = Colors.white.withValues(alpha: 0.85));
+        break;
       default:
         canvas.drawCircle(c, r, fill);
     }
   }
 
   @override
-  bool shouldRepaint(_NeuralPainter old) =>
-      old.pulse != pulse ||
-      old.selected != selected ||
-      old.layout != layout ||
+  bool shouldRepaint(_GraphPainter old) =>
+      old.selectedId != selectedId ||
+      old.highlight != highlight ||
       old.ac != ac;
 }
