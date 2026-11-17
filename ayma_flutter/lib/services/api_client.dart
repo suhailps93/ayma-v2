@@ -6593,6 +6593,23 @@ class BulletSection {
 }
 
 /// A node of the person graph: `person`, `section` or `bullet`.
+/// A typed cross-link from one graph node to another (person-graph §2.4). The
+/// person graph highlights `type == 'related'` links (Track D) alongside a
+/// tapped node's ancestors and descendants.
+class GraphLink {
+  const GraphLink({required this.target, required this.type, this.label = ''});
+
+  final String target;
+  final String type;
+  final String label;
+
+  factory GraphLink.fromMap(Map<String, dynamic> m) => GraphLink(
+        target: m['target'] as String? ?? '',
+        type: m['type'] as String? ?? '',
+        label: m['label'] as String? ?? '',
+      );
+}
+
 class GraphNode {
   const GraphNode({
     required this.id,
@@ -6608,6 +6625,7 @@ class GraphNode {
     this.isYou = '',
     this.sourceKind = '',
     this.sourceRef = '',
+    this.links = const [],
   });
 
   final String id;
@@ -6636,8 +6654,16 @@ class GraphNode {
   final String openType;
   final String openId;
 
+  /// Typed cross-links from this node (person-graph §2.4). The graph highlights
+  /// the `type == 'related'` ones; empty on nodes the payload gives no links.
+  final List<GraphLink> links;
+
   /// A node the user can navigate FROM — opens a report or a photo on tap.
   bool get isOpenable => openType.isNotEmpty;
+
+  /// The ids of this node's related (cross-link) targets.
+  Iterable<String> get relatedTargets =>
+      links.where((l) => l.type == 'related').map((l) => l.target);
 
   factory GraphNode.fromMap(Map<String, dynamic> m) {
     final open = (m['open'] as Map?)?.cast<String, dynamic>();
@@ -6655,6 +6681,10 @@ class GraphNode {
       isYou: open?['is_you'] as String? ?? '',
       sourceKind: open?['source_kind'] as String? ?? '',
       sourceRef: open?['source_ref'] as String? ?? '',
+      links: ((m['links'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => GraphLink.fromMap(e.cast<String, dynamic>()))
+          .toList(),
     );
   }
 }
