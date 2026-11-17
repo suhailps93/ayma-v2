@@ -6,6 +6,7 @@ import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
 import 'package:ayma_flutter/screens/camera_color_picker_screen.dart';
+import 'package:ayma_flutter/screens/career_view_screen.dart';
 import 'package:ayma_flutter/screens/assistant_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_screen.dart';
 import 'package:ayma_flutter/screens/biometric_consent_settings_screen.dart';
@@ -158,6 +159,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     PersonGraphScreen.path: () => shell(PersonGraphScreen(api: api)),
     StoryEditorScreen.path: () =>
         shell(StoryEditorScreen(api: api, myUid: 'me')),
+    CareerViewScreen.path: () => shell(CareerViewScreen(api: api)),
     '/dm/:threadId': () => shell(
       DmThreadScreen(
         threadId: 'her__me',

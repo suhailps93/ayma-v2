@@ -103,6 +103,40 @@ def test_public_never_leaks_ayma_only():
             assert n["visibility"] != "ayma_only"
 
 
+# --- dated: surfaced only where the node already carries one (Career view) ---
+
+
+def test_node_dated_surfaced_from_link_dated_only_where_present():
+    """The dedicated Career view renders a date only where a node ALREADY has
+    one (the first ``Link.dated`` on it). A node with no dated link lists with
+    no date; no date is ever invented and no node is migrated."""
+    overlay = {
+        "emergent.story.career.0": {
+            "prompt": "Senior engineer at Acme", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Senior engineer at Acme",
+            "state": "answered", "visibility": "public",
+            "links": [
+                {"target": "career_role_narrative", "type": "same_topic",
+                 "dated": "2021-06"},
+            ],
+        },
+        "emergent.story.career.1": {
+            "prompt": "Studied CS", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Studied CS",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    g = _graph(overlay)
+    t = tree.node_tree(g, surface="story")
+    career = next(s for s in t["sections"] if s["page_type"] == "career")
+    by_id = {n["id"]: n for n in career["nodes"]}
+    assert by_id["emergent.story.career.0"]["dated"] == "2021-06"
+    # a node with no dated link lists WITHOUT a date (never invented)
+    assert by_id["emergent.story.career.1"]["dated"] == ""
+    # every node carries the key, defaulting to "" (the Career view keys on it)
+    assert all("dated" in n for n in career["nodes"])
+
+
 def test_ayma_only_shown_in_story_when_flag_on_hidden_when_off():
     overlay = {
         "emergent.editor.goals.0": {

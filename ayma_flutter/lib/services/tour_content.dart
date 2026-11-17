@@ -164,6 +164,16 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 3,
   ),
   TourFeature(
+    featureId: 'career_view',
+    headline: 'Your career, as a timeline',
+    subtitle: 'Open Career & education to see your work and schooling in one '
+        'editable list — dates show where Ayma has them. Tap any entry to '
+        'change it or set it public, or add your LinkedIn.',
+    icon: Icons.work_outline,
+    anchorId: TourAnchors.profileCareerRow,
+    tab: 3,
+  ),
+  TourFeature(
     featureId: 'appearance_report',
     headline: 'An honest mirror',
     subtitle: 'Open Appearance, tick several photos per section, and get one '

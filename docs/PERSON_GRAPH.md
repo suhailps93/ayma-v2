@@ -615,3 +615,38 @@ Refinements on the adopted visualiser surfaces:
   it's you" (never "hasn't checked yet") when the node is `is_you: unknown` but
   carries a real image read. The node chat window's image context card applies
   the same two rules.
+
+## Dedicated Career view (Nov 17 2026, "B-widened" — no schema change)
+
+The founder's settled answer to the A/B/C career-timeline question: a **dedicated
+Career view** that is a *presentation* over the existing graph Career section,
+**not** a new data model. Option A (dated start/end fields on a node, node
+migration, or resurrecting the deleted wiki-timeline subsystem) is **rejected** —
+there is no career date schema and none is added.
+
+- **Screen**: `CareerViewScreen` (`/profile/career`,
+  `ayma_flutter/lib/screens/career_view_screen.dart`), reachable from the "Career
+  & education" row on the Profile tab and via Ayma (`career` destination in
+  `app_registry.json`, aliases "career / my work history / my timeline /
+  education / …"). It loads the owner story tree (`GET /profile/graph/tree?
+  surface=story`) and renders **only** the `career` section's nodes — the career
+  seed nodes (`career_role_narrative`, `career_integration_vector`,
+  `career_trajectory_narrative`, `work_schedule_pattern`, `education_level`), the
+  injected LinkedIn link node (`career.linkedin`), and any **emergent** career
+  children (`page_type: "career"`) the graph has grown — as an editable list.
+- **Dates only where already present**: `person_graph_tree._node_dated` surfaces
+  a read-only `dated` field on **every** tree node, populated from the first
+  `Link.dated` on the node (`Link.dated` / `HistoryEntry.date` are the only
+  date-ish fields in the model) and `""` otherwise. The Career view renders a
+  timeline-style date beside an entry **only** when `dated` is non-empty;
+  undated entries list with no date. No date is invented, no node migrated.
+- **Editing reuses the generic paths**: each entry is a real `NodeVisualiser`, so
+  tap-to-edit opens the same node chat window and drives the same
+  `/profile/graph/node/{id}/{visibility,text,add-child,delete}` endpoints as the
+  generic Node-Visualiser — no duplicate edit path. Per-node visibility is
+  respected: a public-tree viewer (the public-profile surface) only ever sees
+  public career nodes; this view is owner-only.
+- Tests: `tests/test_person_graph_tree.py::
+  test_node_dated_surfaced_from_link_dated_only_where_present` (backend) and
+  `ayma_flutter/test/career_view_test.dart` (lists seed + LinkedIn + emergent,
+  dates only where present, edit persists through the node-edit path).

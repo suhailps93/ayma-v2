@@ -97,6 +97,20 @@ def _source_out(node: GraphNode) -> dict:
     }
 
 
+def _node_dated(node: GraphNode) -> str:
+    """The date a node ALREADY carries, if any — the first typed-link ``dated``
+    on it (``Link.dated``, the only user-facing date on the node model). Surfaced
+    read-only so the dedicated Career view can render a date where one already
+    exists; a node without one gets ``""`` and lists with no date. Never
+    invents a date, never adds start/end fields (founder Nov 17: no schema
+    change)."""
+    for link in getattr(node, "links", None) or []:
+        dated = (getattr(link, "dated", None) or "").strip()
+        if dated:
+            return dated
+    return ""
+
+
 def _image_fields(node: GraphNode) -> dict:
     """Contract 1 image-node fields (image-only), read defensively."""
     if node.answer_type != "image":
@@ -176,6 +190,7 @@ def _build_node(
         "standard_label": node.standard_field_label,
         "standard_order": node.standard_field_order,
         "editable": own_vis != "ayma_only",
+        "dated": _node_dated(node),  # a date only where the node already has one
         "children": children,
     }
     out.update(_source_out(node))  # source on every node, not just images
