@@ -35,7 +35,6 @@ from firebase_admin import storage
 from pydantic import BaseModel, Field
 
 import age_gate
-import agent_wake
 import token_ledger
 from auth import Caller, require_caller, require_uid
 from config import CONFIG
@@ -45,7 +44,6 @@ from livekit_token import (
     LiveKitConfigError,
     build_room_seed,
     mint_access_token,
-    resolve_voice_agent_cloud,
     room_name_for,
     seed_room_context,
     watch_hosted_dispatch,
@@ -421,9 +419,8 @@ async def practice_voice_start(
     # asks who's calling), and the persona's gender rides along so the worker
     # picks a gender-matched TTS voice.
     user_name = _caller_first_name(db, caller.uid)
-    agent_cloud = resolve_voice_agent_cloud(db, caller.uid)
-    if agent_cloud == "cloudrun":
-        background.add_task(agent_wake.wake_agent)
+    # Every voice room runs on LiveKit (founder Nov 17) — no Cloud Run wake.
+    agent_cloud = "livekit"
     # Resume the conversation on a reconnect (item B): when start_or_resume_session
     # returned an already-open session, it holds the transcript so far. Seed those
     # turns into the room — just like /bootstrap seeds a main call's recent turns —

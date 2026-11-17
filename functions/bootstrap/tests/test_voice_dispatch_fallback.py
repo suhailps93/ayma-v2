@@ -10,8 +10,6 @@ fall back to. These tests pin:
   marker, wakes Cloud Run or dispatches (prod feedback RFLpFWkaaCuDC0ew1MUT:
   a silent-voice call that left no backend trail, and flipping to the deleted
   Cloud Run target would only have made the hosted worker decline the room).
-* ``livekit_token.resolve_voice_agent_cloud`` — the one resolution shared by
-  /bootstrap and Practice Date voice.
 * The welcome room's move to explicit ``ayma-lk`` dispatch (it was the last
   always-on Cloud Run consumer).
 * Practice Date voice routing through the same resolution (it originally
@@ -27,7 +25,6 @@ from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 from starlette.background import BackgroundTasks
 
-import agent_wake
 import livekit_token
 import main
 import practice_date
@@ -136,8 +133,6 @@ async def test_watch_no_fallback_when_agent_joins(monkeypatch):
 async def test_watch_flags_when_agent_never_joins(monkeypatch, caplog):
     room = _FakeRoomSvc([[_USER_KIND]], metadata=_seed_json())
     fake = _patch_lk(monkeypatch, room)
-    woken = []
-    monkeypatch.setattr(agent_wake, "wake_agent", lambda: woken.append(1))
 
     with caplog.at_level("WARNING", logger="ayma.livekit_token"):
         fired = await livekit_token.watch_hosted_dispatch(
@@ -148,7 +143,6 @@ async def test_watch_flags_when_agent_never_joins(monkeypatch, caplog):
     # gone; flipping would only make the hosted worker decline the room).
     assert fired is True
     assert room.updated == []
-    assert woken == []
     assert fake.agent_dispatch.created == []
     assert any(
         "did not join room ayma-u1-x" in r.message for r in caplog.records
@@ -199,29 +193,6 @@ async def test_watch_no_flag_if_agent_joins_during_the_window(monkeypatch):
     assert fake.agent_dispatch.created == []
 
 
-# --- resolve_voice_agent_cloud (shared by /bootstrap + practice) ------------
-
-
-def test_resolve_defaults_to_livekit(monkeypatch):
-    monkeypatch.setattr(schema, "profile_doc", lambda _db, _uid: _ProfileDoc())
-    assert livekit_token.resolve_voice_agent_cloud(object(), "me") == "livekit"
-
-
-def test_resolve_honours_explicit_cloudrun_pref(monkeypatch):
-    doc = _ProfileDoc({schema.PF_AYMA_VOICE_CLOUD: "cloudrun"})
-    monkeypatch.setattr(schema, "profile_doc", lambda _db, _uid: doc)
-    assert livekit_token.resolve_voice_agent_cloud(object(), "me") == "cloudrun"
-
-
-def test_resolve_read_error_falls_back_to_default(monkeypatch):
-    class _Boom:
-        def get(self):
-            raise RuntimeError("firestore down")
-
-    monkeypatch.setattr(schema, "profile_doc", lambda _db, _uid: _Boom())
-    assert livekit_token.resolve_voice_agent_cloud(object(), "me") == "livekit"
-
-
 # --- endpoint routing: welcome + bootstrap schedule the watcher -------------
 
 
@@ -250,8 +221,6 @@ def _endpoint_env(monkeypatch):
 def test_welcome_room_routes_to_the_hosted_worker(monkeypatch):
     seeds, watched = _endpoint_env(monkeypatch)
     main._welcome_hits.clear()
-    woken = []
-    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
 
     resp = client.post("/welcome/token")
     assert resp.status_code == 200
@@ -262,7 +231,6 @@ def test_welcome_room_routes_to_the_hosted_worker(monkeypatch):
     # request_fnc guard requires — and no Cloud Run wake at seed time.
     assert agent_name == CONFIG.agent_name_livekit
     assert json.loads(seed_json)["voice_agent_cloud"] == "livekit"
-    assert woken == []
     # The failure-only fallback watcher is armed for the room.
     assert watched == [room]
 
@@ -340,11 +308,7 @@ def _practice_env(monkeypatch, stored=None):
         return False
 
     monkeypatch.setattr(practice_date, "watch_hosted_dispatch", _fake_watch)
-    woken = []
-    monkeypatch.setattr(
-        practice_date.agent_wake, "wake_agent", lambda: woken.append(1)
-    )
-    return seeds, woken
+    return seeds
 
 
 def _background_funcs(background):
@@ -353,7 +317,7 @@ def _background_funcs(background):
 
 @pytest.mark.asyncio
 async def test_practice_voice_defaults_to_the_hosted_worker(monkeypatch):
-    seeds, _woken = _practice_env(monkeypatch)
+    seeds = _practice_env(monkeypatch)
     background = BackgroundTasks()
     caller = practice_date.Caller(
         uid="me", is_anonymous=False, sign_in_provider="google"
@@ -369,29 +333,5 @@ async def test_practice_voice_defaults_to_the_hosted_worker(monkeypatch):
     assert json.loads(seed_json)["voice_agent_cloud"] == "livekit"
     funcs = _background_funcs(background)
     assert practice_date.watch_hosted_dispatch in funcs
-    assert practice_date.agent_wake.wake_agent not in funcs
 
 
-@pytest.mark.asyncio
-async def test_practice_voice_cloudrun_pref_still_routes_to_cloud_run(
-    monkeypatch,
-):
-    seeds, _woken = _practice_env(
-        monkeypatch, stored={schema.PF_AYMA_VOICE_CLOUD: "cloudrun"}
-    )
-    background = BackgroundTasks()
-    caller = practice_date.Caller(
-        uid="me", is_anonymous=False, sign_in_provider="google"
-    )
-    resp = await practice_date.practice_voice_start(
-        practice_date.VoiceStartRequest(other_uid="other-1"),
-        background,
-        caller,
-    )
-    assert resp["livekit"]["room"]
-    _room, seed_json, agent_name = seeds[-1]
-    assert agent_name is None  # automatic dispatch
-    assert json.loads(seed_json)["voice_agent_cloud"] == "cloudrun"
-    funcs = _background_funcs(background)
-    assert practice_date.agent_wake.wake_agent in funcs
-    assert practice_date.watch_hosted_dispatch not in funcs

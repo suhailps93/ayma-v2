@@ -274,8 +274,6 @@ def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch
     token, unchanged, since `splash_screen.dart`'s own response parsing
     requires the `livekit` key to be present."""
     seeds = _livekit_env(monkeypatch)
-    woken = []
-    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
 
     resp = client.post("/bootstrap", headers=_valid_auth(monkeypatch))
     assert resp.status_code == 200
@@ -283,7 +281,6 @@ def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch
     assert body["livekit"]["token"]
     assert body["livekit"]["room"].startswith("ayma-test-uid-123-")
     assert seeds == []
-    assert woken == []
 
     # Same outcome when the client sends an explicit empty session_id (what
     # splash_screen.dart actually does) rather than omitting the field.
@@ -292,7 +289,6 @@ def test_bootstrap_without_a_session_id_never_touches_the_voice_room(monkeypatch
     )
     assert resp2.status_code == 200
     assert seeds == []
-    assert woken == []
 
 
 def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
@@ -310,42 +306,6 @@ def test_bootstrap_schedules_the_one_time_web_self_dive(monkeypatch):
     # TestClient drains background tasks after the response.
     assert seen == ["test-uid-123"]
 
-
-def test_bootstrap_wakes_cloud_run_only_for_cloudrun_users(monkeypatch):
-    """ayma-agent (Cloud Run) runs min-instances=0 (docs/deploy.md §12.2), but
-    the DEFAULT voice routing is now "livekit" — served by the
-    LiveKit-Cloud-hosted worker, which LiveKit keeps warm itself. So a real
-    voice-start /bootstrap (a non-empty session_id — see `newSessionId()`) for a
-    livekit-routed user must NOT fire the Cloud Run wake ping: that would
-    cold-start a 2 GB instance only for it to decline the room (request_fnc
-    guard) — pure wasted spend. Only a user explicitly on "cloudrun" wakes it.
-    (The routing-only, empty-session_id call `splash_screen.dart` makes never
-    touches the voice room at all — see
-    `test_bootstrap_without_a_session_id_never_touches_the_voice_room`.)"""
-    _livekit_env(monkeypatch)
-    woken = []
-    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
-
-    # Default routing ("livekit") → no Cloud Run wake.
-    monkeypatch.setattr(main, "_voice_agent_cloud", lambda _uid: "livekit")
-    resp = client.post(
-        "/bootstrap",
-        headers=_valid_auth(monkeypatch),
-        json={"session_id": "s-real-voice-session"},
-    )
-    assert resp.status_code == 200
-    # TestClient drains background tasks after the response.
-    assert woken == []
-
-    # Explicit "cloudrun" routing → wake the Cloud Run worker.
-    monkeypatch.setattr(main, "_voice_agent_cloud", lambda _uid: "cloudrun")
-    resp = client.post(
-        "/bootstrap",
-        headers=_valid_auth(monkeypatch),
-        json={"session_id": "s-real-voice-session-2"},
-    )
-    assert resp.status_code == 200
-    assert woken == [1]
 
 
 def test_bootstrap_skips_the_web_dive_when_not_eligible(monkeypatch):
@@ -439,20 +399,6 @@ def test_welcome_greeting_instructs_introduce_once_and_wait():
     assert "stay completely silent and wait for them to reply" in main._WELCOME_GREETING
     assert "do not reprompt, ask again, or nag to log in" in main._WELCOME_GREETING
 
-
-def test_welcome_token_no_longer_wakes_the_scale_to_zero_agent(monkeypatch):
-    # The welcome room routes to the hosted LiveKit worker now (§1.1; founder
-    # directive 2026-11-03 — everything on LiveKit Cloud, GCP only if LiveKit
-    # crashes). The Cloud Run wake fires only inside the failure-only fallback
-    # watcher (livekit_token.watch_hosted_dispatch), never at welcome-seed time.
-    _livekit_env(monkeypatch)
-    main._welcome_hits.clear()
-    woken = []
-    monkeypatch.setattr(main.agent_wake, "wake_agent", lambda: woken.append(1))
-
-    resp = client.post("/welcome/token")
-    assert resp.status_code == 200
-    assert woken == []
 
 
 def test_welcome_token_rate_limits_per_ip(monkeypatch):

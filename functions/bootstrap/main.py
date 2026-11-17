@@ -60,7 +60,6 @@ from auth import (  # noqa: E402
 )
 from config import CONFIG, PLAN_TIERS  # noqa: E402
 import location_log as location_log_mod  # noqa: E402
-import agent_wake  # noqa: E402
 import emotion as emotion_mod  # noqa: E402
 import feedback_bubble as feedback_bubble_mod  # noqa: E402
 import self_check as self_check_mod  # noqa: E402
@@ -75,7 +74,6 @@ from livekit_token import (  # noqa: E402
     LiveKitConfigError,
     build_room_seed,
     mint_access_token,
-    resolve_voice_agent_cloud,
     room_name_for,
     seed_room_context,
     watch_hosted_dispatch,
@@ -323,18 +321,6 @@ def _voice_engine_seed(uid: str) -> dict[str, str]:
     out["tts_id"] = str(prof.get(schema.PF_AYMA_CASCADE_TTS, "")).strip()
     out["tts_voice"] = str(prof.get(schema.PF_AYMA_TTS_VOICE, "")).strip()
     return out
-
-
-def _voice_agent_cloud(uid: str) -> str:
-    """Which cloud serves this user's next voice call (§1.1, dual-cloud agent):
-    ``"livekit"`` (the default — the hosted ``ayma-lk`` worker) or ``"cloudrun"``
-    (opt-out via the Developer screen, ``PF_AYMA_VOICE_CLOUD``). Any
-    unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT`` (the
-    one authoritative default); a user who explicitly set ``cloudrun`` still
-    routes to Cloud Run. Thin wrapper over
-    :func:`livekit_token.resolve_voice_agent_cloud`, which Practice Date voice
-    shares so every voice room resolves its target the same way."""
-    return resolve_voice_agent_cloud(get_db(), uid)
 
 
 def _emotion_matching_enabled(uid: str) -> bool:
@@ -1183,19 +1169,11 @@ async def bootstrap(
     # (just a signed JWT) so it still happens unconditionally below, keeping
     # this call's response shape unchanged for `splash_screen.dart`.
     if session_id:
-        # Dual-cloud dispatch (§1.1): resolve the user's target cloud up front.
-        # Only the Cloud Run worker needs a wake ping — livekit-routed users
-        # (the default) are served by the LiveKit-Cloud-hosted worker, which
-        # LiveKit keeps warm itself. Firing the Cloud Run wake for them would
-        # just cold-start a 2 GB instance that immediately declines the room
-        # (request_fnc guard) — pure wasted Cloud Run spend. So wake Cloud Run
-        # only when this user is actually routed there.
-        agent_cloud = _voice_agent_cloud(uid)
-        if agent_cloud == "cloudrun":
-            # Fire the wake ping as early as possible (§ scale-to-zero,
-            # docs/deploy.md §12.2, agent_wake.py) so the container starts in
-            # parallel with the LiveKit token mint + room creation below.
-            background.add_task(agent_wake.wake_agent)
+        # Every voice room runs on LiveKit (founder Nov 17 — the per-user
+        # voice-cloud opt-out was removed). The LiveKit-Cloud-hosted worker is
+        # kept warm by LiveKit itself, so there is no Cloud Run wake ping to
+        # fire.
+        agent_cloud = schema.VOICE_AGENT_CLOUD
         voice_language = _ayma_voice_language(uid)
         # Phase 2 voice seed diet (cost program 2026-09-26): the Live API
         # re-bills the whole seeded context on every turn of the call, so at
@@ -6590,48 +6568,6 @@ async def set_voice_preference_endpoint(
             "accent": body.accent.strip()[:200],
         },
     }
-
-
-@app.get("/voice/agent-cloud")
-async def get_voice_agent_cloud(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Which cloud serves this user's voice agent (§1.1, dual-cloud agent):
-    ``{current, default, options}``. ``current`` is the saved
-    ``voice_agent_cloud`` (``livekit`` by default). Dev-only control on the
-    Developer screen; no LLM spend."""
-    return {
-        "current": _voice_agent_cloud(uid),
-        "default": schema.VOICE_AGENT_CLOUD_DEFAULT,
-        "options": list(schema.VOICE_AGENT_CLOUDS),
-    }
-
-
-class VoiceAgentCloudBody(BaseModel):
-    cloud: str = Field(min_length=1, max_length=32)
-
-
-@app.post("/voice/agent-cloud")
-async def set_voice_agent_cloud(
-    body: VoiceAgentCloudBody, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Persist which cloud serves this user's next voice call on
-    ``users/{uid}/profile/main`` (``voice_agent_cloud``, §1.1). ``livekit``
-    (the default) routes the next room explicitly to the LiveKit-Cloud-hosted
-    worker; ``cloudrun`` routes to the Cloud Run worker via automatic dispatch.
-    Takes effect on the next voice session."""
-    from firebase_admin import firestore
-
-    cloud = body.cloud.strip().lower()
-    if cloud not in schema.VOICE_AGENT_CLOUDS:
-        raise HTTPException(status_code=422, detail="Unknown voice agent cloud.")
-    try:
-        schema.profile_doc(get_db(), uid).set(
-            {schema.PF_AYMA_VOICE_CLOUD: cloud, "updated_at": firestore.SERVER_TIMESTAMP},
-            merge=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("could not save voice_agent_cloud for %s", uid)
-        raise HTTPException(status_code=502, detail="Could not save preference.") from exc
-    return {"ok": True, "current": cloud}
 
 
 @app.get("/brain/preference")

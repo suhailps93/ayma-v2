@@ -4857,17 +4857,17 @@ def _this_runtime_cloud() -> str:
 
 def _room_target_cloud(metadata: str | None) -> str:
     """The ``voice_agent_cloud`` marker ``POST /bootstrap`` left on the room
-    metadata, or ``cloudrun`` when absent/unreadable — so a room with no marker
-    (and any room whose metadata can't be parsed yet) is served by Cloud Run
-    exactly as today."""
+    metadata, or ``livekit`` when absent/unreadable — a room with no marker (and
+    any room whose metadata can't be parsed yet) defaults to LiveKit (founder
+    Nov 17: every voice room runs on LiveKit; the per-user opt-out was removed)."""
     raw = (metadata or "").strip()
     if not raw:
-        return "cloudrun"
+        return "livekit"
     try:
         target = str(json.loads(raw).get("voice_agent_cloud", "")).strip()
     except (ValueError, AttributeError):
-        return "cloudrun"
-    return target if target in ("cloudrun", "livekit") else "cloudrun"
+        return "livekit"
+    return target if target in ("cloudrun", "livekit") else "livekit"
 
 
 async def _request_fnc(req: JobRequest) -> None:
