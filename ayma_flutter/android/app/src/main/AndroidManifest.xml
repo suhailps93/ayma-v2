@@ -182,6 +182,26 @@
                 android:name="android.voice_interaction"
                 android:resource="@xml/ayma_voice_interaction_service" />
         </service>
+
+        <!-- The session + recognition services NAMED by
+             ayma_voice_interaction_service.xml. Both MUST be declared here:
+             the system's VoiceInteractionServiceInfo parser validates that
+             the sessionService (BIND_VOICE_INTERACTION) and recognitionService
+             (android.speech.RecognitionService) referenced by the XML resolve
+             to real, declared components. Without these two declarations the
+             whole AymaAssistantService is rejected with a parse error and Ayma
+             never appears in Settings → Default apps → Digital assistant. -->
+        <service
+            android:name=".AymaAssistantSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+        <service
+            android:name=".AymaRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService"/>
+            </intent-filter>
+        </service>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

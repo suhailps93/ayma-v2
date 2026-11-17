@@ -49,9 +49,6 @@ class MainActivity : FlutterActivity() {
         /** Boolean extra marking an intent as an assistant summon. */
         const val EXTRA_FROM_ASSISTANT = "from_assistant"
 
-        /** Request code for the ROLE_ASSISTANT role-request intent. */
-        const val ASSISTANT_ROLE_REQUEST = 9022
-
         /**
          * Notification channel for FCM `notification`-payload pushes the system
          * displays on its own (web-search ready, new match, Ayma check-in …).
@@ -178,44 +175,36 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Deep-links to the system UI for choosing the default assistant:
-     * the ROLE_ASSISTANT request dialog on Android 10+ (one tap for
-     * the user to confirm), else the default-apps settings page, else
-     * the voice-input settings page.
+     * Opens the system settings surface where the user picks the default
+     * digital assistant, returning true only when one actually launched.
+     *
+     * NOT the ROLE_ASSISTANT role-request dialog: ROLE_ASSISTANT is not a
+     * user-requestable role, so `RoleManager.createRequestRoleIntent`
+     * resolves to an activity that finishes immediately with
+     * RESULT_CANCELED and shows nothing — that is the "button does nothing"
+     * defect (row 2r). Instead we go straight to the Assist & voice-input
+     * settings page (then the default-apps list, then top-level Settings),
+     * resolving each candidate before starting it so the return value is
+     * honest: false means no surface could be opened, and the caller shows
+     * a visible message rather than a silent no-op.
      */
-    private fun openDefaultAssistantSettings() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val roleManager =
-                getSystemService(Context.ROLE_SERVICE) as? RoleManager
-            if (roleManager != null &&
-                roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT) &&
-                !roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
-            ) {
-                @Suppress("DEPRECATION")
-                startActivityForResult(
-                    roleManager.createRequestRoleIntent(
-                        RoleManager.ROLE_ASSISTANT
-                    ),
-                    ASSISTANT_ROLE_REQUEST,
-                )
-                return
-            }
-        }
-        val intents = listOf(
-            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+    private fun openDefaultAssistantSettings(): Boolean {
+        val candidates = listOf(
             Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
             Intent(Settings.ACTION_SETTINGS),
         )
-        for (candidate in intents) {
+        for (candidate in candidates) {
+            candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (candidate.resolveActivity(packageManager) == null) continue
             try {
-                startActivity(
-                    candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-                return
+                startActivity(candidate)
+                return true
             } catch (e: Exception) {
-                // Try the next settings surface.
+                // Resolved but failed to launch — try the next surface.
             }
         }
+        return false
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -350,10 +339,8 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "isDefaultAssistant" ->
                         result.success(isDefaultAssistant())
-                    "openDefaultAssistantSettings" -> {
-                        openDefaultAssistantSettings()
-                        result.success(true)
-                    }
+                    "openDefaultAssistantSettings" ->
+                        result.success(openDefaultAssistantSettings())
                     "takePendingAssist" ->
                         result.success(AssistBridge.take()?.toMap())
                     "hasPendingAssist" ->

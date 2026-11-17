@@ -48,12 +48,21 @@ reading other apps.
    point the Guide button at `CopilotScreen.path` and seed
    `CopilotService` with the capture's screenshot as its first frame;
    the code marks the spot with a `COPILOT-HANDOFF` comment.
-7. **Enabling from the app.** Ayma's settings carries an
-   **Assistant** section: "Ayma Assistant" opens the surface above,
-   and "Default assistant app" deep-links to the system UI
-   (`RoleManager` role request for `ROLE_ASSISTANT` on Android 10+,
-   the default-apps settings page below that). The assistant surface
-   itself shows live status and the same deep link.
+7. **Enabling from the app.** Ayma's settings carries a single
+   **Ayma Assistant** row that opens the surface above; that surface
+   shows live status and the "Open assistant settings" button, which
+   is the one entry point for making Ayma the default (the separate
+   "Default assistant app" shortcut row was removed, row 2r). The
+   button deep-links straight to the system Assist & voice-input
+   settings page (then the default-apps list, then top-level
+   Settings), resolving each surface before opening it. It does **not**
+   use `RoleManager.createRequestRoleIntent(ROLE_ASSISTANT)`:
+   `ROLE_ASSISTANT` is not a user-requestable role, so that intent
+   finishes immediately with `RESULT_CANCELED` and shows nothing — the
+   original "button does nothing" defect. The native side returns
+   whether a surface actually opened, and the screen shows a visible
+   message when none can be. (`RoleManager.isRoleHeld(ROLE_ASSISTANT)`
+   is still used to *detect* the current default.)
 
 ## Privacy (behavior matches this copy)
 
@@ -79,7 +88,15 @@ Native (Kotlin, `android/app/src/main/kotlin/com/ayma/ayma_flutter/`):
 requires), `AssistBridge.kt` (snapshot + flattening, JVM-tested),
 plus the `MainActivity.kt` `ayma/assistant` channel (default-status
 check, settings deep link, one-shot snapshot hand-off) and the
-manifest service declaration.
+manifest service declarations. **All three services must be declared
+in `AndroidManifest.xml`** — `AymaAssistantService` (the
+`VoiceInteractionService`), `AymaAssistantSessionService`
+(`BIND_VOICE_INTERACTION`) and `AymaRecognitionService`
+(`android.speech.RecognitionService`). The session + recognition
+services are the ones the voice-interaction XML names; if either is
+missing, the system's `VoiceInteractionServiceInfo` parser rejects the
+whole service and Ayma never appears in the Digital assistant picker
+(this was the row-2r "not selectable" half of the defect).
 
 Dart: `lib/services/assist_context.dart` (snapshot model, describe /
 context builders, session store, privacy copy),
