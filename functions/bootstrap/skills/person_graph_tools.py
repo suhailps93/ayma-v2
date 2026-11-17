@@ -201,6 +201,10 @@ def _bind_add_node(db, uid: str) -> Callable[..., str]:
                 section=(section or None),
                 answer_type=("narrative" if answer else None),
                 provenance=Provenance.STATED,
+                # The pg_add_node binder gets only (db, uid), no session — stamp
+                # the agent-tool source so the node is never sourceless.
+                source_kind="chat",
+                source_ref="agent_tool",
             )
         except ValueError as exc:
             return f"error: {exc}"

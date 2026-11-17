@@ -156,6 +156,8 @@ def _bind(
                     db, uid, f"emergent.profile.{field}", str(normalised),
                     section="identity", visibility="private",
                     provenance="stated", label=field.replace("_", " ").title(),
+                    source_kind="chat", source_ref=session_id,
+                    source_message_id=str(turn_index),
                 )
 
             try:

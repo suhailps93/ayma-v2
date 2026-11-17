@@ -128,3 +128,61 @@ def test_remember_tool_stamps_the_conversation(monkeypatch):
     assert saved[0]["source_kind"] == "chat"
     assert saved[0]["source_ref"] == "sess-live"
     assert saved[0]["source_message_id"] == "5"
+
+
+# --- the five call sites the sweep delta flagged as sourceless (now fixed) ---
+def _graph_reads_on(monkeypatch):
+    import dataclasses
+
+    import config
+
+    monkeypatch.setattr(
+        config, "CONFIG", dataclasses.replace(config.CONFIG, person_graph_reads=True)
+    )
+
+
+def test_steering_rule_node_carries_a_source(monkeypatch):
+    import steering_ops
+
+    _graph_reads_on(monkeypatch)
+    db = FakeDb()
+    steering_ops.add_rule(db, "u1", "Never call me dude")
+    n = store.load_overlay(db, "u1")[steering_ops._GRAPH_NODE_ID]
+    assert n["source_kind"] == "steering"
+    assert n["source_ref"] == "user_directive"
+
+
+def test_skill_memory_node_carries_a_source():
+    import skill_memory
+
+    db = FakeDb()
+    skill_memory._graph_upsert_skill(db, "u1", "values", "Family first.")
+    n = store.load_overlay(db, "u1")[skill_memory._skill_node_id("values")]
+    assert n["source_kind"] == "skill_memory"
+    assert n["source_ref"] == "values"
+
+
+def test_pg_add_node_tool_stamps_the_agent_source():
+    from skills import person_graph_tools
+
+    db = FakeDb()
+    fn = person_graph_tools._bind_add_node(db, "u1")
+    out = fn("date_of_birth", "a note", answer="I was born at sunrise")
+    assert out.startswith("added node")
+    nid = out.split()[-1]
+    n = store.load_overlay(db, "u1")[nid]
+    assert n["source_kind"] == "chat"
+    assert n["source_ref"] == "agent_tool"
+
+
+def test_set_profile_field_stamps_the_chat_source(monkeypatch):
+    from skills import set_profile_field
+
+    _graph_reads_on(monkeypatch)
+    db = FakeDb()
+    fn = set_profile_field._bind(db, "u1", session_id="sess-77", turn_index=4)
+    fn("last_name", "Reyes")
+    n = store.load_overlay(db, "u1")["emergent.profile.last_name"]
+    assert n["source_kind"] == "chat"
+    assert n["source_ref"] == "sess-77"
+    assert n["source_message_id"] == "4"

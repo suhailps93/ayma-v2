@@ -74,6 +74,7 @@ def add_rule(db, uid: str, rule: str) -> str | None:
                 db, uid, _GRAPH_NODE_ID, body,
                 section="misc", visibility="ayma_only",
                 provenance="stated", level=1, label="steering",
+                source_kind="steering", source_ref="user_directive",
             )
             return rule
         except Exception:  # noqa: BLE001 - never break a chat turn

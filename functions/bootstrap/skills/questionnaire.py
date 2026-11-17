@@ -251,6 +251,7 @@ def _sync_taste_page(db, uid: str) -> None:
                 db, uid, "emergent.taste.qloo", "\n".join(lines),
                 section="taste", visibility="public",
                 provenance="stated", label="Taste",
+                source_kind="questionnaire", source_ref="taste",
             )
         except Exception:  # noqa: BLE001 - taste sync is best-effort
             logger.exception("taste graph sync failed for %s", uid)
