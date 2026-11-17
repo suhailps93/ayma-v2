@@ -107,6 +107,21 @@ StoryNode? indexedStoryFor(String flatId, Map<String, StoryNode> storyById) {
   return null;
 }
 
+/// Distance from [scene] to the visual boundary of node [s] with metadata [n].
+/// Returns 0.0 if [scene] lands inside the node's visual bounds. Pure for tests.
+double distanceToGraphNode(SimNode s, GraphNode? n, Offset scene) {
+  if (n?.kind == 'image' || n?.openType == 'image') {
+    // Photo node is painted as an RRect centered at s.pos with size r * 1.7.
+    final half = s.radius * 1.7 / 2;
+    final dx = math.max(0.0, (scene.dx - s.pos.dx).abs() - half);
+    final dy = math.max(0.0, (scene.dy - s.pos.dy).abs() - half);
+    return math.sqrt(dx * dx + dy * dy);
+  }
+  // Circular node (person, section, report, bullet, skill, etc.):
+  final centerDist = (s.pos - scene).distance;
+  return math.max(0.0, centerDist - s.radius);
+}
+
 class PersonGraphScreen extends StatefulWidget {
   const PersonGraphScreen({super.key, this.api, this.uid});
 
@@ -543,18 +558,39 @@ class _GraphBodyState extends State<_GraphBody>
     // Touch tolerance (~22 logical px) expressed in scene units.
     final tol = 22 / _view.scale;
     GraphNode? best;
-    var bestD = double.infinity;
+    SimNode? bestSim;
+    var bestDist = double.infinity;
     for (final s in _sim.nodes) {
       if (!_passesFilter(s.id)) continue;
-      final d = (s.pos - scene).distance;
-      final reach = math.max(s.radius, tol);
-      if (d > reach) continue;
-      // Nearer wins; on a near tie prefer the smaller (leaf) node so a leaf
-      // sitting over a hub stays reachable.
-      if (d < bestD - 0.5 ||
-          (d < bestD + 0.5 && best != null && s.radius < _radiusOf(best))) {
-        bestD = d;
-        best = _byId[s.id];
+      final node = _byId[s.id];
+      final dist = distanceToGraphNode(s, node, scene);
+      if (dist > tol) continue;
+
+      if (dist < bestDist - 0.5) {
+        bestDist = dist;
+        bestSim = s;
+        best = node;
+      } else if ((dist - bestDist).abs() <= 0.5 &&
+          best != null &&
+          bestSim != null) {
+        // On a near tie:
+        // 1. If one node is openable/photo and the other is inert (e.g. bullet),
+        //    prefer the openable node.
+        final currOpen = node?.isOpenable ?? false;
+        final bestOpen = best.isOpenable;
+        if (currOpen && !bestOpen) {
+          bestDist = dist;
+          bestSim = s;
+          best = node;
+        } else if (!currOpen && bestOpen) {
+          // Keep best.
+        } else if (s.radius < _radiusOf(best)) {
+          // 2. Otherwise prefer the smaller (leaf) node so a leaf sitting over
+          //    a hub stays reachable.
+          bestDist = dist;
+          bestSim = s;
+          best = node;
+        }
       }
     }
     return best;
@@ -599,8 +635,14 @@ class _GraphBodyState extends State<_GraphBody>
 
   void _onScaleEnd(ScaleEndDetails d) {
     if (!_multi && _maxMove < 18) {
-      // A clean single-finger tap: open the node, or clear on empty space.
-      _select(_hitTest(_downPos));
+      // A clean single-finger tap: open the node in full if already selected,
+      // select it if not, or clear on empty space.
+      final hit = _hitTest(_downPos);
+      if (hit != null && hit.id == _selected?.id && hit.isOpenable) {
+        _openFull(hit);
+      } else {
+        _select(hit);
+      }
     }
     _multi = false;
     _multiInit = false;
