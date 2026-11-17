@@ -57,7 +57,7 @@ def _bind_find(db, uid: str) -> Callable[..., str]:
     def pg_find_duplicates() -> str:
         try:
             index = index_mod.build_index(db, uid)
-            report = crosscheck.find_candidates(index)
+            report = crosscheck.candidate_report(db, uid, index)
             dismissed = store.dedupe_dismissed(db, uid)
         except Exception as exc:  # noqa: BLE001
             logger.warning("pg_find_duplicates failed for %s", uid, exc_info=True)

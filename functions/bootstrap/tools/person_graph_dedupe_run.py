@@ -98,7 +98,7 @@ def main(argv: list[str]) -> int:
         f"[project={project or os.getenv('GOOGLE_CLOUD_PROJECT') or 'default'}]"
     )
 
-    report = crosscheck.find_candidates(index)
+    report = crosscheck.candidate_report(db, uid, index)
     if semantic:
         print(f"semantic judge over {len(report.ambiguous_pairs)} ambiguous pairs (LiveKit)...")
         report = asyncio.run(

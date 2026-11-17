@@ -170,6 +170,77 @@ def find_candidates(index: list[NodeIndexEntry]) -> CrossCheckReport:
     return report
 
 
+def candidate_report(db, uid: str, index: list[NodeIndexEntry]) -> "CrossCheckReport":
+    """The ONE candidate entry point (no parallel read paths): nearest-neighbour
+    over Gemini-embedding vectors when ``CONFIG.graph_embedding_dedupe`` is on
+    (refreshing the vectors first), else the lexical pass. Degrades to lexical on
+    any embedding failure. The caller then runs the SAME judge (classify_pairs)
+    over ``report.ambiguous_pairs`` and raises real pairs in chat."""
+    from config import CONFIG
+
+    if CONFIG.graph_embedding_dedupe:
+        try:
+            import graph_embeddings
+
+            graph_embeddings.refresh_vectors(db, uid)
+            vectors = graph_embeddings.load_vectors(db, uid)
+            if vectors:
+                return find_candidates_semantic(index, vectors)
+        except Exception:  # noqa: BLE001 - fall back to lexical, never block
+            logger.warning(
+                "semantic candidate finding failed; using lexical", exc_info=True
+            )
+    return find_candidates(index)
+
+
+# Cosine cutoff for a NEAREST-NEIGHBOUR candidate (founder Nov 17: embeddings
+# find candidates, the judge makes the call). Moderate on purpose — a high
+# cosine is only a CANDIDATE handed to the judge, never a merge; the judge
+# labels each duplicate/related/conflicting.
+_SEMANTIC_NN_THRESHOLD = 0.82
+
+
+def find_candidates_semantic(
+    index: list[NodeIndexEntry],
+    vectors: dict[str, list[float]],
+    *,
+    threshold: float = _SEMANTIC_NN_THRESHOLD,
+    cap: int = 200,
+) -> CrossCheckReport:
+    """Candidate finding by NEAREST NEIGHBOUR over Gemini-embedding vectors,
+    REPLACING the lexical pre-filter (``find_candidates``). Each near pair
+    (cosine ≥ ``threshold``, skipping ancestor/descendant pairs) becomes an
+    AMBIGUOUS candidate for the same LiveKit judge (``classify_pairs``), which
+    decides duplicate / related / conflicting. Exact text identity still lands
+    as a duplicate directly (cosine ≈ 1 would too, but the exact check is free).
+    The judge's job is unchanged — only HOW candidates are found."""
+    import graph_embeddings
+
+    by_id = {e.node_id: e for e in index if e.indexable}
+    report = CrossCheckReport(node_count=len(by_id))
+    for a_id, b_id, score in graph_embeddings.nearest_pairs(
+        {nid: vectors[nid] for nid in by_id if nid in vectors},
+        threshold=threshold, cap=cap,
+    ):
+        a, b = by_id.get(a_id), by_id.get(b_id)
+        if not a or not b or _rel_excluded(a, b):
+            continue
+        if a.norm and a.norm == b.norm:
+            report.duplicate_pairs.append(
+                CandidatePair(a_id, b_id, EXACT, 1.0, "identical text")
+            )
+            continue
+        pair = CandidatePair(
+            a_id, b_id, RELATED, float(score), f"semantic match ~{score:.2f}"
+        )
+        report.ambiguous_pairs.append(pair)
+        report.related_pairs.append(pair)
+    report.duplicate_pairs.sort(key=lambda p: -p.score)
+    report.related_pairs.sort(key=lambda p: -p.score)
+    report.ambiguous_pairs.sort(key=lambda p: -p.score)
+    return report
+
+
 def _cross_label(a: NodeIndexEntry, b: NodeIndexEntry, base: str) -> str:
     if a.kind != b.kind:
         return f"{base}: {a.kind} vs {b.kind}"
