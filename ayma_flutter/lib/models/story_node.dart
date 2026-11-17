@@ -69,8 +69,10 @@ class StoryNode {
   /// `image` for an image node, `narrative`/`bool`/… otherwise.
   final String answerType;
 
-  /// Depth in the tree — used only for the bullet indentation when a subtree is
-  /// rendered standalone; children are normally indented relative to the parent.
+  /// Depth in the tree (1 = top level). Drives the row's left indent in the
+  /// [NodeVisualiser]: a level-2 node sits one step in from a level-1 one, so a
+  /// parentless conversational fact (stored at level 2) nests under the
+  /// standard block instead of sitting flush with it.
   final int level;
 
   /// `public` | `private` | `ayma_only`.

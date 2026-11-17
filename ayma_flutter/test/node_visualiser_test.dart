@@ -152,6 +152,81 @@ void main() {
     expect(grandX, greaterThan(childX));
   });
 
+  // The founder path (build 2488): his Story bullets are parentless level-2
+  // facts (the Your Story editor / content writers mint `upsert_fact_node`
+  // nodes at level 2 with no parent), so they render as flat SECTION ROOTS.
+  // The old renderer indented by recursion depth only, so every one sat flush
+  // with the level-1 standard block. A section of a level-1, a level-2 and a
+  // level-3 root must now render at three visibly DIFFERENT left insets.
+  testWidgets('parentless roots indent by their actual level', (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'identity',
+      title: 'About Me',
+      order: 0,
+      nodes: [
+        _node(id: 'l1', text: 'Level one', level: 1),
+        _node(id: 'l2', text: 'Level two', level: 2),
+        _node(id: 'l3', text: 'Level three', level: 3),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: section,
+        surface: NodeVisualiserSurface.story,
+      ),
+    ));
+
+    final l1X = tester.getTopLeft(find.text('Level one')).dx;
+    final l2X = tester.getTopLeft(find.text('Level two')).dx;
+    final l3X = tester.getTopLeft(find.text('Level three')).dx;
+    // Three distinct, strictly increasing insets — not all flush.
+    expect(l2X, greaterThan(l1X));
+    expect(l3X, greaterThan(l2X));
+  });
+
+  // Deep nesting (past the indent cap) must never push a row off a narrow phone
+  // at the largest text scale — the indent caps and the content text wraps,
+  // in both text directions (RTL indents from the right).
+  testWidgets('deep nesting never overflows at 320px / text-scale 2.0',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    const longText =
+        'A deeply nested conversational fact with enough words that it must '
+        'wrap rather than run off the side of a narrow phone at a large scale';
+    // 8 levels — well past the indent cap, to prove the cap keeps content on.
+    StoryNode chain(int level) => _node(
+          id: 'n$level',
+          text: '$longText (level $level)',
+          level: level,
+          children: level >= 8 ? const [] : [chain(level + 1)],
+        );
+
+    for (final rtl in [false, true]) {
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: Directionality(
+          textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
+          child: Scaffold(
+            body: SingleChildScrollView(
+              child: NodeVisualiser(
+                node: chain(1),
+                surface: NodeVisualiserSurface.story,
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'rtl=$rtl');
+    }
+  });
+
   testWidgets('standard node renders as a labelled field, first', (tester) async {
     final section = GraphTreeSection(
       pageType: 'identity',

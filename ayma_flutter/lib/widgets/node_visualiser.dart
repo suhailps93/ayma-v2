@@ -3,8 +3,11 @@
 /// One data model, one renderer: Your Story, the public profile, every report,
 /// the image carousel and the person-graph tap-detail all render through this
 /// widget. INPUT is a single [StoryNode]; it renders that node's content and
-/// all of its child nodes recursively (children indented by level). This
-/// removes the parallel-renderer defect class structurally (founder Nov 16/17).
+/// all of its child nodes recursively — each row indented by its ACTUAL level
+/// in the tree (a level-2 node one step in from a level-1 one, level-3 one step
+/// further), so a conversational fact nests visibly under the standard block
+/// even when it is stored as a parentless section root. This removes the
+/// parallel-renderer defect class structurally (founder Nov 16/17).
 ///
 /// Rules folded in:
 ///  - FIXED ORDER + STANDARD fields: the backend tree already orders standard
@@ -73,8 +76,31 @@ class NodeVisualiser extends StatelessWidget {
   /// the candidate shows as a plain pending photo.
   final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
 
-  /// Recursion depth — drives the per-level indentation. Hosts leave it 0.
+  /// Render depth — the floor for this node's indentation, so a child always
+  /// sits at least one step deeper than its parent even if a stored [level] is
+  /// stale. Hosts (a section list) leave it 0.
   final int depth;
+
+  /// One indent step, in dp, per tree level.
+  static const double _indentStep = 18;
+
+  /// The deepest level that still earns a fresh indent step. Past this, every
+  /// level shares the same inset and the content text wraps instead, so deep
+  /// nesting can't push a row off-screen at phone width / large text scale.
+  static const int _maxIndentSteps = 5;
+
+  /// Indent steps for this node: its ACTUAL level in the tree (a level-2 node
+  /// sits one step in from a level-1 one), but never fewer than [depth] so a
+  /// nested child is always one step deeper than its parent. Capped at
+  /// [_maxIndentSteps]. This is what makes a parentless level-2 fact (the Your
+  /// Story editor / content writers mint these) indent even though it renders
+  /// as a flat section root — recursion depth alone would leave it flush.
+  int get _indentSteps {
+    final byLevel = node.level - 1;
+    final steps = byLevel > depth ? byLevel : depth;
+    if (steps < 0) return 0;
+    return steps > _maxIndentSteps ? _maxIndentSteps : steps;
+  }
 
   bool get _publicOnly => surface == NodeVisualiserSurface.publicProfile;
 
@@ -126,41 +152,46 @@ class NodeVisualiser extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (showOwnRow) _row(context),
+        // Children are NOT wrapped in an indent here: each node indents itself
+        // by its own level (see [_row]/[_indentSteps]), so a parentless level-2
+        // fact indents the same as a genuinely nested one.
         for (final child in visibleChildren)
-          Padding(
-            padding: const EdgeInsets.only(left: 18, top: 4),
-            child: NodeVisualiser(
-              node: child,
-              surface: surface,
-              onChanged: onChanged,
-              api: api,
-              isOwner: isOwner,
-              onImageTap: onImageTap,
-              onCandidateVerdict: onCandidateVerdict,
-              depth: depth + 1,
-            ),
+          NodeVisualiser(
+            node: child,
+            surface: surface,
+            onChanged: onChanged,
+            api: api,
+            isOwner: isOwner,
+            onImageTap: onImageTap,
+            onCandidateVerdict: onCandidateVerdict,
+            depth: depth + 1,
           ),
       ],
     );
   }
 
   Widget _row(BuildContext context) {
-    return InkWell(
-      key: Key('node_row_${node.id}'),
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => _openChat(context),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: NodeVisibilityBullet(visibility: node.subtreeVisibility),
-            ),
-            const SizedBox(width: 10),
-            Expanded(child: _content(context)),
-          ],
+    // EdgeInsetsDirectional so the indent follows text direction — it grows
+    // from the left in LTR and from the right in RTL.
+    return Padding(
+      padding: EdgeInsetsDirectional.only(start: _indentSteps * _indentStep),
+      child: InkWell(
+        key: Key('node_row_${node.id}'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _openChat(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: NodeVisibilityBullet(visibility: node.subtreeVisibility),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: _content(context)),
+            ],
+          ),
         ),
       ),
     );
