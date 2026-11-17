@@ -303,6 +303,27 @@ reroute to work around an empty response.
   pool already drops ids no longer analysed; the representative guard additionally stops a still-in-pool id (hidden
   under an **older** selection) from pinning an old hero or emptying the card. This is server-side in the report meta,
   so it fixes both the on-screen card and the exported PNG on the next report fetch — no client change.
+- *Appearance report body — TEMPLATED, not bullets (build 2488, founder)*: under the shareable card, the full
+  Appearance report renders through a **designed templated page** (`lib/widgets/appearance_templated_report.dart`,
+  `AppearanceTemplatedReport`), **not** the generic `GraphTreeView` bullet tree every other report uses — the founder
+  viewed a match's appearance report and a face/physique analysis read badly as flat tappable bullets. It fetches the
+  **exact same appearance node tree** the bullet tree did (`GET /report/appearance/{uid}/tree` via
+  `ApiClient.reportTree('appearance', uid)` → `report_tree.report_node_tree` over `report_adapters.appearance_blocks`)
+  — **same nodes, one source of truth, no second store, no duplicated content** — and maps each node-tree section to a
+  fixed designed section by its `page_type` (`attributes` → "Physical attributes", `face` → "Face", `body` →
+  "Physique"; an unknown `page_type` falls back to the node section's own title). Each section lays out: a numeric
+  **score header** (the stat node's value + verdict + a `ScoreBar`), **attribute fields** (standard labelled nodes as
+  "Label: value" rows, not bullets), narrative findings (text nodes), confidence band pills (non-numeric stats), and
+  its analysed photos **carousel-style** — a swipeable square `PageView` of the ONE shared `NodeImage` `fill`
+  renderer with page dots + tap-to-open fullscreen gallery (`AymaImageViewer.openGallery`), exactly like the profile
+  photo carousel — never bounded bullet-row thumbnails. Its loading / 404-empty / retry states mirror `GraphTreeView`
+  (`withColdStartRetry`; a clean 404 → "No appearance report yet.", a 5xx → Retry) so the screen chrome (card, Re-run
+  spinner, "Updating…" banner, `ReportEvents` auto-refresh, `onLoaded` → card reload) is unchanged. The OLD appearance
+  body (`GraphTreeView(reportType:'appearance')`) was **deleted** in the same change; `GraphTreeView` itself stays for
+  deep-dive / match / shared / story. Privacy unchanged: access stays owner/match-scoped via `report_hub.get_report`'s
+  checks (the tree read is the same endpoint), and the photos shown are the same the report already exposed. Regression:
+  `test/appearance_templated_report_test.dart`; layout matrix feeds a populated appearance node tree
+  (`test/support/layout_fakes.dart::_appearanceTree`) so the templated page is held to the overflow bars.
 - *Appearance pre-run photo grouping*: before a run/rerun the Skills-screen sheet (and the report screen's Re-run) call
   `GET /appearance/eligibility` (`photo_attrs.eligibility`) and show the current grid photos as two thumbnail groups —
   **Face analysis** and **Body analysis**. Every grid photo is surfaced (not only the shot-type-tagged ones): a photo
