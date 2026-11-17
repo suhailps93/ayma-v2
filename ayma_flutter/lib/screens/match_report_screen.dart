@@ -310,7 +310,7 @@ class _Report extends StatelessWidget {
     final ac = context.ac;
     // ONE scrolling column for the whole screen (§ class doc: "don't keep
     // this part frozen") — the avatar-row chrome below is just its first
-    // item, ahead of the embedded [LivingReportView] and the taste card.
+    // item, ahead of the embedded [GraphTreeView] body and the taste card.
     // A `SingleChildScrollView` + `Column` (not a lazy `ListView`) so every
     // child is fully laid out: an exact scroll extent, smooth scrolling both
     // ways, and the trailing taste card always reachable (§ BUG: the lazy
