@@ -157,6 +157,72 @@ def is_renderable(node: GraphNode) -> bool:
     return _is_renderable(node)
 
 
+# --- standard-fact restatement matching (zero-duplicates, founder build 2488) --
+#
+# A STANDARD node (Name, Age, Gender, Location, Interested in, Ethnic & cultural
+# origin) renders as its own labelled row. The defect: another node in the same
+# section restates the same fact as a plain bullet — the standard node
+# ``ethnic_cultural_origin`` (South Asian) AND an editor bullet "Ethnic and
+# cultural origin: South Asian", or "Age: 33" next to the Age row. These helpers
+# are the ONE place both the tree render (suppress the restating bullet) and the
+# write paths (never MINT one) decide "does this text restate that standard
+# fact", so the two can never disagree. High precision: a restatement is the
+# bare value, or the label+value content tokens exactly (so "Ethnic & cultural
+# origin: South Asian" and "Ethnic and cultural origin: South Asian" match, past
+# the ``&``/``and`` difference, while a longer distinct sentence does not).
+
+
+def standard_fact_forms(node: GraphNode) -> tuple[str, frozenset[str]]:
+    """``(value_norm, labelvalue_tokens)`` for a STANDARD ``node`` — the two
+    forms a restating node's text is matched against: the normalized bare value
+    and the content-token set of ``"<label> <value>"``. ``("", frozenset())``
+    when the standard node has no renderable value."""
+    import person_graph_index as index_mod
+
+    val = node_display_text(node)
+    if not val:
+        return "", frozenset()
+    label = node.standard_field_label or node.prompt or ""
+    return index_mod.normalize_text(val), index_mod.token_set(f"{label} {val}")
+
+
+def text_restates_standard_fact(
+    value_norm: str, labelvalue_tokens: frozenset[str], text: str
+) -> bool:
+    """True when ``text`` restates the standard fact described by ``value_norm``
+    / ``labelvalue_tokens`` (from :func:`standard_fact_forms`): its normalized
+    text equals the bare value, or its content tokens equal the label+value
+    tokens. Genuine restatements only — never a merely overlapping sentence."""
+    import person_graph_index as index_mod
+
+    if not text:
+        return False
+    if value_norm and index_mod.normalize_text(text) == value_norm:
+        return True
+    if labelvalue_tokens and index_mod.token_set(text) == labelvalue_tokens:
+        return True
+    return False
+
+
+def standard_restatement_id(
+    graph: dict[str, GraphNode], text: str, section: str
+) -> str | None:
+    """The id of a STANDARD node in ``section`` whose fact ``text`` restates, or
+    ``None``. The write-time guard (never mint a bullet that restates a standard
+    fact) and the data-merge tool both call this; the tree render uses the
+    per-form helpers directly (it is surface/visibility-aware). Restricted to the
+    same section — a fact only collides with the labelled row it sits beside."""
+    if not text:
+        return None
+    for n in graph.values():
+        if not getattr(n, "standard", False) or n.section != section:
+            continue
+        vn, lv = standard_fact_forms(n)
+        if text_restates_standard_fact(vn, lv, text):
+            return n.id
+    return None
+
+
 def _is_renderable(node: GraphNode) -> bool:
     """A node renders as a bullet once it carries content — an answer or at
     least one child. Unanswered seed scaffolding does not render."""

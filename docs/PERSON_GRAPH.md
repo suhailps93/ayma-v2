@@ -545,7 +545,58 @@ byte-identical to today.
 - **Staging runner** (read-only, never mutates the graph):
   `PYTHONPATH=. python3 tools/person_graph_dedupe_run.py <uid> --project=ayma-staging [--semantic] [--limit=N]`.
   Prints duplicate groups + related pairs with ids/kind/section/visibility/snippet.
-- Tests: `tests/test_node_dedupe.py` (22 — incl. write-time conflict raising).
+- Tests: `tests/test_node_dedupe.py` (24 — incl. write-time conflict raising and
+  the editor-import merge-not-mint guard).
+
+### Zero-duplicates — standard-vs-emergent facts (founder build 2488, Nov 17 2026)
+
+Founder's About Me showed facts TWICE: a STANDARD node (`ethnic_cultural_origin`
+= South Asian, `date_of_birth` → Age, `target_match_genders` → Interested in)
+AND an emergent node that only restated it (`emergent.editor.identity.11` =
+"Ethnic and cultural origin: South Asian", `emergent.editor.identity.4` = "Age:
+33", prose `emergent.story` bullets). The 2485 lexical dedupe missed these
+because a "`<Label>: <value>`" bullet is *not* an exact-text match of the bare
+standard value. Three layers, all surgical, closing the loop:
+
+1. **Render guarantee (always on)** — `person_graph_tree.node_tree` / `_build_node`.
+   A section never shows the same fact twice: when a STANDARD fact renders as its
+   labelled row, any OTHER node in that section whose text restates it (the bare
+   value, or the `<label> <value>` content tokens — so "Ethnic & cultural origin:
+   South Asian" ≡ "Ethnic and cultural origin: South Asian" past the `&`/`and`
+   gap) is suppressed; the standard row is the keeper. Exact-duplicate bullets
+   (same normalized text) anywhere in the tree are suppressed too (first wins).
+   **Surface-aware:** a standard fact only suppresses a restatement on a surface
+   where that standard row itself renders (its visibility ∈ `keep`), so
+   suppression can never drop the only copy of a fact nor pull a private value
+   onto the public profile (and vice-versa). Suppressing a node blanks its own
+   line only — distinct children still render.
+2. **Write-time prevention (merge-not-mint)** — the gap that let the editor
+   import create the duplicates. The editor write-back
+   (`person_graph_store.replace_section_bullets`) renders the standard facts into
+   its bullet list; their ids are SEED ids, so they never matched an editor-owned
+   node and a new `emergent.editor.*` node was minted. Now every creation path
+   drops a bullet/fact that only restates a standard fact:
+   `replace_section_bullets` (a matched legacy restatement is left unconsumed and
+   so deleted on save), and the free-minting `add_loose_node` / off-script
+   `add_node` (which reuse the standard node's id — `_standard_restatement_id`,
+   always on, before the flag-gated exact `_dedupe_collapse_id`). The matcher is
+   the one shared primitive `person_graph_render.standard_restatement_id` the
+   render uses, so write-time and render can never disagree.
+3. **Data merge (build + test only, NOT executed)** —
+   `tools/merge_duplicate_fact_nodes.py`: for a uid, finds every emergent node
+   that restates a standard fact and MERGES it into the standard node with the
+   existing `store.merge_nodes` (= `pg_resolve_duplicate` 'merge': standard
+   survives, duplicate's answer retired to the survivor's history, children
+   rehomed, links carried, duplicate deleted). A visibility conflict keeps the
+   STANDARD node's visibility and is recorded in the report. `--dry-run` (default)
+   only reports pairs + counts. Project-pinned: ABORTS unless the active project
+   is exactly `ayma-staging`. The main thread runs it (dry-run first) for the
+   founder's uid only; other staging users are governed by the in-chat raise flow
+   (layers 1+2 protect their renders). `--apply` applies.
+- Tests: `tests/test_person_graph_tree.py` (render suppression + surface-aware
+  privacy), `tests/test_node_dedupe.py` (editor merge-not-mint, loose-node reuse),
+  `tests/test_merge_duplicate_fact_nodes.py` (dry-run report, apply merge, child
+  preservation, visibility-conflict keep-standard, staging-project guard).
 
 ## Live image-node ingestion on every source path (2l, Nov 17 2026)
 

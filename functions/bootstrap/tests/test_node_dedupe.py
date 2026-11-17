@@ -283,6 +283,57 @@ def test_write_time_prevention_collapses_exact_on_flag(monkeypatch):
     assert len(store.load_overlay(db, UID)) == 1
 
 
+def _identity_db(standard):
+    """A FakeDb whose overlay holds the given standard identity answers (seed
+    node ids), so effective() marks them ``standard``."""
+    return FakeDb({**_profile(UID), **_overlay_doc(UID, dict(standard))})
+
+
+def test_editor_import_does_not_mint_restatement_of_standard_fact():
+    """Founder build 2488: the editor write-back minted
+    ``emergent.editor.identity.*`` nodes that only restated a standard fact
+    ("Ethnic and cultural origin: South Asian" beside the ethnic-origin row,
+    "Age: 33", "Interested in: Women"). The gap: the standard bullet's id is a
+    SEED id, so it never matched an editor-owned node and a duplicate was minted.
+    The write path now drops any bullet that only restates a standard fact —
+    merge-not-mint — while keeping genuinely new bullets."""
+    db = _identity_db({
+        "ethnic_cultural_origin": {"answer": "South Asian", "state": "answered"},
+        "target_match_genders": {"answer": ["Women"], "state": "answered"},
+        "gender_identity": {"answer": "Male", "state": "answered"},
+    })
+    bullets = [
+        {"id": "ethnic_cultural_origin", "text": "South Asian", "visibility": "private"},
+        {"id": "", "text": "Ethnic and cultural origin: South Asian", "visibility": "private"},
+        {"id": "", "text": "Interested in: Women", "visibility": "public"},
+        {"id": "", "text": "Gender: Male", "visibility": "public"},
+        {"id": "", "text": "Grew up in Chennai", "visibility": "public"},  # a distinct fact
+    ]
+    result_ids = store.replace_section_bullets(db, UID, "identity", bullets)
+    overlay = store.load_overlay(db, UID)
+    # No editor node that restates a standard fact was minted.
+    editor_nodes = [n for n in overlay if n.startswith("emergent.editor.identity.")]
+    editor_texts = {str(overlay[n].get("answer")) for n in editor_nodes}
+    assert editor_texts == {"Grew up in Chennai"}  # only the distinct bullet survived
+    assert "Ethnic and cultural origin: South Asian" not in editor_texts
+    assert "Interested in: Women" not in editor_texts
+    # the standard seed nodes are untouched (the facts still live on them)
+    assert overlay["ethnic_cultural_origin"]["answer"] == "South Asian"
+
+
+def test_add_loose_node_reuses_standard_fact_instead_of_minting():
+    """``remember`` / off-script facts route through ``add_loose_node``; a fact
+    that restates a standard identity answer reuses the standard node (returns
+    its id) rather than minting a second node — always on, no flag."""
+    db = _identity_db({
+        "ethnic_cultural_origin": {"answer": "South Asian", "state": "answered"},
+    })
+    before = len(store.load_overlay(db, UID))
+    nid = store.add_loose_node(db, UID, "Ethnic and cultural origin: South Asian")
+    assert nid == "ethnic_cultural_origin"  # reused the standard node
+    assert len(store.load_overlay(db, UID)) == before  # nothing minted
+
+
 def test_write_time_prevention_off_by_default_creates_node(monkeypatch):
     nodes = {
         "existing": {"prompt": "x", "section": "misc", "level": 1,
