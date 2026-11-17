@@ -21,19 +21,30 @@ class GraphTreeView extends StatefulWidget {
     super.key,
     this.uid,
     required this.surface,
+    this.reportType,
+    this.reportId,
     this.api,
     this.isOwner = true,
     this.emptyMessage = 'Nothing here yet.',
+    this.emptyBuilder,
     this.onChatToEdit,
     this.onImageTap,
+    this.onCandidateVerdict,
     this.onLoaded,
   });
 
-  /// Whose graph to load — null means the signed-in user ("mine").
+  /// Whose graph to load — null means the signed-in user ("mine"). Ignored when
+  /// [reportType] is set (a report is fetched by type+id, not by uid).
   final String? uid;
 
   /// The surface (sets the visibility filter + owner affordances).
   final NodeVisualiserSurface surface;
+
+  /// When set, the body is a REPORT tree fetched via
+  /// `ApiClient.reportTree(reportType, reportId)` (2o P2) instead of the person
+  /// graph — the appearance / deep-dive / match / shared report screens.
+  final String? reportType;
+  final String? reportId;
 
   final ApiClient? api;
 
@@ -43,6 +54,11 @@ class GraphTreeView extends StatefulWidget {
   /// Shown when the tree loaded but has no visible content.
   final String emptyMessage;
 
+  /// A rich empty state — shown instead of [emptyMessage] when the report has
+  /// never been run (a clean 404) or the tree is empty (e.g. deep-dive's "Run
+  /// web search" CTA).
+  final WidgetBuilder? emptyBuilder;
+
   /// Host hook for the "Chat to edit" bubble (opens the shared chat overlay
   /// scoped to a node); forwarded to [NodeVisualiser].
   final void Function(StoryNode node)? onChatToEdit;
@@ -50,7 +66,10 @@ class GraphTreeView extends StatefulWidget {
   /// Overrides what tapping an image node does (e.g. the carousel's viewer).
   final void Function(StoryNode node)? onImageTap;
 
-  /// Called with the loaded tree (e.g. so a host can show a count).
+  /// A CANDIDATE node's "This is me" / "Not me" verdict (deep-dive report).
+  final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
+
+  /// Called with the loaded tree (e.g. so a host can refresh adjacent chrome).
   final void Function(GraphTree tree)? onLoaded;
 
   @override
@@ -64,6 +83,7 @@ class GraphTreeViewState extends State<GraphTreeView>
   GraphTree? _tree;
   bool _loading = true;
   bool _error = false;
+  bool _notFound = false; // a clean 404 (report never run) → empty CTA
 
   // Survive flings when embedded in a scrolling host (e.g. Your Story's outer
   // ListView): without this the widget is destroyed + re-fetched on every
@@ -81,30 +101,44 @@ class GraphTreeViewState extends State<GraphTreeView>
   @override
   void didUpdateWidget(covariant GraphTreeView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.uid != widget.uid || oldWidget.surface != widget.surface) {
+    if (oldWidget.uid != widget.uid ||
+        oldWidget.surface != widget.surface ||
+        oldWidget.reportType != widget.reportType ||
+        oldWidget.reportId != widget.reportId) {
       _load();
     }
   }
 
-  /// Public so a host (e.g. after an edit elsewhere) can refresh the tree.
+  /// Public so a host (e.g. after an edit elsewhere, or a report re-run) can
+  /// refresh the tree.
   Future<void> reload() => _load();
 
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = false;
+      _notFound = false;
     });
     try {
-      final tree = await _api.graphTree(
-        uid: widget.uid,
-        surface: widget.surface.name,
-      );
+      final tree = widget.reportType != null
+          ? await _api.reportTree(widget.reportType!, widget.reportId ?? '')
+          : await _api.graphTree(uid: widget.uid, surface: widget.surface.name);
       if (!mounted) return;
       setState(() {
         _tree = tree;
         _loading = false;
       });
       widget.onLoaded?.call(tree);
+    } on ApiException catch (e) {
+      // A clean 404 means the report has never been run — a CTA empty state,
+      // not the "Couldn't load" error a real fetch failure gets.
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _notFound = e.statusCode == 404;
+          _error = e.statusCode != 404;
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -143,7 +177,8 @@ class GraphTreeViewState extends State<GraphTreeView>
             .where((s) => s.nodes.isNotEmpty)
             .toList(growable: false) ??
         const [];
-    if (sections.isEmpty) {
+    if (_notFound || sections.isEmpty) {
+      if (widget.emptyBuilder != null) return widget.emptyBuilder!(context);
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
         child: Text(
@@ -170,6 +205,7 @@ class GraphTreeViewState extends State<GraphTreeView>
             onChanged: _load,
             onChatToEdit: widget.onChatToEdit,
             onImageTap: widget.onImageTap,
+            onCandidateVerdict: widget.onCandidateVerdict,
           ),
       ],
     );
