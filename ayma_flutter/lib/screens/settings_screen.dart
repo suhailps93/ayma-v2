@@ -232,20 +232,6 @@ class _SettingsScreenState extends State<SettingsScreen>
               onTap: () => context.push(AssistantScreen.path),
             ),
           ),
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-            key: const Key('ayma_settings_default_assistant'),
-            leading: Icon(Icons.settings_outlined, color: ac.fgDim),
-            title: Text('Default assistant app',
-                style: AymaType.sans(size: 15, color: ac.fg)),
-            subtitle: Text(
-                _isDefaultAssistant == true
-                    ? 'Ayma is selected in Android settings'
-                    : 'Choose Ayma in Android default app settings',
-                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
-            trailing: Icon(Icons.open_in_new, color: ac.fgMute),
-            onTap: () => _assistant.openDefaultAssistantSettings(),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
             child: Text(AssistPrivacy.settingsBlurb,

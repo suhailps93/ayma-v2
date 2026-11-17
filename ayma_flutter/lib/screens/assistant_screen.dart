@@ -112,6 +112,23 @@ class _AssistantScreenState extends State<AssistantScreen>
     if (mounted) setState(() => _isDefault = isDefault);
   }
 
+  /// Opens the system surface where Ayma can be picked as the default
+  /// assistant. The native side now returns whether a settings page
+  /// actually opened, so a failure is visible instead of a silent no-op
+  /// (row 2r: the button used to do nothing).
+  Future<void> _openAssistantSettings() async {
+    final opened = await _service.openDefaultAssistantSettings();
+    if (!opened && mounted) {
+      AymaToast.show(
+        context,
+        "Couldn't open Android's assistant settings on this device. "
+        'Open Settings › Apps › Default apps › Digital assistant and '
+        'choose Ayma.',
+        kind: AymaToastKind.error,
+      );
+    }
+  }
+
   Future<void> _ask(String question) async {
     final capture = _capture;
     final q = question.trim();
@@ -225,7 +242,7 @@ class _AssistantScreenState extends State<AssistantScreen>
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
           child: FilledButton.tonal(
             key: const Key('assistant_open_settings'),
-            onPressed: () => _service.openDefaultAssistantSettings(),
+            onPressed: _openAssistantSettings,
             child: const Text('Open assistant settings'),
           ),
         ),
