@@ -165,21 +165,14 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
     return [base]
 
 
-def report_node_tree(
-    db, report_type: str, report_id: str, viewer_uid: str
-) -> dict:
-    """The whole report as a Node-Visualiser tree: ``{surface:"report", title,
-    sections:[{page_type,title,order,nodes:[...]}], meta}``.
-
-    Reuses :func:`report_hub.get_report` (owner/permission checks included), so
-    it raises the same ``ValueError`` (unknown type) / ``KeyError`` (nothing to
-    report → 404) / ``PermissionError`` (owner-only → 403) the block endpoint
-    does. ``meta`` is carried through unchanged (``viewer_can_edit``,
-    ``card_hidden_photos`` …) for the report screens that consume this tree.
-    """
-    report = report_hub.get_report(db, report_type, report_id, viewer_uid)
+def _sections_to_tree(sections: Any) -> list[dict]:
+    """Convert a block-model ``sections`` list (``[{heading, blocks:[...]}]``)
+    to the Node-Visualiser section shape. Shared by the live-report path and
+    the frozen-snapshot path so both produce identical node trees."""
     sections_out: list[dict] = []
-    for order, section in enumerate(report.get("sections") or []):
+    for order, section in enumerate(sections or []):
+        if not isinstance(section, dict):
+            continue
         heading = str(section.get("heading") or "")
         slug = _slug(heading)
         nodes: list[dict] = []
@@ -194,9 +187,44 @@ def report_node_tree(
                 "nodes": nodes,
             }
         )
+    return sections_out
+
+
+def report_node_tree(
+    db, report_type: str, report_id: str, viewer_uid: str
+) -> dict:
+    """The whole report as a Node-Visualiser tree: ``{surface:"report", title,
+    sections:[{page_type,title,order,nodes:[...]}], meta}``.
+
+    Reuses :func:`report_hub.get_report` (owner/permission checks included), so
+    it raises the same ``ValueError`` (unknown type) / ``KeyError`` (nothing to
+    report → 404) / ``PermissionError`` (owner-only → 403) the block endpoint
+    does. ``meta`` is carried through unchanged (``viewer_can_edit``,
+    ``card_hidden_photos`` …) for the report screens that consume this tree.
+    """
+    report = report_hub.get_report(db, report_type, report_id, viewer_uid)
     return {
         "surface": SURFACE_REPORT,
         "title": report.get("title") or "",
-        "sections": sections_out,
+        "sections": _sections_to_tree(report.get("sections") or []),
         "meta": report.get("meta") or {},
+    }
+
+
+def snapshot_node_tree(snapshot: dict) -> dict:
+    """A frozen SHARE snapshot (``share.fetch_public`` → ``{title, report_type,
+    sections}``) as a Node-Visualiser tree — the token-scoped counterpart of
+    :func:`report_node_tree` (2o P5).
+
+    It deliberately does NOT call :func:`report_hub.get_report`: the public
+    ``/s/{token}`` read is authorized solely by the unguessable token and must
+    stay unauthenticated, exactly like ``/s/{token}/data``. ``meta`` therefore
+    mirrors that endpoint verbatim — no owner, never editable — so every node's
+    chat window stays read-only for a token-holding viewer.
+    """
+    return {
+        "surface": SURFACE_REPORT,
+        "title": str(snapshot.get("title") or ""),
+        "sections": _sections_to_tree(snapshot.get("sections") or []),
+        "meta": {"owner_uid": "", "viewer_can_edit": False},
     }

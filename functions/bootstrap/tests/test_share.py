@@ -119,6 +119,22 @@ def test_data_and_card_sizes(monkeypatch):
     assert client.get(f"/s/{t}/card.png?format=bad").status_code == 422
 
 
+def test_tree_is_public_and_unknown_token_404s(monkeypatch):
+    # 2o P5: the shared-report body renders through the Node-Visualiser tree.
+    db = FakeDb()
+    t = share.create(db, "u1", "deep_dive", "u1")["token"]
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    # Public, unauthenticated, no owner check — same scope as /data.
+    tree = client.get(f"/s/{t}/tree").json()
+    assert tree["surface"] == "report"
+    assert tree["meta"] == {"owner_uid": "", "viewer_can_edit": False}
+    assert tree["sections"]  # the snapshot's sections became node sections
+    # A revoked / unknown token gives the body to nobody.
+    share.revoke(db, "u1", t)
+    assert client.get(f"/s/{t}/tree").status_code == 404
+    assert client.get("/s/nope/tree").status_code == 404
+
+
 def test_share_endpoints_require_auth_and_create(monkeypatch):
     body = {"report_type": "deep_dive", "report_id": "u1"}
     assert client.post("/share", json=body).status_code in (401, 403)

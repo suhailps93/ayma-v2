@@ -24,6 +24,7 @@ class GraphTreeView extends StatefulWidget {
     required this.surface,
     this.reportType,
     this.reportId,
+    this.loader,
     this.api,
     this.isOwner = true,
     this.emptyMessage = 'Nothing here yet.',
@@ -45,6 +46,14 @@ class GraphTreeView extends StatefulWidget {
   /// graph — the appearance / deep-dive / match / shared report screens.
   final String? reportType;
   final String? reportId;
+
+  /// When set, the tree is fetched by this callback instead of by
+  /// [reportType]/[reportId] or [uid] — the token-scoped shared-report path
+  /// (`ApiClient.sharedReportTree`, 2o P5). That read carries no auth and MUST
+  /// NOT go through the owner-checked `/report/.../tree`, so the shared screen
+  /// hands its own unauthenticated loader here. A thrown [ApiException] keeps
+  /// the same 404-is-empty / other-is-error handling as the report path.
+  final Future<GraphTree> Function()? loader;
 
   final ApiClient? api;
 
@@ -117,10 +126,13 @@ class GraphTreeViewState extends State<GraphTreeView>
     });
     try {
       final tree = await withColdStartRetry(
-        () async => widget.reportType != null
-            ? await _api.reportTree(widget.reportType!, widget.reportId ?? '')
-            : await _api.graphTree(
-                uid: widget.uid, surface: widget.surface.name),
+        () async => widget.loader != null
+            ? await widget.loader!()
+            : widget.reportType != null
+                ? await _api.reportTree(
+                    widget.reportType!, widget.reportId ?? '')
+                : await _api.graphTree(
+                    uid: widget.uid, surface: widget.surface.name),
       );
       if (!mounted) return;
       setState(() {
