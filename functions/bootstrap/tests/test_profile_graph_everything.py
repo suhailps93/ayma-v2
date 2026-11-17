@@ -105,3 +105,34 @@ def test_public_graph_hides_private_and_ayma_only_store_nodes():
         "emergent.assess.summary",
     ):
         assert hidden not in ids
+
+
+def test_related_links_are_surfaced_type_related_only():
+    # Track D (Contract 4): a node's typed RELATED cross-links reach the flat
+    # payload so the graph can highlight them; non-related link types do not.
+    db = FakeDb()
+    store.replace_overlay(
+        db,
+        "u1",
+        {
+            "emergent.skill.physical-profile": {
+                "prompt": "Physical profile", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "Athletic build.",
+                "state": "answered", "visibility": "private",
+                "links": [
+                    {"target": "emergent.appearance.report", "type": "related"},
+                    {"target": "emergent.image.photo1", "type": "elaborates"},
+                ],
+            },
+            "emergent.appearance.report": {
+                "prompt": "Appearance report", "section": "identity", "level": 2,
+                "answer_type": "narrative", "answer": "Face 7.0",
+                "state": "answered", "visibility": "private",
+            },
+        },
+    )
+    g = profile_graph.get_graph(db, "u1")
+    skill = _by_id(g)["emergent.skill.physical-profile"]
+    assert skill.get("links") == [
+        {"target": "emergent.appearance.report", "type": "related"}
+    ]

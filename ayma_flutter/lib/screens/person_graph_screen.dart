@@ -5,11 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 
+import '../models/story_node.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
-import '../widgets/bullet_visibility.dart';
+import '../widgets/node_chat_window.dart';
 import '../widgets/node_visualiser.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/photo_gallery.dart';
@@ -38,6 +39,73 @@ String? graphOpenRoute(GraphNode n) => switch (n.openType) {
       'webfind_report' => n.openId.isEmpty ? null : '/deep-dive/${n.openId}',
       _ => null,
     };
+
+/// Symmetric related-link adjacency (Track D, Contract 4) over the flat graph:
+/// flat node id -> related flat ids. A link target is a raw graph-store id, but
+/// a bullet is drawn as `b:<id>`, so each target is resolved to whichever flat
+/// id actually exists; the result is symmetric so tapping either end lights the
+/// other. Pure so the highlight wiring is unit-testable.
+Map<String, Set<String>> buildRelatedAdjacency(
+    Iterable<GraphNode> nodes, Set<String> existingIds) {
+  String? resolve(String raw) {
+    if (existingIds.contains(raw)) return raw;
+    final prefixed = 'b:$raw';
+    if (existingIds.contains(prefixed)) return prefixed;
+    return null;
+  }
+
+  final adj = <String, Set<String>>{};
+  for (final n in nodes) {
+    for (final target in n.relatedTargets) {
+      final t = resolve(target);
+      if (t == null || t == n.id) continue;
+      (adj[n.id] ??= {}).add(t);
+      (adj[t] ??= {}).add(n.id);
+    }
+  }
+  return adj;
+}
+
+/// The lit set when node [id] is tapped: the node, its ancestors, its
+/// descendants, and its related nodes. Pure so the highlight is unit-testable.
+Set<String> graphHighlightSet(
+  String id, {
+  required Map<String, Set<String>> parentsOf,
+  required Map<String, Set<String>> childrenOf,
+  required Map<String, Set<String>> relatedAdj,
+}) {
+  final out = <String>{id};
+  // Ancestors.
+  final up = <String>[id];
+  var h = 0;
+  while (h < up.length) {
+    for (final p in parentsOf[up[h]] ?? const <String>{}) {
+      if (out.add(p)) up.add(p);
+    }
+    h++;
+  }
+  // Descendants.
+  final down = <String>[id];
+  h = 0;
+  while (h < down.length) {
+    for (final c in childrenOf[down[h]] ?? const <String>{}) {
+      if (out.add(c)) down.add(c);
+    }
+    h++;
+  }
+  out.addAll(relatedAdj[id] ?? const <String>{});
+  return out;
+}
+
+/// The indexed StoryNode (Track B's tree) for a flat node id: the raw id, or a
+/// bullet's `b:`-stripped id. Null when the tree holds no such node (a section
+/// hub or the person centre, which the screen synthesizes). Pure for tests.
+StoryNode? indexedStoryFor(String flatId, Map<String, StoryNode> storyById) {
+  final direct = storyById[flatId];
+  if (direct != null) return direct;
+  if (flatId.startsWith('b:')) return storyById[flatId.substring(2)];
+  return null;
+}
 
 class PersonGraphScreen extends StatefulWidget {
   const PersonGraphScreen({super.key, this.api, this.uid});
@@ -115,7 +183,12 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
             )
           : g == null
               ? const Center(child: CircularProgressIndicator())
-              : _GraphBody(key: ValueKey(identityHashCode(g)), graph: g),
+              : _GraphBody(
+                  key: ValueKey(identityHashCode(g)),
+                  graph: g,
+                  api: _api,
+                  uid: widget.uid,
+                ),
     );
   }
 
@@ -219,8 +292,15 @@ class GraphTypeColors {
 
 /// The live graph: force simulation + fit + gestures + the visualiser below.
 class _GraphBody extends StatefulWidget {
-  const _GraphBody({super.key, required this.graph});
+  const _GraphBody({
+    super.key,
+    required this.graph,
+    required this.api,
+    this.uid,
+  });
   final PersonGraph graph;
+  final ApiClient api;
+  final String? uid;
 
   @override
   State<_GraphBody> createState() => _GraphBodyState();
@@ -243,6 +323,16 @@ class _GraphBodyState extends State<_GraphBody>
 
   GraphNode? _selected;
   Set<String> _highlight = const {};
+
+  // Track B's recursive tree, indexed by StoryNode id, fetched once on open.
+  GraphTree? _tree;
+  final Map<String, StoryNode> _storyById = {};
+
+  // Symmetric related-link adjacency (Track D, Contract 4): flat id -> related
+  // flat ids, resolved from every node's `links` (both directions).
+  late final Map<String, Set<String>> _relatedAdj;
+
+  bool get _isOwner => widget.uid == null;
 
   // Filters: hidden node kinds and hidden depth buckets.
   final Set<String> _hiddenKinds = {};
@@ -275,6 +365,8 @@ class _GraphBodyState extends State<_GraphBody>
     _levels = _computeLevels();
     _kinds = _distinctKinds();
     _depths = (_levels.values.toSet().toList()..sort());
+    _relatedAdj =
+        buildRelatedAdjacency(widget.graph.nodes, _byId.keys.toSet());
 
     final simNodes = [
       for (final n in widget.graph.nodes)
@@ -298,6 +390,40 @@ class _GraphBodyState extends State<_GraphBody>
         _ticker.start();
       }
     });
+    unawaited(_loadTree());
+  }
+
+  /// Fetch Track B's recursive tree ONCE and index every StoryNode by id, so a
+  /// tap/scrub swaps the node prop cheaply (no per-node refetch). Best-effort:
+  /// a failure leaves the detail panel on the synthesized fallback.
+  Future<void> _loadTree() async {
+    try {
+      final tree =
+          await widget.api.graphTree(uid: widget.uid, surface: 'graphDetail');
+      if (!mounted) return;
+      setState(() {
+        _tree = tree;
+        _indexTree(tree);
+      });
+    } catch (_) {
+      // Keep the graph usable; the panel falls back to the flat node content.
+    }
+  }
+
+  void _indexTree(GraphTree tree) {
+    _storyById.clear();
+    void walk(StoryNode n) {
+      _storyById[n.id] = n;
+      for (final c in n.children) {
+        walk(c);
+      }
+    }
+
+    for (final s in tree.sections) {
+      for (final n in s.nodes) {
+        walk(n);
+      }
+    }
   }
 
   @override
@@ -399,40 +525,16 @@ class _GraphBodyState extends State<_GraphBody>
     if (n?.id == _selected?.id) return;
     setState(() {
       _selected = n;
-      _highlight = n == null ? const {} : _highlightSet(n.id);
+      _highlight = n == null
+          ? const {}
+          : graphHighlightSet(
+              n.id,
+              parentsOf: _parentsOf,
+              childrenOf: _childrenOf,
+              relatedAdj: _relatedAdj,
+            );
     });
   }
-
-  /// The lit set on tap: the node, its ancestors, its descendants and its
-  /// related nodes. Related links arrive with Track D (row 2p); until then the
-  /// set is ancestors + descendants.
-  Set<String> _highlightSet(String id) {
-    final out = <String>{id};
-    // Ancestors.
-    final up = <String>[id];
-    var h = 0;
-    while (h < up.length) {
-      for (final p in _parentsOf[up[h]] ?? const <String>{}) {
-        if (out.add(p)) up.add(p);
-      }
-      h++;
-    }
-    // Descendants.
-    final down = <String>[id];
-    h = 0;
-    while (h < down.length) {
-      for (final c in _childrenOf[down[h]] ?? const <String>{}) {
-        if (out.add(c)) down.add(c);
-      }
-      h++;
-    }
-    out.addAll(_relatedOf(id));
-    return out;
-  }
-
-  /// Related (cross-link) nodes — populated once Track D adds related links to
-  /// the payload. Empty for now so highlighting is ancestors + descendants.
-  Set<String> _relatedOf(String id) => const {};
 
   // --- hit testing -----------------------------------------------------------
 
@@ -528,7 +630,63 @@ class _GraphBodyState extends State<_GraphBody>
     });
   }
 
-  // --- open full content -----------------------------------------------------
+  // --- detail (Track B NodeVisualiser) ---------------------------------------
+
+  /// The StoryNode Track B's visualiser renders for a tapped flat node. The
+  /// tree indexes raw ids; a bullet's flat id is `b:<raw>`, so try both, then
+  /// fall back to a node synthesized from the flat node (a section hub shows its
+  /// tree children; the person node shows its label) so the panel is never
+  /// blank while the tree loads or for nodes the tree omits.
+  StoryNode _storyFor(GraphNode n) {
+    final indexed = indexedStoryFor(n.id, _storyById);
+    if (indexed != null) return indexed;
+    // Section hub: gather its section's root nodes from the tree as children.
+    List<StoryNode> children = const [];
+    if (n.kind == 'section' && _tree != null) {
+      for (final s in _tree!.sections) {
+        if (s.pageType == n.pageType) {
+          children = s.nodes;
+          break;
+        }
+      }
+    }
+    final vis = n.visibility.isEmpty ? NodeVis.private : n.visibility;
+    return StoryNode(
+      id: n.id,
+      section: n.pageType,
+      label: n.label,
+      text: n.text,
+      answerType: n.kind == 'image' ? 'image' : 'text',
+      level: _levels[n.id] ?? 1,
+      visibility: vis,
+      subtreeVisibility: vis,
+      standard: false,
+      editable: vis != NodeVis.aymaOnly,
+      imageUrl: n.imageUrl,
+      imageRead: n.text,
+      children: children,
+    );
+  }
+
+  /// A node changed through the chat window — refetch the tree so the detail
+  /// re-renders with the edit.
+  void _onTreeChanged() => unawaited(_loadTree());
+
+  /// The "Chat to edit" bubble hook — open the node chat window scoped to the
+  /// node so the owner can edit it by chat.
+  void _onChatToEdit(StoryNode n) {
+    unawaited(showNodeChatWindow(
+      context,
+      node: n,
+      surface: NodeVisualiserSurface.graphDetail,
+      api: widget.api,
+      isOwner: _isOwner,
+    ).then((changed) {
+      if (changed && mounted) _onTreeChanged();
+    }));
+  }
+
+  // --- open full report / photo ----------------------------------------------
 
   void _openFull(GraphNode n) {
     if (n.openType == 'image') {
@@ -612,10 +770,15 @@ class _GraphBodyState extends State<_GraphBody>
       footer: [
         _VisualiserPanel(
           node: _selected,
+          story: _selected == null ? null : _storyFor(_selected!),
           color: _selected == null
               ? ac.accent
               : GraphTypeColors.forNode(ac, _selected!),
+          api: widget.api,
+          isOwner: _isOwner,
           onOpenFull: _openFull,
+          onChatToEdit: _onChatToEdit,
+          onChanged: _onTreeChanged,
         ),
       ],
     );
@@ -742,20 +905,33 @@ class _FilterBar extends StatelessWidget {
 class _VisualiserPanel extends StatelessWidget {
   const _VisualiserPanel({
     required this.node,
+    required this.story,
     required this.color,
+    required this.api,
+    required this.isOwner,
     required this.onOpenFull,
+    required this.onChatToEdit,
+    required this.onChanged,
   });
 
+  /// The tapped flat node — drives the header (type colour, label, "Open").
   final GraphNode? node;
+
+  /// The recursive node Track B's visualiser renders (self + subtree).
+  final StoryNode? story;
   final Color color;
+  final ApiClient api;
+  final bool isOwner;
   final void Function(GraphNode) onOpenFull;
+  final void Function(StoryNode) onChatToEdit;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     final media = MediaQuery.of(context);
     final n = node;
-    if (n == null) {
+    if (n == null || story == null) {
       return Container(
         width: double.infinity,
         padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + media.padding.bottom),
@@ -769,7 +945,7 @@ class _VisualiserPanel extends StatelessWidget {
         ),
       );
     }
-    final panelMax = math.min(320.0, media.size.height * 0.4);
+    final panelMax = math.min(360.0, media.size.height * 0.45);
     return Container(
       width: double.infinity,
       constraints: BoxConstraints(maxHeight: panelMax),
@@ -797,14 +973,6 @@ class _VisualiserPanel extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (n.visibility.isNotEmpty) ...[
-                Icon(bulletVisibilityIcon(n.visibility),
-                    size: 13, color: bulletVisibilityColor(ac, n.visibility)),
-                const SizedBox(width: 4),
-                Text(bulletVisibilityLabel(n.visibility),
-                    style: AymaType.sans(
-                        size: 12, color: bulletVisibilityColor(ac, n.visibility))),
-              ],
               if (n.isOpenable)
                 TextButton(
                   onPressed: () => onOpenFull(n),
@@ -817,11 +985,18 @@ class _VisualiserPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          // Track B's real recursive renderer (Contract 3), on the graph-detail
+          // surface. Swapping `story` as the finger scrubs is a cheap prop
+          // change — no heavy reload per node.
           Flexible(
             child: SingleChildScrollView(
               child: NodeVisualiser(
-                node: n,
-                surface: NodeVisualiserSurface.graph,
+                node: story!,
+                surface: NodeVisualiserSurface.graphDetail,
+                api: api,
+                isOwner: isOwner,
+                onChanged: onChanged,
+                onChatToEdit: onChatToEdit,
               ),
             ),
           ),

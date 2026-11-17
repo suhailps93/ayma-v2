@@ -24,6 +24,7 @@ person's graph without leaking private or Ayma-only content.
 
 from __future__ import annotations
 
+import person_graph as pg
 import person_graph_render as render
 import person_graph_store
 import profile_bullets
@@ -194,6 +195,27 @@ def _open_target(nid: str, node, kind: str) -> dict | None:
     return None
 
 
+def _related_links(node) -> list[dict]:
+    """The node's typed RELATED cross-links (person-graph §2.4), as plain dicts
+    the client highlights. Targets are raw graph-store ids; the client resolves
+    them to the flat node ids it draws (a bullet target ``x`` renders as ``b:x``).
+    Non-related link types (elaborates / same-topic / …) are not surfaced."""
+    out: list[dict] = []
+    for l in getattr(node, "links", None) or []:
+        ltype = getattr(l, "type", None) or (l.get("type") if isinstance(l, dict) else None)
+        if ltype != pg.StrictLinkType.RELATED.value:
+            continue
+        target = getattr(l, "target", None) or (l.get("target") if isinstance(l, dict) else None)
+        if not target:
+            continue
+        label = getattr(l, "label", None) or (l.get("label") if isinstance(l, dict) else None)
+        link = {"target": target, "type": "related"}
+        if label:
+            link["label"] = label
+        out.append(link)
+    return out
+
+
 def _meta_section_label(pt: str) -> str:
     if pt in _META_SECTION_LABELS:
         return _META_SECTION_LABELS[pt]
@@ -263,6 +285,9 @@ def _augment_with_store_nodes(graph: dict, db, uid: str, *, owner_only: bool) ->
             gnode["open"] = ot
             if kind == "image":
                 gnode["image_url"] = ot["url"]
+        rel = _related_links(node)
+        if rel:
+            gnode["links"] = rel
         nodes.append(gnode)
         existing.add(nid)
         edges.append({"from": sec_id, "to": nid})
