@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/photo_service.dart';
@@ -11,8 +12,8 @@ import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/inline_photo_carousel.dart';
 import '../widgets/overflow_guards.dart';
-import 'manual_profile_edit_screen.dart';
 import 'profile_proposals_screen.dart';
+import 'story_editor_screen.dart';
 
 /// The signed-in user's own "My public profile" page (You tab). It is the
 /// reference look for every profile view: the whole content is the shared
@@ -223,9 +224,13 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   }
 
   Future<void> _editManually() async {
-    final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
-        builder: (_) => ManualProfileEditScreen(apiClient: _api)));
-    if (saved == true && mounted) _refreshProfile();
+    // The public profile is bullets from the graph, so "edit manually" IS the
+    // bullet editor (Your Story — per-bullet edit with identity, dated history
+    // and visibility), not a legacy markdown paragraph editor (founder settled
+    // design; the old ManualProfileEditScreen was deleted Nov 16). Refresh on
+    // return so an edit shows immediately.
+    await context.push(StoryEditorScreen.path);
+    if (mounted) _refreshProfile();
   }
 
   Future<void> _reviewUpdates() async {
