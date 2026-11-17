@@ -159,9 +159,15 @@ def test_emergent_node_is_overlay_defined_and_private():
     assert n.state is NodeState.ANSWERED
 
 
-def test_emergent_node_missing_definition_raises():
-    with pytest.raises(ValueError):
-        merge_node(None, OverlayNode(answer="x"), "emergent.bad")
+def test_emergent_node_missing_definition_defaults_not_raises():
+    # Founder defect Nov 17: a minimal emergent node (only an answer, no
+    # prompt/section/level — legacy/partial writes) must NOT raise, or it blanks
+    # the whole effective graph. It homes as a renderable loose fact instead.
+    n = merge_node(None, OverlayNode(answer="x"), "emergent.bad")
+    assert n.section == "misc"
+    assert n.level == 1
+    assert n.answer == "x"
+    assert n.prompt == "x"  # derived from the answer, never empty
 
 
 # --- effective graph + branch filtering ------------------------------------
