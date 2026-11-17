@@ -93,17 +93,23 @@ pixel_serial() {
 }
 
 # --- "What's different" bullets from git log PREV..NEW ---------------------- #
-# feat/fix/ui/perf/feature -> one founder-language bullet each (type+scope
-# stripped, scope kept as a readable prefix). Jobs-pass UI-program commits and
-# versionCode bumps are user-visible too -> each gets its own named bullet
-# (they used to fall into the generic "internal" count and be repaired by hand).
-# Everything else -> one grouped "internal fixes" bullet. Merge commits are
-# skipped (their branch commits carry the real change). Prints markdown bullets.
+# feat/fix/ui/perf/feature/refactor -> one founder-language bullet each (type+
+# scope stripped, scope kept as a readable prefix). `refactor` is user-visible
+# too: the founder's standing order is to DELETE the old screen/report/renderer
+# in the same change that replaces it, and those deletions ship as `refactor:`
+# (e.g. "refactor(story): delete the legacy career-timeline subsystem" — a
+# duplicate block the founder actually saw go away), so they must get their own
+# bullet, not be buried in the "internal fixes" count. Jobs-pass UI-program
+# commits and versionCode bumps are user-visible too -> each gets its own named
+# bullet (they used to fall into the generic "internal" count, repaired by hand).
+# Everything else (chore/docs/test/style/ci/build) -> one grouped "internal
+# fixes" bullet. Merge commits are skipped (their branch commits carry the real
+# change). Prints markdown bullets.
 whats_different() {
   local range="$1" internal=0 subj scope rest newver note
   # Regexes held in variables (not inline in [[ =~ ]]): the inline unquoted
   # alternation form fails to parse on bash >= 5.2 ("unexpected token )").
-  local re_feat='^(feat|feature|fix|ui|perf)(\(([^)]+)\))?!?:\ *(.*)$'
+  local re_feat='^(feat|feature|fix|ui|perf|refactor)(\(([^)]+)\))?!?:\ *(.*)$'
   local re_jobs='[Jj]obs [PpWw]'
   local re_bump='^Bump versionCode [0-9]+ to ([0-9]+)( \((.*)\))?$'
   while IFS= read -r subj; do
