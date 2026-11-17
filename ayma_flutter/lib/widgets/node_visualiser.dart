@@ -40,7 +40,6 @@ class NodeVisualiser extends StatelessWidget {
     this.onChanged,
     this.api,
     this.isOwner = true,
-    this.onChatToEdit,
     this.onImageTap,
     this.onCandidateVerdict,
     this.depth = 0,
@@ -63,9 +62,6 @@ class NodeVisualiser extends StatelessWidget {
   /// Whether the viewer owns this graph (owner action bubbles show only then).
   final bool isOwner;
 
-  /// Host hook for the "Chat to edit" bubble — opens the shared chat overlay
-  /// scoped to [node]. When null the bubble closes the window without chat.
-  final void Function(StoryNode node)? onChatToEdit;
 
   /// Overrides what tapping an image node does (the carousel passes its own
   /// viewer); defaults to opening the node chat window.
@@ -106,7 +102,6 @@ class NodeVisualiser extends StatelessWidget {
       surface: surface,
       api: api,
       isOwner: isOwner,
-      onChatToEdit: onChatToEdit,
     );
     if (changed) onChanged?.call();
   }
@@ -136,7 +131,6 @@ class NodeVisualiser extends StatelessWidget {
               onChanged: onChanged,
               api: api,
               isOwner: isOwner,
-              onChatToEdit: onChatToEdit,
               onImageTap: onImageTap,
               onCandidateVerdict: onCandidateVerdict,
               depth: depth + 1,
@@ -410,7 +404,6 @@ class NodeVisualiserSection extends StatelessWidget {
     this.onChanged,
     this.api,
     this.isOwner = true,
-    this.onChatToEdit,
     this.onImageTap,
     this.onCandidateVerdict,
   });
@@ -420,7 +413,6 @@ class NodeVisualiserSection extends StatelessWidget {
   final VoidCallback? onChanged;
   final ApiClient? api;
   final bool isOwner;
-  final void Function(StoryNode node)? onChatToEdit;
   final void Function(StoryNode node)? onImageTap;
   final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
 
@@ -447,7 +439,6 @@ class NodeVisualiserSection extends StatelessWidget {
             onChanged: onChanged,
             api: api,
             isOwner: isOwner,
-            onChatToEdit: onChatToEdit,
             onImageTap: onImageTap,
             onCandidateVerdict: onCandidateVerdict,
           ),

@@ -19,18 +19,50 @@ import 'package:flutter/material.dart';
 
 import '../models/story_node.dart';
 import '../services/api_client.dart';
+import 'ask_ayma_overlay.dart';
 import 'ayma_photo.dart';
 import 'node_visibility.dart';
 
-/// Open the node chat window for [node]. Returns true when the node changed
-/// (visibility/text/delete), so the caller can refresh.
+/// Open the REAL partial Ayma chat window for [node] — the half-screen docked
+/// sheet hosting the one shared ChatScreen, with the node attached as the
+/// persistent context card above the composer (text, or for an image node the
+/// image + its read + is-you verdict). Ayma gets the whole node + what's
+/// connected to it as context on every message, resolved server-side through
+/// the single graph lookup (`graph_node_id`). This is "Chat about it" on any
+/// node, on every surface (founder Nov 17). Turns save to the one main
+/// conversation.
+Future<void> showNodeChat(
+  BuildContext context, {
+  required StoryNode node,
+  ApiClient? api,
+}) {
+  final isImage = node.isImage;
+  final text = node.text.isNotEmpty ? node.text : node.label;
+  return showAskAymaOverlay(
+    context,
+    api: api ?? ApiClient(),
+    ctx: AskAymaContext(
+      origin: AskAymaOrigin.graphNode,
+      nodeId: node.id,
+      quoteTitle: isImage ? 'Photo' : (node.label.isNotEmpty ? node.label : 'This'),
+      quoteText: isImage ? node.imageRead : text,
+      nodeImageUrl: isImage ? node.imageUrl : '',
+      nodeImageRead: isImage ? node.imageRead : '',
+      nodeIsYou: isImage ? node.isYou : '',
+    ),
+  );
+}
+
+/// Open the node ACTION sheet for [node] (the owner bubbles — make public/
+/// private, edit, add a line, delete, and "Chat about it" which opens the real
+/// partial chat window). Returns true when the node changed, so the caller can
+/// refresh.
 Future<bool> showNodeChatWindow(
   BuildContext context, {
   required StoryNode node,
   required NodeVisualiserSurface surface,
   ApiClient? api,
   bool isOwner = true,
-  void Function(StoryNode node)? onChatToEdit,
 }) async {
   final changed = await showModalBottomSheet<bool>(
     context: context,
@@ -45,7 +77,6 @@ Future<bool> showNodeChatWindow(
       surface: surface,
       api: api ?? ApiClient(),
       isOwner: isOwner,
-      onChatToEdit: onChatToEdit,
     ),
   );
   return changed ?? false;
@@ -57,14 +88,12 @@ class _NodeChatSheet extends StatefulWidget {
     required this.surface,
     required this.api,
     required this.isOwner,
-    this.onChatToEdit,
   });
 
   final StoryNode node;
   final NodeVisualiserSurface surface;
   final ApiClient api;
   final bool isOwner;
-  final void Function(StoryNode node)? onChatToEdit;
 
   @override
   State<_NodeChatSheet> createState() => _NodeChatSheetState();
@@ -75,12 +104,24 @@ class _NodeChatSheetState extends State<_NodeChatSheet> {
   bool _changed = false;
   String? _error;
 
+  // The EDIT bubbles (visibility / edit / add / delete) need an editable node
+  // on an owner-editing surface.
   bool get _ownerActions =>
       widget.isOwner &&
       widget.node.editable &&
       (widget.surface == NodeVisualiserSurface.story ||
           widget.surface == NodeVisualiserSurface.report ||
           widget.surface == NodeVisualiserSurface.graphDetail);
+
+  // "Chat about it" is available on EVERY owner surface — including the owner's
+  // public profile and non-editable report nodes — not just editable ones
+  // (founder: every node gets a working Chat about it).
+  bool get _canChat =>
+      widget.isOwner &&
+      (widget.surface == NodeVisualiserSurface.story ||
+          widget.surface == NodeVisualiserSurface.report ||
+          widget.surface == NodeVisualiserSurface.graphDetail ||
+          widget.surface == NodeVisualiserSurface.publicProfile);
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -172,10 +213,12 @@ class _NodeChatSheetState extends State<_NodeChatSheet> {
     if (mounted && _changed) Navigator.of(context).pop(true);
   }
 
-  Future<void> _chatToEdit() async {
-    final cb = widget.onChatToEdit;
+  // "Chat about it" — close this action sheet and open the REAL partial Ayma
+  // chat window with the node attached (never a dead no-op: this is the fix for
+  // the old host-hook loop that only person_graph_screen wired).
+  Future<void> _chatAbout() async {
     Navigator.of(context).pop(_changed);
-    if (cb != null) cb(widget.node);
+    await showNodeChat(context, node: widget.node, api: widget.api);
   }
 
   Future<void> _delete() async {
@@ -254,46 +297,52 @@ class _NodeChatSheetState extends State<_NodeChatSheet> {
                     style: TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ),
-              if (_ownerActions)
+              if (_canChat || _ownerActions)
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _Bubble(
-                      key: const Key('bubble_visibility'),
-                      icon: node.visibility == NodeVis.public
-                          ? Icons.lock_outline
-                          : Icons.public,
-                      label: node.visibility == NodeVis.public
-                          ? 'Make private'
-                          : 'Make public',
-                      onTap: _busy ? null : _toggleVisibility,
-                    ),
-                    _Bubble(
-                      key: const Key('bubble_edit_manually'),
-                      icon: Icons.edit_outlined,
-                      label: 'Edit manually',
-                      onTap: _busy ? null : _editManually,
-                    ),
-                    _Bubble(
-                      key: const Key('bubble_chat_to_edit'),
-                      icon: Icons.chat_bubble_outline,
-                      label: 'Chat to edit',
-                      onTap: _busy ? null : _chatToEdit,
-                    ),
-                    _Bubble(
-                      key: const Key('bubble_add_child'),
-                      icon: Icons.add,
-                      label: 'Add a line',
-                      onTap: _busy ? null : _addChild,
-                    ),
-                    _Bubble(
-                      key: const Key('bubble_delete'),
-                      icon: Icons.delete_outline,
-                      label: 'Delete',
-                      destructive: true,
-                      onTap: _busy ? null : _delete,
-                    ),
+                    // "Chat about it" is first and shows on every owner surface
+                    // (even non-editable report nodes), opening the real partial
+                    // chat window — never a dead no-op.
+                    if (_canChat)
+                      _Bubble(
+                        key: const Key('bubble_chat_about'),
+                        icon: Icons.chat_bubble_outline,
+                        label: 'Chat about it',
+                        onTap: _busy ? null : _chatAbout,
+                      ),
+                    if (_ownerActions) ...[
+                      _Bubble(
+                        key: const Key('bubble_visibility'),
+                        icon: node.visibility == NodeVis.public
+                            ? Icons.lock_outline
+                            : Icons.public,
+                        label: node.visibility == NodeVis.public
+                            ? 'Make private'
+                            : 'Make public',
+                        onTap: _busy ? null : _toggleVisibility,
+                      ),
+                      _Bubble(
+                        key: const Key('bubble_edit_manually'),
+                        icon: Icons.edit_outlined,
+                        label: 'Edit manually',
+                        onTap: _busy ? null : _editManually,
+                      ),
+                      _Bubble(
+                        key: const Key('bubble_add_child'),
+                        icon: Icons.add,
+                        label: 'Add a line',
+                        onTap: _busy ? null : _addChild,
+                      ),
+                      _Bubble(
+                        key: const Key('bubble_delete'),
+                        icon: Icons.delete_outline,
+                        label: 'Delete',
+                        destructive: true,
+                        onTap: _busy ? null : _delete,
+                      ),
+                    ],
                   ],
                 )
               else

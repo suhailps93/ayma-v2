@@ -8,6 +8,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -301,6 +302,7 @@ class _FakeApi extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -349,6 +351,7 @@ class _FakeApi extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -900,8 +903,8 @@ void main() {
   });
 
   testWidgets(
-      'the photo detail sheet\'s "Chat about it" renders via the shared '
-      'AskAymaAction and still opens chat for that photo', (tester) async {
+      'the photo detail sheet\'s "Chat about it" opens the unified node partial '
+      'window with the photo attached as a graph-node context', (tester) async {
     final api = _FakeApi()..photos = mixedSourcePhotos();
     silenceImageLoadErrors();
 
@@ -917,11 +920,17 @@ void main() {
     await tester.tap(chatAction);
     await tester.pumpAndSettle();
 
-    // Same tap behavior as before: opens ChatScreen for this photo.
+    // Unified onto the node partial window: the overlay hosts the shared
+    // ChatScreen with a graphNode context carrying the photo as an image node
+    // (not the old photoUrl/photoSource path).
     expect(find.byType(ChatScreen), findsOneWidget);
     final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
-    expect(chat.photoUrl, 'https://example.com/profile.jpg');
-    expect(chat.photoSource, 'profile');
+    final ctx = chat.askAymaContext;
+    expect(ctx, isNotNull);
+    expect(ctx!.origin, AskAymaOrigin.graphNode);
+    expect(ctx.nodeImageUrl, 'https://example.com/profile.jpg');
+    // The photo is pinned as the persistent image context card.
+    expect(find.byType(AymaPhoto), findsWidgets);
   });
 
   testWidgets("Ayma's Notes shows every group, including deleted", (tester) async {

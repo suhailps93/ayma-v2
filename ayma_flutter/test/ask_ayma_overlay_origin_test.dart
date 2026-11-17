@@ -25,6 +25,7 @@ class _FakeApi extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -68,6 +69,7 @@ class _FakeApi extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -104,6 +106,7 @@ class _FakeApi extends ApiClient {
     chatCalls.add({
       'message': message,
       'story_page_id': storyPageId,
+      'graph_node_id': graphNodeId,
       'story_passage': storyPassage,
       'story_timeline_entry_id': storyTimelineEntryId,
       'deep_dive_report_id': deepDiveReportId,
@@ -280,6 +283,46 @@ void main() {
       expect(call['match_report_id'], 'a__me');
       expect(call['deep_dive_report_id'], '');
       expect(call['appearance_finding_id'], '');
+    });
+
+    testWidgets(
+        'graph-node field rides along on a graphNode-origin tap '
+        '("Chat about it"), story/deep-dive stay empty', (tester) async {
+      final api = _FakeApi();
+      // "Chat about it" on any person-graph node: nodeId -> graph_node_id, so
+      // main._graph_node_context can resolve the whole node via graph_lookup.
+      await _openSheet(tester, api, const AskAymaContext(
+        origin: AskAymaOrigin.graphNode,
+        nodeId: 'emergent.hobby.climbing',
+        quoteText: 'I love climbing',
+      ));
+
+      await tester.enterText(
+          find.byType(TextField).last, 'tell me what you know about this');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pumpAndSettle();
+
+      expect(api.chatCalls, hasLength(1));
+      final call = api.chatCalls.single;
+      expect(call['graph_node_id'], 'emergent.hobby.climbing');
+      expect(call['story_page_id'], '');
+      expect(call['deep_dive_report_id'], '');
+      expect(call['appearance_finding_id'], '');
+    });
+
+    testWidgets('graphNode origin shows no quick-action chips (free chat)',
+        (tester) async {
+      await _openSheet(tester, _FakeApi(), const AskAymaContext(
+        origin: AskAymaOrigin.graphNode,
+        nodeId: 'n1',
+        quoteText: 'I love climbing',
+      ));
+      // The owner actions stay as bubbles on the node sheet, not here.
+      expect(find.text('Make private'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+      // The node is pinned as the persistent context card.
+      expect(find.textContaining('I love climbing'), findsOneWidget);
     });
   });
 }

@@ -2645,6 +2645,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     final storyPageId = askAyma?.pageId ?? '';
+    final graphNodeId = askAyma?.nodeId ?? '';
     final storyPassage = askAyma != null && !askAyma.isTimelineEntry
         ? askAyma.selectedText
         : '';
@@ -2698,6 +2699,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           recentTurns: window,
           imagePath: imagePath,
           storyPageId: storyPageId,
+          graphNodeId: graphNodeId,
           storyPassage: storyPassage,
           storyTimelineEntryId: storyTimelineEntryId,
           deepDiveReportId: deepDiveReportId,
@@ -2743,6 +2745,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           recentTurns: window,
           imagePath: imagePath,
           storyPageId: storyPageId,
+          graphNodeId: graphNodeId,
           storyPassage: storyPassage,
           storyTimelineEntryId: storyTimelineEntryId,
           deepDiveReportId: deepDiveReportId,
@@ -3904,7 +3907,15 @@ class _AskAymaHeader extends StatelessWidget {
             style: AymaType.sans(size: 13, color: ac.fgMute),
           ),
         ),
-        if (quoteText.trim().isNotEmpty)
+        // An image node attaches its photo (+ read + is-you verdict), pinned
+        // for the whole session like a quoted reply; a text node uses the
+        // quote card below (NOTE "Chat about it" partial window).
+        if (ctx.nodeImageUrl.trim().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: _NodeImageAttach(ctx: ctx),
+          )
+        else if (quoteText.trim().isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
             child: _SelectedQuote(
@@ -3915,6 +3926,58 @@ class _AskAymaHeader extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The pinned image-node attachment above the composer: the photo, Ayma's read
+/// of it, and the is-you verdict — rendered for the whole session.
+class _NodeImageAttach extends StatelessWidget {
+  const _NodeImageAttach({required this.ctx});
+  final AskAymaContext ctx;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final verdict = switch (ctx.nodeIsYou) {
+      'yes' => 'This looks like you',
+      'no' => 'This does not look like you',
+      _ => "Unconfirmed whether it's you",
+    };
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: ac.bgElev,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: ac.lineSoft),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: AymaPhoto(url: ctx.nodeImageUrl, displayWidth: 120),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (ctx.nodeImageRead.trim().isNotEmpty)
+                  Text(ctx.nodeImageRead,
+                      style: AymaType.sans(size: 13, color: ac.fg)),
+                const SizedBox(height: 2),
+                Text(verdict,
+                    style: AymaType.sans(size: 11, color: ac.fgMute)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

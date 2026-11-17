@@ -225,6 +225,41 @@ void main() {
     expect(api.visibilitySet, [('n1', NodeVis.public)]);
   });
 
+  testWidgets('every owner surface shows "Chat about it"; a non-editable '
+      'report node shows it but no edit bubbles', (tester) async {
+    // Editable story node: chat-about rides alongside the edit bubbles.
+    final api = _FakeApi();
+    final story = _node(id: 's1', text: 'A fact', vis: NodeVis.private);
+    await tester.pumpWidget(_host(
+      NodeVisualiser(
+          node: story, surface: NodeVisualiserSurface.story, api: api),
+    ));
+    await tester.tap(find.byKey(const Key('node_row_s1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('bubble_chat_about')), findsOneWidget);
+    expect(find.byKey(const Key('bubble_visibility')), findsOneWidget);
+    // dismiss the sheet
+    Navigator.of(tester.element(find.byKey(const Key('bubble_chat_about'))))
+        .pop();
+    await tester.pumpAndSettle();
+
+    // Non-editable report node: "Chat about it" still works; no edit bubbles.
+    final report = _node(
+        id: 'r1', text: 'Reported insight', vis: NodeVis.public,
+        editable: false);
+    await tester.pumpWidget(_host(
+      NodeVisualiser(
+          node: report, surface: NodeVisualiserSurface.report, api: api),
+    ));
+    await tester.tap(find.byKey(const Key('node_row_r1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('bubble_chat_about')), findsOneWidget);
+    expect(find.byKey(const Key('bubble_visibility')), findsNothing);
+    expect(find.byKey(const Key('bubble_delete')), findsNothing);
+    // never a dead "Ask Ayma about this" with no action
+    expect(find.text('Ask Ayma about this'), findsNothing);
+  });
+
   testWidgets('delete names the children count and wires the real delete',
       (tester) async {
     final api = _FakeApi()..deleteCountToReturn = 2;
