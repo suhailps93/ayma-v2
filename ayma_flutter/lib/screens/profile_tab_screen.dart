@@ -63,7 +63,14 @@ class ProfileTabScreen extends StatelessWidget {
     var hasReport = false;
     try {
       final rows = await (apiClient ?? ApiClient()).appearanceHistory();
-      hasReport = rows.isNotEmpty;
+      // Only a CURRENT report (the `emergent.appearance.report` graph node)
+      // opens the report screen. History also folds in legacy face/body/
+      // physical rows (`legacy: true`), which exist for users who ran the old
+      // per-skill reports but have no current report node — routing them to
+      // `/appearance/current` lands on the "Couldn't load that report." empty
+      // state (NOTE 241 Leg 1). The backend emits the single non-legacy
+      // `appearance` row only when that node exists, so key off `!legacy`.
+      hasReport = rows.any((r) => !r.legacy);
     } catch (_) {
       /* fall through to the run screen */
     }

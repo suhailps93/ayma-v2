@@ -21,6 +21,7 @@ ApiClient _api({
   int? creditsRemaining,
   String? deepDiveReportId,
   bool appearanceReport = false,
+  bool appearanceLegacyOnly = false,
 }) {
   final mockHttp = MockClient((req) async {
     if (req.url.path == '/completeness') {
@@ -45,14 +46,19 @@ ApiClient _api({
       );
     }
     if (req.url.path == '/appearance/history') {
+      // A current report is the single non-legacy `appearance` row; legacy
+      // face/body/physical rows always carry `legacy: true`. `appearanceReport`
+      // emits the current row; `appearanceLegacyOnly` emits ONLY legacy rows
+      // (the NOTE 241 Leg 1 shape: history non-empty, but no current report).
+      final List<Map<String, dynamic>> rows = [
+        if (appearanceReport) {'id': 'a1', 'legacy': false, 'kind': 'appearance'},
+        if (appearanceLegacyOnly) ...[
+          {'id': 'p1', 'legacy': true, 'kind': 'physical'},
+          {'id': 'f1', 'legacy': true, 'kind': 'face'},
+        ],
+      ];
       return http.Response(
-        jsonEncode({
-          'reports': appearanceReport
-              ? [
-                  {'id': 'a1'}
-                ]
-              : <dynamic>[],
-        }),
+        jsonEncode({'reports': rows}),
         200,
         headers: _jsonUtf8,
       );
@@ -294,6 +300,27 @@ void main() {
     // Skills menu), never through a /skills route.
     expect(find.byType(AppearancePreRunSheet), findsOneWidget);
     expect(find.text('ROUTE /skills'), findsNothing);
+  });
+
+  testWidgets(
+      'Appearance opens the pre-run sheet when only LEGACY history rows exist '
+      '(no current report node) — NOTE 241 Leg 1', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // Priya's shape: legacy face/physical rows, but no current report node, so
+    // history is non-empty yet there is no `/appearance/current` to show.
+    await tester.pumpWidget(_host(_api(appearanceLegacyOnly: true)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Appearance'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+
+    // Must reach the pre-run sheet, NOT the dead report screen.
+    expect(find.byType(AppearancePreRunSheet), findsOneWidget);
+    expect(find.text('ROUTE /appearance/current'), findsNothing);
   });
 
   testWidgets('the credits row shows the fetched balance', (tester) async {
