@@ -13,12 +13,11 @@ passage stays in the body, wrapped in an inline ``{{ai_only}}`` span
 public view and the normal Story view, still visible (in red) in Ayma's
 Notes, and revertible from that section's history like any other edit.
 
-When the chat is instead opened from one entry of the structured career
-timeline (``story_timeline_entry_id`` on the chat request — see the Ask Ayma
-overlay on a timeline row), two more tools bind scoped to that entry id:
-``edit_career_timeline_entry`` / ``delete_career_timeline_entry``, which call
-straight through to ``career_timeline.edit_entry`` / ``.delete_entry`` rather
-than the passage-offset mechanism above, which doesn't fit structured fields.
+(The structured career-timeline per-entry tools that used to live here —
+``edit_career_timeline_entry`` / ``delete_career_timeline_entry`` — were
+removed with the career-timeline subsystem Nov 16 2026; career edits now flow
+through the ordinary section tools above, since Career is just another graph
+section.)
 """
 
 from __future__ import annotations
@@ -178,85 +177,9 @@ def _bind_section(
     return set_section_privacy
 
 
-_TIMELINE_EDIT_DECL = {
-    "name": "edit_career_timeline_entry",
-    "description": (
-        "Correct one entry in the user's structured career/education "
-        "timeline — its organisation, title/degree, start date, or end "
-        "date. Only pass the fields that actually changed."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "org": {"type": "string", "description": "the employer or school"},
-            "title_or_degree": {"type": "string"},
-            "start": {"type": "string", "description": "e.g. 2020 or 2020-09"},
-            "end": {
-                "type": "string",
-                "description": "e.g. 2022, Present, or empty if unknown",
-            },
-        },
-    },
-}
-
-_TIMELINE_DELETE_DECL = {
-    "name": "delete_career_timeline_entry",
-    "description": (
-        "Remove one entry from the user's career/education timeline "
-        "entirely — use when they say it shouldn't be there at all."
-    ),
-    "parameters": {"type": "object", "properties": {}},
-}
-
-
-def _bind_timeline_edit(
-    db, uid, *, page_id="", passage="", timeline_entry_id=""  # noqa: ARG001
-) -> Callable[..., str]:
-    def edit_career_timeline_entry(
-        org: str | None = None,
-        title_or_degree: str | None = None,
-        start: str | None = None,
-        end: str | None = None,
-    ) -> str:
-        if not timeline_entry_id:
-            return "no timeline entry is in focus"
-        import career_timeline
-
-        changes = {
-            k: v
-            for k, v in {
-                "org": org,
-                "title_or_degree": title_or_degree,
-                "start": start,
-                "end": end,
-            }.items()
-            if v is not None
-        }
-        if not changes:
-            return "nothing to change"
-        return career_timeline.edit_entry(db, uid, timeline_entry_id, changes)
-
-    return edit_career_timeline_entry
-
-
-def _bind_timeline_delete(
-    db, uid, *, page_id="", passage="", timeline_entry_id=""  # noqa: ARG001
-) -> Callable[..., str]:
-    def delete_career_timeline_entry() -> str:
-        if not timeline_entry_id:
-            return "no timeline entry is in focus"
-        import career_timeline
-
-        return career_timeline.delete_entry(db, uid, timeline_entry_id)
-
-    return delete_career_timeline_entry
-
-
 SKILLS: list[Skill] = [
     Skill(declaration=_PRIVACY_DECL, bind=_bind_privacy),
     Skill(declaration=_EDIT_DECL, bind=_bind_edit),
     Skill(declaration=_REMOVE_DECL, bind=_bind_remove),
     Skill(declaration=_SECTION_DECL, bind=_bind_section),
-    Skill(declaration=_TIMELINE_EDIT_DECL, bind=_bind_timeline_edit),
-    Skill(declaration=_TIMELINE_DELETE_DECL, bind=_bind_timeline_delete),
 ]

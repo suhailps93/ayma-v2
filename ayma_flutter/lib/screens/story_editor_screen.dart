@@ -7,13 +7,10 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
-import '../util/text_diff.dart';
-import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/bullet_sections_editor.dart';
-import '../widgets/career_timeline_view.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
@@ -290,25 +287,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     return _loadedForUid != null && live.isNotEmpty && live != _loadedForUid;
   }
 
-  CareerTimeline? _careerTimeline;
-
   @override
   void initState() {
     super.initState();
     reassertScreenContext();
     _load();
-    unawaited(_loadCareerTimeline());
   }
 
   @override
   void reassertScreenContext() => AppContext.instance.set(screen: 'story');
-
-  StorySection? _section(String id) {
-    for (final s in _sections) {
-      if (s.pageId == id) return s;
-    }
-    return null;
-  }
 
   Future<void> _load() async {
     final loadUid = _uid;
@@ -343,15 +330,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     unawaited(_loadPhotos());
   }
 
-  Future<void> _loadCareerTimeline() async {
-    try {
-      final t = await _api.careerTimeline();
-      if (mounted) setState(() => _careerTimeline = t);
-    } catch (e) {
-      debugPrint('[story] career timeline failed: $e');
-    }
-  }
-
   /// Re-fetch the section list after a skill runs / a report finishes.
   Future<void> _refreshStorySections() async {
     final data = await _api.storyGet();
@@ -370,136 +348,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       if (s.pageId == 'web-findings') return s;
     }
     return null;
-  }
-
-  /// Opens the Ask Ayma overlay for a career-timeline entry (the ONE
-  /// remaining caller — § Living Report migration: ordinary narrative
-  /// passages now go through [LivingReportView]'s own block tap-to-correct
-  /// instead of this raw `pageId`/`timelineEntryId`-scoped path, which the
-  /// generic report model doesn't represent at all — see `AskAymaContext`'s
-  /// own doc on `timelineEntryId` mapping to `story_timeline_entry_id`, a
-  /// field with no block-model equivalent). Re-syncs the affected page in
-  /// place afterwards and — when the edit actually changed its text — shows
-  /// a "Changed to" toast; the same `/chat` (+ `story_edit` tools) pipeline
-  /// every other Ayma conversation uses, no parallel rewrite system.
-  Future<void> _openAskAyma({
-    required String pageId,
-    String timelineEntryId = '',
-    String timelineEntryLabel = '',
-    String sectionTitle = '',
-  }) async {
-    var lastBody = _section(pageId)?.editableBody ?? '';
-
-    Future<void> refresh() async {
-      try {
-        final data = await _api.storyGet();
-        if (!mounted) return;
-        setState(() => _sections = data.sections);
-        StorySection? updated;
-        for (final s in data.sections) {
-          if (s.pageId == pageId) updated = s;
-        }
-        if (updated != null) {
-          final range = changedRange(lastBody, updated.editableBody);
-          lastBody = updated.editableBody;
-          if (range != null) {
-            final start = range.$1.clamp(0, updated.editableBody.length);
-            final end = range.$2.clamp(0, updated.editableBody.length);
-            final changedText = updated.editableBody.substring(start, end).replaceAll(RegExp(r'\{\{/?(?:private|ai_only)\}\}'), '').trim();
-            if (changedText.isNotEmpty) {
-              _toast('Changed to "$changedText"',
-                  kind: AymaToastKind.success);
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('[story] post-chat refresh failed: $e');
-      }
-      unawaited(_loadCareerTimeline());
-    }
-
-    await showAskAymaOverlay(
-      context,
-      api: _api,
-      ctx: AskAymaContext(
-        pageId: pageId,
-        sectionTitle: sectionTitle,
-        timelineEntryId: timelineEntryId,
-        timelineEntryLabel: timelineEntryLabel,
-        quoteTitle: 'Selected text',
-        quoteText: timelineEntryLabel,
-      ),
-      onExchange: () => unawaited(refresh()),
-    );
-    await refresh();
-  }
-
-  void _onTapTimelineEntry(TimelineEntry e) {
-    final bits = [
-      e.org,
-      if (e.titleOrDegree.isNotEmpty) e.titleOrDegree,
-      if (e.dateRange.isNotEmpty) e.dateRange,
-    ];
-    unawaited(_openAskAyma(
-      pageId: 'career',
-      timelineEntryId: e.id,
-      timelineEntryLabel: bits.join(' — '),
-      sectionTitle: 'Career & Education',
-    ));
-  }
-
-  Future<void> _addLinkedin() async {
-    final controller = TextEditingController();
-    final ac = context.ac;
-    final url = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        scrollable: true,
-        backgroundColor: ac.bg,
-        title: Text('Add your LinkedIn', style: AymaType.sans(size: 16, weight: FontWeight.w600, color: ac.fg)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Ayma will read this page directly to help build your career "
-              'timeline — nothing is scraped or shared.',
-              style: AymaType.sans(size: 13, color: ac.fgMute),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                hintText: 'https://www.linkedin.com/in/…',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (url == null || url.isEmpty || !mounted) return;
-    try {
-      await _api.setLinkedinUrl(url);
-      _toast('Saved — building your timeline…', kind: AymaToastKind.success);
-      final refreshed = await _api.refreshCareerTimeline();
-      if (mounted) setState(() => _careerTimeline = refreshed);
-    } on ApiException catch (e) {
-      _toast(e.statusCode == 400
-          ? "That doesn't look like a LinkedIn URL."
-          : 'Failed ($e)', kind: AymaToastKind.error);
-    } catch (e) {
-      _toast('Failed ($e)', kind: AymaToastKind.error);
-    }
   }
 
   // --- build ----------------------------------------------------
@@ -590,7 +438,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     if (webFindings != null && webFindings.reportId != null) {
       unawaited(_loadWebFindingsReport(webFindings.reportId!));
     }
-    final showCareer = _showCareer;
 
     var num = 0;
     return ListView(
@@ -624,11 +471,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         // per-sentence drag-select -> "Edit with Ayma" mechanism.
         editor,
         _sectionDivider(),
-        if (showCareer) ...[
-          () { num++; return const SizedBox.shrink(); }(),
-          _careerSection(num),
-          _sectionDivider(),
-        ],
         if (showAppearance) ...[
           () { num++; return const SizedBox.shrink(); }(),
           _AppearanceCard(
@@ -661,51 +503,6 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     return null;
   }
 
-  /// Whether the standalone Career & Education section (below) has anything
-  /// to show: a real parsed timeline, or (when there isn't yet) the "Add
-  /// your LinkedIn" nudge. Mirrors the old inline `_careerTimelineArea`'s own
-  /// null-return conditions exactly, just decoupled from any particular
-  /// narrative wiki page's presence — a structured
-  /// [CareerTimeline]/[TimelineEntry] concept in its own right (`GET
-  /// /story/career-timeline`), not something the block model represents.
-  bool get _showCareer {
-    final t = _careerTimeline;
-    if (t == null) return false;
-    if (t.showTimeline && t.entries.isNotEmpty) return true;
-    return t.linkedinUrl.isEmpty;
-  }
-
-  /// The structured career timeline / "Add your LinkedIn" nudge, standalone
-  /// (§ Living Report migration — previously nested as `trailing` under the
-  /// narrative "career" wiki page's own section; the page's own prose is now
-  /// rendered by [LivingReportView] above like any other narrative section,
-  /// and this stays a separate bespoke card below it, not yet represented by
-  /// any block type). Call only when [_showCareer] is true.
-  Widget _careerSection(int number) {
-    final t = _careerTimeline!;
-    final ac = context.ac;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('${number.toString().padLeft(2, '0')}  CAREER & EDUCATION',
-            style: AymaType.mono(size: 11, color: ac.accentText).copyWith(letterSpacing: 2)),
-        const SizedBox(height: 12),
-        if (t.showTimeline && t.entries.isNotEmpty)
-          CareerTimelineView(entries: t.entries, onTapEntry: _onTapTimelineEntry)
-        else if (t.linkedinUrl.isEmpty)
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: OutlinedButton.icon(
-              key: const ValueKey('add_linkedin'),
-              onPressed: _addLinkedin,
-              icon: const Icon(Icons.link, size: 18),
-              label: const Text('Add your LinkedIn profile'),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(64, 48)),
-            ),
-          ),
-      ],
-    );
-  }
 }
 
 /// Ayma's Notes — "the intelligence beneath the portrait": the full, more

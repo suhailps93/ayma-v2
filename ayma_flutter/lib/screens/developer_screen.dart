@@ -596,7 +596,6 @@ class _Spend extends StatelessWidget {
     'photo_caption': 'Photo notes',
     'photo_moderation': 'Photo safety check',
     'dm_ingest': 'Reading messages',
-    'career_timeline': 'Career timeline',
     'photo_edit': 'Photo edit',
     'persona_evolution': 'Persona tuning',
   };

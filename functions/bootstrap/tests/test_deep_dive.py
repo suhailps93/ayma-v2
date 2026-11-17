@@ -1034,11 +1034,6 @@ def _patch_finish_env(monkeypatch):
     monkeypatch.setattr(main.skill_memory, "promote", lambda *a, **k: None)
     monkeypatch.setattr(main.skill_runs, "record", lambda *a, **k: None)
 
-    async def _no_timeline(*a, **k):
-        return None
-
-    monkeypatch.setattr(main.career_timeline, "extract", _no_timeline)
-
     async def _instant(_seconds):
         return None
 
