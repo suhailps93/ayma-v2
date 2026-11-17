@@ -321,6 +321,28 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     references anywhere in `lib/` (pinned by
     `test/living_report_view_removed_test.dart`). Every report-like surface now
     renders through the shared `GraphTreeView` Node-Visualiser.
+  - *Appearance report — TEMPLATED, not bullets (build 2488, founder).* The
+    founder viewed a match's appearance report and the generic Node-Visualiser
+    bullet rows read badly for a face/physique analysis. Only the appearance
+    report now renders through a **designed templated page**
+    (`lib/widgets/appearance_templated_report.dart`,
+    `AppearanceTemplatedReport`) instead of `GraphTreeView`: fixed
+    **Physical attributes / Face / Physique** sections, each built ENTIRELY from
+    the SAME appearance node tree (`GET /report/appearance/{uid}/tree` via
+    `ApiClient.reportTree('appearance', uid)` — no second store, no duplicated
+    content), mapped to a section by the node tree's `page_type`
+    (`attributes`/`face`/`body`). Each section lays out a numeric **score
+    header** (the stat node + a `ScoreBar`), **attribute fields** (standard
+    labelled nodes), narrative findings (text nodes), and its analysed photos
+    **carousel-style** — a swipeable `PageView` of the ONE shared
+    `NodeImage` `fill` renderer with page dots + tap-to-open gallery, exactly
+    like the profile photo carousel, never bounded bullet-row thumbnails. Its
+    loading / 404-empty / retry states mirror `GraphTreeView` so the screen
+    chrome (card, Re-run, Updating… banner) is unchanged. The OLD appearance
+    body (`GraphTreeView(reportType:'appearance')`) was deleted in the same
+    change; `GraphTreeView` itself stays for deep-dive / match / shared / story.
+    Regression: `test/appearance_templated_report_test.dart` (asserts the
+    templated sections + carousel render and it is NOT the bullet tree).
 ## Read/write switch FINISHED (Nov 16) — staging code no longer reads or writes wiki_pages (flag-on)
 
 Branch `fleet/graph-read-write-switch`. With `PERSON_GRAPH_READS` on, every live

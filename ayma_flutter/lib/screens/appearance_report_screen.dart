@@ -18,8 +18,7 @@ import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
-import '../models/story_node.dart';
-import '../widgets/graph_tree_view.dart';
+import '../widgets/appearance_templated_report.dart';
 import 'report_run_flows.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
@@ -29,8 +28,11 @@ import 'report_run_flows.dart';
 /// Re-opened from an `[appearance:<id>]` chat marker, the chat report card,
 /// or the Skills screen's "View my report" link.
 ///
-/// The full report body renders through the shared [GraphTreeView]
-/// Node-Visualiser (2o P2) via `GET /report/appearance/{uid}/tree`.
+/// The full report body renders through [AppearanceTemplatedReport] — a
+/// designed, templated page (score header, carousel-style analysed photos,
+/// attribute fields) built ENTIRELY from the appearance node tree
+/// `GET /report/appearance/{uid}/tree` (same nodes, same source of truth as the
+/// generic bullet tree it replaced for this one report; build 2488, founder).
 /// `report_hub.resolve_owner` treats "appearance"'s `{report_id}` as the
 /// subject's own uid (there is only ever one current Appearance report per
 /// user) — [reportId] (an older, possibly-stale marker id from before that
@@ -76,10 +78,10 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     with ScreenContextReasserter<AppearanceReportScreen> {
   AppearanceCardData? _card;
 
-  /// The Node-Visualiser body; reloaded when a re-run lands so both it and the
-  /// shareable card refresh together (the card reloads via its onLoaded).
-  final GlobalKey<GraphTreeViewState> _bodyKey =
-      GlobalKey<GraphTreeViewState>();
+  /// The templated appearance body; reloaded when a re-run lands so both it and
+  /// the shareable card refresh together (the card reloads via its onLoaded).
+  final GlobalKey<AppearanceTemplatedReportState> _bodyKey =
+      GlobalKey<AppearanceTemplatedReportState>();
   bool _wasRunning = false;
 
   /// The version stamp (the report's `created_at`) of the exact run
@@ -483,14 +485,14 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
             ),
             if (card.nextSteps.isNotEmpty) _NextSteps(steps: card.nextSteps),
           ],
-          // The full report body renders through the shared Node-Visualiser
-          // (2o P2), replacing the old block renderer. The shareable card above
-          // keeps its own block-model fetch (_loadCard) — fired whenever this
-          // tree (re)loads, so the two stay in step on a re-run.
-          GraphTreeView(
+          // The full report body renders through the TEMPLATED appearance page
+          // (build 2488) — a designed layout built from the same appearance
+          // node tree the generic bullet tree used, replacing it for this one
+          // report. The shareable card above keeps its own block-model fetch
+          // (_loadCard) — fired whenever this tree (re)loads, so the two stay in
+          // step on a re-run.
+          AppearanceTemplatedReport(
             key: _bodyKey,
-            surface: NodeVisualiserSurface.report,
-            reportType: 'appearance',
             reportId: uid,
             api: widget.apiClient,
             emptyMessage: 'No appearance report yet.',

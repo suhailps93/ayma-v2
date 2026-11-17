@@ -177,6 +177,7 @@ Map<String, dynamic> _report() => {
   'meta': {'owner_uid': 'me', 'viewer_can_edit': true},
 };
 
+
 /// A deliberately TALL Node-Visualiser tree (`…/tree` reads): a web-findings
 /// "Facts" section of many long narrative nodes plus stat / confidence / link /
 /// candidate nodes — the exact shape that overflowed the web-research report
@@ -255,6 +256,102 @@ List<Map<String, dynamic>> _factsSections() => [
     ],
   },
 ];
+
+/// The appearance report node tree (`GET /report/appearance/{uid}/tree`) in the
+/// shape `report_tree.report_node_tree` produces over
+/// `report_adapters.appearance_blocks`: an Attributes section of standard
+/// attribute nodes + a photo grid, and Face / Body sections each with a numeric
+/// score stat, narrative text, and their source photos. Long strings and a
+/// multi-photo carousel so the TEMPLATED layout is held to the overflow matrix.
+Map<String, dynamic> _appearanceTree() {
+  Map<String, dynamic> attr(String id, String label, String value) => {
+    'id': id,
+    'section': 'attributes',
+    'label': label,
+    'text': value,
+    'answer_type': 'text',
+    'level': 1,
+    'visibility': 'public',
+    'subtree_visibility': 'public',
+    'standard': true,
+    'standard_label': label,
+  };
+  Map<String, dynamic> stat(String id, String verdict, num value) => {
+    'id': id,
+    'section': id,
+    'label': verdict,
+    'text': verdict,
+    'answer_type': 'stat',
+    'level': 1,
+    'visibility': 'public',
+    'subtree_visibility': 'public',
+    'stat_value': value,
+    'stat_text': '$value',
+    'stat_basis': 'A long basis line explaining the weighting of this score',
+  };
+  Map<String, dynamic> text(String id, String section) => {
+    'id': id,
+    'section': section,
+    'label': '',
+    'text': kLongText,
+    'answer_type': 'text',
+    'level': 1,
+    'visibility': 'public',
+    'subtree_visibility': 'public',
+  };
+  Map<String, dynamic> image(String id, String section) => {
+    'id': id,
+    'section': section,
+    'label': '',
+    'text': kLongText,
+    'answer_type': 'image',
+    'level': 1,
+    'visibility': 'public',
+    'subtree_visibility': 'public',
+    'image_url': 'https://cdn/$id.jpg',
+    'image_read': kLongText,
+  };
+  return {
+    'surface': 'report',
+    'title': 'Appearance',
+    'sections': [
+      {
+        'page_type': 'attributes',
+        'title': 'Attributes',
+        'order': 0,
+        'nodes': [
+          attr('attr:eye_color', 'Eye color',
+              'A long descriptive eye-colour value that should wrap on narrow'),
+          attr('attr:hair_color', 'Hair color', 'Dark brown, wavy, mid-length'),
+          attr('attr:build', 'Build', 'Athletic, broad-shouldered'),
+          for (var i = 0; i < 3; i++) image('attr:photos:$i', 'attributes'),
+        ],
+      },
+      {
+        'page_type': 'face',
+        'title': 'Face',
+        'order': 1,
+        'nodes': [
+          stat('face', 'Striking', 7.8),
+          text('face:note:sent:0', 'face'),
+          image('face:photo', 'face'),
+        ],
+      },
+      {
+        'page_type': 'body',
+        'title': 'Body',
+        'order': 2,
+        'nodes': [
+          stat('body', 'Strong physique', 8.1),
+          text('body:note:sent:0', 'body'),
+          image('body:photo', 'body'),
+        ],
+      },
+    ],
+    'meta': {'owner_uid': 'me', 'viewer_can_edit': true},
+  };
+}
+
 
 Object? _bodyFor(String path) {
   if (path == '/dm/assist') {
@@ -513,13 +610,24 @@ Object? _bodyFor(String path) {
     // section so the matrix exercises it on the match-report route.
     return {..._report(), 'taste': {..._tastePayload(), 'status': 'ok'}};
   }
+
+  if (path.startsWith('/report/appearance/') && path.endsWith('/tree')) {
+    // The APPEARANCE report's TEMPLATED page (score header, carousel-style
+    // photos, attribute fields) renders from this node tree — give the matrix a
+    // populated attributes/face/body tree with long strings so every section,
+    // the carousel and the score header are held to the overflow bars.
+    return _appearanceTree();
+  }
+
   // A report / shared-report as a Node-Visualiser TREE (`…/tree`): the tall
   // web-findings Facts tree so the matrix pumps full-length report content
-  // (deep_dive / appearance / match / story_ai_notes / shared). Must precede
+  // (deep_dive / match / story_ai_notes / shared - appearance is
+  // handled by the branch above). Must precede
   // the living-report block shape below, which `/report/` also matches.
   if (path.endsWith('/tree') &&
       (path.startsWith('/report/') || path.startsWith('/s/'))) {
     return {'surface': 'report', 'sections': _factsSections()};
+
   }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
