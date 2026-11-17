@@ -320,25 +320,17 @@ void main() {
   });
 
   testWidgets(
-      'NOTE 250 Leg 1: re-run with a new report id (Vo2iuT4) overwrites '
-      'the cache and repaints the card with fresh scores',
+      'NOTE 250 Leg 1: re-run with a new report id (Vo2iuT4) repaints '
+      'the card with fresh scores, never stale ones',
       (tester) async {
     const uid = 'demo-test1';
-    // Stale run from 06:47Z cached under the user's uid key: scores 7.5 / 6.0
-    SharedPreferences.setMockInitialValues({
-      'report_cache:$uid:appearance:$uid': jsonEncode(_report(
-        faceScore: 7.5,
-        bodyScore: 6.0,
-        bodyPhotoId: 'seed_body',
-        bodyPhotoUrl: 'body.jpg',
-        createdAt: '2026-11-17T06:47:00Z',
-      )),
-    });
-
     final img = await _decoded(tester);
 
-    // Network request gate: holds the network response so we can assert the
-    // cached scores paint first.
+    // Network request gate: holds every network response until the fresh
+    // run lands, so we can assert nothing stale paints first. (P2: the card
+    // loads via an uncached getReport fired on the tree onLoaded — the old
+    // report_cache first-paint is gone by design, and nothing writes that
+    // cache key on this screen anymore.)
     final netGate = Completer<Map<String, dynamic>>();
     final api = ApiClient(
       httpClient: MockClient((req) async {
@@ -362,12 +354,12 @@ void main() {
       ),
     ));
 
-    // Stale cache restores and paints (6.0 renders as '6' per score formatting):
+    // Nothing paints while the fresh fetch is gated — no stale scores:
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(find.text('7.5'), findsOneWidget);
-    expect(find.text('6'), findsOneWidget);
+    expect(find.text('7.5'), findsNothing);
+    expect(find.text('7.8'), findsNothing);
 
     // Fresh run Vo2iuT4 from 11:33:27Z lands: scores 7.8 / 6.2
     netGate.complete(_report(
@@ -388,12 +380,5 @@ void main() {
     expect(find.text('6.2'), findsOneWidget);
     expect(find.text('7.5'), findsNothing);
     expect(find.text('6'), findsNothing);
-
-    // Cache is overwritten with the fresh payload:
-    final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString('report_cache:$uid:appearance:$uid');
-    expect(cached, isNotNull);
-    final cachedJson = jsonDecode(cached!) as Map<String, dynamic>;
-    expect(cachedJson['meta']['created_at'], '2026-11-17T11:33:27Z');
   });
 }
