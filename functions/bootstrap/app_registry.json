@@ -293,6 +293,15 @@
     "reason": "Automatic client behavior in the voice transport/controller; Ayma neither triggers nor configures it. If asked about it, explain what it means (the phone's connection dropped and the call is re-establishing itself over a more forgiving route) — never claim to fix the user's connection."
   },
 
+  "assistant_summon_orb": {
+    "_doc": "Floating Ayma orb on a default-assistant summon (Android, Nov 2026): when Ayma is the device's default digital assistant, a summon (long-press Home / the assistant gesture) raises a floating Ayma orb OVER the current app and starts voice mode in the background — the full Ayma app does NOT open. The orb is the real AymaOrb reflecting voice state (idle/listening/speaking); tapping it expands to the voice panel, and dismissing returns to the app the user was in. It runs the real LiveKit voice stack (assistant_orb_main.dart on a FlutterEngine hosted inside the VoiceInteractionSession's own window — no SYSTEM_ALERT_WINDOW overlay, no always-on bubble). It is raised by the Android assistant gesture, not from inside the app, and has no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router). The in-app 'Ayma Assistant' settings/status page is the separate 'assistant' destination (/assistant).",
+    "key": "assistant_summon_orb",
+    "label": "Floating Ayma orb (summon over any app)",
+    "aliases": ["floating orb", "floating ayma", "voice over this app", "ayma over other apps", "long press home", "assistant gesture", "summon orb", "ayma orb over apps"],
+    "operated_by_ayma": false,
+    "reason": "Raised by the Android assistant gesture (long-press Home) while Ayma is the default digital assistant, not by Ayma herself. If asked, explain how to summon the orb (make Ayma the default assistant in Settings › Ayma Assistant, then long-press Home in any app) — Ayma cannot trigger it from inside the app."
+  },
+
   "offline_first": {
     "_doc": "Offline-first rendering (Nov 2026): the main screens paint their last-known content from the on-device cache the moment they open, then refresh from the network behind it — no full-screen loading spinner when any saved content exists. The Explore feed's first page and the Plan page snapshot persist per-account in the report cache (wiped on sign-out); Firestore-backed surfaces (messages, DMs, notifications, profile) read their on-device Firestore cache first by construction. Behavior inside existing screens with no route of its own, so — like connection_banner — deliberately not a destination/non_navigable entry (both are validated against the router).",
     "key": "offline_first",
