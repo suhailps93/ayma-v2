@@ -731,3 +731,41 @@ there is no career date schema and none is added.
   test_node_dated_surfaced_from_link_dated_only_where_present` (backend) and
   `ayma_flutter/test/career_view_test.dart` (lists seed + LinkedIn + emergent,
   dates only where present, edit persists through the node-edit path).
+
+## Live graph layout + highlight fix (person-graph-sections, Nov 17 2026)
+
+Two founder-reported defects on the `/profile/graph` live force-directed view
+(`person_graph_screen.dart` + `person_graph_layout.dart`), fixed together.
+
+- **Part A — the layout was a collision-packed blob, not an organic mesh.** With
+  Sections on, the founder saw the graph "destroyed" (black screen, pink streaks
+  flung off-screen); with Sections hidden, two tight blobs. Diagnosis (reproduced
+  on ~230-node founder-shaped data via a golden capture, not guessed): the
+  `GraphSim._seed` **golden-angle spiral** placed consecutive-index nodes as far
+  apart as possible, so every section's facts were scattered across the whole
+  disk. Because the spring + repulsion forces are alpha-scaled (→0 at settle) but
+  the no-overlap collision pass is **not**, the settled frame was dominated by
+  collision packing → one uniform hex-packed disk with no hub-and-spoke lobes.
+  Fix: seed the BFS spanning tree as a **radial sunburst** (centre at origin;
+  sections fanned in angular sectors sized by subtree weight with a flat floor so
+  small meta-hubs aren't crushed; facts seeded inside their section's sector at a
+  larger radius), and re-tune the forces so equilibrium spacing exceeds the
+  collision minimum: `_repel` 42→220 (cap 4→30, cutoff 400→900px), `_gravity`
+  0.015→0.0035, longer spring rest lengths, `_alphaDecay` 0.035→0.0225. The graph
+  now settles into a lobed organic mesh that `fitToViewport` keeps fully
+  on-screen (section hubs included).
+- **Part B — the tap highlight "didn't dim the rest".** The highlight SET
+  (`graphHighlightSet` = self + ancestors + descendants + related) and the painter
+  dim/lit passes were already correct; the symptom was Part A — in the packed blob
+  the 230 overlapping nodes buried the dimming. The painter now routes every node
+  through the pure `graphNodeLit(selectedId, highlight, id)` and every edge
+  through `graphEdgeLit(...)`, so a render test can assert the dimming. Once the
+  mesh is spread, a tap visibly lights only the connected set and dims the rest.
+- **Tests:** `test/person_graph_layout_test.dart` — a ~230-node section-ful graph
+  settles **bounded** (|x|,|y| < 3000, no NaN) and `fitToViewport` puts every node
+  on-screen; the radial seed lobes each section's facts nearer their own hub than
+  a sibling's. `test/person_graph_screen_test.dart` — `graphNodeLit`/`graphEdgeLit`
+  light the connected set (incl. descendants) and dim non-members. Golden
+  evidence: `test/goldens/person_graph_all_chips.png`,
+  `test/goldens/person_graph_tapped.png`. No backend/inference change (100%
+  LiveKit unaffected).

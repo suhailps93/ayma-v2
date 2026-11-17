@@ -498,6 +498,51 @@ void main() {
       }), isTrue);
     });
 
+    // Part B regression (person-graph-sections): the PAINTER must APPLY the
+    // highlight — a tapped node lights its connected set and DIMS the rest. The
+    // painter paints every node through `graphNodeLit` and every edge through
+    // `graphEdgeLit`, so asserting those pure predicates proves the render dims
+    // non-members and lights members (opacity/brightness), not just that the
+    // highlight SET is computed.
+    test('graphNodeLit: nothing selected lights every node', () {
+      expect(graphNodeLit(null, const {}, 'anything'), isTrue);
+      expect(graphNodeLit(null, const {'x'}, 'y'), isTrue);
+    });
+
+    test('graphNodeLit: a selection lights its set and dims everyone else', () {
+      // A section tapped: self + You (ancestor) + its facts (descendants) lit.
+      final lit = graphHighlightSet(
+        'sec:appearance',
+        parentsOf: const {
+          'sec:appearance': {'me'}
+        },
+        childrenOf: const {
+          'sec:appearance': {'b:1', 'emergent.image.p1'}
+        },
+        relatedAdj: const {},
+      );
+      const selected = 'sec:appearance';
+      // Members (self, ancestor, every descendant) render LIT.
+      for (final id in lit) {
+        expect(graphNodeLit(selected, lit, id), isTrue, reason: '$id lit');
+      }
+      // A node in a DIFFERENT section renders DIMMED.
+      expect(graphNodeLit(selected, lit, 'sec:career'), isFalse);
+      expect(graphNodeLit(selected, lit, 'b:other'), isFalse);
+    });
+
+    test('graphEdgeLit: only edges with both endpoints in the set glow', () {
+      const sel = 'sec:appearance';
+      const lit = {'sec:appearance', 'me', 'b:1'};
+      // Edge inside the lit set glows.
+      expect(graphEdgeLit(sel, lit, 'me', 'sec:appearance'), isTrue);
+      expect(graphEdgeLit(sel, lit, 'sec:appearance', 'b:1'), isTrue);
+      // An edge leaving the set (to a dimmed node) does not glow.
+      expect(graphEdgeLit(sel, lit, 'sec:appearance', 'b:other'), isFalse);
+      // With nothing selected no edge is "lit" (the resting-graph pass).
+      expect(graphEdgeLit(null, const {}, 'me', 'sec:appearance'), isFalse);
+    });
+
     test('highlight set is ancestors + descendants + related', () {
       final lit = graphHighlightSet(
         'sec:appearance',

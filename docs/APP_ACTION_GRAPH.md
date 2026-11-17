@@ -337,13 +337,50 @@ every leaf node — story bullets **and** the Appearance / web-findings reports,
 photos, skills and Ayma's assessment — a smaller neuron clustered around its
 hub, wired by glowing synapses. Built by `profile_graph.get_graph` from
 `person_graph_store.effective` (owner sees all visibilities; another member's
-`public_graph` shows public nodes only). Pinch to zoom, drag to pan.
+`public_graph` shows public nodes only).
+
+**Live force-directed layout** (`person_graph_layout.dart`, `GraphSim`): link
+springs + node repulsion + a hard no-overlap collision pass settle the web, then
+STOP (the ticker halts at `isSettled`). Node **size = depth** (person largest,
+sections next, facts shrinking), **colour = type** (`GraphTypeColors`). Filter
+chips (You / Sections / Facts / Photos / Reports / …) hide a type or depth; a
+**Fit** button recenters. Pinch to zoom, two-finger drag to pan, single-finger
+tap/scrub selects the node under the finger and opens it in the Node-Visualiser
+panel below.
+
+**Seed = radial sunburst, not a spiral (person-graph-sections fix, Nov 17
+2026).** The founder saw the Sections layer "destroy" the graph — black screen
+with a few pink streaks flung off-screen, or (sections hidden) two tight blobs.
+Root cause: the old golden-angle **spiral** seed scattered each section's facts
+across the whole disk, so the sim collapsed to one uniform collision-packed blob
+instead of a hub-and-spoke mesh (the final frame is dominated by the unscaled
+collision pass once the alpha-scaled spring/repulsion forces cool). Fix:
+`GraphSim._seed` now seeds the BFS spanning tree as a **radial sunburst** — the
+centre at the origin, its sections fanned in angular sectors sized by subtree
+weight (with a flat floor so small meta-hubs aren't crushed), every fact seeded
+inside its section's sector at a larger radius — so relaxation loosens it into an
+organic mesh while keeping each section's facts **lobed** near their hub.
+Repulsion was strengthened (`_repel` 42→220, cap 4→30, cutoff 400→900px), inward
+gravity cut (0.015→0.0035), springs lengthened and alpha cooled slower
+(0.035→0.0225) so the equilibrium spacing exceeds the collision minimum and the
+graph no longer packs into a blob. `fitToViewport` already scales the whole
+settled graph (section hubs included) inside the viewport, so nothing lands
+off-screen.
+
+**Tap highlight** (`graphHighlightSet` + `graphNodeLit` / `graphEdgeLit`): a tap
+lights exactly the connected set — self + ancestors + descendants + related — and
+**dims** every other node and edge; the painter paints each node through
+`graphNodeLit` and each edge through `graphEdgeLit`, so the render provably
+applies the highlight (the earlier "nothing dims" report was the blob hiding it —
+once the mesh is spread, the lit set and the dimming read clearly).
 
 | Control | Does | Ayma |
 |---|---|---|
-| Pinch / drag the canvas | Zoom + pan the whole web (`InteractiveViewer`) | `UI` |
-| Report node (tap) | Open its report — Appearance (`/appearance/current`) or web findings (`/deep-dive/{id}`), from the node's `open` target | `UI` / `open_screen` |
-| Photo node (tap) | Open the photo with Ayma's read (`PhotoViewer` caption) | `UI` |
+| Pinch / two-finger drag the canvas | Zoom + pan the whole web | `UI` |
+| Single-finger tap / scrub a node | Select it: light its connected set, dim the rest, open it in the panel below | `UI` |
+| Filter chip (type / depth) | Hide/show that node type or depth (and its edges); **Fit** recenters | `UI` |
+| Report node (tap → Open) | Open its report — Appearance (`/appearance/current`) or web findings (`/deep-dive/{id}`), from the node's `open` target | `UI` / `open_screen` |
+| Photo node (tap → Open) | Open the photo with Ayma's read (`PhotoViewer` caption) | `UI` |
 | Fact / skill / assessment node (tap) | Show its text + visibility in the detail panel | `UI` |
 | Info button → legend | What the node colours/kinds mean | `UI` |
 | Profile tab row "My person graph" | Open the graph | COVERED `open_screen person_graph` |
