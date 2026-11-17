@@ -1632,6 +1632,18 @@ class ApiClient {
     return GraphTree.fromMap(m);
   }
 
+  /// `GET /report/{type}/{id}/tree` — a report (appearance / deep_dive / match
+  /// / story_public / public_profile / shared) as a Node-Visualiser tree, with
+  /// SCORE/STAT, CONFIDENCE, CANDIDATE, LINK, image and text nodes. The report
+  /// screens render this through the shared NodeVisualiser (2o P2/P3/P5).
+  Future<GraphTree> reportTree(String reportType, String reportId) async {
+    final m = await _getJson(
+      '/report/${Uri.encodeComponent(reportType)}'
+      '/${Uri.encodeComponent(reportId)}/tree',
+    );
+    return GraphTree.fromMap(m);
+  }
+
   /// `POST /profile/graph/node/{id}/visibility` — set a node's visibility WITH
   /// the cascade (every descendant takes the same visibility; AI-only exempt).
   /// Returns the number of nodes changed.

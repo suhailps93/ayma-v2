@@ -315,4 +315,103 @@ void main() {
     expect(find.text('A person smiling'), findsNWidgets(2));
     expect(find.textContaining('looks like you'), findsOneWidget);
   });
+
+  // --- report node kinds (2o P0) ---
+
+  StoryNode statNode({
+    required String id,
+    required String label,
+    double? value,
+    String text = '',
+    String basis = '',
+  }) =>
+      StoryNode(
+        id: id,
+        section: 'score',
+        label: label,
+        text: label,
+        answerType: 'stat',
+        level: 1,
+        visibility: NodeVis.public,
+        subtreeVisibility: NodeVis.public,
+        standard: false,
+        editable: false,
+        statValue: value,
+        statText: text,
+        statBasis: basis,
+      );
+
+  testWidgets('numeric stat renders its value digit + a ScoreBar + basis',
+      (tester) async {
+    await tester.pumpWidget(_host(NodeVisualiser(
+      node: statNode(
+          id: 's1', label: 'Overall', value: 8, basis: '22% weight · measured'),
+      surface: NodeVisualiserSurface.report,
+      api: _FakeApi(),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Overall'), findsOneWidget);
+    expect(find.byKey(const Key('node_stat_value_s1')), findsOneWidget);
+    expect(find.text('8'), findsOneWidget);
+    expect(find.byKey(const Key('node_stat_bar_s1')), findsOneWidget);
+    expect(find.text('22% weight · measured'), findsOneWidget);
+    // Non-numeric band pill is NOT shown for a numeric stat.
+    expect(find.byKey(const Key('node_band_s1')), findsNothing);
+  });
+
+  testWidgets('non-numeric stat renders a confidence band pill, no bar',
+      (tester) async {
+    await tester.pumpWidget(_host(NodeVisualiser(
+      node: statNode(id: 'c1', label: 'Confidence', value: null, text: 'Low'),
+      surface: NodeVisualiserSurface.report,
+      api: _FakeApi(),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('node_band_c1')), findsOneWidget);
+    expect(find.text('Low'), findsOneWidget);
+    expect(find.byKey(const Key('node_stat_bar_c1')), findsNothing);
+  });
+
+  testWidgets('link node renders its label; candidate verdict buttons appear '
+      'only when a handler is wired', (tester) async {
+    final link = StoryNode(
+      id: 'l1', section: 'links', label: 'Jane on X', text: 'Jane on X',
+      answerType: 'link', level: 1,
+      visibility: NodeVis.public, subtreeVisibility: NodeVis.public,
+      standard: false, editable: false,
+      linkUrl: 'https://x.com/jane', linkPlatform: 'x',
+    );
+    await tester.pumpWidget(_host(NodeVisualiser(
+      node: link, surface: NodeVisualiserSurface.report, api: _FakeApi(),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Jane on X'), findsOneWidget);
+
+    // Candidate without a handler: photo + caption, no buttons.
+    final cand = StoryNode(
+      id: 'cand1', section: 'photos', label: '', text: 'Found online',
+      answerType: 'candidate', level: 1,
+      visibility: NodeVis.public, subtreeVisibility: NodeVis.public,
+      standard: false, editable: false,
+      imageUrl: 'https://site/p.jpg', candidateId: 'abc',
+    );
+    await tester.pumpWidget(_host(NodeVisualiser(
+      node: cand, surface: NodeVisualiserSurface.report, api: _FakeApi(),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('node_candidate_me_cand1')), findsNothing);
+
+    // With a handler: "This is me" / "Not me" fire the verdict.
+    final verdicts = <bool>[];
+    await tester.pumpWidget(_host(NodeVisualiser(
+      node: cand, surface: NodeVisualiserSurface.report, api: _FakeApi(),
+      onCandidateVerdict: (n, isMe) => verdicts.add(isMe),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('node_candidate_me_cand1')));
+    await tester.tap(find.byKey(const Key('node_candidate_notme_cand1')));
+    expect(verdicts, [true, false]);
+  });
 }

@@ -22,12 +22,15 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/story_node.dart';
 import '../services/api_client.dart';
+import '../theme.dart';
 import 'ayma_photo.dart';
 import 'node_chat_window.dart';
 import 'node_visibility.dart';
+import 'score_bar.dart';
 
 class NodeVisualiser extends StatelessWidget {
   const NodeVisualiser({
@@ -39,6 +42,7 @@ class NodeVisualiser extends StatelessWidget {
     this.isOwner = true,
     this.onChatToEdit,
     this.onImageTap,
+    this.onCandidateVerdict,
     this.depth = 0,
   });
 
@@ -67,6 +71,11 @@ class NodeVisualiser extends StatelessWidget {
   /// viewer); defaults to opening the node chat window.
   final void Function(StoryNode node)? onImageTap;
 
+  /// Handler for a CANDIDATE node's "This is me" / "Not me" verdict (the
+  /// deep-dive report provides it). When null the two buttons are hidden and
+  /// the candidate shows as a plain pending photo.
+  final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
+
   /// Recursion depth — drives the per-level indentation. Hosts leave it 0.
   final int depth;
 
@@ -80,6 +89,13 @@ class NodeVisualiser extends StatelessWidget {
   }
 
   Future<void> _openChat(BuildContext context) async {
+    if (node.isLink && node.linkUrl.isNotEmpty) {
+      final uri = Uri.tryParse(node.linkUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+      return;
+    }
     if (node.isImage && onImageTap != null) {
       onImageTap!(node);
       return;
@@ -122,6 +138,7 @@ class NodeVisualiser extends StatelessWidget {
               isOwner: isOwner,
               onChatToEdit: onChatToEdit,
               onImageTap: onImageTap,
+              onCandidateVerdict: onCandidateVerdict,
               depth: depth + 1,
             ),
           ),
@@ -152,7 +169,10 @@ class NodeVisualiser extends StatelessWidget {
   }
 
   Widget _content(BuildContext context) {
+    if (node.isCandidate) return _candidateContent(context);
     if (node.isImage) return _imageContent(context);
+    if (node.isStat) return _statContent(context);
+    if (node.isLink) return _linkContent(context);
     final theme = Theme.of(context);
     if (node.standard && (node.standardLabel ?? '').isNotEmpty) {
       return RichText(
@@ -200,6 +220,171 @@ class NodeVisualiser extends StatelessWidget {
             child: Text(
               node.imageRead,
               style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+      ],
+    );
+  }
+
+  // --- report node kinds (2o P0) ---
+
+  /// A SCORE / STAT node (numeric → label + value digit + banded ScoreBar), or
+  /// a CONFIDENCE node (non-numeric → label + a band pill). [statBasis] reads
+  /// as the quiet line under either.
+  Widget _statContent(BuildContext context) {
+    final theme = Theme.of(context);
+    final ac = context.ac;
+    final numeric = node.statValue != null;
+    final max = numeric && node.statValue! > 10 ? 100.0 : 10.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Expanded(
+              child: Text(node.label.isNotEmpty ? node.label : node.text,
+                  style: theme.textTheme.bodyLarge),
+            ),
+            const SizedBox(width: 8),
+            if (numeric)
+              Text(
+                _trimNum(node.statValue!),
+                key: Key('node_stat_value_${node.id}'),
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              )
+            else
+              _bandPill(context, node.statText),
+          ],
+        ),
+        if (numeric)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ScoreBar(
+              key: Key('node_stat_bar_${node.id}'),
+              value: node.statValue!,
+              max: max,
+              colorFor: (ctx, v, m) => _bandColor(ac, m <= 0 ? 0 : v / m),
+            ),
+          ),
+        if (node.statBasis.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(node.statBasis,
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+          ),
+      ],
+    );
+  }
+
+  Widget _bandPill(BuildContext context, String text) {
+    final ac = context.ac;
+    return Container(
+      key: Key('node_band_${node.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: _confidenceColor(ac, text).withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(text,
+          style: AymaType.mono(size: 11, color: _confidenceColor(ac, text))),
+    );
+  }
+
+  // Same green/amber/red bands LivingReportView used (contrast-safe *Text
+  // tokens for the bar fill; the solid tokens for the pill).
+  Color _bandColor(AymaTokens ac, double frac) {
+    if (frac >= 0.7) return ac.successText;
+    if (frac >= 0.4) return ac.warningText;
+    return ac.errorText;
+  }
+
+  Color _confidenceColor(AymaTokens ac, String band) {
+    switch (band.toLowerCase()) {
+      case 'high':
+        return ac.success;
+      case 'medium':
+        return ac.warning;
+      case 'low':
+        return ac.error;
+      default:
+        return ac.fgDim;
+    }
+  }
+
+  static String _trimNum(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+
+  /// A LINK node — the label (or host) with a social/open glyph; the row tap
+  /// (see [_openChat]) opens the URL.
+  Widget _linkContent(BuildContext context) {
+    final theme = Theme.of(context);
+    final ac = context.ac;
+    final label = node.label.isNotEmpty ? node.label : node.linkUrl;
+    return Row(
+      children: [
+        Icon(node.linkPlatform.isNotEmpty ? Icons.link : Icons.open_in_new,
+            size: 18, color: ac.fgDim),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(label,
+              style: theme.textTheme.bodyLarge
+                  ?.copyWith(decoration: TextDecoration.underline)),
+        ),
+      ],
+    );
+  }
+
+  /// A CANDIDATE node — a pending reverse-image-search photo with "This is me"
+  /// / "Not me" when [onCandidateVerdict] is wired (the deep-dive report wires
+  /// it); otherwise just the photo + caption.
+  Widget _candidateContent(BuildContext context) {
+    final ac = context.ac;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 200, maxHeight: 200),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: AymaPhoto(
+                key: Key('node_candidate_${node.id}'),
+                url: node.imageUrl,
+                displayWidth: 400,
+              ),
+            ),
+          ),
+        ),
+        if (node.text.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child:
+                Text(node.text, style: Theme.of(context).textTheme.bodySmall),
+          ),
+        if (onCandidateVerdict != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              children: [
+                FilledButton.tonal(
+                  key: Key('node_candidate_me_${node.id}'),
+                  onPressed: () => onCandidateVerdict!(node, true),
+                  child: const Text('This is me'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  key: Key('node_candidate_notme_${node.id}'),
+                  onPressed: () => onCandidateVerdict!(node, false),
+                  child: Text('Not me',
+                      style: TextStyle(color: ac.fgDim)),
+                ),
+              ],
             ),
           ),
       ],

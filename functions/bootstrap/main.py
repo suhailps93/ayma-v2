@@ -7239,6 +7239,29 @@ async def report_get(
         raise HTTPException(status_code=404, detail="No such report.")
 
 
+@app.get("/report/{report_type}/{report_id}/tree")
+async def report_tree_get(
+    report_type: str, report_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The same report as a Node-Visualiser tree (2o P0): ``{surface, title,
+    sections, meta}`` with SCORE/STAT, CONFIDENCE, CANDIDATE, LINK, image and
+    text nodes, built from ``report_hub.get_report`` by ``report_tree`` — so
+    every report type (match included) can render through the shared
+    NodeVisualiser. Same auth / 403 / 404 semantics as the block reader."""
+    if report_type not in report_hub.REPORT_TYPES:
+        raise HTTPException(status_code=404, detail="No such report type.")
+    try:
+        import report_tree
+
+        return await asyncio.to_thread(
+            report_tree.report_node_tree, get_db(), report_type, report_id, uid
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such report.")
+
+
 @app.post("/report/{report_type}/{report_id}/correct")
 async def report_correct(
     report_type: str,

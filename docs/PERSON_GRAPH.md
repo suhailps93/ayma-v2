@@ -493,3 +493,33 @@ that is not parent and child so that there is no duplicated content." Branch
   `PYTHONPATH=. python3 tools/person_graph_dedupe_run.py <uid> --project=ayma-staging [--semantic] [--limit=N]`.
   Prints duplicate groups + related pairs with ids/kind/section/visibility/snippet.
 - Tests: `tests/test_node_dedupe.py` (12).
+
+## Report → Node-Visualiser tree (2o P0, Nov 17 2026)
+
+The blocker for migrating the report screens off `LivingReportView`: a report
+lived as ONE opaque `report_doc` node (scores/findings only the block renderer
+could read). P0 makes a report a NODE TREE, and teaches the node model +
+visualiser the report node kinds.
+
+- **Node kinds** (`models/story_node.dart` + `widgets/node_visualiser.dart`):
+  - **stat** (`answer_type == "stat"`): a numeric SCORE/STAT → label + value
+    digit + banded `ScoreBar` (green/amber/red) + `stat_basis` line; a
+    non-numeric value is a CONFIDENCE band → a coloured pill, no bar.
+  - **link** (`answer_type == "link"`): `link_url` + `link_platform`; the row
+    tap opens the URL.
+  - **candidate** (`answer_type == "candidate"`): a pending reverse-image-search
+    photo with "This is me" / "Not me" (shown only when the host wires
+    `onCandidateVerdict`; the deep-dive report will, P2).
+  - image / text / standard-field nodes are unchanged.
+- **Backend adapter** (`report_tree.py`): `report_node_tree(db, type, id,
+  viewer_uid)` reuses `report_hub.get_report` (the exact `{title, sections,
+  meta}` block model the `/report/{type}/{id}` endpoint serves, owner/permission
+  checks included) and converts each block to a node, so EVERY report type works
+  — `match` included, which has no node in any person graph. Served at
+  **`GET /report/{type}/{id}/tree`** (same 403/404 semantics as the block
+  reader); client `ApiClient.reportTree(type, id)` → `GraphTree`.
+- Report nodes are display-only: visibility is always `public`, `editable`
+  carries the block's own flag. Tests: `tests/test_report_tree.py` (9),
+  `test/node_visualiser_test.dart` (+3). Next: P2/P3 point the appearance /
+  deep-dive / match screens at `reportTree` + `GraphTreeView`, deleting
+  `LivingReportView` + those screens' old bodies in the same change (P6).

@@ -44,6 +44,12 @@ class StoryNode {
     this.sourceKind = '',
     this.sourceRef = '',
     this.sourceCreatedAt = '',
+    this.statValue,
+    this.statText = '',
+    this.statBasis = '',
+    this.linkUrl = '',
+    this.linkPlatform = '',
+    this.candidateId = '',
     this.children = const [],
   });
 
@@ -90,9 +96,33 @@ class StoryNode {
   final String sourceRef;
   final String sourceCreatedAt;
 
+  // --- report node kinds (2o P0) ---
+  /// `stat` node — the numeric score (0-10 or 0-100), or null for a
+  /// non-numeric stat (a CONFIDENCE band, rendered as a pill from [statText]).
+  final double? statValue;
+
+  /// `stat` node — the raw value as text (the band label for a confidence
+  /// stat, e.g. "Low"; the number as a string for a numeric one).
+  final String statText;
+
+  /// `stat` node — the basis line under the bar ("22% weight · measured").
+  final String statBasis;
+
+  /// `link` node — the destination URL.
+  final String linkUrl;
+
+  /// `link` node — a social platform key (instagram/x/linkedin/…) or ''.
+  final String linkPlatform;
+
+  /// `candidate` node — the reverse-image-search candidate id (is-me/not-me).
+  final String candidateId;
+
   final List<StoryNode> children;
 
   bool get isImage => answerType == 'image' && imageUrl.isNotEmpty;
+  bool get isStat => answerType == 'stat';
+  bool get isLink => answerType == 'link';
+  bool get isCandidate => answerType == 'candidate' && imageUrl.isNotEmpty;
 
   factory StoryNode.fromMap(Map<String, dynamic> m) {
     return StoryNode(
@@ -115,6 +145,12 @@ class StoryNode {
       sourceKind: m['source_kind'] as String? ?? '',
       sourceRef: m['source_ref'] as String? ?? '',
       sourceCreatedAt: m['source_created_at'] as String? ?? '',
+      statValue: (m['stat_value'] as num?)?.toDouble(),
+      statText: m['stat_text'] as String? ?? '',
+      statBasis: m['stat_basis'] as String? ?? '',
+      linkUrl: m['link_url'] as String? ?? '',
+      linkPlatform: m['link_platform'] as String? ?? '',
+      candidateId: m['candidate_id'] as String? ?? '',
       children: ((m['children'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => StoryNode.fromMap(e.cast<String, dynamic>()))
