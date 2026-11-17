@@ -154,7 +154,6 @@ from wiki_ingest import ingest_or_defer as wiki_ingest  # noqa: E402
 from wiki_lint import lint_all  # noqa: E402
 from wiki_query import read_wiki_context  # noqa: E402
 import story  # noqa: E402
-import career_timeline  # noqa: E402
 import referrals  # noqa: E402
 import reverse_image_search  # noqa: E402
 import report_hub  # noqa: E402
@@ -1522,10 +1521,9 @@ class ChatRequest(_TruncatingModel):
     # gets these as context plus the story-edit tools bound to that section.
     story_page_id: str = Field(default="", max_length=80)
     story_passage: str = Field(default="", max_length=8000)
-    # Set when the Ask Ayma overlay is opened from one row of the structured
-    # career timeline instead of a highlighted passage — scopes the
-    # `edit_career_timeline_entry` / `delete_career_timeline_entry` tools to
-    # that entry. `story_page_id` is still set (to "career") alongside this.
+    # Vestigial: scoped the retired career-timeline subsystem's per-entry edit.
+    # Always empty now (that UI was removed); kept only so older clients that
+    # still send the field don't 422.
     story_timeline_entry_id: str = Field(default="", max_length=64)
     # Set when the Ask Ayma chat is opened from a deep-dive (web-search) report
     # item: a fact, the summary, a social-profile link, or a "photos of you
@@ -2273,16 +2271,9 @@ async def _prepare_chat(
 def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "") -> str:
     if not page_id:
         return ""
-    if timeline_entry_id:
-        return (
-            "STORY EDITOR: the user opened this chat from one entry of their "
-            "Your Story career timeline (a single job or degree), not a "
-            "highlighted passage. Use `edit_career_timeline_entry` to correct "
-            "its organisation/title/degree/dates, or "
-            "`delete_career_timeline_entry` if they want that entry removed "
-            "entirely. Confirm what you did in one line and keep chatting — "
-            "it's saved immediately, no separate accept step."
-        )
+    # ``timeline_entry_id`` is vestigial — the career-timeline subsystem (and its
+    # ``edit_career_timeline_entry`` / ``delete_career_timeline_entry`` tools) was
+    # removed; career edits now go through the ordinary story-section tools below.
     lines = [
         "STORY EDITOR: the user opened this chat from their Your Story editor "
         "to work on one section of their profile story.",
@@ -5954,7 +5945,6 @@ async def wiki_reset(uid: str = Depends(require_uid)) -> dict[str, object]:
 
 # --- Your Story & Profile endpoints (delegated to routes.story & routes.profile) ---
 from routes.story import (  # noqa: E402
-    LinkedInUrlRequest,
     StoryChatMessage,
     StoryEditRequest,
     StoryRemoveSectionRequest,
@@ -5962,8 +5952,6 @@ from routes.story import (  # noqa: E402
     StorySectionRevertRequest,
     StoryVisibilityRequest,
     story_ai_notes,
-    story_career_timeline,
-    story_career_timeline_refresh,
     story_edit,
     story_get,
     story_remove_section,
@@ -5972,7 +5960,6 @@ from routes.story import (  # noqa: E402
     story_section_revert,
     story_section_version,
     story_section_versions,
-    story_set_linkedin,
     story_set_visibility,
 )
 from routes.profile import (  # noqa: E402

@@ -47,9 +47,9 @@ enum AskAymaOrigin {
 
 /// What one Ask Ayma turn is scoped to. For [AskAymaOrigin.story], carries
 /// exactly what `skills/story_edit.py`'s tools need: `pageId`/`selectedText`
-/// map to `story_page_id`/`story_passage`; `timelineEntryId` maps to the
-/// newer `story_timeline_entry_id` field, which scopes
-/// `edit_career_timeline_entry` / `delete_career_timeline_entry` instead. For
+/// map to `story_page_id`/`story_passage`. (`timelineEntryId` /
+/// `story_timeline_entry_id` is a now-vestigial scope left from the retired
+/// career-timeline subsystem — always empty since that UI was removed.) For
 /// every other origin, `deepDiveReportId`/`deepDiveTarget` or
 /// `appearanceFindingId` map to the matching backend fields that let the
 /// conversational agent invoke `correct_deep_dive_item` /

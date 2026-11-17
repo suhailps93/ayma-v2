@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import require_uid
-import career_timeline
 import story
 
 router = APIRouter(tags=["story"])
@@ -53,10 +52,6 @@ class StoryRemoveSectionRequest(BaseModel):
 class StorySectionRevertRequest(BaseModel):
     page_id: str = Field(min_length=1, max_length=80)
     version_id: str = Field(min_length=1, max_length=128)
-
-
-class LinkedInUrlRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=300)
 
 
 @router.get("/story")
@@ -193,41 +188,3 @@ async def story_section_provenance(
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="No such section.")
-
-
-@router.get("/story/career-timeline")
-async def story_career_timeline(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """The structured career/education timeline (§ Your Story career
-    timeline): built lazily on first read, then cached on the ``career`` wiki
-    page. ``show_timeline`` is only ``true`` once Ayma has decent confidence
-    in every entry — otherwise the client renders Career & Education as
-    flowing prose only, same as any other section. Always carries
-    ``linkedin_url`` (``""`` if none on file yet)."""
-    return await career_timeline.get_or_build_timeline(get_db(), uid)
-
-
-@router.post("/story/career-timeline/refresh")
-async def story_career_timeline_refresh(
-    uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Force a fresh extraction pass — e.g. right after the user adds their
-    LinkedIn URL, or corrects the Career & Education prose."""
-    return await career_timeline.extract(get_db(), uid)
-
-
-@router.post("/story/linkedin")
-async def story_set_linkedin(
-    req: LinkedInUrlRequest, uid: str = Depends(require_uid)
-) -> dict[str, object]:
-    """Save the user's own LinkedIn profile URL, given with their explicit
-    consent (§ Your Story career timeline). No scraper, no LinkedIn API call
-    of any kind: this URL is simply handed to Gemini's ``url_context`` tool on
-    the next self deep-dive, which reads that one page directly as part of
-    the same grounded research call "search me" already runs."""
-    try:
-        url = await asyncio.to_thread(
-            career_timeline.set_linkedin_url, get_db(), uid, req.url
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"linkedin_url": url}

@@ -14,7 +14,7 @@ owns that tail so the ONE path serves both callers that need it:
 
 Importable in BOTH the Main API venv and the voice-agent venv — it pulls in
 only plain modules (``chat_history``, ``notifications_triggers``,
-``career_timeline``, ``skill_memory``, ``skill_runs``, ``deep_dive``,
+``skill_memory``, ``skill_runs``, ``deep_dive``,
 ``token_ledger``), never ``main`` or ``livekit-agents``.
 """
 
@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import career_timeline
 import chat_history
 import deep_dive
 import notifications_triggers
@@ -159,13 +158,6 @@ async def finish(
                 "deep-dive wiki/skill-run bookkeeping failed for %s "
                 "(continuing to card + notify)", uid,
             )
-        # Best-effort: re-derive the structured career timeline now that fresh
-        # web-research facts (possibly LinkedIn-derived — § career timeline)
-        # are on hand. Never blocks/fails the deep-dive response itself.
-        try:
-            await career_timeline.extract(db, uid)
-        except Exception:  # noqa: BLE001
-            logger.exception("career-timeline extraction after self-dive failed for %s", uid)
     else:
         # The person researched is NOT the account holder, so none of the
         # digest belongs in the user's wiki. Drop a single behavioural

@@ -129,17 +129,6 @@ class _FakeApi extends ApiClient {
     );
   }
 
-  @override
-  Future<CareerTimeline> careerTimeline() async {
-    return const CareerTimeline(
-      showTimeline: true,
-      linkedinUrl: 'https://linkedin.com/in/test',
-      entries: [
-        TimelineEntry(id: 'c1', org: 'Company 1', titleOrDegree: 'Role 1', confidence: 'high', kind: 'work'),
-        TimelineEntry(id: 'c2', org: 'Company 2', titleOrDegree: 'Role 2', confidence: 'high', kind: 'work'),
-      ],
-    );
-  }
 }
 
 void main() {

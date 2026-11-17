@@ -153,9 +153,6 @@ class _FakeApi extends ApiClient {
   List<StorySection> aiSections = const [];
   List<AiNotePhoto> photos = const [];
 
-  CareerTimeline careerTimelineResult =
-      const CareerTimeline(entries: [], overallConfidence: 'none', showTimeline: false);
-
   SectionProvenance provenanceResult = const SectionProvenance(
     pageId: 'career',
     conversationCount: 3,
@@ -266,24 +263,6 @@ class _FakeApi extends ApiClient {
   @override
   Future<void> photoPublish(String url, {required String source}) async {
     calls.add('photo_publish:$url:$source');
-  }
-
-  @override
-  Future<CareerTimeline> careerTimeline() async {
-    calls.add('career_timeline');
-    return careerTimelineResult;
-  }
-
-  @override
-  Future<CareerTimeline> refreshCareerTimeline() async {
-    calls.add('career_timeline_refresh');
-    return careerTimelineResult;
-  }
-
-  @override
-  Future<String> setLinkedinUrl(String url) async {
-    calls.add('set_linkedin:$url');
-    return url;
   }
 
   @override
@@ -660,6 +639,13 @@ void main() {
     expect(find.text('What drives me at work'), findsOneWidget);
     expect(find.text('I lead the analytics team in Lisbon.'), findsOneWidget);
     expect(find.text('Hobbies'), findsOneWidget);
+    // Regression (founder-found Nov 16 2026): Career is the graph section ONLY.
+    // The legacy career-timeline subsystem rendered a SECOND, duplicate numbered
+    // "CAREER & EDUCATION" block (+ an "Add your LinkedIn" nudge) below it — both
+    // are deleted and must never render again.
+    expect(find.textContaining('CAREER & EDUCATION'), findsNothing);
+    expect(find.text('Add your LinkedIn profile'), findsNothing);
+    expect(find.byKey(const ValueKey('add_linkedin')), findsNothing);
     expect(find.byKey(const ValueKey('add_bullet_hobbies')), findsOneWidget);
     // Ayma-only is NEVER shown in Your Story (founder order, Nov 15 2026): the
     // seeded ai_only career bullet is filtered out, so only the public bullet
@@ -962,87 +948,6 @@ void main() {
     expect(find.text('VIEW WEB FINDINGS'), findsNothing);
   });
 
-  testWidgets('the career timeline renders only when confidence is decent',
-      (tester) async {
-    final api = _FakeApi()
-      ..careerTimelineResult = const CareerTimeline(
-        entries: [
-          TimelineEntry(id: 'e1', kind: 'work', org: 'Figure AI',
-              titleOrDegree: 'Software Integration Engineer',
-              start: '2025', end: 'Present', confidence: 'high'),
-        ],
-        overallConfidence: 'high',
-        showTimeline: true,
-      );
-    await _pumpWithRouter(tester, api);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Figure AI'), findsOneWidget);
-    expect(find.textContaining('Software Integration Engineer'), findsOneWidget);
-  });
-
-  testWidgets('a low-confidence timeline falls back to prose only (no LinkedIn nudge either)',
-      (tester) async {
-    final api = _FakeApi()
-      ..careerTimelineResult = const CareerTimeline(
-        entries: [], overallConfidence: 'low', showTimeline: false,
-        linkedinUrl: 'https://www.linkedin.com/in/me/',
-      );
-    await _pumpWithRouter(tester, api);
-    await tester.pumpAndSettle();
-
-    expect(find.byIcon(Icons.work_outline), findsNothing);
-    expect(find.textContaining('Add your LinkedIn'), findsNothing);
-  });
-
-  testWidgets('no LinkedIn on file nudges the user to add one, under Career & Education',
-      (tester) async {
-    final api = _FakeApi()
-      ..careerTimelineResult = const CareerTimeline(
-        entries: [], overallConfidence: 'none', showTimeline: false, linkedinUrl: '',
-      );
-    await _pumpWithRouter(tester, api);
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Add your LinkedIn'), findsOneWidget);
-
-    await tester.tap(find.textContaining('Add your LinkedIn'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'https://www.linkedin.com/in/me/');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-
-    expect(api.calls, contains('set_linkedin:https://www.linkedin.com/in/me/'));
-    expect(api.calls, contains('career_timeline_refresh'));
-  });
-
-  testWidgets('tapping a timeline entry opens Ask Ayma scoped to that entry',
-      (tester) async {
-    final api = _FakeApi()
-      ..careerTimelineResult = const CareerTimeline(
-        entries: [
-          TimelineEntry(id: 'e1', kind: 'work', org: 'Figure AI',
-              titleOrDegree: 'Engineer', start: '2025', end: 'Present',
-              confidence: 'high'),
-        ],
-        overallConfidence: 'high', showTimeline: true,
-      );
-    await _pumpWithRouter(tester, api);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Figure AI'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ask Ayma'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).last, "that's wrong, I left in 2023");
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pumpAndSettle();
-
-    final call = api.chatCalls.last;
-    expect(call['page_id'], 'career');
-    expect(call['timeline_entry_id'], 'e1');
-  });
 
   // --- privacy: the cover stats header never shows another account's data ---
   //

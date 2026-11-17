@@ -43,9 +43,6 @@ def test_story_routes_registered():
         ("GET", "/story/section/{page_id}/versions/{version_id}"),
         ("POST", "/story/section/revert"),
         ("GET", "/story/section/{page_id}/provenance"),
-        ("GET", "/story/career-timeline"),
-        ("POST", "/story/career-timeline/refresh"),
-        ("POST", "/story/linkedin"),
     ]
     for method, path in expected:
         assert (method, path) in route_map, f"Missing route {method} {path}"

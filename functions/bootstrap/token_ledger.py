@@ -124,7 +124,6 @@ FEATURE_COMPLETENESS = "completeness"  # profile-completeness narrative coverage
 FEATURE_QUESTIONNAIRE = "questionnaire"  # session-end deterministic questionnaire/supplemental capture
 FEATURE_SUMMARY = "summary"  # rolling conversation-summary maintenance (context_opt)
 FEATURE_PERSONA_EVOLUTION = "persona_evolution"  # daily crowd feedback aggregation + eval gate (§15 Part B)
-FEATURE_CAREER_TIMELINE = "career_timeline"  # structured career/education timeline extraction
 FEATURE_PHOTO_EDIT = "photo_edit"  # edit_photo tool — Gemini image-edit model call
 FEATURE_IMAGE_GEN = "image_gen"  # generate_image tool — same Gemini image model, no input photo required
 FEATURE_PHOTO_MODERATION = "photo_moderation"  # profile/generated-photo safety check (record-only)
@@ -157,7 +156,6 @@ FEATURE_LABELS = {
     FEATURE_COMPLETENESS: "Profile completeness",
     FEATURE_SUMMARY: "Conversation memory",
     FEATURE_PERSONA_EVOLUTION: "Ayma's learning",
-    FEATURE_CAREER_TIMELINE: "Career timeline",
     FEATURE_PHOTO_EDIT: "Photo edits",
     FEATURE_IMAGE_GEN: "Image creation",
     FEATURE_PHOTO_MODERATION: "Photo safety check",

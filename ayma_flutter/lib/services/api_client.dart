@@ -1741,28 +1741,6 @@ class ApiClient {
     return SectionProvenance.fromMap(m);
   }
 
-  /// `GET /story/career-timeline` — the structured career/education timeline,
-  /// built lazily server-side on first read then cached. `showTimeline` is
-  /// only true once Ayma has decent confidence in every entry.
-  Future<CareerTimeline> careerTimeline() async {
-    final m = await _getJson('/story/career-timeline');
-    return CareerTimeline.fromMap(m);
-  }
-
-  /// `POST /story/career-timeline/refresh` — force a fresh extraction pass,
-  /// e.g. right after the user adds their LinkedIn URL.
-  Future<CareerTimeline> refreshCareerTimeline() async {
-    final m = await _sendJson('POST', '/story/career-timeline/refresh', {});
-    return CareerTimeline.fromMap(m);
-  }
-
-  /// `POST /story/linkedin` — save the user's own LinkedIn profile URL (their
-  /// consent). Throws [ApiException] (400) if it isn't a linkedin.com link.
-  Future<String> setLinkedinUrl(String url) async {
-    final m = await _sendJson('POST', '/story/linkedin', {'url': url});
-    return m['linkedin_url'] as String? ?? url;
-  }
-
   /// `GET /usage` — lifetime Gemini-token usage + the derived credit balance.
   /// With [period] (`since_credit`, `7d`, `30d` or `all`) the response also
   /// carries [UsageSummary.periodUsage]: credits spent per feature in that
@@ -6732,80 +6710,6 @@ class SectionProvenance {
             .map((e) => ProvenanceSource.fromMap(e.cast<String, dynamic>()))
             .toList(),
       );
-}
-
-/// One job or degree in the structured career timeline.
-class TimelineEntry {
-  const TimelineEntry({
-    required this.id,
-    required this.kind,
-    required this.org,
-    this.titleOrDegree = '',
-    this.start = '',
-    this.end = '',
-    this.confidence = 'low',
-  });
-
-  final String id;
-
-  /// `work` | `education`.
-  final String kind;
-  final String org;
-  final String titleOrDegree;
-  final String start;
-  final String end;
-
-  /// `high` | `medium` | `low` — this one entry's own confidence.
-  final String confidence;
-
-  /// "2020 – Present" / "2020 – 2022" / "2020" (open-ended when [end] is empty
-  /// but [start] isn't).
-  String get dateRange {
-    if (start.isEmpty && end.isEmpty) return '';
-    if (start.isNotEmpty && end.isNotEmpty) return '$start – $end';
-    return start.isNotEmpty ? start : end;
-  }
-
-  factory TimelineEntry.fromMap(Map<String, dynamic> m) => TimelineEntry(
-    id: m['id'] as String? ?? '',
-    kind: m['kind'] as String? ?? 'work',
-    org: m['org'] as String? ?? '',
-    titleOrDegree: m['title_or_degree'] as String? ?? '',
-    start: m['start'] as String? ?? '',
-    end: m['end'] as String? ?? '',
-    confidence: m['confidence'] as String? ?? 'low',
-  );
-}
-
-/// `GET /story/career-timeline` / `POST /story/career-timeline/refresh` — the
-/// structured career/education timeline. [showTimeline] is the confidence
-/// gate the client must respect: only render the visual timeline when it's
-/// true, otherwise fall back to the section's flowing prose.
-class CareerTimeline {
-  const CareerTimeline({
-    this.entries = const [],
-    this.overallConfidence = 'none',
-    this.showTimeline = false,
-    this.linkedinUrl = '',
-    this.usageCapped = false,
-  });
-
-  final List<TimelineEntry> entries;
-  final String overallConfidence;
-  final bool showTimeline;
-  final String linkedinUrl;
-  final bool usageCapped;
-
-  factory CareerTimeline.fromMap(Map<String, dynamic> m) => CareerTimeline(
-    entries: ((m['entries'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) => TimelineEntry.fromMap(e.cast<String, dynamic>()))
-        .toList(),
-    overallConfidence: m['overall_confidence'] as String? ?? 'none',
-    showTimeline: m['show_timeline'] == true,
-    linkedinUrl: m['linkedin_url'] as String? ?? '',
-    usageCapped: m['usage_capped'] == true,
-  );
 }
 
 /// `POST /credits/topup` answered 402: free reloads are off, upgrade instead.
