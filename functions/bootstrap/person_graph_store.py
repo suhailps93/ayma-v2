@@ -1168,6 +1168,140 @@ def query_nodes(
     return out
 
 
+# --- the single graph lookup (founder Nov 17) ------------------------------
+# ONE way for the agents to look up info in the graph, used for three things:
+# (1) what to ask next (what the graph holds vs what's missing), (2) matching
+# (pull the nodes a decision needs, assessment nodes included), (3) anywhere
+# else user info is pulled. It supports topic search the graph way: find the one
+# node on a topic, then walk its parents, children and related-node links to
+# pull everything connected to it — in ONE call. No parallel read paths.
+
+
+def _topic_score(node: pg.GraphNode, topic_l: str) -> int:
+    """How well ``node`` anchors ``topic`` (lowercased). Higher = better."""
+    if not topic_l:
+        return 0
+    section_l = (node.section or "").lower()
+    prompt_l = (node.prompt or "").lower()
+    answer_l = str(node.answer or "").lower()
+    label_l = (getattr(node, "standard_field_label", "") or "").lower()
+    # Exact section / standard-field name is the strongest anchor.
+    if topic_l == section_l or topic_l == label_l:
+        return 100
+    score = 0
+    if topic_l in label_l or topic_l in prompt_l:
+        score = max(score, 60)
+    if topic_l in answer_l:
+        score = max(score, 50)
+    if topic_l in section_l:
+        score = max(score, 40)
+    return score
+
+
+def find_topic_anchor(
+    graph: dict[str, pg.GraphNode], topic: str
+) -> Optional[pg.GraphNode]:
+    """The single best node anchoring ``topic``, or None. Ties break toward the
+    shallowest (most general) node, then answered content, then id."""
+    topic_l = (topic or "").strip().lower()
+    best: Optional[pg.GraphNode] = None
+    best_key: tuple = (-1, 0, 0, "")
+    for n in graph.values():
+        s = _topic_score(n, topic_l)
+        if s <= 0:
+            continue
+        key = (s, -int(n.level or 1), 1 if n.answer is not None else 0, n.id)
+        if key > best_key:
+            best_key, best = key, n
+    return best
+
+
+def connected_node_ids(graph: dict[str, pg.GraphNode], anchor_id: str) -> list[str]:
+    """``anchor_id`` plus everything connected to it in the graph: its ancestor
+    chain (parent links up), its descendants (child nodes down), and its
+    related-linked nodes (``type == related``, both directions). One hop out
+    through related links, then that node's own subtree — so a related topic
+    brings its details too."""
+    import person_graph_tree as tree
+
+    if anchor_id not in graph:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(nid: str) -> None:
+        if nid in graph and nid not in seen:
+            seen.add(nid)
+            out.append(nid)
+
+    # related edges, both directions
+    related: dict[str, set[str]] = {}
+    for nid, n in graph.items():
+        for ln in getattr(n, "links", []) or []:
+            if getattr(ln, "type", "") == pg.StrictLinkType.RELATED.value:
+                tgt = getattr(ln, "target", "")
+                if tgt:
+                    related.setdefault(nid, set()).add(tgt)
+                    related.setdefault(tgt, set()).add(nid)
+
+    # the anchor + its ancestor chain
+    add(anchor_id)
+    cur = graph[anchor_id]
+    guard = 0
+    while getattr(cur, "parent", None) and guard < 64:
+        guard += 1
+        p = cur.parent
+        if p not in graph or p in seen:
+            break
+        add(p)
+        cur = graph[p]
+
+    # the anchor's descendants + each related node and its descendants
+    roots = [anchor_id] + sorted(related.get(anchor_id, ()))
+    for r in roots:
+        add(r)
+        for d in tree.descendant_ids(graph, r):
+            add(d)
+    return out
+
+
+def graph_lookup(
+    db,
+    uid: str,
+    *,
+    topic: str | None = None,
+    node_id: str | None = None,
+    intent: str | None = None,
+    include_ayma_only: bool = True,
+) -> dict:
+    """The single graph lookup. Pass a ``topic`` (topic search finds the one
+    anchor node) or a ``node_id`` directly; returns that node plus everything
+    connected to it — ancestors, descendants, related — in one call:
+
+        {"anchor": <id|None>, "node_ids": [...], "nodes": [GraphNode, ...]}
+
+    ``nodes`` are in section-then-level order. ``include_ayma_only=False`` drops
+    Ayma-only nodes (e.g. the assessment nodes) for a non-grounding consumer."""
+    graph = effective(db, uid, intent=intent)
+    anchor = (
+        graph.get(node_id)
+        if node_id
+        else (find_topic_anchor(graph, topic) if topic else None)
+    )
+    if anchor is None:
+        return {"anchor": None, "node_ids": [], "nodes": []}
+    ids = connected_node_ids(graph, anchor.id)
+    nodes = [graph[i] for i in ids]
+    if not include_ayma_only:
+        nodes = [n for n in nodes if n.visibility is not Visibility.AYMA_ONLY]
+    nodes.sort(key=lambda n: (question_tree.section_order(n.section), n.level, n.id))
+    return {
+        "anchor": anchor.id,
+        "node_ids": [n.id for n in nodes],
+        "nodes": nodes,
+    }
+
+
 # --- node dedupe: resolution + write-time prevention -----------------------
 # These are the user-confirmed resolution primitives for the node-dedupe
 # cross-check (founder Nov 17). Nothing here runs silently: Ayma surfaces a
