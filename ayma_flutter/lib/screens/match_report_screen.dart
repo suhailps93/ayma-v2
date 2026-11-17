@@ -11,7 +11,8 @@ import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/overflow_guards.dart';
-import '../widgets/living_report_view.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import '../widgets/report_progress.dart';
 import '../widgets/taste_match_card.dart';
 import '../widgets/out_of_credits.dart';
@@ -24,40 +25,49 @@ import '../widgets/ayma_back_button.dart';
 /// photos, the score, what lines up / what doesn't, and the note Ayma wrote
 /// to you.
 ///
-/// --- Bespoke chrome vs. the Living Report — see the GUARDRAIL in
-/// `living_report_view.dart`'s own file doc before adding anything here. ---
-/// The score breakdown, confidence band, narrative, dealbreakers and
-/// per-dimension rationale ALL come from the ONE shared [LivingReportView]
-/// renderer (§ generic reports, `report_type: "match"` — see
-/// `report_adapters.match_blocks` / `report_hub.py`); its own top-of-section
-/// `stat` block ("Match score", e.g. "31%", basis "Low confidence") is the
-/// ONLY place the score and confidence band are rendered. Only the
-/// two-person avatar/photo row stays bespoke screen chrome — photos aren't a
-/// block type at all, the same reasoning `deep_dive_report_screen.dart` uses
-/// to keep its own AppBar actions outside the generic body. This screen used
-/// to ALSO print a big score digit and a separate "Confidence: Low" chip
-/// here in the header — a real duplication bug (the founder's screenshot:
-/// "31% match" / "Confidence: Low" shown once as chrome and again, moments
-/// later, as the block-rendered "Match score" stat) — removed; do not bring
-/// either back without also removing the block that already shows it.
+/// The full report body renders through the shared [GraphTreeView]
+/// Node-Visualiser (2o P3) via `GET /report/match/{id}/tree` — the SAME
+/// pattern `appearance_report_screen.dart` and `deep_dive_report_screen.dart`
+/// (P2) use. The score breakdown, confidence band, narrative, dealbreakers and
+/// per-dimension rationale ALL come from that one tree (§ generic reports,
+/// `report_type: "match"` — see `report_adapters.match_blocks` /
+/// `report_tree.py` / `report_hub.py`); its own top-of-section `stat` node
+/// ("Match score", e.g. "31%", basis "Low confidence") is the ONLY place the
+/// score and confidence band are rendered. Only the two-person avatar/photo
+/// row stays bespoke screen chrome — photos aren't a node kind at all, the
+/// same reasoning `deep_dive_report_screen.dart` uses to keep its own AppBar
+/// actions outside the generic body. This screen used to ALSO print a big
+/// score digit and a separate "Confidence: Low" chip here in the header — a
+/// real duplication bug (the founder's screenshot: "31% match" / "Confidence:
+/// Low" shown once as chrome and again, moments later, as the node-rendered
+/// "Match score" stat) — removed; do not bring either back without also
+/// removing the node that already shows it.
 ///
-/// The avatar row and the [LivingReportView] body render inside ONE
-/// scrolling list ([LivingReportView.shrinkWrap], the same
-/// embedded-inline-in-an-outer-`ListView` pattern `my_public_profile_screen
-/// .dart` and `story_editor_screen.dart` use) — nothing on this screen stays
-/// pinned while the rest scrolls (§ founder: "Don't keep this part frozen,
-/// let it also scroll").
+/// The avatar row and the [GraphTreeView] body render inside ONE scrolling
+/// list — [GraphTreeView] returns a non-scrolling `Column` that drops straight
+/// into this screen's outer `SingleChildScrollView` + `Column`, the same
+/// embedded-inline pattern `appearance_report_screen.dart` uses — so nothing
+/// on this screen stays pinned while the rest scrolls (§ founder: "Don't keep
+/// this part frozen, let it also scroll").
+///
+/// The avatar photos, the two people's names, the Taste-match card, and the
+/// Recalculate/Share AppBar chrome are all fed by the SEPARATE
+/// `GET /match/{id}` fetch ([MatchReport] / [MatchReportCache]) — the live
+/// match chrome, not report content. The report BODY no longer reads that
+/// fetch at all; it renders entirely from its own `.../tree` load.
 ///
 /// Match reports are read + informational-chat-only: `report_hub` never sets
 /// `meta.viewer_can_edit` for this report type, for either participant, so
-/// [LivingReportView] never offers a quick-action/tap-to-correct affordance
-/// here — every tap opens plain, read-only Ask-Ayma chat about the report. A
-/// match score is algorithmically computed (`matching_skill.score_pair`),
-/// not user-authored content the way a Story passage or an Appearance
-/// finding is, so there's nothing to "correct" via a stated-value override;
-/// a stray write attempt still gets a clear, deliberate reply server-side
+/// [GraphTreeView] never offers a quick-action/tap-to-correct affordance here —
+/// every tap opens plain, read-only Ask-Ayma chat about the report. A match
+/// score is algorithmically computed (`matching_skill.score_pair`), not
+/// user-authored content the way a Story passage or an Appearance finding is,
+/// so there's nothing to "correct" via a stated-value override; a stray write
+/// attempt still gets a clear, deliberate reply server-side
 /// (`report_hub.correct`'s explicit "nothing to correct" branch) rather than
-/// silently no-op'ing.
+/// silently no-op'ing. A non-participant's `.../tree` fetch 404s
+/// (`report_hub.resolve_owner` returns nothing for them) — they get the empty
+/// state, never the score.
 class MatchReportScreen extends StatefulWidget {
   const MatchReportScreen({
     super.key,
@@ -88,11 +98,12 @@ class _MatchReportScreenState extends State<MatchReportScreen>
   String _subjectUid = '';
   String _subjectName = '';
 
-  /// Lets "Recalculate" reload [LivingReportView] too: the score/confidence/
-  /// narrative shown to the user lives ENTIRELY in the embedded view, so a
-  /// recalculation must explicitly reload it, not just the `_future` this
-  /// AppBar's own action reads from — otherwise it would visibly do nothing.
-  final _reportKey = GlobalKey<LivingReportViewState>();
+  /// Lets "Recalculate" reload the [GraphTreeView] body too: the
+  /// score/confidence/narrative shown to the user lives ENTIRELY in the
+  /// embedded Node-Visualiser tree, so a recalculation must explicitly reload
+  /// it, not just the `_future` this AppBar's own action reads from —
+  /// otherwise it would visibly do nothing.
+  final _reportKey = GlobalKey<GraphTreeViewState>();
 
   bool get _recalculating =>
       _sendingRecalc || MatchActivity.instance.isRecalculating(widget.matchId);
@@ -292,14 +303,14 @@ class _Report extends StatelessWidget {
 
   final MatchReport r;
   final ApiClient apiClient;
-  final GlobalKey<LivingReportViewState> reportKey;
+  final GlobalKey<GraphTreeViewState> reportKey;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
     // ONE scrolling column for the whole screen (§ class doc: "don't keep
     // this part frozen") — the avatar-row chrome below is just its first
-    // item, ahead of the embedded [LivingReportView] and the taste card.
+    // item, ahead of the embedded [GraphTreeView] body and the taste card.
     // A `SingleChildScrollView` + `Column` (not a lazy `ListView`) so every
     // child is fully laid out: an exact scroll extent, smooth scrolling both
     // ways, and the trailing taste card always reachable (§ BUG: the lazy
@@ -344,22 +355,26 @@ class _Report extends StatelessWidget {
               ),
             ),
           ),
-          // `shrinkWrap: true` — embedded as one item of the outer scroll
-          // (a `SingleChildScrollView` + `Column`, NOT a lazy `ListView`:
-          // the lazy list mis-estimated the scroll extent of this
-          // variable-height embedded report and let the trailing taste
-          // card below be overshot / skipped — § BUG). Fully laying every
-          // child out gives an exact extent, smooth scrolling both ways, and
-          // a taste card that's always reachable. This is where the score,
-          // confidence band, and narrative actually render — do not re-add
-          // them to the header card above.
-          LivingReportView(
+          // The report BODY renders through the shared Node-Visualiser (2o P3),
+          // replacing the old block renderer — the same pattern the appearance
+          // and deep-dive report screens use. [GraphTreeView] returns a
+          // non-scrolling `Column` (mainAxisSize.min), so it drops in as one
+          // item of this outer `SingleChildScrollView` + `Column` (NOT a lazy
+          // `ListView`: the lazy list mis-estimated the scroll extent of this
+          // variable-height embedded report and let the trailing taste card
+          // below be overshot / skipped — § BUG). Fully laying every child out
+          // gives an exact extent, smooth scrolling both ways, and a taste
+          // card that's always reachable. This is where the score, confidence
+          // band, and narrative actually render — do not re-add them to the
+          // header card above. A non-participant's `.../tree` 404s → the empty
+          // state here, never the score.
+          GraphTreeView(
             key: reportKey,
+            surface: NodeVisualiserSurface.report,
             reportType: 'match',
             reportId: r.matchId,
-            apiClient: apiClient,
+            api: apiClient,
             emptyMessage: "Nothing to show for this report yet.",
-            shrinkWrap: true,
           ),
           // "Taste match" — the shared-taste section between
           // the two people (score + domain reads + date ideas). Omitted
