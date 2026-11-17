@@ -245,18 +245,25 @@ class PhotoViewer extends StatelessWidget {
     super.key,
     required this.url,
     this.isUser = '',
+    this.caption = '',
   });
 
   final String url;
   final String isUser;
 
+  /// An optional caption shown over the photo — used by the person graph to
+  /// surface Ayma's read of a photo node.
+  final String caption;
+
   @override
   Widget build(BuildContext context) {
-    final note = switch (isUser) {
-      'yes' => 'Ayma thinks this is you',
-      'no' => "Ayma doesn't think this is you",
-      _ => '',
-    };
+    final note = caption.isNotEmpty
+        ? caption
+        : switch (isUser) {
+            'yes' => 'Ayma thinks this is you',
+            'no' => "Ayma doesn't think this is you",
+            _ => '',
+          };
     return Dialog(
       backgroundColor: Colors.black,
       insetPadding: const EdgeInsets.all(16),
