@@ -24,7 +24,8 @@ import '../widgets/inline_photo_carousel.dart';
 import '../widgets/ayma_tab_bar.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
-import '../widgets/living_report_view.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import '../widgets/out_of_credits.dart';
 import 'voice_call_screen.dart';
 
@@ -1035,8 +1036,9 @@ class _Filmstrip extends StatelessWidget {
 /// THE profile body — the single widget every screen that shows a member's
 /// public profile MUST render its content through: the photo header
 /// ([ProfilePhotoHeader], with its thumbnail strip) followed by the Living
-/// Report ([LivingReportView]) embedded `shrinkWrap: true` in one outer
-/// `ListView`. It is exactly what the You tab's "My public profile" page
+/// Report body (the shared [GraphTreeView] Node-Visualiser, public-only
+/// filter) embedded in one outer `ListView`. It is exactly what the You tab's
+/// "My public profile" page
 /// (`MyPublicProfileScreen`) shows. [PublicProfileScreen] (Explore, chat,
 /// self-view by uid) and the match-request screen (`matches_screen.dart`)
 /// reuse it unchanged and layer their own actions on top, outside this
@@ -1131,16 +1133,22 @@ class ProfileBody extends StatelessWidget {
             aiGenerated: p.aiGenerated,
             blockedMessage: p.blocked ? "You've blocked this person." : null,
           ),
-        LivingReportView(
-          reportType: reportType,
-          reportId: reportId,
-          apiClient: api,
-          emptyMessage: reportType == 'story_public'
-              ? 'Nothing public yet.'
-              : "They haven't shared much publicly yet.",
-          shrinkWrap: true,
-          showTitle: false,
-          extraRightPadding: extraRightPadding,
+        // 2o — the public profile body renders through the ONE shared
+        // Node-Visualiser (public-only filter), replacing the old block
+        // renderer. `story_public` = the owner's own (editable) view, fetched
+        // as "mine" (uid null); `public_profile` = anyone else's (read-only,
+        // by uid). The rail gutter is reserved by this wrapping Padding.
+        Padding(
+          padding: EdgeInsets.only(right: extraRightPadding),
+          child: GraphTreeView(
+            uid: reportType == 'story_public' ? null : reportId,
+            surface: NodeVisualiserSurface.publicProfile,
+            api: api,
+            isOwner: reportType == 'story_public',
+            emptyMessage: reportType == 'story_public'
+                ? 'Nothing public yet.'
+                : "They haven't shared much publicly yet.",
+          ),
         ),
       ],
     );

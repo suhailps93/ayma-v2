@@ -68,6 +68,42 @@ void main() {
     expect(find.text('Climbs on weekends'), findsOneWidget);
   });
 
+  testWidgets('renders two sections of the SAME page_type without a '
+      'duplicate-key crash', (tester) async {
+    final tree = GraphTree.fromMap({
+      'surface': 'publicProfile',
+      'sections': [
+        for (var i = 0; i < 2; i++)
+          {
+            'page_type': 'misc',
+            'title': 'Section $i',
+            'order': i,
+            'nodes': [
+              {
+                'id': 'n$i',
+                'section': 'misc',
+                'label': '',
+                'text': 'Body $i',
+                'answer_type': 'text',
+                'level': 1,
+                'visibility': 'public',
+                'subtree_visibility': 'public',
+              }
+            ],
+          }
+      ],
+    });
+    await tester.pumpWidget(_app(GraphTreeView(
+      surface: NodeVisualiserSurface.publicProfile,
+      api: _FakeApi(tree: tree),
+    )));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Body 0'), findsOneWidget);
+    expect(find.text('Body 1'), findsOneWidget);
+  });
+
   testWidgets('shows the empty message when the tree has no nodes',
       (tester) async {
     await tester.pumpWidget(_app(GraphTreeView(

@@ -39,15 +39,9 @@ MockClient _profileBackend() => MockClient((request) async {
           headers: const {'content-type': 'application/json; charset=utf-8'},
         );
       }
+      // The body now renders the Node-Visualiser tree (2o): empty here.
       return http.Response(
-        jsonEncode({
-          'title': 'Story',
-          'sections': const [],
-          'meta': {
-            'owner_uid': 'u1', 'viewer_can_edit': true,
-            'created_at': null, 'updated_at': null,
-          },
-        }),
+        jsonEncode({'surface': 'publicProfile', 'sections': const []}),
         200,
         headers: const {'content-type': 'application/json; charset=utf-8'},
       );
@@ -99,27 +93,26 @@ void main() {
       }
       return http.Response(
         jsonEncode({
-          'title': 'Story',
+          'surface': 'publicProfile',
           'sections': [
             {
-              'heading': 'Attributes',
-              'blocks': [
+              'page_type': 'identity',
+              'title': 'Attributes',
+              'order': 0,
+              'nodes': [
                 {
-                  'block_id': 'attr:eye_color',
-                  'type': 'attribute',
-                  'editable': true,
+                  'id': 'n0',
+                  'section': 'identity',
                   'label': 'Eyes',
-                  'value': 'Brown',
+                  'text': 'Brown',
+                  'answer_type': 'text',
+                  'level': 1,
+                  'visibility': 'public',
+                  'subtree_visibility': 'public',
                 },
               ],
             },
           ],
-          'meta': {
-            'owner_uid': 'u1',
-            'viewer_can_edit': true,
-            'created_at': null,
-            'updated_at': null,
-          },
         }),
         200,
         headers: const {'content-type': 'application/json; charset=utf-8'},
@@ -134,7 +127,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(requestedPaths, contains('/explore/profile/u1'));
-    expect(requestedPaths, contains('/report/story_public/u1'));
+    // Self view fetches the public tree as "mine".
+    expect(requestedPaths, contains('/profile/graph/tree'));
     expect(find.text('My public profile'), findsOneWidget); // AppBar title
 
     // The photo carousel + name/age/location header renders — the bug this
@@ -185,30 +179,29 @@ void main() {
           headers: const {'content-type': 'application/json; charset=utf-8'},
         );
       }
-      // Minimal, new-account story_public: one real IDENTITY section only.
+      // Minimal, new-account public tree: one real IDENTITY section only.
       return http.Response(
         jsonEncode({
-          'title': 'Story',
+          'surface': 'publicProfile',
           'sections': [
             {
-              'heading': 'IDENTITY',
-              'blocks': [
+              'page_type': 'identity',
+              'title': 'IDENTITY',
+              'order': 0,
+              'nodes': [
                 {
-                  'block_id': 'attr:goes_by',
-                  'type': 'attribute',
-                  'editable': true,
+                  'id': 'n0',
+                  'section': 'identity',
                   'label': 'Goes by',
-                  'value': 'Alex',
+                  'text': 'Alex',
+                  'answer_type': 'text',
+                  'level': 1,
+                  'visibility': 'public',
+                  'subtree_visibility': 'public',
                 },
               ],
             },
           ],
-          'meta': {
-            'owner_uid': 'u1',
-            'viewer_can_edit': true,
-            'created_at': null,
-            'updated_at': null,
-          },
         }),
         200,
         headers: const {'content-type': 'application/json; charset=utf-8'},
@@ -331,16 +324,7 @@ void main() {
         );
       }
       return http.Response(
-        jsonEncode({
-          'title': 'Story',
-          'sections': [],
-          'meta': {
-            'owner_uid': 'u1',
-            'viewer_can_edit': true,
-            'created_at': null,
-            'updated_at': null,
-          },
-        }),
+        jsonEncode({'surface': 'publicProfile', 'sections': []}),
         200,
         headers: const {'content-type': 'application/json; charset=utf-8'},
       );

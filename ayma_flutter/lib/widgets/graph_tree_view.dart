@@ -149,9 +149,11 @@ class GraphTreeViewState extends State<GraphTreeView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final section in sections)
+        for (final (i, section) in sections.indexed)
           NodeVisualiserSection(
-            key: Key('graph_section_${section.pageType}'),
+            // Index-keyed: a surface can carry two sections of the same
+            // page_type, so the page_type alone is not unique.
+            key: Key('graph_section_${i}_${section.pageType}'),
             section: section,
             surface: widget.surface,
             api: _api,

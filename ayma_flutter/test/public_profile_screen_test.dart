@@ -9,8 +9,9 @@ import 'package:ayma_flutter/services/deep_dive_activity.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
+import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/widgets/ayma_rail_icons.dart';
-import 'package:ayma_flutter/widgets/living_report_view.dart';
+import 'package:ayma_flutter/widgets/graph_tree_view.dart';
 import 'package:file/file.dart' as fs;
 import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -93,11 +94,11 @@ Map<String, dynamic> _profile({
       'deep_dive_id': deepDiveId,
     };
 
-/// The `GET /report/public_profile/her` payload the backend derives from
-/// the SAME pages `/explore/profile` serves (see
-/// `report_adapters.public_profile_blocks` — one text block per page here;
-/// sentence-splitting granularity is the server's own business).
-Map<String, dynamic> _reportFromProfile(Map<String, dynamic> profile) {
+/// The `GET /profile/graph/tree[/uid]` node-tree the public profile body
+/// (`GraphTreeView`) now renders — one section per profile page, each with one
+/// public text node carrying the page body. Section titles are upper-cased to
+/// mirror what the screen asserts.
+Map<String, dynamic> _treeFromProfile(Map<String, dynamic> profile) {
   const labels = {
     'identity': 'Identity',
     'career': 'Work & study',
@@ -112,29 +113,30 @@ Map<String, dynamic> _reportFromProfile(Map<String, dynamic> profile) {
   };
   final pages = (profile['pages'] as List).cast<Map<String, dynamic>>();
   return {
-    'title': profile['name'],
+    'surface': 'publicProfile',
     'sections': [
       for (var i = 0; i < pages.length; i++)
         {
-          'heading': (pages[i]['title'] as String? ?? '').isNotEmpty
-              ? pages[i]['title']
-              : (labels[pages[i]['page_type']] ?? 'More'),
-          'blocks': [
+          'page_type': pages[i]['page_type'] ?? 'misc',
+          'title': ((pages[i]['title'] as String? ?? '').isNotEmpty
+                  ? pages[i]['title'] as String
+                  : (labels[pages[i]['page_type']] ?? 'More'))
+              .toUpperCase(),
+          'order': i,
+          'nodes': [
             {
-              'block_id': 'sec:$i:sent:0',
-              'type': 'text',
-              'editable': false,
-              'text': pages[i]['body'],
-            },
+              'id': 'n$i',
+              'section': pages[i]['page_type'] ?? 'misc',
+              'label': pages[i]['title'] ?? '',
+              'text': pages[i]['body'] ?? '',
+              'answer_type': 'text',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+            }
           ],
         },
     ],
-    'meta': {
-      'owner_uid': profile['uid'],
-      'viewer_can_edit': false,
-      'created_at': null,
-      'updated_at': null,
-    },
   };
 }
 
@@ -153,9 +155,11 @@ ApiClient _api(
       if (req.url.path == '/explore/profile/her') {
         return http.Response(jsonEncode(profile), 200);
       }
-      if (req.url.path == '/report/public_profile/her' ||
-          req.url.path == '/report/story_public/her') {
-        return http.Response(jsonEncode(_reportFromProfile(profile)), 200);
+      // The public profile body now renders the Node-Visualiser tree (2o):
+      // self view fetches "mine" (/profile/graph/tree), other-user by uid.
+      if (req.url.path == '/profile/graph/tree' ||
+          req.url.path == '/profile/graph/tree/her') {
+        return http.Response(jsonEncode(_treeFromProfile(profile)), 200);
       }
       if (req.method == 'POST') {
         onPost?.call(req.url.path);
@@ -351,25 +355,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileBody), findsOneWidget);
-    final view = tester
-        .widget<LivingReportView>(find.byType(LivingReportView));
-    expect(view.reportType, 'public_profile');
-    expect(view.reportId, 'her');
+    final view = tester.widget<GraphTreeView>(find.byType(GraphTreeView));
+    // Other-user read-only view: the public-profile surface, fetched by uid.
+    expect(view.surface, NodeVisualiserSurface.publicProfile);
+    expect(view.uid, 'her');
+    expect(view.isOwner, isFalse);
     expect(find.byType(ProfilePhotoHeader), findsOneWidget);
     expect(find.text('From Lisbon, lives in Berlin.'), findsOneWidget);
   });
 
   testWidgets(
       'the self view renders the same ProfileBody over the story_public '
-      'report, exactly as the You tab page does', (tester) async {
+      'tree (fetched as "mine"), exactly as the You tab page does',
+      (tester) async {
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
 
     expect(find.byType(ProfileBody), findsOneWidget);
-    final view = tester
-        .widget<LivingReportView>(find.byType(LivingReportView));
-    expect(view.reportType, 'story_public');
-    expect(view.reportId, 'her');
+    final view = tester.widget<GraphTreeView>(find.byType(GraphTreeView));
+    // Owner's own view: the public surface fetched as mine (uid null), owner.
+    expect(view.surface, NodeVisualiserSurface.publicProfile);
+    expect(view.uid, isNull);
+    expect(view.isOwner, isTrue);
     expect(find.byType(ProfilePhotoHeader), findsOneWidget);
   });
 
@@ -774,18 +781,19 @@ void main() {
     await tester.pumpAndSettle();
     final youTab = bodyTexts();
     final youView =
-        tester.widget<LivingReportView>(find.byType(LivingReportView));
+        tester.widget<GraphTreeView>(find.byType(GraphTreeView));
 
     await tester.pumpWidget(_app(api));
     await tester.pumpAndSettle();
     final selfView =
-        tester.widget<LivingReportView>(find.byType(LivingReportView));
+        tester.widget<GraphTreeView>(find.byType(GraphTreeView));
 
     expect(find.byType(ProfileBody), findsOneWidget);
     expect(youTab, isNotEmpty);
     expect(bodyTexts(), youTab);
-    expect(selfView.reportType, youView.reportType);
-    expect(selfView.reportId, youView.reportId);
+    expect(selfView.surface, youView.surface);
+    expect(selfView.uid, youView.uid);
+    expect(selfView.isOwner, youView.isOwner);
   });
 
   testWidgets(
@@ -983,46 +991,34 @@ void main() {
   });
 
   testWidgets(
-      'Text gutter: non-self unblocked profile reserves 64px rail gutter (84px right padding), '
-      'while self or blocked profile reserves 0px', (tester) async {
+      'Text gutter: non-self unblocked profile reserves a 64px rail gutter on '
+      'the body, while self or blocked profile reserves 0px', (tester) async {
+    // The gutter is now the Padding wrapping the Node-Visualiser body
+    // (GraphTreeView) in ProfileBody; its right inset == the reserved gutter.
+    double bodyRightGutter(WidgetTester t) {
+      final pad = t.widget<Padding>(find
+          .ancestor(
+            of: find.byType(GraphTreeView),
+            matching: find.byType(Padding),
+          )
+          .first);
+      return pad.padding.resolve(TextDirection.ltr).right;
+    }
+
     // 1. Non-self unblocked profile (rail mounted)
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
-
-    var view = tester.widget<LivingReportView>(find.byType(LivingReportView));
-    expect(view.extraRightPadding, 64.0);
-
-    var list = tester.widget<ListView>(find.descendant(
-      of: find.byType(LivingReportView),
-      matching: find.byType(ListView),
-    ));
-    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 84, 40));
+    expect(bodyRightGutter(tester), 64.0);
 
     // 2. Self view (no rail mounted)
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
-
-    view = tester.widget<LivingReportView>(find.byType(LivingReportView));
-    expect(view.extraRightPadding, 0.0);
-
-    list = tester.widget<ListView>(find.descendant(
-      of: find.byType(LivingReportView),
-      matching: find.byType(ListView),
-    ));
-    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 40));
+    expect(bodyRightGutter(tester), 0.0);
 
     // 3. Blocked view (no rail mounted)
     await tester.pumpWidget(_app(_api(_profile(blocked: true))));
     await tester.pumpAndSettle();
-
-    view = tester.widget<LivingReportView>(find.byType(LivingReportView));
-    expect(view.extraRightPadding, 0.0);
-
-    list = tester.widget<ListView>(find.descendant(
-      of: find.byType(LivingReportView),
-      matching: find.byType(ListView),
-    ));
-    expect(list.padding, const EdgeInsets.fromLTRB(20, 16, 20, 40));
+    expect(bodyRightGutter(tester), 0.0);
 
     // Jobs pass (cluster 16, defect 9): the blocked message reads in the
     // contrast-safe errorText token, not raw AymaColors.error.
