@@ -63,6 +63,7 @@ void main() {
           photo: photo,
           onHide: () async {},
           onPublish: () async {},
+          onMakePrivate: () async {},
           onChat: () {},
         ),
       ),
@@ -93,6 +94,7 @@ void main() {
       id: 'p1',
       url: 'https://example.invalid/photo.png',
       source: 'web',
+      visibility: 'ayma_only',
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -102,6 +104,7 @@ void main() {
           photo: photo,
           onHide: () async {},
           onPublish: () async {},
+          onMakePrivate: () async {},
           onChat: () {},
         ),
       ),
@@ -114,5 +117,87 @@ void main() {
     final style = tester.widget<Text>(labelFinder).style!;
     expect(style.color, ctx.ac.errorTextCard);
     expect(style.color, isNot(ctx.ac.error)); // the card-safe token, not raw
+  });
+
+  // --- NOTE 250 item 2 + 4: delete confirms, verdict + Make-private read the node ---
+  Widget sheet(AiNotePhoto photo,
+          {Future<void> Function()? onHide,
+          Future<void> Function()? onMakePrivate}) =>
+      MaterialApp(
+        theme: AymaTheme.light,
+        home: Scaffold(
+          body: PhotoDetailSheet(
+            photo: photo,
+            onHide: onHide ?? () async {},
+            onPublish: () async {},
+            onMakePrivate: onMakePrivate ?? () async {},
+            onChat: () {},
+          ),
+        ),
+      );
+
+  testWidgets('Delete asks for confirmation before removing the photo node',
+      (tester) async {
+    var hidden = false;
+    const photo = AiNotePhoto(
+        id: 'p1', url: 'https://example.invalid/p.png', source: 'chat');
+    await tester.pumpWidget(sheet(photo, onHide: () async => hidden = true));
+    await tester.pump();
+
+    await tester.ensureVisible(find.byKey(const Key('photo_delete')));
+    await tester.tap(find.byKey(const Key('photo_delete')));
+    await tester.pumpAndSettle();
+    // A confirmation dialog appears; nothing deleted yet.
+    expect(find.text('Delete this photo? This removes it everywhere.'),
+        findsOneWidget);
+    expect(hidden, isFalse);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    expect(hidden, isTrue);
+  });
+
+  testWidgets(
+      'a public node offers Make private (not Make public) and flips in place',
+      (tester) async {
+    var madePrivate = false;
+    const photo = AiNotePhoto(
+        id: 'p1', url: 'https://example.invalid/p.png', source: 'profile',
+        visibility: 'public');
+    await tester
+        .pumpWidget(sheet(photo, onMakePrivate: () async => madePrivate = true));
+    await tester.pump();
+
+    expect(find.text('Public — on your profile'), findsOneWidget);
+    expect(find.byKey(const Key('photo_make_private')), findsOneWidget);
+    expect(find.byKey(const Key('photo_make_public')), findsNothing);
+
+    await tester.ensureVisible(find.byKey(const Key('photo_make_private')));
+    await tester.tap(find.byKey(const Key('photo_make_private')));
+    await tester.pumpAndSettle();
+    expect(madePrivate, isTrue);
+    // The label + button now read the node's new (private) state, in place.
+    expect(find.text('Private — only you and Ayma'), findsOneWidget);
+    expect(find.byKey(const Key('photo_make_public')), findsOneWidget);
+  });
+
+  testWidgets(
+      'is_you unknown WITH a read says Ayma read it, never "hasn\'t checked"',
+      (tester) async {
+    const withRead = AiNotePhoto(
+        id: 'p1', url: 'https://example.invalid/p.png', source: 'chat',
+        isUser: '', context: 'A dog in a park');
+    await tester.pumpWidget(sheet(withRead));
+    await tester.pump();
+    expect(find.text("Ayma read this but couldn't confirm it's you"),
+        findsOneWidget);
+    expect(find.text("Ayma hasn't checked yet"), findsNothing);
+
+    const noRead = AiNotePhoto(
+        id: 'p2', url: 'https://example.invalid/p.png', source: 'chat',
+        isUser: '', context: '');
+    await tester.pumpWidget(sheet(noRead));
+    await tester.pump();
+    expect(find.text("Ayma hasn't checked yet"), findsOneWidget);
   });
 }

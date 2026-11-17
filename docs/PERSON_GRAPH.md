@@ -523,3 +523,28 @@ visualiser the report node kinds.
   `test/node_visualiser_test.dart` (+3). Next: P2/P3 point the appearance /
   deep-dive / match screens at `reportTree` + `GraphTreeView`, deleting
   `LivingReportView` + those screens' old bodies in the same change (P6).
+
+## NOTE 250 visualiser follow-ups (Nov 17 2026)
+
+Refinements on the adopted visualiser surfaces:
+- **Visibility on structured level-1 nodes** — `set_visibility[_cascade]` already
+  accepts a seed node with no overlay entry (it writes a sparse `{visibility}`
+  overlay that merges over the seed), so the Make public/private bubble flips a
+  structured field ("Gender identity") the same as any node. Pinned by
+  `tests/test_note250_visualiser.py`.
+- **Delete always confirms** — the Photos-strip `PhotoDetailSheet` Delete button
+  now shows a confirmation dialog before removing the image node (the node chat
+  window already did), so no photo/bullet is deleted by a single tap.
+- **Career LinkedIn button** — `career_timeline.linkedin_link_node(db, uid)`
+  returns a public `link` node (the P0 link kind) built from the profile doc's
+  `linkedin_url`; `routes/profile._inject_linkedin_button` prepends it to the
+  Career section of the story / public-profile tree (adding the section if the
+  person has no other public career nodes). Renders as the LinkedIn button via
+  the shared NodeVisualiser link row (work-outline glyph, taps open).
+- **Photo view reads the node** — `PhotoDetailSheet`'s visibility label now reads
+  the image node's own `visibility` (not the ingestion source / a stale
+  snapshot) and updates in place on a flip; it offers Make private when the node
+  is public; and the is-you verdict says "Ayma read this but couldn't confirm
+  it's you" (never "hasn't checked yet") when the node is `is_you: unknown` but
+  carries a real image read. The node chat window's image context card applies
+  the same two rules.

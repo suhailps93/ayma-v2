@@ -318,6 +318,14 @@ class NodeVisualiser extends StatelessWidget {
   static String _trimNum(double v) =>
       v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
 
+  static IconData _platformIcon(String platform) => switch (platform) {
+        'linkedin' => Icons.work_outline,
+        'github' => Icons.code,
+        'youtube' => Icons.play_circle_outline,
+        '' => Icons.open_in_new,
+        _ => Icons.link,
+      };
+
   /// A LINK node — the label (or host) with a social/open glyph; the row tap
   /// (see [_openChat]) opens the URL.
   Widget _linkContent(BuildContext context) {
@@ -326,8 +334,7 @@ class NodeVisualiser extends StatelessWidget {
     final label = node.label.isNotEmpty ? node.label : node.linkUrl;
     return Row(
       children: [
-        Icon(node.linkPlatform.isNotEmpty ? Icons.link : Icons.open_in_new,
-            size: 18, color: ac.fgDim),
+        Icon(_platformIcon(node.linkPlatform), size: 18, color: ac.fgDim),
         const SizedBox(width: 8),
         Expanded(
           child: Text(label,

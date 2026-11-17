@@ -223,11 +223,45 @@ def _tree_payload(uid: str, surface: str) -> dict:
     from config import CONFIG
 
     graph = person_graph_store.effective(get_db(), uid)
-    return person_graph_tree.node_tree(
+    tree = person_graph_tree.node_tree(
         graph,
         surface=surface,
         include_ayma_only=CONFIG.graph_show_ai_only,
     )
+    # The Career "special visualiser": the public LinkedIn button on top of the
+    # Career section, on Your Story and the public profile (NOTE 250 §3).
+    if surface in ("story", "publicProfile"):
+        _inject_linkedin_button(uid, surface, tree)
+    return tree
+
+
+def _inject_linkedin_button(uid: str, surface: str, tree: dict) -> None:
+    """Prepend ``uid``'s LinkedIn link node to the Career section (or add a
+    Career section holding just it when there is none yet). Best-effort."""
+    try:
+        import career_timeline
+        import question_tree
+
+        node = career_timeline.linkedin_link_node(get_db(), uid)
+        if not node:
+            return
+        for section in tree.get("sections", []):
+            if section.get("page_type") == "career":
+                section["nodes"] = [node] + list(section.get("nodes") or [])
+                return
+        tree.setdefault("sections", []).append(
+            {
+                "page_type": "career",
+                "title": question_tree.section_title("career"),
+                "order": question_tree.section_order("career"),
+                "nodes": [node],
+            }
+        )
+        tree["sections"].sort(
+            key=lambda s: (s.get("order", 0), str(s.get("title") or "").lower())
+        )
+    except Exception:  # noqa: BLE001 - the button is best-effort, never 500s a tree
+        pass
 
 
 @router.get("/profile/graph/tree")
