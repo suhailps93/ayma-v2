@@ -190,6 +190,64 @@ def test_appearance_adapter_none_when_no_report(monkeypatch):
     assert report is None and created is None and updated is None
 
 
+# --- appearance card photo pool (founder defect Nov 16 2026) ----------------
+# The shareable card must show only the SELECTED photos — the Face and Body
+# reads' source_photos — never the Attributes read's whole-grid pool, which
+# includes photos the user never selected for any axis.
+
+
+def test_card_photo_pool_is_face_plus_body_only_never_attributes():
+    data = {
+        "face": {"source_photos": ["p/f1.jpg", "p/f2.jpg"]},
+        "body": {"source_photos": ["p/b1.jpg"]},
+        # whole-grid Attributes read: selected ones + two the user never picked
+        "attributes": {
+            "source_photos": ["p/f1.jpg", "p/b1.jpg", "p/x1.jpg", "p/x2.jpg"]
+        },
+    }
+    pool = ra._card_photo_pool(data)
+    assert pool == ["p/f1.jpg", "p/f2.jpg", "p/b1.jpg"]
+    # the attributes-only photos are never pooled for the card
+    assert "p/x1.jpg" not in pool
+    assert "p/x2.jpg" not in pool
+
+
+def test_card_photo_pool_dedupes_and_drops_when_an_axis_is_deselected():
+    both = {"face": {"source_photos": ["p/f1.jpg"]}, "body": {"source_photos": ["p/b1.jpg"]}}
+    assert ra._card_photo_pool(both) == ["p/f1.jpg", "p/b1.jpg"]
+    # a fresh run with no body selection drops the body photo from the pool
+    face_only = {"face": {"source_photos": ["p/f1.jpg"]}, "body": {}}
+    assert ra._card_photo_pool(face_only) == ["p/f1.jpg"]
+    # a photo shared by both axes appears once
+    shared = {"face": {"source_photos": ["p/s.jpg"]}, "body": {"source_photos": ["p/s.jpg"]}}
+    assert ra._card_photo_pool(shared) == ["p/s.jpg"]
+
+
+def test_appearance_adapter_card_hidden_scoped_to_card_pool_not_attributes(monkeypatch):
+    # A hidden id that is an attributes-ONLY photo must not survive into
+    # `card_hidden_photos` — the card can't show it, so it is not a card photo.
+    doc = dict(_APPEARANCE_DOC)
+    doc["face"] = {**_APPEARANCE_DOC["face"], "source_photos": ["p/f1.jpg"]}
+    doc["body"] = {
+        "usable": True,
+        "overall_score": 5.0,
+        "verdict": "Average",
+        "source_photos": ["p/b1.jpg"],
+    }
+    doc["attributes"] = {
+        **_APPEARANCE_DOC["attributes"],
+        "source_photos": ["p/f1.jpg", "p/x1.jpg"],
+    }
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    # the user hid one real card photo (f1) and one attributes-only photo (x1)
+    monkeypatch.setattr(
+        appearance, "read_card_hidden", lambda db, uid: ["p/x1.jpg", "p/f1.jpg"]
+    )
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    # x1 is dropped (not in the face+body card pool); f1 survives
+    assert report["card_hidden_photos"] == ["p/f1.jpg"]
+
+
 # --- deep-dive -------------------------------------------------------------
 
 _DIGEST = {

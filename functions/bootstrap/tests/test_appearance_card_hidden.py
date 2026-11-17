@@ -136,13 +136,19 @@ def test_report_meta_carries_only_live_pool_hidden_ids(monkeypatch):
     image are both built from this same report, so the shared picture never
     shows a photo the user hid."""
     monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_DOC))
-    # One live id + one stale id that is no longer in the pool.
+    # One live CARD id (the face photo), one attributes-only id (a.jpg — not a
+    # card photo, founder defect Nov 16 2026), and one stale id no longer in the
+    # grid. Only the live card photo survives.
     monkeypatch.setattr(
         appearance, "read_card_hidden",
-        lambda db, uid: ["users/u1/photos/a.jpg", "users/u1/photos/gone.jpg"],
+        lambda db, uid: [
+            "users/u1/photos/face.jpg",
+            "users/u1/photos/a.jpg",
+            "users/u1/photos/gone.jpg",
+        ],
     )
     report, *_ = ra.appearance_blocks(object(), "u1")
-    assert report["card_hidden_photos"] == ["users/u1/photos/a.jpg"]
+    assert report["card_hidden_photos"] == ["users/u1/photos/face.jpg"]
 
 
 def test_hidden_list_is_applied_exactly_including_the_first_pool_photo(monkeypatch):
@@ -154,10 +160,18 @@ def test_hidden_list_is_applied_exactly_including_the_first_pool_photo(monkeypat
     list can no longer reach this adapter, so there is nothing to rescue,
     and un-hiding pool[0] only resurrected a photo the user had removed.)"""
     monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_DOC))
-    pool = appearance._pool_from_data(_DOC)  # face, body, a, b
-    monkeypatch.setattr(appearance, "read_card_hidden", lambda db, uid: list(pool))
+    # The CARD pool is the selected face+body photos (attributes excluded,
+    # founder defect Nov 16 2026). Hiding every card photo — plus an
+    # attributes-only id for good measure — empties the card; the meta carries
+    # exactly the card pool, never the attributes-only id.
+    card_pool = ra._card_photo_pool(_DOC)  # face, body
+    monkeypatch.setattr(
+        appearance,
+        "read_card_hidden",
+        lambda db, uid: list(card_pool) + ["users/u1/photos/a.jpg"],
+    )
     report, *_ = ra.appearance_blocks(object(), "u1")
-    assert report["card_hidden_photos"] == pool
+    assert report["card_hidden_photos"] == card_pool
 
 
 def test_rerun_hero_follows_the_new_selection_when_nothing_is_hidden(monkeypatch):

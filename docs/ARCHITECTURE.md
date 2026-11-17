@@ -268,7 +268,10 @@ reroute to work around an empty response.
   A non-match, no-face, or unknown hit is discarded, never shown. When
   the user has **no usable reference photo yet** (no verified selfie / no profile photos, or no
   biometric consent), `scan` no-ops and stages nothing at all — identity can't be verified, so nothing is surfaced.
-- *Appearance report card*: the Appearance screen draws a positive-only card (analysed photos, max 4; Face and Body
+- *Appearance report card*: the Appearance screen draws a positive-only card (the **selected** Face + Body photos,
+  max 4 — **never** the Attributes whole-grid photos, which include ones the user didn't select for any axis (founder
+  defect Nov 16 2026: `report_adapters._card_photo_pool` / `AppearanceCardData.fromReport` pool Face→Body only; the
+  Attributes section still shows its own whole-grid photos, it just no longer feeds the card); Face and Body
   scores with verdicts; up to 4 strengths; the real Ayma orb logo asset `assets/icon/ayma_orb_ios.png` in its header
   and footer, decoded up-front so it is in the captured frame) from the report's own blocks, and shares it as a PNG
   rendered on the device (`report_card_share.dart`). **The single "Share" button opens the native OS share sheet
@@ -281,8 +284,8 @@ reroute to work around an empty response.
   (`docs/SMART_LINK.md`, with the sharer's referral code when known); recommendations stay on screen only
   ("What to do next"). Appearance is no longer a `POST /share` link type (`share.SHAREABLE_TYPES`).
   Each shown photo carries a "Remove from card" (X) control (**card-only** — it never deletes the photo or its
-  analysis, which stay in the full report). Removing hides that photo and slides the next pooled analysed photo
-  (the full set feeding the report, best/recent first) into its place; when the pool is spent the card simply shows
+  analysis, which stay in the full report). Removing hides that photo and slides the next pooled card photo
+  (the selected Face+Body set, best/recent first) into its place; when the pool is spent the card simply shows
   fewer (down to 0 → no card, same fallback as a missing score), with a quick `AymaToast` Undo. The choice is a
   `report_card_hidden_photos` list of Storage paths on the profile, set through `POST /appearance/card/hidden`
   (`appearance.set_card_hidden`, validates each id is the caller's own analysed photo) and surfaced on the report
