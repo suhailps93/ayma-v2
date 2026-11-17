@@ -146,8 +146,7 @@ class VoiceSessionController extends ChangeNotifier {
   /// How long to wait in [VoiceSessionPhase.waking] for the agent to join
   /// before giving up. `ayma-agent` is permanently scale-to-zero (2026-09-19
   /// founder decision — accept a cold-start wait over paying to keep it
-  /// warm 24/7; `agent_wake.py` fires the actual Cloud Run start the moment
-  /// a call begins). A real measured cold start: Cloud Run's own "STARTUP
+  /// warm 24/7). A real measured cold start: Cloud Run's own "STARTUP
   /// TCP probe succeeded" log landed ~22s after the wake ping in production
   /// — and that's before the worker has even registered with LiveKit,
   /// received the job dispatch, and joined the room on top. 45s leaves

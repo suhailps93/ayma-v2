@@ -241,26 +241,6 @@ async def seed_room_context(
         await lk.aclose()
 
 
-def resolve_voice_agent_cloud(db, uid: str) -> str:
-    """Which cloud serves this user's next voice call (§1.1, dual-cloud
-    agent): ``"livekit"`` (the default — the hosted ``ayma-lk`` worker) or
-    ``"cloudrun"`` (the user's explicit opt-out pref, ``PF_AYMA_VOICE_CLOUD``).
-    Any unknown/absent value falls back to ``schema.VOICE_AGENT_CLOUD_DEFAULT``
-    (the one authoritative default). Shared by ``POST /bootstrap`` and
-    Practice Date voice so every voice room resolves its target cloud the
-    same way (Practice Date originally skipped the resolution entirely and
-    always landed on Cloud Run)."""
-    try:
-        snap = schema.profile_doc(db, uid).get()
-        val = str(
-            (snap.to_dict() or {}).get(schema.PF_AYMA_VOICE_CLOUD, "")
-        ).strip()
-    except Exception:  # noqa: BLE001 - never block a voice start on this read
-        logger.exception("could not read voice_agent_cloud for %s", uid)
-        return schema.VOICE_AGENT_CLOUD_DEFAULT
-    return val if val in schema.VOICE_AGENT_CLOUDS else schema.VOICE_AGENT_CLOUD_DEFAULT
-
-
 # --- hosted-dispatch failure DETECTION (§1.1) ------------------------------
 #
 # Founder policy: all voice runs on the LiveKit-Cloud hosted worker

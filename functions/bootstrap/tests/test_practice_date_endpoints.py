@@ -793,9 +793,6 @@ def _seed_capture(monkeypatch, *, stored_turns):
     monkeypatch.setattr(
         practice_date, "mint_access_token", lambda uid, room: "tok"
     )
-    monkeypatch.setattr(
-        practice_date, "resolve_voice_agent_cloud", lambda db, uid: "livekit"
-    )
     monkeypatch.setattr(practice_date, "watch_hosted_dispatch", lambda room: None)
     monkeypatch.setattr(practice_date, "build_room_seed", _fake_build_room_seed)
     monkeypatch.setattr(practice_date, "seed_room_context", _fake_seed)

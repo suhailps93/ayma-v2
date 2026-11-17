@@ -302,27 +302,12 @@ PF_AYMA_BRAIN_MODEL = "ayma_brain_model"
 # on this deploy (e.g. ``xai-direct`` with no ``XAI_API_KEY``) is never offered
 # or accepted, so a saved value always resolves to an available provider.
 PF_AYMA_IMAGE_MODEL = "ayma_image_model"
-# Which cloud hosts the voice agent for THIS user's next call (dual-cloud agent,
-# ARCHITECTURE §1.1): "livekit" (LiveKit Cloud Agents — now the default, served
-# by the hosted ``ayma-lk`` worker) or "cloudrun" (GCP Cloud Run, opt-out via
-# the Developer screen). Read by ``main._voice_agent_cloud`` and threaded into
-# the room dispatch; "" / absent = the default below. A user who explicitly set
-# "cloudrun" still routes to Cloud Run. Written by ``/voice/agent-cloud``.
-# ROLLBACK: flip VOICE_AGENT_CLOUD_DEFAULT back to "cloudrun" and redeploy
-# ayma-api (global), or set a user's ``voice_agent_cloud`` pref (instant, no
-# deploy). This single constant is the one authoritative default.
-PF_AYMA_VOICE_CLOUD = "voice_agent_cloud"
-VOICE_AGENT_CLOUDS = ("cloudrun", "livekit")
-# Env-overridable so each environment can pick its own default without a code
-# change: PROD (env unset) stays "livekit" (the hosted ``ayma-lk`` worker);
-# STAGING sets VOICE_AGENT_CLOUD_DEFAULT=cloudrun so rooms route to the staging
-# Cloud Run worker (its separate LiveKit project has no ``ayma-lk``). An invalid
-# value falls back to "livekit". This is still the one authoritative default.
-VOICE_AGENT_CLOUD_DEFAULT = os.getenv(
-    "VOICE_AGENT_CLOUD_DEFAULT", "livekit"
-).strip().lower()
-if VOICE_AGENT_CLOUD_DEFAULT not in VOICE_AGENT_CLOUDS:
-    VOICE_AGENT_CLOUD_DEFAULT = "livekit"
+# Voice routing: EVERY room runs on LiveKit (founder decision Nov 17 — the
+# per-user voice-cloud opt-out was removed). Every room's dispatch marker is
+# ``"livekit"`` and a room with no marker defaults to LiveKit. There is no
+# per-user ``voice_agent_cloud`` field, cloud-value set, or env-overridable
+# default any more.
+VOICE_AGENT_CLOUD = "livekit"
 # The user's own LinkedIn profile URL, given with their consent (§ Your Story
 # career timeline) — never scraped, never fetched via an unofficial API. When
 # set, a self deep-dive hands it to Gemini's `url_context` tool directly.

@@ -13,7 +13,7 @@ killed while it is working.
 Two halves:
 
 - ``KeepAliveServer`` (worker main process) serves ``$PORT``: ``/`` (health
-  and the wake ping from ``agent_wake.py``) and ``/keepalive``, a streaming
+  health probe) and ``/keepalive``, a streaming
   response that writes a heartbeat line every ``HEARTBEAT_SECONDS`` and ends
   after ``MAX_HOLD_SECONDS`` (below the service's 3600 s request timeout) or
   when the caller goes away.

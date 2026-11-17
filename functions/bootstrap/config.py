@@ -561,7 +561,7 @@ class Config:
     agent_url: str
     """``ayma-agent``'s own Cloud Run URL (e.g.
     ``https://ayma-agent-xxxx-uc.a.run.app``) — empty unless set. Used only to
-    "wake" the scale-to-zero worker (``agent_wake.py``): Cloud Run scales an
+    "wake" the scale-to-zero worker: Cloud Run scales an
     instance up only in response to inbound HTTP traffic hitting the
     service's *own* URL, and nothing in the LiveKit room-creation flow ever
     does that (automatic dispatch is a push from LiveKit Cloud to whichever
@@ -571,7 +571,7 @@ class Config:
     agent_runtime: str
     """Which cloud hosts THIS agent-worker process: ``""`` / ``cloudrun`` (GCP
     Cloud Run — the default and all of production) or ``livekit`` (LiveKit Cloud
-    Agents, opt-in behind the per-user ``voice_agent_cloud`` flag). ``AGENT_RUNTIME``.
+    Agents — now the only voice runtime). ``AGENT_RUNTIME``.
     Read by ``agent.py`` to pick its dispatch model (automatic on Cloud Run,
     explicit ``agent_name`` on LiveKit) and its Firestore credential source
     (runtime identity on Cloud Run, a mounted service-account key on LiveKit)."""
@@ -579,9 +579,8 @@ class Config:
     agent_name_livekit: str
     """The explicit LiveKit agent-dispatch name the LiveKit-Cloud-hosted worker
     registers under (``agent.py`` ``worker_options`` when ``agent_runtime ==
-    'livekit'``), and the name ``POST /bootstrap`` routes a room to when a user's
-    ``voice_agent_cloud`` is ``livekit``. The Cloud Run worker keeps AUTOMATIC
-    dispatch (no name) so production voice is unchanged. ``AGENT_NAME_LIVEKIT``."""
+    'livekit'``), and the name ``POST /bootstrap`` + Practice Date route every
+    room to (every voice room runs on LiveKit; founder Nov 17). ``AGENT_NAME_LIVEKIT``."""
 
     push_preview_len: int
     """Max chars of underlying message/event text in a push preview (§7.4)."""
