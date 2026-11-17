@@ -419,17 +419,26 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
             emergent=False,
         )
     else:
-        # emergent node — defined wholly by the overlay (design §2.3)
-        if not (o.prompt and o.section and o.level):
-            raise ValueError(
-                f"emergent node {node_id!r} needs prompt, section and level"
-            )
+        # emergent node — defined wholly by the overlay (design §2.3). The write
+        # paths (add_node / add_loose_node) always set prompt+section+level, but
+        # a legacy or partial write may lack them (founder defect Nov 17: 54
+        # nodes stored with only answer/provenance/state). DEFAULT the missing
+        # structural fields to a renderable loose fact (Little Extras, level 1)
+        # rather than RAISE — one such node must never blank the whole effective
+        # graph (which would empty Your Story / public profile / the person
+        # graph, as it did). A node that carries an answer is content and belongs
+        # on the graph; here it simply homes in `misc` with its answer as text.
+        section = o.section or "misc"
+        level = o.level or 1
+        prompt = o.prompt or (
+            str(o.answer).strip()[:80] if o.answer is not None else node_id
+        )
         base = GraphNode(
             id=node_id,
-            section=o.section,
-            prompt=o.prompt,
+            section=section,
+            prompt=prompt,
             answer_type=o.answer_type,
-            level=o.level,
+            level=level,
             weight=o.weight if o.weight is not None else 0.0,
             visibility=Visibility.PRIVATE,  # emergent default private (§8.2)
             emergent=True,
@@ -507,13 +516,23 @@ def effective_graph(
     for nid, s in seed_nodes.items():
         if s.branch not in ("all", branch):
             continue
-        out[nid] = merge_node(s, _coerce_overlay(overlay.get(nid)), nid)
+        try:
+            out[nid] = merge_node(s, _coerce_overlay(overlay.get(nid)), nid)
+        except Exception:  # noqa: BLE001 - one bad overlay entry must not blank the graph
+            out[nid] = merge_node(s, None, nid)  # fall back to the seed node
 
     # emergent nodes: overlay entries with no seed
     for nid, raw in overlay.items():
         if nid in seed_nodes:
             continue
-        out[nid] = merge_node(None, _coerce_overlay(raw), nid)
+        # Safety net: a single unparseable emergent node must NEVER blank the
+        # whole effective graph (founder defect Nov 17). merge_node now defaults
+        # missing structural fields rather than raising; this is belt-and-braces
+        # for anything still malformed — skip just that node, keep the rest.
+        try:
+            out[nid] = merge_node(None, _coerce_overlay(raw), nid)
+        except Exception:  # noqa: BLE001
+            continue
     return out
 
 
