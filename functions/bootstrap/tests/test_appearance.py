@@ -1341,3 +1341,105 @@ def test_no_photo_run_fires_no_notification(monkeypatch, _mocks, _notif_capture)
     db = FakeDb()
     assert _run(appearance.run_appearance(db, "u1", source="endpoint")) is None
     assert _notif_capture == []
+
+
+def test_grid_photos_trusts_stored_verdict_and_excludes_non_user_or_group(monkeypatch):
+    import appearance_engine
+    import media_embed
+
+    monkeypatch.setattr(media_embed, "download_bytes", lambda sp: (b"bytes", "image/jpeg"))
+
+    class _Doc:
+        def __init__(self, data):
+            self._data = data
+        def get(self):
+            return self
+        def to_dict(self):
+            return self._data
+
+    class _Col:
+        def __init__(self, docs):
+            self._docs = docs
+        def document(self, doc_id):
+            return self._docs.get(doc_id, _Doc(None))
+
+    profile_main = {
+        "photos": [
+            {"media_id": "m_self", "order": 0},
+            {"media_id": "m_not_self", "order": 1},
+            {"media_id": "m_unvetted", "order": 2},
+            {"media_id": "m_group", "order": 3},
+        ]
+    }
+    user_media = {
+        "m_self": {
+            "storage_path": "uploads/u1/self.jpg",
+            "is_user": "yes",
+            "attributes": {"usable_for_face": True, "usable_for_body": True, "shot_type": "face"},
+        },
+        "m_not_self": {
+            "storage_path": "uploads/u1/other.jpg",
+            "is_user": "no",
+            "attributes": {"usable_for_face": True, "usable_for_body": True, "shot_type": "face"},
+        },
+        "m_unvetted": {
+            "storage_path": "uploads/u1/unknown.jpg",
+            "is_user": "",
+            "attributes": {"usable_for_face": True, "usable_for_body": True, "shot_type": "face"},
+        },
+        "m_group": {
+            "storage_path": "uploads/u1/group.jpg",
+            "is_user": "yes",
+            "attributes": {"usable_for_face": True, "usable_for_body": True, "shot_type": "group"},
+        },
+    }
+
+    class _TestDb:
+        def collection(self, name):
+            if name == "users":
+                class _UserCol:
+                    def document(self, uid):
+                        class _UserDoc:
+                            def collection(self, sub):
+                                if sub == "profile":
+                                    return _Col({"main": _Doc(profile_main)})
+                                if sub == "user_media":
+                                    return _Col({k: _Doc(v) for k, v in user_media.items()})
+                                return _Col({})
+                        return _UserDoc()
+                return _UserCol()
+            return _Col({})
+
+    db = _TestDb()
+    photos = appearance_engine._grid_photos(db, "u1")
+    # Only m_self survives (confirmed user + non-group solo)
+    assert len(photos) == 1
+    assert photos[0]["media_id"] == "m_self"
+    assert photos[0]["path"] == "uploads/u1/self.jpg"
+    assert photos[0]["is_user"] == "yes"
+
+
+def test_pick_all_enforces_is_user_verdict():
+    import appearance_engine
+
+    photos = [
+        {"bytes": b"1", "mime": "image/jpeg", "path": "p1.jpg", "media_id": "m1",
+         "is_user": "no", "attrs": {"usable_for_face": True}},
+        {"bytes": b"2", "mime": "image/jpeg", "path": "p2.jpg", "media_id": "m2",
+         "is_user": "yes", "attrs": {"usable_for_face": True}},
+    ]
+
+    # Auto path skips m1 (is_user=="no") and picks m2
+    auto_picks = appearance_engine._pick_all(photos, [], "usable_for_face")
+    assert len(auto_picks) == 1
+    assert auto_picks[0][2] == "p2.jpg"
+
+    # Explicit selection of m1 is rejected because is_user != "yes"
+    explicit_picks = appearance_engine._pick_all(photos, [], "usable_for_face", only_media_ids={"m1"})
+    assert len(explicit_picks) == 0
+
+    # Explicit selection of m2 succeeds
+    explicit_picks_m2 = appearance_engine._pick_all(photos, [], "usable_for_face", only_media_ids={"m2"})
+    assert len(explicit_picks_m2) == 1
+    assert explicit_picks_m2[0][2] == "p2.jpg"
+

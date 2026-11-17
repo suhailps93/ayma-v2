@@ -121,9 +121,8 @@ def _grid_photos(db, uid: str) -> list[dict]:
         sp = str(e.get("storage_path") or "").strip()  # legacy inline shape
         mid = str(e.get("media_id") or "").strip()
         attrs: dict = {}
-        if not sp:
-            if not mid:
-                continue
+        is_user = "yes"
+        if mid:
             try:
                 media = (
                     db.collection("users")
@@ -135,8 +134,20 @@ def _grid_photos(db, uid: str) -> list[dict]:
                 ) or {}
             except Exception:  # noqa: BLE001
                 continue
-            sp = str(media.get("storage_path") or "").strip()
-            attrs = media.get("attributes") or {}
+            if not sp:
+                sp = str(media.get("storage_path") or "").strip()
+            if not attrs:
+                attrs = media.get("attributes") or {}
+            # Founder is-you rule (Nov 17): trusts the verdict stored at ingest.
+            # Only solo photos confirmed to be the user (is_user == "yes") are
+            # eligible for appearance analysis. Group photos and non-user photos
+            # are excluded.
+            is_user = str(media.get("is_user") or "").strip().lower()
+            st = str(attrs.get("shot_type") or "").strip().lower()
+            if is_user != "yes" or st == "group":
+                continue
+        elif not sp:
+            continue
         if not sp:
             continue
         try:
@@ -151,6 +162,7 @@ def _grid_photos(db, uid: str) -> list[dict]:
                     "attrs": attrs,
                     "path": sp,
                     "media_id": mid,
+                    "is_user": is_user,
                 }
             )
     return out
@@ -235,6 +247,9 @@ def _pick_all(
         out: list[tuple[bytes, str, str]] = []
         for p in photos:
             attrs = p.get("attrs") or {}
+            # Trust stored verdict: drop photo if not confirmed as the user
+            if str(p.get("is_user") or "yes").strip().lower() != "yes":
+                continue
             if p.get("media_id") in only_media_ids and bucket_fn(attrs, flag):
                 out.append((p["bytes"], p["mime"], p.get("path", "")))
         for e in extra:
@@ -243,6 +258,8 @@ def _pick_all(
                 out.append(e)
         return out[:_MAX_PHOTOS]
     for p in photos:
+        if str(p.get("is_user") or "yes").strip().lower() != "yes":
+            continue
         if (p.get("attrs") or {}).get(flag):
             return [(p["bytes"], p["mime"], p.get("path", ""))]
     if extra:
