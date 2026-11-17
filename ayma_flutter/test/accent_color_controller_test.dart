@@ -99,6 +99,25 @@ void main() {
     expect(prefs.getString('accent_color_hex'), isNull);
   });
 
+  test('cancelPreview() reverts live to the saved colour, writes nothing',
+      () async {
+    final profiles = _FakeProfiles();
+    final c = AccentColorController(profileService: profiles);
+    const saved = Color(0xFF2D6A4F);
+    c.preview(saved); // pretend this was the committed baseline
+    c.preview(const Color(0xFFABCDEF)); // user drags away
+    var notified = 0;
+    c.addListener(() => notified++);
+
+    c.cancelPreview(saved);
+
+    expect(c.color, saved);
+    expect(notified, 1);
+    expect(profiles.serverWrites, isEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('accent_color_hex'), isNull);
+  });
+
   test('set() keeps the local pick even if the server write fails',
       () async {
     final profiles = _FakeProfiles()..throwOnWrite = true;
