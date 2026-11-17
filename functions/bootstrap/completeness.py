@@ -813,12 +813,63 @@ def _sections(
     return out
 
 
+def _graph_already_answered(db, uid: str, node_id: str) -> bool:
+    """Check-before-asking (founder Nov 17, part c): True when the person graph
+    already holds a concrete answer for this question on a node OTHER than its
+    own seed node — an emergent child or a same-topic related node captured from
+    conversation (e.g. the user told Ayma in chat and ``wiki_ingest`` grew an
+    emergent node, but ``record_answer`` never wrote the seed node back). Such a
+    question must never be re-asked.
+
+    Routed through the single graph lookup (``person_graph_store.graph_lookup``),
+    exactly as its design intends ("what to ask next: what the graph holds vs
+    what's missing"). The anchor IS this question's seed node; its descendants
+    and related-linked nodes are the same topic, so a concrete answer on any of
+    them covers the question. The seed node itself is excluded (an answered seed
+    is already scored ``covered`` and never reaches here; a still-blank one must
+    stay open), and so are its ancestors (a broader topic being answered does not
+    answer this specific question). Only applies when the graph is the
+    authoritative store; best-effort — a graph read failure never blocks a
+    question from being offered."""
+    if not CONFIG.person_graph_reads or not db or not uid or not node_id:
+        return False
+    try:
+        import person_graph_store as store
+
+        # Ayma-only nodes (assessment/judgment) are Ayma's own notes, never the
+        # user's answer to this question, so they must not satisfy it.
+        res = store.graph_lookup(db, uid, node_id=node_id, include_ayma_only=False)
+        nodes = res.get("nodes") or []
+        by_id = {n.id: n for n in nodes}
+        # the seed node's ancestor chain — an answer on a broader node up the
+        # tree does not answer this question, so it is not a skip signal.
+        ancestors: set[str] = set()
+        cur = by_id.get(node_id)
+        guard = 0
+        while cur is not None and getattr(cur, "parent", None) and guard < 64:
+            ancestors.add(cur.parent)
+            cur = by_id.get(cur.parent)
+            guard += 1
+        for n in nodes:
+            if n.id == node_id or n.id in ancestors:
+                continue
+            if getattr(n, "answer", None) not in (None, "", [], {}):
+                return True
+    except Exception:  # noqa: BLE001 - never block question selection on a read
+        logger.exception(
+            "completeness: graph answer-check failed for %s/%s", uid, node_id
+        )
+    return False
+
+
 def _next(
     visible: list[dict],
     meta: dict[str, dict],
     intent_set: bool,
     offered: dict[str, str] | None = None,
     level_ceiling: int | None = None,
+    db=None,
+    uid: str | None = None,
 ) -> list[dict]:
     open_nodes = [
         (i, e)
@@ -861,8 +912,15 @@ def _next(
     ranked = [e for e in ranked if _fresh(e)] + [e for e in ranked if not _fresh(e)]
 
     picked = []
-    for e in ranked[:_NEXT_LIMIT]:
+    for e in ranked:
+        if len(picked) >= _NEXT_LIMIT:
+            break
         n = e["node"]
+        # Check the graph before offering: a question whose answer the graph
+        # already holds (on an emergent/related node, not its own seed node) is
+        # skipped and the next open one takes its slot — never re-asked (part c).
+        if _graph_already_answered(db, uid, n["id"]):
+            continue
         picked.append(
             {
                 "id": n["id"],
@@ -889,6 +947,8 @@ def _summarise(
     intent_set: bool,
     evaluated: list[dict],
     offered: dict[str, str] | None = None,
+    db=None,
+    uid: str | None = None,
 ) -> dict:
     visible = _visible(evaluated, intent_set)
     ordered, meta = _section_gating(visible, branch, intent_set)
@@ -909,7 +969,9 @@ def _summarise(
         "intent": branch,
         "intent_set": intent_set,
         "sections": _sections(visible, ordered, meta),
-        "next": _next(visible, meta, intent_set, offered, level_ceiling),
+        "next": _next(
+            visible, meta, intent_set, offered, level_ceiling, db=db, uid=uid
+        ),
         "updated_at": _now_iso(),
     }
 
@@ -922,7 +984,7 @@ async def compute(db, uid: str) -> dict:
     the summary to ``profile/main.completeness`` and return it."""
     branch, intent_set, evaluated = await _evaluate(db, uid)
     offered = _read_offers(db, uid)
-    result = _summarise(branch, intent_set, evaluated, offered)
+    result = _summarise(branch, intent_set, evaluated, offered, db=db, uid=uid)
     # Recorded tree answers (so check-before-asking gate knows what is already recorded):
     recorded = [
         {

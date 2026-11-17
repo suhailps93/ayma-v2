@@ -1117,3 +1117,80 @@ def test_qz_mirror_on_profile_counts_as_covered(monkeypatch):
     assert recorded_by_id["spending_philosophy"]["value"] == "Save raises, spend some"
     assert "capital_vs_experiential" in recorded_by_id
     assert recorded_by_id["capital_vs_experiential"]["value"] == "7"
+
+
+# --- part (c): check-before-asking against the graph ----------------------
+
+
+def _graph_key(uid="u1"):
+    return ("users", uid, "graph", "main")
+
+
+def _graph_reads_on(monkeypatch):
+    # The flag is read both module-level (completeness.CONFIG) and via local
+    # `from config import CONFIG` inside completeness helpers — patch both.
+    import config
+
+    patched = dataclasses.replace(CONFIG, person_graph_reads=True)
+    monkeypatch.setattr(completeness, "CONFIG", patched)
+    monkeypatch.setattr(config, "CONFIG", patched)
+
+
+def test_question_not_reasked_when_graph_already_holds_answer(monkeypatch):
+    # Founder Nov 17, part (c): the question-asking path checks the graph before
+    # asking. The user told Ayma their answer in chat, so `wiki_ingest` grew an
+    # emergent node connected to the question's seed node — but `record_answer`
+    # never wrote the seed node itself. The seed question must NOT be offered
+    # again. Routed through the single graph lookup (person_graph_store.graph_lookup).
+    _graph_reads_on(monkeypatch)
+    _stub_narrative(monkeypatch, {})  # the free-text story pass finds nothing
+
+    target = "relocation_radius"  # level-1, non-profile-derivable, always offered
+
+    # Baseline: an empty graph -> the seed question is open and offered.
+    db = FakeDb({_profile_key(): {}, _graph_key(): {"nodes": {}}})
+    base = _run(completeness.compute(db, "u1"))
+    assert target in {n["id"] for n in base["next"]}
+
+    # Now the graph holds the answer on an emergent child of the seed node,
+    # while the seed node itself is still blank.
+    db = FakeDb({
+        _profile_key(): {},
+        _graph_key(): {"nodes": {
+            "emergent.relocation.note": {
+                "prompt": "How far would you move for someone",
+                "section": "looking_for",
+                "level": 2,
+                "answer": "Within my city",
+                "parent": target,
+            },
+        }},
+    })
+    after = _run(completeness.compute(db, "u1"))
+    assert target not in {n["id"] for n in after["next"]}
+
+
+def test_graph_check_does_not_skip_on_a_broader_ancestor_answer(monkeypatch):
+    # The gate must be precise: an answer on a BROADER (ancestor) node does not
+    # answer this specific question, so the question still gets offered.
+    _graph_reads_on(monkeypatch)
+    _stub_narrative(monkeypatch, {})
+
+    target = "relocation_radius"
+    # An emergent node that is the seed question's PARENT (broader) and answered.
+    db = FakeDb({
+        _profile_key(): {},
+        _graph_key(): {"nodes": {
+            "emergent.looking_for.broad": {
+                "prompt": "What matters in a partner",
+                "section": "looking_for",
+                "level": 1,
+                "answer": "someone kind",
+            },
+        }},
+    })
+    # Re-point the seed node under that emergent ancestor via an overlay entry
+    # on the seed id (parent only; seed keeps its own blank answer).
+    db.docs[_graph_key()]["nodes"][target] = {"parent": "emergent.looking_for.broad"}
+    res = _run(completeness.compute(db, "u1"))
+    assert target in {n["id"] for n in res["next"]}
