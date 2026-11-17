@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:ayma_flutter/main.dart';
 import 'package:ayma_flutter/screens/splash_screen.dart';
 import 'package:ayma_flutter/services/location_service.dart';
+import 'package:ayma_flutter/services/permission_coordinator.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// NOTE 239 Leg 4 & NOTE 242 Leg 1 — the startup OS location-permission prompt
@@ -156,5 +158,141 @@ void main() {
 
     await done;
     expect(calls, 2, reason: 'initial ask (1) + maxRetries (1) = 2 calls total');
+  });
+
+  test(
+      'retry is held while a competing permission dialog is pending/showing, and fires once the app is idle with no other dialog up',
+      () async {
+    var calls = 0;
+    var competingShowing = true;
+    final idleCompleter = Completer<void>();
+
+    final done = askStartupLocationPermission(
+      ask: () async {
+        calls++;
+        return calls > 1;
+      },
+      waitFirstPaint: () async {},
+      settle: (_) async {},
+      checkPermission: () async => LocationPermission.denied,
+      isCompetingDialogShowing: () => competingShowing,
+      waitForIdle: () => idleCompleter.future,
+    );
+
+    // Initial ask executes and returns empty/denied
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, 1,
+        reason:
+            'initial ask ran, but retry must be held while competing dialog is showing');
+
+    // Competing dialog finishes, app is now idle
+    competingShowing = false;
+    idleCompleter.complete();
+
+    await done;
+    expect(calls, 2,
+        reason: 'retry fires once the app is idle with no other dialog up');
+  });
+
+  test(
+      'retry is held while PermissionCoordinator has active in-flight requests, and fires once requests finish',
+      () async {
+    PermissionCoordinator.instance.resetForTest();
+    addTearDown(() => PermissionCoordinator.instance.resetForTest());
+
+    var calls = 0;
+    PermissionCoordinator.instance.setInFlightRequestsForTest(1);
+
+    final done = askStartupLocationPermission(
+      ask: () async {
+        calls++;
+        return calls > 1;
+      },
+      waitFirstPaint: () async {},
+      settle: (_) async {},
+      checkPermission: () async => LocationPermission.denied,
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, 1,
+        reason:
+            'retry is held while PermissionCoordinator has in-flight requests');
+
+    PermissionCoordinator.instance.setInFlightRequestsForTest(0);
+    await done;
+    expect(calls, 2,
+        reason: 'retry fires once in-flight requests are completed');
+  });
+
+  test(
+      'retry is held while app lifecycle is inactive (competing system dialog showing), and fires once resumed',
+      () async {
+    PermissionCoordinator.instance.resetForTest();
+    addTearDown(() => PermissionCoordinator.instance.resetForTest());
+
+    var calls = 0;
+    PermissionCoordinator.instance
+        .setLifecycleStateForTest(AppLifecycleState.inactive);
+
+    final done = askStartupLocationPermission(
+      ask: () async {
+        calls++;
+        return calls > 1;
+      },
+      waitFirstPaint: () async {},
+      settle: (_) async {},
+      checkPermission: () async => LocationPermission.denied,
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, 1,
+        reason:
+            'retry is held while system permission dialog is showing (app inactive)');
+
+    PermissionCoordinator.instance
+        .setLifecycleStateForTest(AppLifecycleState.resumed);
+    await done;
+    expect(calls, 2,
+        reason: 'retry fires once system permission dialog is dismissed (app resumed)');
+  });
+
+  test(
+      'sequential competing dialogs: retry waits through both notification and mic dialogs before firing',
+      () async {
+    PermissionCoordinator.instance.resetForTest();
+    addTearDown(() => PermissionCoordinator.instance.resetForTest());
+
+    var calls = 0;
+    // Notification dialog in flight
+    PermissionCoordinator.instance.setInFlightRequestsForTest(1);
+
+    final done = askStartupLocationPermission(
+      ask: () async {
+        calls++;
+        return calls > 1;
+      },
+      waitFirstPaint: () async {},
+      settle: (_) async {},
+      checkPermission: () async => LocationPermission.denied,
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, 1, reason: 'held during notification dialog');
+
+    // Notification dialog finishes, but immediately mic dialog starts
+    PermissionCoordinator.instance
+        .setLifecycleStateForTest(AppLifecycleState.inactive);
+    PermissionCoordinator.instance.setInFlightRequestsForTest(0);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, 1, reason: 'still held during subsequent mic dialog');
+
+    // Mic dialog dismissed, app resumed
+    PermissionCoordinator.instance
+        .setLifecycleStateForTest(AppLifecycleState.resumed);
+
+    await done;
+    expect(calls, 2,
+        reason: 'retry fires after all sequential competing dialogs clear');
   });
 }

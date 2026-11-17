@@ -10,6 +10,7 @@ import 'api_client.dart';
 import 'auth_service.dart';
 import 'deep_link_queue.dart';
 import 'notification_service.dart';
+import 'permission_coordinator.dart';
 import 'push_permission.dart';
 
 /// The slice of Firebase Cloud Messaging [PushService] needs — pulled behind an
@@ -69,7 +70,10 @@ class FirebaseFcmTokens implements FcmTokens {
       }
     } catch (_) {}
 
-    final settings = await _m.requestPermission();
+    final settings = await PermissionCoordinator.instance.trackRequest(
+      () => _m.requestPermission(),
+      timeout: const Duration(seconds: 15),
+    );
     final granted = settings.authorizationStatus != AuthorizationStatus.denied;
     await _setStoredChoice(granted);
     return granted;

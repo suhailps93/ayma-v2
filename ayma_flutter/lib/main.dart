@@ -23,6 +23,7 @@ import 'services/deep_link_queue.dart';
 import 'services/install_referrer_service.dart';
 import 'services/background_location_service.dart';
 import 'services/location_service.dart';
+import 'services/permission_coordinator.dart';
 import 'services/push_service.dart';
 import 'services/revenuecat_service.dart';
 import 'services/theme_controller.dart';
@@ -172,8 +173,9 @@ Future<void> _defaultWaitFirstPaint() => SplashFirstPaint.done
 /// where a modal permission dialog compounds the input-dispatch ANR and leaves
 /// the paused process open to an OS reap (NOTE 239 Leg 4). If the initial ask
 /// returns empty or cancelled (e.g. races a route transition or competing
-/// dialog on a fresh-install signed-out path — NOTE 242 Leg 1), it retries
-/// once the app has settled, provided the permission is not denied forever.
+/// dialog on a fresh-install signed-out path — NOTE 242 Leg 1, NOTE 244), it
+/// retries once competing permission dialogs have dismissed and the app is fully
+/// idle and interactive, provided the permission is not denied forever.
 /// The ask itself still never throws (see [LocationService.ensurePermission]).
 @visibleForTesting
 Future<void> askStartupLocationPermission({
@@ -182,25 +184,45 @@ Future<void> askStartupLocationPermission({
   Future<void> Function(Duration)? settle,
   Future<LocationPermission> Function()? checkPermission,
   int maxRetries = 1,
+  Future<void> Function()? waitForIdle,
+  bool Function()? isCompetingDialogShowing,
 }) async {
   await (waitFirstPaint ?? _defaultWaitFirstPaint)();
   await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskSettle);
 
   final doAsk = ask ?? const LocationService().ensurePermission;
   final check = checkPermission ?? const LocationService().checkPermission;
+  final checkCompeting = isCompetingDialogShowing ??
+      () => PermissionCoordinator.instance.isCompetingDialogShowing;
+  final waitIdle =
+      waitForIdle ?? () => PermissionCoordinator.instance.waitForIdle();
 
   var granted = await doAsk();
   if (granted) return;
 
   // The first request returned empty / still denied (e.g. Android dropped the
   // request with empty grantResults because a route transition or competing
-  // startup dialog was in flight — Scout NOTE 242).
-  // If permission is still denied and NOT deniedForever, wait for the app to
-  // settle and retry.
+  // startup dialog was in flight — Scout NOTE 242, NOTE 244).
+  // If permission is still denied and NOT deniedForever, serialize against
+  // competing permission dialogs (wait until no other system permission
+  // dialog is showing), settle, and retry.
   for (var i = 0; i < maxRetries; i++) {
     final status = await check();
     if (status != LocationPermission.denied) {
       break;
+    }
+    if (isCompetingDialogShowing != null) {
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (isCompetingDialogShowing() && DateTime.now().isBefore(deadline)) {
+        await waitIdle();
+      }
+    } else if (waitForIdle != null) {
+      await waitForIdle();
+    } else {
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (checkCompeting() && DateTime.now().isBefore(deadline)) {
+        await waitIdle();
+      }
     }
     await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskRetrySettle);
     granted = await doAsk();
