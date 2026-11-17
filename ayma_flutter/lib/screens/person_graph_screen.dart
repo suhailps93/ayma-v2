@@ -97,6 +97,22 @@ Set<String> graphHighlightSet(
   return out;
 }
 
+/// Whether flat node [id] renders LIT (full colour / full-strength edge) rather
+/// than DIMMED, given the current selection. Nothing selected -> every node lit
+/// (the resting graph); once a node is tapped, only its connected [highlight]
+/// set (self + ancestors + descendants + related) stays lit and everything else
+/// dims. The painter calls this for every node, and `graphEdgeLit` for every
+/// edge, so the highlight render is unit-testable without a screenshot.
+bool graphNodeLit(String? selectedId, Set<String> highlight, String id) =>
+    selectedId == null || highlight.contains(id);
+
+/// Whether the edge [from]->[to] renders lit: only when a node is selected and
+/// BOTH endpoints are in the lit set, so a highlighted node's edges glow while
+/// the rest of the web dims.
+bool graphEdgeLit(
+        String? selectedId, Set<String> highlight, String from, String to) =>
+    selectedId != null && highlight.contains(from) && highlight.contains(to);
+
 /// The indexed StoryNode (Track B's tree) for a flat node id: the raw id, or a
 /// bullet's `b:`-stripped id. Null when the tree holds no such node (a section
 /// hub or the person centre, which the screen synthesizes). Pure for tests.
@@ -1095,7 +1111,7 @@ class _GraphPainter extends CustomPainter {
         final from = s.id;
         for (final to in adjacency[from] ?? const <String>{}) {
           if (!passes(from) || !passes(to)) continue;
-          final lit = highlight.contains(from) && highlight.contains(to);
+          final lit = graphEdgeLit(selectedId, highlight, from, to);
           if (lit != pass) continue;
           final a = posById[from];
           final b = posById[to];
@@ -1110,15 +1126,13 @@ class _GraphPainter extends CustomPainter {
     for (final s in sim.nodes) {
       if (!passes(s.id)) continue;
       if (s.id == selectedId) continue;
-      final lit = !_dimming || highlight.contains(s.id);
-      if (lit) continue;
+      if (graphNodeLit(selectedId, highlight, s.id)) continue;
       _paintNode(canvas, s, false);
     }
     for (final s in sim.nodes) {
       if (!passes(s.id)) continue;
       if (s.id == selectedId) continue;
-      final lit = !_dimming || highlight.contains(s.id);
-      if (!lit) continue;
+      if (!graphNodeLit(selectedId, highlight, s.id)) continue;
       _paintNode(canvas, s, true);
     }
     final sel = selectedId == null ? null : posById[selectedId];

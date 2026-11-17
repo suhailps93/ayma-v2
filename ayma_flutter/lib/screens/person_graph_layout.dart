@@ -119,36 +119,117 @@ class GraphSim {
 
   double alpha = 1.0;
   static const double alphaMin = 0.02;
-  static const double _alphaDecay = 0.035;
+  static const double _alphaDecay = 0.0225;
   static const double _velocityDecay = 0.80;
   static const double _springK = 0.085;
-  static const double _repel = 42.0;
-  static const double _gravity = 0.015;
+  static const double _repel = 220.0;
+  static const double _repelCap = 30.0;
+  static const double _repelCutoff = 900.0;
+  static const double _gravity = 0.0035;
   static const int _collisionIters = 2;
 
   bool get isSettled => alpha <= alphaMin;
 
-  /// Deterministic initial placement — the centre node at the origin, the rest
-  /// on a golden-angle spiral with a little seeded jitter so the first frame is
-  /// reproducible (tests) and the settle is stable.
+  /// Deterministic initial placement. A force-directed layout only settles into
+  /// an organic hub-and-spoke MESH if it STARTS near one: a golden-angle spiral
+  /// (the old seed) scatters each section's facts across the whole disk — they
+  /// never cluster into their section's lobe, so the sim collapses to one uniform
+  /// packed blob (founder: "two tight blobs"). Instead, seed the rooted tree as a
+  /// radial sunburst: the centre at the origin, its sections fanned around it in
+  /// angular sectors sized by subtree weight, and every fact seeded inside its
+  /// section's sector at a larger radius. Force relaxation then loosens the
+  /// sunburst into the organic web while KEEPING each section's facts lobed near
+  /// their hub. Nodes the centre can't reach fall back to a golden-angle spiral.
   void _seed(int seed) {
     final rnd = math.Random(seed);
-    for (var i = 0; i < nodes.length; i++) {
-      final n = nodes[i];
-      if (n.id == centerId) {
-        n.x = 0;
-        n.y = 0;
-        continue;
+    final centerIdx = centerId == null ? null : _index[centerId];
+
+    // Undirected adjacency over node indices, from the edge list.
+    final adj = <int, List<int>>{};
+    for (final (a, b) in _edges) {
+      (adj[a] ??= <int>[]).add(b);
+      (adj[b] ??= <int>[]).add(a);
+    }
+
+    // BFS spanning tree from the centre: depth + children per node.
+    final depth = <int, int>{};
+    final children = <int, List<int>>{};
+    if (centerIdx != null) {
+      depth[centerIdx] = 0;
+      final q = <int>[centerIdx];
+      var h = 0;
+      while (h < q.length) {
+        final cur = q[h++];
+        for (final nb in adj[cur] ?? const <int>[]) {
+          if (!depth.containsKey(nb)) {
+            depth[nb] = depth[cur]! + 1;
+            (children[cur] ??= <int>[]).add(nb);
+            q.add(nb);
+          }
+        }
       }
+    }
+
+    // Angular weight = leaf count of a node's subtree, so a section with many
+    // facts gets a proportionally wider sector (tight lobes don't overlap).
+    final weight = <int, double>{};
+    double computeWeight(int n) {
+      final kids = children[n];
+      if (kids == null || kids.isEmpty) return weight[n] = 1.0;
+      var w = 0.0;
+      for (final k in kids) {
+        w += computeWeight(k);
+      }
+      return weight[n] = w;
+    }
+
+    if (centerIdx != null) {
+      computeWeight(centerIdx);
+      nodes[centerIdx].x = 0;
+      nodes[centerIdx].y = 0;
+      // Section ring at ~90px, then +72px per deeper generation.
+      double radiusForDepth(int d) => 90.0 + (d - 1) * 72.0;
+      void place(int n, double a0, double a1) {
+        if (n != centerIdx) {
+          final mid = (a0 + a1) / 2;
+          final r = radiusForDepth(depth[n]!) + rnd.nextDouble() * 8;
+          nodes[n].x = math.cos(mid) * r;
+          nodes[n].y = math.sin(mid) * r;
+        }
+        final kids = children[n];
+        if (kids == null || kids.isEmpty) return;
+        // Blend subtree weight with a flat floor so a section with one fact
+        // still gets a usable wedge and small meta hubs (skills, taste, …) don't
+        // get crushed against each other next to a big story section.
+        double eff(int k) => weight[k]! + 2.0;
+        var total = 0.0;
+        for (final k in kids) {
+          total += eff(k);
+        }
+        var a = a0;
+        for (final k in kids) {
+          final span = (a1 - a0) * (eff(k) / total);
+          place(k, a, a + span);
+          a += span;
+        }
+      }
+
+      place(centerIdx, 0, 2 * math.pi);
+    }
+
+    // Any node the centre never reached (disconnected): golden-angle spiral so
+    // it still starts somewhere reproducible rather than at the origin.
+    for (var i = 0; i < nodes.length; i++) {
+      if (depth.containsKey(i)) continue;
       final ang = i * 2.399963; // golden angle
-      final rad = 28 + 13 * math.sqrt(i + 1) + rnd.nextDouble() * 8;
-      n.x = math.cos(ang) * rad;
-      n.y = math.sin(ang) * rad;
+      final rad = 120 + 13 * math.sqrt(i + 1) + rnd.nextDouble() * 8;
+      nodes[i].x = math.cos(ang) * rad;
+      nodes[i].y = math.sin(ang) * rad;
     }
   }
 
   double _restLen(SimNode a, SimNode b) {
-    final gap = (a.level == 0 || b.level == 0) ? 40.0 : 26.0;
+    final gap = (a.level == 0 || b.level == 0) ? 58.0 : 34.0;
     return a.radius + b.radius + gap;
   }
 
@@ -193,10 +274,12 @@ class GraphSim {
         var dx = ni.x - nj.x;
         var dy = ni.y - nj.y;
         var d2 = dx * dx + dy * dy;
-        // Bounded repulsion radius (400px): beyond this, inverse-square force
-        // is imperceptible (<0.001) but computing math.sqrt across tens of
-        // thousands of node pairs stalls the UI thread (NOTE 250 ANR 04:22).
-        if (d2 > 400 * 400) continue;
+        // Bounded repulsion radius (_repelCutoff): beyond it the inverse-square
+        // force is negligible, but computing math.sqrt across tens of thousands
+        // of node pairs stalls the UI thread (NOTE 250 ANR 04:22). The cutoff is
+        // wide enough to span the settled founder-scale mesh so hubs still push
+        // each other apart (without it the graph collapsed into one blob).
+        if (d2 > _repelCutoff * _repelCutoff) continue;
         if (d2 < 1e-4) {
           dx = (i - j).isEven ? 0.1 : -0.1;
           dy = 0.1;
@@ -206,7 +289,7 @@ class GraphSim {
         // Softened denominator keeps near pairs from exploding.
         final soft = dist + ni.radius + nj.radius;
         var f = _repel * (ni.radius + nj.radius) * a / (soft * soft);
-        if (f > 4.0) f = 4.0;
+        if (f > _repelCap) f = _repelCap;
         final fx = dx / dist * f;
         final fy = dy / dist * f;
         ni.vx += fx;
