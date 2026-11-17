@@ -291,6 +291,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   String? _error;
   List<StorySection> _sections = const [];
 
+  /// The ONE main photo — the SAME setting the public profile uses (the
+  /// starred/primary photo, `profile.photos` order 0), read via the same
+  /// `publicProfile` builder. Starring a photo as main on the public profile
+  /// therefore makes it the Story cover too (founder rule Nov 17: one
+  /// main-photo setting per user, one source of truth).
+  String? _mainPhotoUrl;
+
   /// The signed-in uid the currently-held story data (`_sections`/`_photos`/
   /// web-findings → the cover stats) was fetched for. Guards against this
   /// still-mounted screen painting a PREVIOUS account's cover stats if the
@@ -347,6 +354,22 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       });
     }
     unawaited(_loadPhotos());
+    unawaited(_loadMainPhoto());
+  }
+
+  /// Load the shared main photo — the public profile's primary (order-0) photo,
+  /// via the same `publicProfile` read the public profile itself uses, so both
+  /// surfaces resolve the identical starred picture.
+  Future<void> _loadMainPhoto() async {
+    try {
+      final p = await _api.publicProfile(_uid);
+      if (mounted) {
+        setState(() =>
+            _mainPhotoUrl = p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null);
+      }
+    } catch (_) {
+      // Best-effort: no cover photo rather than an error.
+    }
   }
 
   /// Re-fetch the section list after a skill runs / a report finishes.
@@ -356,6 +379,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     setState(() {
       _sections = data.sections;
     });
+    unawaited(_loadMainPhoto());
   }
 
   List<StorySection> get _narrativeSections => _sections
@@ -544,12 +568,10 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     );
   }
 
-  String? _heroPhotoUrl() {
-    for (final p in _photos) {
-      if (p.source == 'profile' && !p.deleted) return p.url;
-    }
-    return null;
-  }
+  // The cover photo is the SHARED main-photo setting (the public profile's
+  // starred/primary photo), never a separately-picked "first profile photo" —
+  // one source of truth across Story and the public profile (founder Nov 17).
+  String? _heroPhotoUrl() => _mainPhotoUrl;
 
 }
 
