@@ -10,7 +10,8 @@ import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
-import '../widgets/bullet_sections_editor.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
@@ -434,7 +435,18 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     final showAppearance =
         appearanceMerge != null && appearanceMerge.visibility != 'ai';
 
-    final editor = BulletSectionsEditor(key: ValueKey('bullets:$_uid'), api: _api);
+    // 2o — Your Story's narrative renders through the ONE shared
+    // Node-Visualiser (story surface: report-linked sections are dropped, they
+    // keep their own cards below). Tap a node to edit it via the node chat
+    // window; a brand-new user with no graph is pointed at chat.
+    final editor = GraphTreeView(
+      key: ValueKey('story:$_uid'),
+      surface: NodeVisualiserSurface.story,
+      api: _api,
+      isOwner: true,
+      emptyMessage:
+          'Share something in a chat with Ayma and your story fills in here.',
+    );
     if (rows.isEmpty && photos.isEmpty && !showAppearance) {
       // Nothing to put on a cover yet — just the editor, so a user who has
       // never talked to Ayma can still fill in every section.
