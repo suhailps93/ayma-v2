@@ -6,6 +6,7 @@ import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
 import 'package:ayma_flutter/services/chat_service.dart';
+import 'package:ayma_flutter/services/report_events.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,8 +35,25 @@ class _FakeApi extends ApiClient {
   List<String>? ranBodyMediaIds;
   List<String> ranImagePaths = const [];
 
+  /// The id the current-Appearance read returns — flip it to model the NEW run
+  /// landing server-side after a long build (used by the 408 refresh path).
+  String currentReportId = 'old';
+  int currentReads = 0;
+
   @override
   Future<AppearanceEligibility> appearanceEligibility() async => _elig;
+
+  @override
+  Future<AppearanceReport> appearanceReport(String id) async {
+    currentReads++;
+    return AppearanceReport(id: currentReportId, createdAt: 't');
+  }
+
+  /// Resolve the gated run as a client-side TIMEOUT (ApiException 408) — the
+  /// server kept building past the client POST budget; the report is NOT ready
+  /// at this instant but will land later.
+  void timeOutRun() =>
+      _runGate.completeError(ApiException('timed out', statusCode: 408));
 
   @override
   Future<AppearanceReportResult> runAppearanceReport({
@@ -455,6 +473,73 @@ void main() {
     expect(api.runCompleted, isTrue);
     expect(find.textContaining('ready'), findsOneWidget);
     expect(find.text('REPORT rid'), findsNothing);
+  });
+
+  testWidgets(
+      'NOTE 245 Leg 1: a long build that TIMES OUT client-side (408) still '
+      'refreshes the open report the moment the new run lands — no relaunch',
+      (tester) async {
+    // The in-session bug: a full multi-photo build runs longer than the client
+    // POST budget, so the POST 408s while the server keeps going. completed()
+    // used to fire only on POST success, so the open report card lagged minutes
+    // behind the landed node and only caught up on relaunch.
+    final api = _FakeApi(_eligWith(face: 1, body: 1), gated: true)
+      ..currentReportId = 'old';
+    final startRev = ReportEvents.instance.revisionFor('appearance');
+
+    final router = GoRouter(
+      initialLocation: '/start',
+      routes: [
+        GoRoute(
+          path: '/start',
+          builder: (c, s) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => runAppearanceFromPreRunSheet(
+                  c,
+                  api,
+                  landingPollInterval: const Duration(milliseconds: 10),
+                  landingPollTimeout: const Duration(seconds: 2),
+                ),
+                child: const Text('go'),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    await tester.tap(find.text('go'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet + eligibility
+    expect(find.text('Run analysis'), findsOneWidget);
+
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet gone -> run in flight
+    expect(api.runCalls, 1);
+
+    // The POST exceeds its client budget and 408s; the new run has NOT landed
+    // yet (current id still 'old').
+    api.timeOutRun();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    // Nothing refreshed yet — the build hasn't landed, so no completion signal
+    // (and crucially this is NOT treated as a failure).
+    expect(ReportEvents.instance.revisionFor('appearance'), startRev);
+    expect(find.textContaining("Couldn't finish"), findsNothing);
+
+    // The server finishes: the new node lands under a NEW id. The landing poll
+    // detects it and refreshes the open view.
+    api.currentReportId = 'new';
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(ReportEvents.instance.revisionFor('appearance'), startRev + 1,
+        reason: 'the open report view was told to re-fetch the landed run');
+    expect(find.textContaining('ready'), findsOneWidget);
   });
 
   testWidgets(
