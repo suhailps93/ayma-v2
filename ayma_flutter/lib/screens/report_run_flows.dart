@@ -193,17 +193,26 @@ Future<void> _runAppearanceInBackground(
   // (founder 2026-10-29: the run must visibly look like it's running).
   ReportEvents.instance.started('appearance');
   try {
-    await api.runAppearanceReport(
+    final result = await api.runAppearanceReport(
       wantFace: choice.wantFace,
       wantBody: choice.wantBody,
       faceMediaIds: choice.wantFace ? choice.faceMediaIds : null,
       bodyMediaIds: choice.wantBody ? choice.bodyMediaIds : null,
       imagePaths: choice.imagePaths,
     );
-    // The backend has persisted the report and bumped the `appearance/current`
-    // pointer. Tell any open Appearance report screen / report card to re-fetch
-    // so the fresh report shows without the user reloading (founder 2026-10-28:
-    // "it didn't create a new report" when it actually had).
+    // The POST returned success, but the node write can LAG the response by a
+    // couple of seconds, so an immediate refresh re-fetches the OLD run and —
+    // because `completed` fires only once — then stays stale for minutes
+    // (founder NOTE 247 Leg 1: the "ready" toast fired ~2s before the node was
+    // readable; the card sat on the old run for 4.5 min). So wait for the run
+    // the POST just created to actually be readable — the SAME poll the slow
+    // (408) path uses, keyed on the returned report id — THEN signal the
+    // refresh and show the toast, so the card/text move (and "ready" shows)
+    // only once the fresh node is live.
+    await _awaitAppearanceLanded(
+      api, before, landingPollInterval, landingPollTimeout,
+      expectedId: result.reportId,
+    );
     ReportEvents.instance.completed('appearance');
     if (context.mounted) {
       AymaToast.show(context, 'Your Appearance report is ready.');
@@ -255,18 +264,26 @@ Future<String> _currentAppearanceReportId(ApiClient api) async {
   }
 }
 
-/// Poll the current Appearance report until a run NEWER than [before] lands
-/// (its id differs), bounded by [timeout]. Returns whether a new run appeared.
-/// Used only after a long-build POST timed out client-side while the server
-/// kept building — so the open report view refreshes the instant the node
-/// lands rather than waiting for a relaunch.
+/// Poll the current Appearance report until the fresh run is readable, bounded
+/// by [timeout]. Returns whether it landed.
+///
+/// When [expectedId] is given (the POST-success path — the id the build just
+/// returned), it waits until the current report IS that run, so a node write
+/// that lags the POST response can't let a refresh read the old run (NOTE 247).
+/// Otherwise (the 408 slow-build path, which has no returned id) it waits until
+/// the current run differs from [before] — the instant the still-building node
+/// lands — so the open view refreshes without a relaunch.
 Future<bool> _awaitAppearanceLanded(
-    ApiClient api, String before, Duration interval, Duration timeout) async {
+    ApiClient api, String before, Duration interval, Duration timeout,
+    {String expectedId = ''}) async {
   final deadline = DateTime.now().add(timeout);
   while (true) {
     try {
       final id = (await api.appearanceReport('current')).id;
-      if (id.isNotEmpty && id != before) return true;
+      final landed = expectedId.isNotEmpty
+          ? id == expectedId
+          : (id.isNotEmpty && id != before);
+      if (landed) return true;
     } catch (_) {
       // A transient read failure / not-ready read just means wait and retry.
     }
