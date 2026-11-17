@@ -22,9 +22,9 @@ enum AskAymaOrigin {
   appearanceFace,
   appearanceBody,
 
-  /// A generic Living Report tap-to-correct turn (§ generic reports) — the
-  /// owner tapped a block/section/report-header on the shared
-  /// `LivingReportView` renderer. Unlike every origin above (which rides its
+  /// A generic report tap-to-correct turn (§ generic reports) — the
+  /// owner tapped a block/section/report-header in the report correction
+  /// flow. Unlike every origin above (which rides its
   /// own dedicated `/chat` fields), this one is sent to `/chat` at all —
   /// [ChatScreen] routes it straight to `POST
   /// /report/{report_type}/{report_id}/correct` via [reportCorrectBody]
@@ -115,13 +115,13 @@ class AskAymaContext {
   /// Meaningless (and ignored) outside [AskAymaOrigin.story] and
   /// [AskAymaOrigin.report] (and, within [AskAymaOrigin.story], for a
   /// timeline entry). For [AskAymaOrigin.report] most block types carry no
-  /// visibility field of their own, so `LivingReportView` falls back to a
+  /// visibility field of their own, so the correction flow falls back to a
   /// REPORT-TYPE-level guess: `story_public` (everything narrative shown
   /// there is already public) -> `false` (offers "Make private"); every
   /// other type -> `true` (offers "Make public"). The one exception is a
   /// `story_public` attribute block (a physical-attribute field, private by
   /// default — see `ReportBlock.public`): that carries its OWN real
-  /// visibility on the owner's read, and `LivingReportView._isPrivateFor`
+  /// visibility on the owner's read, and the correction flow's private-check
   /// uses that actual value instead of the report-wide guess whenever every
   /// targeted block is one of those.
   final bool isPrivate;
@@ -131,7 +131,7 @@ class AskAymaContext {
   final String appearanceFindingId;
 
   /// Maps to backend `match_report_id` — set for a tap on a Match report
-  /// block (`LivingReportView(reportType: 'match')`) regardless of
+  /// block (a `match` report correction tap) regardless of
   /// [AskAymaOrigin.reportView]'s usual read-only wiring (unlike
   /// [reportType]/[reportId], which stay unset for a non-editable report so
   /// nothing here can resolve to a `correctReport` mutation attempt). This

@@ -259,7 +259,7 @@ class NodeVisualiser extends StatelessWidget {
     );
   }
 
-  // Same green/amber/red bands LivingReportView used (contrast-safe *Text
+  // Same green/amber/red bands the report score bars use (contrast-safe *Text
   // tokens for the bar fill; the solid tokens for the pill).
   Color _bandColor(AymaTokens ac, double frac) {
     if (frac >= 0.7) return ac.successText;

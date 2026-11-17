@@ -314,8 +314,13 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     parses it to a numeric 0..100 ScoreBar so the headline score gets the same
     banded graphic its sub-dimensions do. The two-person avatar row, Taste-match
     card, and Recalculate/Share chrome stay bespoke, fed by the separate
-    `GET /match/{id}` fetch. (Story-public / public-profile / shared reports —
-    P5 — still on `LivingReportView`.)
+    `GET /match/{id}` fetch. **Public profile (P4) + story-public /
+    shared-report (P5)** migrated the same way, and **P6 (SHIPPED)** migrated
+    the final host — Ayma's Notes' `story_ai_notes` body — and **deleted
+    `living_report_view.dart` outright**: there are now ZERO `LivingReportView`
+    references anywhere in `lib/` (pinned by
+    `test/living_report_view_removed_test.dart`). Every report-like surface now
+    renders through the shared `GraphTreeView` Node-Visualiser.
 ## Read/write switch FINISHED (Nov 16) — staging code no longer reads or writes wiki_pages (flag-on)
 
 Branch `fleet/graph-read-write-switch`. With `PERSON_GRAPH_READS` on, every live
@@ -623,12 +628,18 @@ visualiser the report node kinds.
   `tests/test_report_tree.py` snapshot cases, `tests/test_share.py`
   `test_tree_is_public_and_unknown_token_404s`, `test/share_report_test.dart`
   (renders through the tree unauthed; a revoked/unknown token shows no body).
-- Remaining real `LivingReportView(` hosts after P5 (this staging base):
-  `story_editor_screen.dart:769` (Your Story report body) and
-  `match_report_screen.dart:356` (match body — P3's migration not yet in this
-  base). `public_profile_screen.dart` already renders `GraphTreeView` here. Every
-  other `LivingReportView` mention in `lib/` is a doc-comment reference, not a
-  host. P6 deletes `living_report_view.dart` once its last host migrates.
+- **P6 (SHIPPED) — the final `LivingReportView` removal.** The last real host,
+  Ayma's Notes' `story_ai_notes` body in `story_editor_screen.dart`, now renders
+  through `GraphTreeView(surface: report, reportType: 'story_ai_notes')` — the
+  same owner-only `/report/{type}/{id}/tree` path as appearance/match. With no
+  host left, `living_report_view.dart` was **deleted outright**, along with its
+  now-dead tests (`living_report_view_test.dart`,
+  `living_report_freshness_test.dart`, `report_cache_swr_test.dart`). Every
+  stale `LivingReportView` doc-comment across `lib/` was removed too. There are
+  now **ZERO** `LivingReportView` references anywhere in `lib/`, pinned by
+  `test/living_report_view_removed_test.dart` (fails if the symbol or the file
+  reappears). `models/living_report.dart` + `ApiClient.getReport` stay — the
+  Appearance screen's shareable-card fetch still uses the block model.
 
 ## NOTE 250 visualiser follow-ups (Nov 17 2026)
 

@@ -16,8 +16,7 @@ import '../widgets/ayma_back_button.dart';
 ///
 /// The snapshot's `meta.viewer_can_edit` is always false and the view is
 /// mounted [isOwner]`: false`, so every node's chat window is read-only — no
-/// correction / edit / chat affordance is offered, matching the old
-/// LivingReportView body this replaces.
+/// correction / edit / chat affordance is offered to a token-holding viewer.
 class SharedReportScreen extends StatelessWidget {
   const SharedReportScreen({super.key, required this.token, this.apiClient});
 

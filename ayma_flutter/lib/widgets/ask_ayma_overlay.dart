@@ -264,7 +264,7 @@ Future<void> dismissOpenAymaSheet(BuildContext context) async {
 /// opened from anywhere in its subtree, so [showAskAymaOverlay]'s scoped
 /// turns can keep the bar visible (as a [showAymaChatModal]
 /// `persistentBottomBar` copy) without every opener threading a builder down
-/// by hand — its callers (`LivingReportView`, the Story editor) sit deep in
+/// by hand — its callers (the report Node-Visualiser, the Story editor) sit deep in
 /// screens they know nothing about. Provided by the three bar hosts
 /// ([MainShellScreen], [NavBarShell], `PublicProfileScreen`); absent (null)
 /// on unwrapped routes and in tests, where the sheet opens bar-less, as

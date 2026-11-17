@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
@@ -24,16 +23,6 @@ const _fakeReportLinkedPageIds = {
   'face-analysis', 'body-analysis', 'physical-profile', 'web-findings',
 };
 
-List<String> _fakeSplitSentences(String body) {
-  final trimmed = body.trim();
-  if (trimmed.isEmpty) return const [];
-  return trimmed
-      .split(RegExp(r'(?<=[.!?])\s+'))
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-}
-
 class _FakeApi extends ApiClient {
   _FakeApi() : super(auth: MockFirebaseAuth(signedIn: true));
 
@@ -48,91 +37,6 @@ class _FakeApi extends ApiClient {
   Future<PublicProfile> publicProfile(String otherUid) async {
     calls.add('public_profile');
     return PublicProfile.fromMap({'uid': otherUid, 'photos': mainPhotos});
-  }
-
-  /// Every `POST /report/{type}/{id}/correct` this fake received — same
-  /// rigor the file already applies to `chatCalls`/`chatStream`, now also
-  /// covering the block-model tap-to-correct path `LivingReportView` uses.
-  final List<Map<String, dynamic>> correctCalls = [];
-
-  /// `GET /report/{report_type}/{report_id}` for `story_private` /
-  /// `story_public` / `story_ai_notes` — built straight from [data]/
-  /// [aiSections], the exact same sentence-splitting + report-linked-page
-  /// exclusion the real `report_adapters.py` Story adapters apply, so a test
-  /// against this fake stays honest about what block ids/content actually
-  /// reach `LivingReportView`.
-  LivingReport _storyReport(String reportType) {
-    final source = switch (reportType) {
-      'story_private' => data.sections,
-      'story_ai_notes' => aiSections,
-      'story_public' =>
-        data.sections.where((s) => s.visibility == 'public').toList(),
-      _ => const <StorySection>[],
-    };
-    final sections = <ReportSection>[];
-    for (final s in source) {
-      if (_fakeReportLinkedPageIds.contains(s.pageId)) continue;
-      final sentences = _fakeSplitSentences(s.body);
-      final blocks = sentences.isEmpty
-          ? [
-              ReportBlock({
-                'block_id': 'page:${s.pageId}:empty',
-                'type': 'section_head',
-                'editable': false,
-                'text': '(empty)',
-              })
-            ]
-          : [
-              for (var i = 0; i < sentences.length; i++)
-                ReportBlock({
-                  'block_id': 'page:${s.pageId}:sent:$i',
-                  'type': 'text',
-                  'editable': true,
-                  'text': sentences[i],
-                }),
-            ];
-      sections.add(ReportSection(heading: s.title, blocks: blocks));
-    }
-    final title = switch (reportType) {
-      'story_public' => 'Story',
-      'story_ai_notes' => "Ayma's Notes",
-      _ => 'Your Story',
-    };
-    return LivingReport(
-      title: title,
-      sections: sections,
-      meta: const ReportMeta(ownerUid: 'u1', viewerCanEdit: true),
-    );
-  }
-
-  @override
-  Future<LivingReport> getReport(String reportType, String reportId) async {
-    calls.add('get_report:$reportType:$reportId');
-    return _storyReport(reportType);
-  }
-
-  @override
-  Future<ReportCorrectResult> correctReport(
-    String reportType,
-    String reportId, {
-    required List<String> blockIds,
-    required String scope,
-    required String message,
-  }) async {
-    correctCalls.add({
-      'report_type': reportType,
-      'report_id': reportId,
-      'block_ids': blockIds,
-      'scope': scope,
-      'message': message,
-    });
-    return ReportCorrectResult(
-      ok: true,
-      results: [
-        for (final id in blockIds)
-          ReportCorrectItem(blockId: id, ok: true, reply: 'Got it — updated.'),
-      ],
-    );
   }
 
   StoryData data = const StoryData(sections: [
@@ -202,6 +106,45 @@ class _FakeApi extends ApiClient {
   Future<GraphTree> graphTree({String? uid, String surface = 'story'}) async {
     calls.add('graph_tree:$surface');
     return storyTree;
+  }
+
+  /// `GET /report/{type}/{id}/tree` — Ayma's Notes now renders `story_ai_notes`
+  /// through the shared Node-Visualiser (2o P6), the report tree fetched by
+  /// reportType/reportId. Built straight from [aiSections] (report-linked /
+  /// empty pages excluded, exactly as the real `report_tree` adapter does), so
+  /// a test stays honest about what nodes actually reach the tree.
+  @override
+  Future<GraphTree> reportTree(String reportType, String reportId) async {
+    calls.add('report_tree:$reportType:$reportId');
+    final source = switch (reportType) {
+      'story_ai_notes' => aiSections,
+      _ => const <StorySection>[],
+    };
+    final sections = <Map<String, dynamic>>[];
+    var order = 0;
+    for (final s in source) {
+      if (_fakeReportLinkedPageIds.contains(s.pageId)) continue;
+      if (s.body.trim().isEmpty) continue;
+      order++;
+      sections.add({
+        'page_type': s.pageType,
+        'title': s.title,
+        'order': order,
+        'nodes': [
+          {
+            'id': '${s.pageId}_0',
+            'section': s.pageId,
+            'label': s.title,
+            'text': s.body,
+            'answer_type': 'text',
+            'level': 1,
+            'visibility': s.visibility,
+            'subtree_visibility': s.visibility,
+          }
+        ],
+      });
+    }
+    return GraphTree.fromMap({'surface': 'report', 'sections': sections});
   }
 
   @override
@@ -711,8 +654,9 @@ void main() {
   });
 
   testWidgets(
-      "Ayma's Notes: narrative wiki pages render via story_ai_notes, "
-      'with no invented per-passage confidence figure', (tester) async {
+      "Ayma's Notes: narrative wiki pages render via the story_ai_notes "
+      'Node-Visualiser, with no invented per-passage confidence figure',
+      (tester) async {
     final api = _FakeApi()
       ..aiSections = const [
         StorySection(
@@ -722,8 +666,11 @@ void main() {
       ];
     await _pumpNotes(tester, api);
 
-    expect(api.calls, contains('get_report:story_ai_notes:u1'));
-    expect(find.text('VALUES'), findsOneWidget);
+    // The body now fetches the story_ai_notes report tree (2o P6), not the old
+    // block report.
+    expect(api.calls, contains('report_tree:story_ai_notes:u1'));
+    expect(find.text('Values'), findsOneWidget);
+    expect(find.byKey(const Key('node_row_values_0')), findsOneWidget);
     expect(find.textContaining('Family matters most to me.'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
   });

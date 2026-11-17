@@ -1,8 +1,8 @@
 // MyPublicProfileScreen: an AppBar, the photo carousel + name/age/location
 // header (fetched via GET /explore/profile/{uid} — the SAME endpoint and
 // SAME `ProfilePhotoHeader` widget the Explore-facing profile screen and the
-// match-request screen use), plus the shared LivingReportView renderer over
-// the converged `story_public` Living Report (§ founder direction
+// match-request screen use), plus the shared Node-Visualiser renderer over
+// the converged `story_public` public graph (§ founder direction
 // 2026-09-20: physical-attribute fields + public Story narrative, one
 // document). Its content is the shared ProfileBody, which PublicProfileScreen
 // (`/profile/user/:uid`) renders too — see public_profile_screen_test.dart

@@ -57,7 +57,7 @@ abstract final class AymaLoaderLines {
   /// Notification prefs ([NotificationPrefsScreen]): reading `notification_prefs`.
   static const notifPrefs = ['Loading your notification settings…'];
 
-  /// Report views ([LivingReportView]): reading the stored report.
+  /// Report views (the Node-Visualiser tree): reading the stored report.
   static const report = ['Loading your report…'];
 
   /// Face report ([FaceReportView]): `GET /skills/report/face/{id}`.
