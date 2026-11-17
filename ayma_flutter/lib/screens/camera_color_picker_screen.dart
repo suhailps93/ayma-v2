@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../services/accent_color_controller.dart';
 import '../services/camera_color_sampler.dart';
+import '../services/permission_coordinator.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
@@ -91,7 +92,10 @@ class _CameraColorPickerScreenState extends State<CameraColorPickerScreen> {
 
   Future<bool> _requestCameraPermission() async {
     try {
-      final status = await Permission.camera.request();
+      final status = await PermissionCoordinator.instance.trackRequest(
+        () => Permission.camera.request(),
+        timeout: const Duration(seconds: 15),
+      );
       return status.isGranted;
     } catch (_) {
       return false;

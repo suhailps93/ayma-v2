@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'permission_coordinator.dart';
+
 /// Single source of truth for the user's stored notification permission choice,
 /// ensuring prompt-once semantics across sign-in and app relaunch (A2).
 class NotificationPermissionStore {
@@ -93,7 +95,11 @@ class PushPermission {
   /// Triggers the OS prompt (iOS and Android 13+). Returns the resulting state.
   Future<PushPermissionState> request() async {
     try {
-      final s = _map((await _m.requestPermission()).authorizationStatus);
+      final settings = await PermissionCoordinator.instance.trackRequest(
+        () => _m.requestPermission(),
+        timeout: const Duration(seconds: 15),
+      );
+      final s = _map(settings.authorizationStatus);
       await _setStoredChoice(s == PushPermissionState.granted);
       return s;
     } catch (e) {

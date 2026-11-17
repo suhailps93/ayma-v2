@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
+import 'permission_coordinator.dart';
 import 'push_permission.dart';
 
 /// The platform calls behind a permission check/request, isolated behind an
@@ -99,7 +100,10 @@ class CallPermissions {
       // Choice was already made; do not re-prompt on relaunch.
       return;
     }
-    final granted = await _gateway.requestNotification();
+    final granted = await PermissionCoordinator.instance.trackRequest(
+      () => _gateway.requestNotification(),
+      timeout: const Duration(seconds: 15),
+    );
     await _setStoredChoice(granted);
   }
 

@@ -3,6 +3,8 @@ import 'dart:io' show Platform;
 import 'package:geocoding/geocoding.dart' as gc;
 import 'package:geolocator/geolocator.dart';
 
+import 'permission_coordinator.dart';
+
 export 'package:geolocator/geolocator.dart' show LocationPermission;
 
 /// Device location → a human "City, Country" string for the profile location
@@ -118,9 +120,12 @@ class LocationService {
 
   /// Request location permission from the OS.
   Future<LocationPermission> requestPermission() async {
-    if (requestPermissionFn != null) return requestPermissionFn!();
+    final req = requestPermissionFn ?? Geolocator.requestPermission;
     try {
-      return await Geolocator.requestPermission();
+      return await PermissionCoordinator.instance.trackRequest(
+        req,
+        timeout: const Duration(seconds: 15),
+      );
     } catch (_) {
       return LocationPermission.denied;
     }
