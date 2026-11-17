@@ -8,8 +8,8 @@ import 'ayma_share_sheet.dart';
 /// carry. It is a thin adapter onto the ONE reusable share kit
 /// (`share_kit.dart` + `ayma_share_sheet.dart`): the button builds the
 /// report's [ShareTarget] from the EXACT report this screen opened —
-/// [reportType] / [reportId] are the same pair the screen's
-/// `LivingReportView` reads, never re-resolved by pair or person — and
+/// [reportType] / [reportId] are the same pair the screen's report tree
+/// reads, never re-resolved by pair or person — and
 /// the kit sheet offers the same two options as every other page:
 /// "Send to Ayma" and "Send externally" (the existing `/s/` snapshot).
 ///

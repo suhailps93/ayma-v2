@@ -13,7 +13,6 @@ import 'package:ayma_flutter/services/chat_inbox.dart';
 import 'package:ayma_flutter/services/pending_chat_queue.dart';
 import 'package:ayma_flutter/widgets/ayma_back_button.dart';
 import 'package:ayma_flutter/widgets/ayma_wing_loader.dart';
-import 'package:ayma_flutter/widgets/living_report_view.dart';
 import 'package:ayma_flutter/widgets/report_progress.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -62,35 +61,6 @@ Map<String, dynamic> _photoReport() => {
     };
 
 void main() {
-  testWidgets('report photo thumbnail + caption and URLs in text are tappable',
-      (tester) async {
-    final api = ApiClient(
-      auth: MockFirebaseAuth(signedIn: true),
-      httpClient: MockClient((req) async =>
-          http.Response(jsonEncode(_photoReport()), 200, headers: _json)),
-    );
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: LivingReportView(
-            reportType: 'deep_dive', reportId: 'r1', apiClient: api),
-      ),
-    ));
-    await tester.pumpAndSettle();
-
-    final thumb =
-        tester.widget<InkWell>(find.byKey(const ValueKey('photoRowThumb')));
-    final caption =
-        tester.widget<InkWell>(find.byKey(const ValueKey('photoRowCaption')));
-    expect(thumb.onTap, isNotNull);
-    expect(caption.onTap, isNotNull);
-    expect(find.text('p19-common-sign.tiktokcdn-us.com'), findsOneWidget);
-    // The bare URL inside a fact is rendered as its own tappable span.
-    final rich = find.byWidgetPredicate((w) =>
-        w is RichText &&
-        w.text.toPlainText().contains('https://example.com/jane'));
-    expect(rich, findsOneWidget);
-  });
-
   testWidgets('AymaBackButton pops when it can and goes to the shell otherwise',
       (tester) async {
     final router = GoRouter(

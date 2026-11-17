@@ -21,7 +21,7 @@ import '../services/api_client.dart';
 /// This one is sized for a scale-to-zero COLD START: it pairs a raised
 /// per-call timeout ([kColdStartCallTimeout], so the first call can itself ride
 /// an ~18s+ cold start) with a long exponential backoff over a generous overall
-/// [kColdStartBudget]. The report family (`LivingReportView`) keeps using
+/// [kColdStartBudget]. Interactive, already-warm report loads keep using
 /// `withAutoRetry`; the on-open loads that were hard-failing on cold start use
 /// this.
 

@@ -1,13 +1,11 @@
-// DeepDiveReportScreen's body is now the ONE shared [LivingReportView]
-// renderer (§ generic reports), fetching `GET /report/deep_dive/{id}`; the
+// DeepDiveReportScreen's body is the ONE shared [GraphTreeView]
+// Node-Visualiser, fetching `GET /report/deep_dive/{id}/tree`; the
 // AppBar's "Re-run" / "Ask Ayma" actions still read a small amount of
 // metadata (name/isSelf/otherUid) off the existing dedicated
 // `GET /deep-dive-report/{id}` read, fetched alongside purely for that.
-// Per-block tap/section/report tier behavior, quick actions (including the
-// candidate "This is me"/"Not me" pair), multi-select, and the sentence
-// long-press guard are all covered once, generically, in
-// `living_report_view_test.dart` — this file proves the screen wires the
-// right report id/type and that its own AppBar actions still work.
+// Per-node behavior (image/candidate "This is me"/"Not me", link, text) is
+// covered generically by the Node-Visualiser; this file proves the screen
+// wires the right report id/type and that its own AppBar actions still work.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';

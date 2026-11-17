@@ -14,7 +14,6 @@ import '../models/story_node.dart';
 import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/graph_tree_view.dart';
 import '../widgets/overflow_guards.dart';
-import '../widgets/living_report_view.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
 import 'chat_screen.dart';
@@ -25,19 +24,18 @@ import '../util/cold_start_retry.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
-/// The narrative passages themselves (title, prose body, visibility) are
-/// rendered through the ONE shared [LivingReportView] renderer (§ generic
-/// reports), embedded here — `shrinkWrap`/`showTitle: false` — alongside
-/// content the block model doesn't (yet) represent: cover stats, the photo
-/// gallery, the merged Appearance card, "Beyond our conversations" (web
-/// findings), and the Career & Education timeline.
+/// The narrative itself is rendered through the ONE shared [GraphTreeView]
+/// Node-Visualiser (2o — person-graph tree, `story` surface), embedded here
+/// alongside content the graph doesn't (yet) represent as nodes: cover stats,
+/// the photo gallery, the merged Appearance card, and "Beyond our
+/// conversations" (web findings).
 ///
 /// **Single surface now** (`story_private` — everything, colour-neutral;
 /// visibility is an interactive toolbar state, not a permanent badge). The two
 /// former tabs are gone:
 /// - **Public view** was removed — it duplicated the dedicated
 ///   [MyPublicProfileScreen] ("My public profile"), which renders the same
-///   `story_public` Living Report and is the single surface that previews what
+///   public-surface graph and is the single surface that previews what
 ///   a match would see.
 /// - **Ayma's Notes** (`story_ai_notes` — the full, analytical picture, "the
 ///   intelligence beneath the portrait") moved OFF this screen into the
@@ -45,13 +43,12 @@ import '../util/cold_start_retry.dart';
 ///   Developer panel (§11.2). It exposes observed/unconfirmed analysis, so it
 ///   is dev-only on purpose — no normal-user path reaches it.
 ///
-/// See the GUARDRAIL in `living_report_view.dart`'s own file doc: the
-/// bespoke content listed above (cover stats, photo gallery, merged
-/// Appearance card, web findings, career timeline) stays bespoke only
-/// because none of it is block-modeled yet — it must not re-implement
-/// anything the narrative blocks below it already render, and any of it
-/// that DOES get a block type later should move onto the shared renderer
-/// instead of staying bespoke.
+/// The bespoke content listed above (cover stats, photo gallery, merged
+/// Appearance card, web findings) stays bespoke only because none of it is a
+/// graph node yet — it must not re-implement anything the Node-Visualiser
+/// tree below it already renders, and any of it that DOES get a node form
+/// later should move onto the shared [GraphTreeView] instead of staying
+/// bespoke.
 class StoryEditorScreen extends StatefulWidget {
   const StoryEditorScreen({super.key, this.api, this.myUid});
 
@@ -61,8 +58,8 @@ class StoryEditorScreen extends StatefulWidget {
 
   /// Injectable for tests; production reads the signed-in Firebase uid —
   /// this screen is always "my own" Story (there's no route param for
-  /// viewing someone else's), so [LivingReportView]'s `reportId` is always
-  /// the caller's own uid, mirroring `AppearanceReportScreen`/
+  /// viewing someone else's), so the graph/report tree is always the
+  /// caller's own uid, mirroring `AppearanceReportScreen`/
   /// `MyPublicProfileScreen`.
   final String? myUid;
 
@@ -545,13 +542,12 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           ),
           _sectionDivider(),
         ],
-        // Every narrative wiki page (minus the four report-linked ones —
-        // face-analysis/body-analysis/physical-profile/web-findings — which
-        // keep their own bespoke cards below, same as before) — the ONE
-        // shared Living Report renderer, embedded (§ generic reports): tap
-        // tiers, ad-hoc multi-select and the make-public/make-private/delete
-        // quick actions all come from here now, superseding the old
-        // per-sentence drag-select -> "Edit with Ayma" mechanism.
+        // The narrative graph (report-linked pages —
+        // face-analysis/body-analysis/physical-profile/web-findings — keep
+        // their own bespoke cards below, same as before) — the ONE shared
+        // Node-Visualiser, embedded: tap a node to open its chat window,
+        // where the make-public/make-private/delete/chat-to-edit actions all
+        // live now, superseding the old per-sentence drag-select mechanism.
         editor,
         _sectionDivider(),
         if (showAppearance) ...[
@@ -766,13 +762,19 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
           if (hasTrailingChrome) _sectionDivider(),
         ],
         if (narrativeRows.isNotEmpty) ...[
-          LivingReportView(
+          // Ayma's Notes narrative renders through the ONE shared
+          // Node-Visualiser (2o P6 — the final legacy report-view removal), the
+          // `story_ai_notes` report tree fetched by reportType/reportId exactly
+          // like appearance / match / the shared report. Dev-only screen: the
+          // full analytical picture, every observed node, read-only for the
+          // owner (tap a node → its node chat window).
+          GraphTreeView(
             key: ValueKey('story_ai_notes:$_reportGen'),
+            surface: NodeVisualiserSurface.report,
             reportType: 'story_ai_notes',
             reportId: _uid,
-            apiClient: _api,
-            shrinkWrap: true,
-            showTitle: false,
+            api: _api,
+            emptyMessage: 'Nothing here yet.',
           ),
           if (appearanceMerge != null || webFindings != null) _sectionDivider(),
         ],

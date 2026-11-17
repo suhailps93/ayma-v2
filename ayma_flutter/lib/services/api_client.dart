@@ -3340,7 +3340,7 @@ class ApiClient {
   // modes ("story_private" / "story_public" / "story_ai_notes"). See
   // `report_hub.py` server-side. [reportId] means something different per
   // type: the caller's own uid for every type except "deep_dive" (a real,
-  // previously-run deep-dive report id) — see `LivingReportView`'s doc.
+  // previously-run deep-dive report id) — see `report_hub.resolve_owner`.
 
   /// `GET /report/{report_type}/{report_id}`.
   Future<LivingReport> getReport(String reportType, String reportId) async {

@@ -10,8 +10,8 @@ import 'package:flutter/foundation.dart';
 /// the widget that started them: the user can navigate away, and the open
 /// report screen never learned the run landed (founder 2026-10-28: "it didn't
 /// create a new report" when the backend actually had). On success the runner
-/// calls [completed] with the report type; [LivingReportView] listens and
-/// reloads when its own type bumps.
+/// calls [completed] with the report type; a listening report screen reloads
+/// when its own type bumps.
 ///
 /// A per-type monotonically increasing revision lets a listener react exactly
 /// once per completion (compare the revision it last handled) instead of
@@ -62,8 +62,8 @@ class ReportEvents extends ChangeNotifier {
   }
 }
 
-/// The report types the Story page renders through [LivingReportView] — the
-/// owner's private story, Ayma's notes, and the public view.
+/// The Story report types — the owner's private story, Ayma's notes, and the
+/// public view.
 const _storyReportTypes = ['story_private', 'story_ai_notes', 'story_public'];
 
 /// Persistent (past-tense) labels of the main chat/voice story-edit tools

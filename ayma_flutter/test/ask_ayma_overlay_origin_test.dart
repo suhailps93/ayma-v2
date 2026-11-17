@@ -262,7 +262,7 @@ void main() {
         'match-report field rides along on a reportView-origin tap, '
         'deep-dive/appearance stay empty', (tester) async {
       final api = _FakeApi();
-      // Mirrors `LivingReportView._open` for `reportType: 'match'`: always
+      // Mirrors the report correction flow for `reportType: 'match'`: always
       // `reportView` (match has no correction path — `report_type`/
       // `report_id` stay unset), but `matchReportId` still rides along so
       // `_match_edit_context` in main.py can brief Ayma.
