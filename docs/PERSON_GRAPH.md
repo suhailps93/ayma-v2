@@ -628,6 +628,21 @@ visualiser the report node kinds.
   `tests/test_report_tree.py` snapshot cases, `tests/test_share.py`
   `test_tree_is_public_and_unknown_token_404s`, `test/share_report_test.dart`
   (renders through the tree unauthed; a revoked/unknown token shows no body).
+- **Level-indent render rule (`fleet/level-indentation`, Nov 17 2026).** The
+  `NodeVisualiser` indents each row by the node's **actual `level`** in the tree
+  (`(level − 1)` indent steps of 18 dp), not by recursion depth — floored at the
+  render depth so a nested child is always ≥1 step deeper than its parent, and
+  **capped at 5 steps** so deep nesting wraps instead of running off a narrow
+  phone. The indent is `EdgeInsetsDirectional.start`, so it grows from the left
+  in LTR and the right in RTL. This fixes the founder's flat Story (build 2488):
+  the Your Story editor and the live content writers mint `upsert_fact_node`
+  facts at `level: 2` with **no parent**, so they render as flat section roots;
+  indenting by recursion depth alone left every one of them flush with the
+  level-1 standard block. The standard labelled rows (level 1) stay flush; only
+  the conversational children step in. Report nodes are all `level: 1` (flat),
+  so report surfaces are unaffected. Regression: `test/node_visualiser_test.dart`
+  "parentless roots indent by their actual level" + "deep nesting never
+  overflows at 320px / text-scale 2.0".
 - **P6 (SHIPPED) — the final `LivingReportView` removal.** The last real host,
   Ayma's Notes' `story_ai_notes` body in `story_editor_screen.dart`, now renders
   through `GraphTreeView(surface: report, reportType: 'story_ai_notes')` — the
