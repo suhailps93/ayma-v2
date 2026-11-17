@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:ayma_flutter/models/living_report.dart';
 import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
@@ -39,6 +40,16 @@ class _FakeApi extends ApiClient {
 
   final List<String> calls = [];
   final List<Map<String, String>> chatCalls = [];
+
+  /// The shared main-photo setting the Story cover now reads (the public
+  /// profile's primary/order-0 photo). First url = the starred main.
+  List<String> mainPhotos = const [];
+
+  @override
+  Future<PublicProfile> publicProfile(String otherUid) async {
+    calls.add('public_profile');
+    return PublicProfile.fromMap({'uid': otherUid, 'photos': mainPhotos});
+  }
 
   /// Every `POST /report/{type}/{id}/correct` this fake received — same
   /// rigor the file already applies to `chatCalls`/`chatStream`, now also
@@ -467,6 +478,26 @@ void main() {
     expect(find.text("Ayma's Notes"), findsNothing);
     // The private Story content is shown directly, with no tab bar above it.
     expect(find.textContaining('Your Story'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the Story cover reads the SHARED main photo (public profile primary), '
+      'not a separately-picked first photo', (tester) async {
+    final api = _FakeApi()
+      ..mainPhotos = const [
+        'https://cdn/main-starred.jpg',
+        'https://cdn/other.jpg',
+      ];
+    await _pumpWithRouter(tester, api);
+
+    // It reads the ONE source of truth — the public profile's primary photo.
+    expect(api.calls, contains('public_profile'));
+    // The cover hero renders that exact (starred) photo.
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'),
+      findsOneWidget,
+    );
   });
 
 
