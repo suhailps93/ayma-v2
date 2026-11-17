@@ -201,30 +201,57 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
       reassertScreenContext();
       return;
     }
-    // Decode the WHOLE pool (not just the four shown) so a remove can slide
-    // the next photo in instantly, with no await and no flicker.
-    final urls = [for (final p in card.pool) p.url];
+    // Swap to the fresh run IMMEDIATELY (NOTE 243 Leg 1): once a newer report
+    // is in hand the card must never keep a previous run's photos or scores on
+    // screen. Photos already decoded for pool urls that carried over are
+    // reused, so an unchanged axis (e.g. the Face photos) shows with no flicker
+    // the instant the fresh scores land; pool photos that are NEW — a just
+    // re-selected or added shot that is still downloading — decode below and
+    // pop in as they land, instead of holding the whole card on the old run
+    // until the slowest photo finishes (the bug: a cached old card, pottery and
+    // all, lingered under a freshly-updated report while a new photo loaded).
+    final poolUrls = {for (final p in card.pool) p.url};
+    final carried = <String, DecodedImage>{};
+    final dropped = <String, DecodedImage>{};
+    _decoded.forEach((url, img) {
+      (poolUrls.contains(url) ? carried : dropped)[url] = img;
+    });
+    if (!mounted) return;
+    setState(() {
+      _card = card;
+      _reportCreatedAt = report.meta.createdAt ?? '';
+      _decoded = carried;
+    });
+    // The dropped photos (deselected out of the new pool) are no longer shown
+    // by the fresh card, so free them.
+    _release(dropped);
+    reassertScreenContext();
+
+    // Decode the rest of the pool (the whole pool is kept decoded so removing a
+    // shown photo later can slide the next one in instantly, with no await).
+    final missing = [
+      for (final p in card.pool)
+        if (!carried.containsKey(p.url)) p.url,
+    ];
+    if (missing.isEmpty) return;
     final decoded = await Future.wait([
-      for (final url in urls) ReportCardShare.decode(_image(url)),
+      for (final url in missing) ReportCardShare.decode(_image(url)),
     ]);
-    final map = <String, DecodedImage>{};
-    for (var i = 0; i < urls.length; i++) {
+    final fresh = <String, DecodedImage>{};
+    for (var i = 0; i < missing.length; i++) {
       final img = decoded[i];
-      if (img != null) map[urls[i]] = DecodedImage(img);
+      if (img != null) fresh[missing[i]] = DecodedImage(img);
     }
+    // A newer report (or an unmount) superseded this decode while it ran — its
+    // own pass owns the card now, so discard these late-arriving images.
     if (!mounted || gen != _loadGen) {
-      _release(map);
+      _release(fresh);
       return;
     }
-    final old = _decoded;
+    if (fresh.isEmpty) return;
     setState(() {
-      // Photos are always on the card; with none loadable it isn't offered.
-      _decoded = map;
-      _card = map.isEmpty ? null : card;
-      _reportCreatedAt =
-          map.isEmpty ? '' : (report.meta.createdAt ?? '');
+      _decoded = {..._decoded, ...fresh};
     });
-    _release(old);
     reassertScreenContext();
   }
 
