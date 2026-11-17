@@ -324,6 +324,20 @@ class Config:
     exact-only, additive, reversible — near/semantic dups still route to the
     never-silent user resolution flow. Checked per call."""
 
+    node_conflict_raise: bool
+    """Write-time CONFLICT raising (founder Nov 17, assessment part d): when a new
+    conversational fact CONTRADICTS a fact the graph already holds (same topic,
+    materially different answer — not a duplicate), the free-minting write is
+    SUPPRESSED and the conflict is raised in chat for the user to resolve, so two
+    contradictory nodes are never written silently. Same-topic candidates are
+    found by the deterministic lexical pre-filter; the contradiction verdict is
+    the LiveKit judge (``person_graph_crosscheck.classify_conflict``) — never
+    rerouted off LiveKit. The user's choice is applied by ``pg_resolve_conflict``
+    (keep existing, or overwrite with the new value, retiring the old to history).
+    **Off by default** (``NODE_CONFLICT_RAISE=true``): additive, reversible —
+    flag-off writes exactly as before. Checked per call, so it flips without a
+    restart. Distinct from ``NODE_DEDUPE_PREVENTION`` (exact DUPLICATE reuse)."""
+
     graph_embedding_dedupe: bool
     """Strong dedupe candidate-finding (founder Nov 17): embed every graph node
     with Gemini Embedding 2 (``graph_embeddings``) and find dedupe / related
@@ -1381,6 +1395,8 @@ def _load() -> Config:
         == "true",
         node_dedupe=os.getenv("NODE_DEDUPE", "false").lower() == "true",
         node_dedupe_prevention=os.getenv("NODE_DEDUPE_PREVENTION", "false").lower()
+        == "true",
+        node_conflict_raise=os.getenv("NODE_CONFLICT_RAISE", "false").lower()
         == "true",
         graph_embedding_dedupe=os.getenv("GRAPH_EMBEDDING_DEDUPE", "false").lower()
         == "true",

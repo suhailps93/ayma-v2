@@ -83,6 +83,23 @@ def _bind(
             if not fact:
                 return "nothing to save yet"
             try:
+                # Write-time CONFLICT gate (founder Nov 17, assessment part d):
+                # if this fact CONTRADICTS a note already in the graph (same
+                # topic, mutually exclusive answer — not a duplicate), do NOT
+                # write a second contradictory node. Raise the conflict in chat so
+                # the user resolves it; the resolution stores only their choice.
+                conflict = await store.find_write_conflict(db, uid, fact)
+                if conflict is not None:
+                    return (
+                        "CONFLICT — this contradicts a note you already have, so "
+                        "I did NOT save it yet. Ask the user which is correct, "
+                        f"showing both: existing note = {conflict.existing_text!r}; "
+                        f"new = {conflict.incoming_text!r}. When they decide, call "
+                        f"pg_resolve_conflict(node_id={conflict.existing_id!r}, "
+                        "keep='existing' to keep the old note, or keep='incoming' "
+                        "to replace it with the new one). Do not save it any other "
+                        "way."
+                    )
                 # Stamp the conversation source at write time (founder Nov 17):
                 # the fact came from THIS chat turn, so the node carries the
                 # session id + the message index, so tapping its source later

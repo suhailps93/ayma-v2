@@ -32,11 +32,17 @@ import difflib
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
+import person_graph_index as index_mod
 from person_graph_index import NodeIndexEntry
 
 logger = logging.getLogger("ayma.graph_dedupe")
+
+# The write-time conflict judge's system prompt lives in its own file
+# (AGENTS.md: prompt text never inline in code).
+_CONFLICT_PROMPT_PATH = Path(__file__).parent / "prompts" / "node_conflict_judge.md"
 
 # Lexical thresholds — deliberately high-precision for the auto-"duplicate"
 # label; everything softer is a candidate the user confirms, never a silent act.
@@ -343,6 +349,113 @@ async def _judge(items: list[dict], *, uid: str | None) -> Optional[dict]:
                 continue
     # keyed by the positional index classify_pairs assigned each pair.
     return out
+
+
+# --- write-time conflict raising (founder Nov 17, assessment part d) --------
+
+
+def candidates_for_text(
+    index: list[NodeIndexEntry],
+    text: str,
+    *,
+    section: str | None = None,
+    exclude: frozenset[str] | set[str] | tuple[str, ...] = (),
+) -> list[NodeIndexEntry]:
+    """Existing nodes on the SAME TOPIC as an incoming ``text`` — the bounded
+    candidate set the conflict judge looks at before a free-minting write.
+
+    Deterministic lexical pre-filter only (no inference): mid-band content-token
+    Jaccard or shared rare (entity-ish) tokens, the same "related, not identical"
+    band the cross-check uses — restricted to one incoming text instead of every
+    pair. EXACT restatements are excluded (those are duplicates the write-time
+    dedupe hook already reuses, never a conflict), as are report scaffolding and
+    empty nodes. ``section`` left ``None`` searches every section, because a
+    contradicting fact can live anywhere in the graph."""
+    norm = index_mod.normalize_text(text)
+    toks = index_mod.token_set(text)
+    if not norm or len(toks) < _MIN_TOKENS:
+        return []
+
+    df: dict[str, int] = {}
+    pool = [
+        e for e in index
+        if e.indexable
+        and e.node_id not in exclude
+        and e.kind != index_mod.KIND_REPORT_DOC
+        and (section is None or e.section == section)
+    ]
+    for e in pool:
+        for t in e.tokens:
+            df[t] = df.get(t, 0) + 1
+
+    out: list[tuple[float, NodeIndexEntry]] = []
+    for e in pool:
+        if e.norm == norm:
+            continue  # exact duplicate, not a conflict
+        if len(e.tokens) < _MIN_TOKENS:
+            continue
+        jac = _jaccard(toks, e.tokens)
+        shared_rare = {t for t in (toks & e.tokens) if df.get(t, 0) <= _RARE_DF}
+        if jac >= _RELATED_JACCARD or len(shared_rare) >= _MIN_SHARED_RARE:
+            out.append((jac, e))
+    out.sort(key=lambda pe: -pe[0])
+    return [e for _, e in out]
+
+
+async def classify_conflict(
+    text: str,
+    candidates: list[NodeIndexEntry],
+    *,
+    uid: str | None = None,
+    cap: int = 12,
+) -> Optional[NodeIndexEntry]:
+    """Ask the LiveKit judge whether the incoming ``text`` CONTRADICTS any of the
+    same-topic ``candidates`` (a mutually-exclusive answer, not a duplicate and
+    not a compatible related fact). Returns the contradicting candidate entry, or
+    ``None`` if the judge finds no conflict (or on any inference failure — the
+    write then proceeds, the never-silent gate is best-effort and never blocks a
+    legitimate write). Routed through the existing LiveKit gateway; never Vertex
+    (``AGENTS.md``)."""
+    import gemini
+    from prompt import load_prompt_file
+
+    cands = [c for c in candidates if c.indexable][:cap]
+    if not text.strip() or not cands:
+        return None
+
+    payload = json.dumps(
+        {
+            "new": text[:280],
+            "existing": [
+                {"i": n, "text": (c.text or "")[:280]} for n, c in enumerate(cands)
+            ],
+        },
+        ensure_ascii=False,
+    )
+    try:
+        result = await gemini.generate_json(
+            payload,
+            load_prompt_file(_CONFLICT_PROMPT_PATH),
+            uid=uid,
+            feature="graph_conflict",
+            enforce_cap=False,
+            temperature=0.0,
+            max_tokens=128,
+        )
+    except Exception:  # noqa: BLE001 - best-effort; a judge failure never blocks
+        logger.warning("graph_conflict: judge failed", exc_info=True)
+        return None
+
+    idx = result.get("conflict_i") if isinstance(result, dict) else None
+    if idx is None:
+        return None
+    try:
+        pos = int(idx)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= pos < len(cands):
+        return cands[pos]
+    return None
 
 
 def _components(pairs: list[tuple[str, str]]) -> list[list[str]]:

@@ -18,6 +18,7 @@ validated primitives the consumer-switch phase will bind as tools.
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 import person_graph as pg
@@ -151,6 +152,62 @@ def _dedupe_collapse_id(
         idx = _index.build_index(db, uid)
         return _index.find_exact_match(idx, text, section=section)
     except Exception:  # noqa: BLE001 - prevention is best-effort, never blocks
+        return None
+
+
+@dataclass(frozen=True)
+class ConflictFinding:
+    """A new fact that CONTRADICTS an existing node (write-time conflict raising,
+    founder Nov 17, assessment part d). Carries the existing node's id + value and
+    the incoming value so the caller can raise both in chat and, on the user's
+    choice, store only the resolved one. Not a duplicate (handled by
+    ``_dedupe_collapse_id``) — the two answers are mutually exclusive."""
+
+    existing_id: str
+    existing_text: str
+    incoming_text: str
+    section: Optional[str] = None
+
+
+async def find_write_conflict(
+    db, uid: str, text: str, *, section: str | None = None
+) -> Optional[ConflictFinding]:
+    """The write-time CONFLICT gate (founder Nov 17, part d). When
+    ``CONFIG.node_conflict_raise`` is on, check whether an incoming free-form fact
+    CONTRADICTS a fact the graph already holds (same topic, materially different
+    answer). Returns a :class:`ConflictFinding` when it does — the caller then
+    SUPPRESSES the write and raises the conflict in chat instead of silently
+    minting a second contradictory node — or ``None`` otherwise.
+
+    Same-topic candidates come from the deterministic lexical pre-filter; the
+    contradiction verdict is the LiveKit judge (never rerouted off LiveKit).
+    Flag-off (the default) returns ``None`` so every write behaves as before.
+    Best-effort — any failure returns ``None`` and never blocks a write."""
+    from config import CONFIG
+
+    if not getattr(CONFIG, "node_conflict_raise", False):
+        return None
+    fact = (text or "").strip()
+    if not fact:
+        return None
+    try:
+        import person_graph_crosscheck as _crosscheck
+        import person_graph_index as _index
+
+        idx = _index.build_index(db, uid)
+        cands = _crosscheck.candidates_for_text(idx, fact)
+        if not cands:
+            return None
+        hit = await _crosscheck.classify_conflict(fact, cands, uid=uid)
+        if hit is None:
+            return None
+        return ConflictFinding(
+            existing_id=hit.node_id,
+            existing_text=hit.text,
+            incoming_text=fact,
+            section=section,
+        )
+    except Exception:  # noqa: BLE001 - the gate is best-effort, never blocks
         return None
 
 
