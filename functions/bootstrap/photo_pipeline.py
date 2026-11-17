@@ -84,8 +84,16 @@ async def _caption(
     confirmed or there's simply nothing else to go on.
     """
     lines: list[str] = []
-    if match == "self" and name:
-        lines.append(f"Confirmed identity: this is {name}, the account owner.")
+    if match == "self":
+        # Confirmed to be the owner → the note MUST be written in the second
+        # person ("you"), never "a man / a woman / a person" (founder rule
+        # Nov 17: his own confirmed photo read "a close-up selfie of a man…").
+        who = f" Their name is {name}." if name else ""
+        lines.append(
+            "Confirmed identity: this photo IS the account owner (you)." + who
+            + " Write the note in the SECOND PERSON, addressing the owner as "
+            '"you"; never call them "a man", "a woman", or "a person".'
+        )
     elif match == "not_self":
         lines.append(
             "Identity: confirmed NOT to be the account owner — do not name "
