@@ -58,11 +58,19 @@ class LocationService {
   /// call on every start: when already granted it just reports true, and a
   /// denial never throws. Granting here does NOT enable any feature — the
   /// "Date moments" toggle is the opt-in.
-  Future<bool> ensurePermission() async {
+  Future<bool> ensurePermission({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
     try {
-      var permission = await Geolocator.checkPermission();
+      var permission = await checkPermission();
+      if (permission == LocationPermission.deniedForever) {
+        return false;
+      }
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+        permission = await requestPermission().timeout(
+          timeout,
+          onTimeout: () => LocationPermission.denied,
+        );
       }
       return permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse;

@@ -154,26 +154,58 @@ Future<void> main() async {
 @visibleForTesting
 Duration startupLocationAskSettle = const Duration(seconds: 3);
 
+/// Settle after an empty / cancelled startup location prompt before retrying,
+/// giving route transitions and competing startup dialogs time to complete so
+/// the retry lands when the app is fully idle and interactive (NOTE 242 Leg 1).
+/// Overridable from tests.
+@visibleForTesting
+Duration startupLocationAskRetrySettle = const Duration(seconds: 2);
+
 /// First-paint gate for the startup location ask: the splash's presented-first
 /// -frame signal, bounded so a wedged frame pipeline never starves the prompt
 /// forever (it just proceeds).
 Future<void> _defaultWaitFirstPaint() => SplashFirstPaint.done
-    .timeout(const Duration(seconds: 12), onTimeout: () {});
+    .timeout(const Duration(seconds: 25), onTimeout: () {});
 
 /// Ask for OS location permission at startup, but only once the first frame is
 /// presented and the app has settled — never inside the cold-start window,
 /// where a modal permission dialog compounds the input-dispatch ANR and leaves
-/// the paused process open to an OS reap (NOTE 239 Leg 4). The ask itself still
-/// never throws (see [LocationService.ensurePermission]).
+/// the paused process open to an OS reap (NOTE 239 Leg 4). If the initial ask
+/// returns empty or cancelled (e.g. races a route transition or competing
+/// dialog on a fresh-install signed-out path — NOTE 242 Leg 1), it retries
+/// once the app has settled, provided the permission is not denied forever.
+/// The ask itself still never throws (see [LocationService.ensurePermission]).
 @visibleForTesting
 Future<void> askStartupLocationPermission({
   Future<bool> Function()? ask,
   Future<void> Function()? waitFirstPaint,
   Future<void> Function(Duration)? settle,
+  Future<LocationPermission> Function()? checkPermission,
+  int maxRetries = 1,
 }) async {
   await (waitFirstPaint ?? _defaultWaitFirstPaint)();
   await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskSettle);
-  await (ask ?? const LocationService().ensurePermission)();
+
+  final doAsk = ask ?? const LocationService().ensurePermission;
+  final check = checkPermission ?? const LocationService().checkPermission;
+
+  var granted = await doAsk();
+  if (granted) return;
+
+  // The first request returned empty / still denied (e.g. Android dropped the
+  // request with empty grantResults because a route transition or competing
+  // startup dialog was in flight — Scout NOTE 242).
+  // If permission is still denied and NOT deniedForever, wait for the app to
+  // settle and retry.
+  for (var i = 0; i < maxRetries; i++) {
+    final status = await check();
+    if (status != LocationPermission.denied) {
+      break;
+    }
+    await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskRetrySettle);
+    granted = await doAsk();
+    if (granted) break;
+  }
 }
 
 /// Runs a pre-first-frame startup step under a hard deadline.
