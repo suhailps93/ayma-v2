@@ -239,6 +239,62 @@ void main() {
       }
     });
 
+    // NOTE 246: first launch ANR'd on the "Remembering where you left off…"
+    // splash, and the session restore sat ~60s. The question was whether the
+    // restore path blocks the main thread / holds the splash. It must not: the
+    // splash's first frame (N8) is deliberately NOT a dependent of auth session
+    // restore (N9) — the splash paints first, then the restore runs async
+    // behind the already-painted splash (main.dart registers the auth listener
+    // only AFTER `dag.run(targetNodes:{N8})` returns). These pin that guarantee
+    // so a future change can't make the splash wait on (and stall behind) the
+    // restore.
+    test(
+        'N8:first_frame_mount does not depend on N9:auth_session_restore '
+        '(the splash never gates on the restore)', () {
+      final n8 = StartupNodes.buildDefaultDAG().nodes['N8:first_frame_mount']!;
+      expect(n8.dependencies, isNot(contains('N9:auth_session_restore')),
+          reason: 'the restore must not be on the path to first paint');
+    });
+
+    test(
+        'run(targetNodes:{N8}) completes even when auth restore (N9) hangs — '
+        'a slow/stuck first-launch restore can never hold the splash (NOTE 246)',
+        () async {
+      // Mirror the real wiring, but make auth session restore HANG — the
+      // worst-case slow first-launch restore (Scout saw ~60s). First paint
+      // must still be reached; the restore simply resolves later, async,
+      // behind the painted splash.
+      final real = StartupNodes.buildDefaultDAG();
+      final completed = <String>{};
+      final mirror = StartupDAG();
+      for (final node in real.nodes.values) {
+        mirror.addNode(
+          StartupNode<void>(
+            id: node.id,
+            dependencies: node.dependencies,
+            critical: node.critical,
+            action: (ctx) async {
+              if (node.id == 'N9:auth_session_restore') {
+                await Completer<void>().future; // never completes
+              }
+              completed.add(node.id);
+            },
+          ),
+        );
+      }
+
+      // If a regression ever puts the restore on the path to first paint, this
+      // run would hang and the timeout would fail the test.
+      await mirror
+          .run(targetNodes: {'N8:first_frame_mount'})
+          .timeout(const Duration(seconds: 5));
+
+      expect(completed.contains('N8:first_frame_mount'), isTrue,
+          reason: 'the splash first frame mounted while restore was pending');
+      expect(completed.contains('N9:auth_session_restore'), isFalse,
+          reason: 'first paint did not wait on the (hung) auth restore');
+    });
+
     test(
         'N19:remote_sync runs post-frame and post-auth so remote flag refresh '
         'does not fire before session is ready (ordering vs session init regression)', () async {
