@@ -244,10 +244,16 @@ def write_profile_and_questionnaire(db, persona: dict, qz: dict, location: str) 
         "paused": False,
         "onboarding_complete": True,
     }
+    if persona.get("linkedin_url"):
+        profile["linkedin_url"] = persona["linkedin_url"]
     # qz_* mirrors (profile/main) — matching reads these first.
     for node_id, value in qz.items():
         profile[f"qz_{node_id}"] = value
     schema.profile_doc(db, uid).set(profile, merge=True)
+    if persona.get("linkedin_url"):
+        import career_timeline
+
+        career_timeline.set_linkedin_url(db, uid, persona["linkedin_url"])
 
     # questionnaire/{node_id} answers
     qcol = db.collection("users").document(uid).collection("questionnaire")

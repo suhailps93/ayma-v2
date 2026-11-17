@@ -106,3 +106,35 @@ def test_get_linkedin_url_falls_back_to_supplemental():
     }
     assert career_timeline.get_linkedin_url(db, "u1") == "https://www.linkedin.com/in/daniel-reyes-ux"
     assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == "https://www.linkedin.com/in/daniel-reyes-ux"
+
+
+def test_set_linkedin_url_never_overwrites_present_url_with_none_or_empty():
+    db = FakeDb()
+    initial_url = "https://www.linkedin.com/in/daniel-reyes-ux"
+    career_timeline.set_linkedin_url(db, "u1", initial_url)
+    assert career_timeline.get_linkedin_url(db, "u1") == initial_url
+
+    # Attempt to overwrite with None
+    res_none = career_timeline.set_linkedin_url(db, "u1", None)
+    assert res_none == initial_url
+    assert career_timeline.get_linkedin_url(db, "u1") == initial_url
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == initial_url
+
+    # Attempt to overwrite with empty string
+    res_empty = career_timeline.set_linkedin_url(db, "u1", "")
+    assert res_empty == initial_url
+    assert career_timeline.get_linkedin_url(db, "u1") == initial_url
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == initial_url
+
+    # Attempt to overwrite with invalid URL
+    res_invalid = career_timeline.set_linkedin_url(db, "u1", "https://not-linkedin.com/user")
+    assert res_invalid == initial_url
+    assert career_timeline.get_linkedin_url(db, "u1") == initial_url
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == initial_url
+
+    # Valid new LinkedIn URL DOES update
+    new_url = "https://www.linkedin.com/in/new-profile"
+    res_new = career_timeline.set_linkedin_url(db, "u1", new_url)
+    assert res_new == new_url
+    assert career_timeline.get_linkedin_url(db, "u1") == new_url
+    assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == new_url
