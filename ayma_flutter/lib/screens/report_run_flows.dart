@@ -132,6 +132,11 @@ Future<void> runAppearanceFromPreRunSheet(
     BuildContext context, ApiClient api, {
   ChatService? chatService,
   Future<List<File>> Function()? pickImages,
+  // How long to keep watching for a SLOW build to land after the POST exceeds
+  // the client budget (see [_runAppearanceInBackground]), and how often to
+  // check. Overridable so tests don't wait real minutes.
+  Duration landingPollInterval = const Duration(seconds: 8),
+  Duration landingPollTimeout = const Duration(minutes: 4),
 }) async {
   final choice = await showModalBottomSheet<_AppearanceChoice>(
     context: context,
@@ -156,7 +161,11 @@ Future<void> runAppearanceFromPreRunSheet(
     context,
     "Running your analysis — I'll update your report when it's ready.",
   );
-  unawaited(_runAppearanceInBackground(context, api, choice));
+  unawaited(_runAppearanceInBackground(
+    context, api, choice,
+    landingPollInterval: landingPollInterval,
+    landingPollTimeout: landingPollTimeout,
+  ));
 }
 
 /// Drives the appearance run to completion independently of any widget: the
@@ -165,7 +174,20 @@ Future<void> runAppearanceFromPreRunSheet(
 /// caller gets a toast; a user who has moved on still gets the result via the
 /// report card refresh (and the backend's chat marker), so nothing is lost.
 Future<void> _runAppearanceInBackground(
-    BuildContext context, ApiClient api, _AppearanceChoice choice) async {
+    BuildContext context, ApiClient api, _AppearanceChoice choice,
+    {required Duration landingPollInterval,
+    required Duration landingPollTimeout}) async {
+  // Capture which run is current BEFORE kicking off the build. A full
+  // multi-photo face+body build regularly runs LONGER than the client POST
+  // budget (`kLongTimeout`), so the POST times out (ApiException 408) while the
+  // server keeps going and persists the report anyway. Because the "report is
+  // ready" refresh signal (`completed`) used to fire ONLY on POST success, a
+  // slow-but-successful build never refreshed the open report view in-session —
+  // the card lagged minutes behind the landed node and only caught up on
+  // relaunch (founder NOTE 245 Leg 1 follow-on, 2026-11-17). We detect the new
+  // run by its id changing from this baseline, so a 408 refreshes the moment
+  // the node lands instead of never.
+  final before = await _currentAppearanceReportId(api);
   // Flip the shared "appearance running" flag so any open report view shows its
   // loading state (spinning Re-run + "Updating…") for the life of the run
   // (founder 2026-10-29: the run must visibly look like it's running).
@@ -186,6 +208,26 @@ Future<void> _runAppearanceInBackground(
     if (context.mounted) {
       AymaToast.show(context, 'Your Appearance report is ready.');
     }
+  } on ApiException catch (e) {
+    // A client timeout (408) on this known long-build endpoint is NOT a
+    // failure: the server persists the report regardless. Wait for the new run
+    // to actually land (its id changes from `before`), then fire the refresh —
+    // so the open view updates promptly instead of only on relaunch.
+    final landed = e.statusCode == 408 &&
+        await _awaitAppearanceLanded(
+            api, before, landingPollInterval, landingPollTimeout);
+    if (landed) {
+      ReportEvents.instance.completed('appearance');
+      if (context.mounted) {
+        AymaToast.show(context, 'Your Appearance report is ready.');
+      }
+    } else if (context.mounted) {
+      AymaToast.show(
+        context,
+        "Couldn't finish the analysis. Please try again.",
+        kind: AymaToastKind.error,
+      );
+    }
   } catch (_) {
     if (context.mounted) {
       AymaToast.show(
@@ -198,6 +240,38 @@ Future<void> _runAppearanceInBackground(
     // Clear the running state whether the run succeeded or failed, so the
     // loading indication never sticks on.
     ReportEvents.instance.stopped('appearance');
+  }
+}
+
+/// The caller's current Appearance report id, or `` when there is none yet
+/// (first-ever run) or the read fails — any landed run then counts as new.
+Future<String> _currentAppearanceReportId(ApiClient api) async {
+  try {
+    return (await api.appearanceReport('current')).id;
+  } catch (_) {
+    // Best-effort baseline: a missing / unreadable current report just means
+    // any run that lands next counts as new.
+    return '';
+  }
+}
+
+/// Poll the current Appearance report until a run NEWER than [before] lands
+/// (its id differs), bounded by [timeout]. Returns whether a new run appeared.
+/// Used only after a long-build POST timed out client-side while the server
+/// kept building — so the open report view refreshes the instant the node
+/// lands rather than waiting for a relaunch.
+Future<bool> _awaitAppearanceLanded(
+    ApiClient api, String before, Duration interval, Duration timeout) async {
+  final deadline = DateTime.now().add(timeout);
+  while (true) {
+    try {
+      final id = (await api.appearanceReport('current')).id;
+      if (id.isNotEmpty && id != before) return true;
+    } catch (_) {
+      // A transient read failure / not-ready read just means wait and retry.
+    }
+    if (!DateTime.now().isBefore(deadline)) return false;
+    await Future<void>.delayed(interval);
   }
 }
 
