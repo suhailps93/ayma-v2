@@ -85,18 +85,26 @@ def _order_key(node: GraphNode) -> tuple:
     return (1, node.level, node.id)
 
 
+def _source_out(node: GraphNode) -> dict:
+    """SOURCE provenance for ANY node (founder Nov 17: every node has a source).
+    Emitted on every node, not just images, so tapping a node's source works for
+    a chat-created fact (session + message id) or a web node (its link)."""
+    return {
+        "source_kind": getattr(node, "source_kind", None) or "",
+        "source_ref": getattr(node, "source_ref", None) or "",
+        "source_message_id": getattr(node, "source_message_id", None) or "",
+        "source_created_at": getattr(node, "source_created_at", None) or "",
+    }
+
+
 def _image_fields(node: GraphNode) -> dict:
-    """Contract 1 image-node fields, read defensively (Track A may not have
-    added every field to the base model yet — code against the contract)."""
+    """Contract 1 image-node fields (image-only), read defensively."""
     if node.answer_type != "image":
         return {}
     return {
         "image_url": node.answer if isinstance(node.answer, str) else "",
         "image_read": getattr(node, "image_read", None) or "",
         "is_you": getattr(node, "is_you", None) or "unknown",
-        "source_kind": getattr(node, "source_kind", None) or "",
-        "source_ref": getattr(node, "source_ref", None) or "",
-        "source_created_at": getattr(node, "source_created_at", None) or "",
     }
 
 
@@ -170,6 +178,7 @@ def _build_node(
         "editable": own_vis != "ayma_only",
         "children": children,
     }
+    out.update(_source_out(node))  # source on every node, not just images
     out.update(_image_fields(node))
     return out
 

@@ -43,6 +43,7 @@ class StoryNode {
     this.isYou = 'unknown',
     this.sourceKind = '',
     this.sourceRef = '',
+    this.sourceMessageId = '',
     this.sourceCreatedAt = '',
     this.statValue,
     this.statText = '',
@@ -94,6 +95,10 @@ class StoryNode {
   final String isYou;
   final String sourceKind;
   final String sourceRef;
+
+  /// The exact chat message this node was captured from (founder Nov 17) — so
+  /// tapping the node's source can open that conversation scrolled to it.
+  final String sourceMessageId;
   final String sourceCreatedAt;
 
   // --- report node kinds (2o P0) ---
@@ -144,6 +149,7 @@ class StoryNode {
       isYou: m['is_you'] as String? ?? 'unknown',
       sourceKind: m['source_kind'] as String? ?? '',
       sourceRef: m['source_ref'] as String? ?? '',
+      sourceMessageId: m['source_message_id'] as String? ?? '',
       sourceCreatedAt: m['source_created_at'] as String? ?? '',
       statValue: (m['stat_value'] as num?)?.toDouble(),
       statText: m['stat_text'] as String? ?? '',

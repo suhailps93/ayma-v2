@@ -250,6 +250,9 @@ def add_node(
     answer_type: str | None = None,
     provenance: Provenance | str = Provenance.STATED,
     node_id: str | None = None,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
 ) -> str:
     """Create an emergent node under ``parent_id`` (design §2.3): level =
     parent level + 1, homed in the parent's section unless ``section`` is given,
@@ -293,6 +296,7 @@ def add_node(
         "visibility": Visibility.PRIVATE.value,
         "provenance": prov,
         "updated_at": pg.now_iso(),
+        **_source_fields(source_kind, source_ref, source_message_id),
     }
     if answer_type is not None:
         e["answer_type"] = answer_type
@@ -306,6 +310,27 @@ def add_node(
     return nid
 
 
+def _source_fields(
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
+    source_created_at: str | None = None,
+) -> dict[str, Any]:
+    """The SOURCE provenance fields to stamp on a node at write time (founder
+    Nov 17: every node carries where it came from). Only non-empty fields are
+    returned, and ``source_created_at`` defaults to now when any source is set."""
+    out: dict[str, Any] = {}
+    if source_kind:
+        out["source_kind"] = source_kind
+    if source_ref:
+        out["source_ref"] = source_ref
+    if source_message_id:
+        out["source_message_id"] = source_message_id
+    if out:  # a node with a source carries when it was captured
+        out["source_created_at"] = source_created_at or pg.now_iso()
+    return out
+
+
 def add_loose_node(
     db,
     uid: str,
@@ -315,6 +340,9 @@ def add_loose_node(
     section: str = "misc",
     provenance: Provenance | str = Provenance.STATED,
     node_id: str | None = None,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
 ) -> str:
     """Record a free-form fact the user volunteered — the graph write path for
     the ``remember`` tool when the person-graph is authoritative (NOTE 228).
@@ -350,6 +378,7 @@ def add_loose_node(
         "visibility": Visibility.PRIVATE.value,
         "provenance": prov,
         "updated_at": pg.now_iso(),
+        **_source_fields(source_kind, source_ref, source_message_id),
     }
     model = OverlayNode.model_validate(e)
     overlay[nid] = model.model_dump(exclude_none=True)
@@ -394,6 +423,9 @@ def upsert_fact_node(
     answer_type: str = "narrative",
     confidence: float | None = None,
     children: list[dict] | None = None,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
 ) -> str:
     """Create-or-overwrite a stand-alone emergent node at a **stable** id — the
     graph write path for the live content writers that used to upsert a single
@@ -428,6 +460,7 @@ def upsert_fact_node(
         "visibility": vis,
         "provenance": prov,
         "updated_at": pg.now_iso(),
+        **_source_fields(source_kind, source_ref, source_message_id),
     }
     if confidence is not None:
         e["confidence"] = confidence

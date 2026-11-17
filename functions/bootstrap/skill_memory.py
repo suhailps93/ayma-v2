@@ -92,6 +92,7 @@ def _graph_upsert_skill(db, uid: str, page_type: str, ai_body: str) -> None:
         visibility=vis,
         provenance="inferred",
         label=page_type.replace("_", " "),
+        source_kind="skill_memory", source_ref=page_type,
     )
 
 
