@@ -155,7 +155,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
   TourFeature(
     featureId: 'person_graph',
     headline: 'See yourself as a graph',
-    subtitle: 'Open My person graph, then tap a section to expand its bullets.',
+    subtitle: 'Open My person graph — everything Ayma knows, wired like a '
+        'neural network. Pinch to zoom; tap a report or photo to open it.',
     icon: Icons.hub_outlined,
     anchorId: TourAnchors.profileGraphRow,
     tab: 3,

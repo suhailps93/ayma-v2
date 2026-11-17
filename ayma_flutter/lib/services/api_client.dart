@@ -6577,6 +6577,8 @@ class GraphNode {
     this.pageType = '',
     this.subtitle = '',
     this.imageUrl = '',
+    this.openType = '',
+    this.openId = '',
   });
 
   final String id;
@@ -6591,16 +6593,30 @@ class GraphNode {
   /// Ayma's read of it). Empty otherwise.
   final String imageUrl;
 
-  factory GraphNode.fromMap(Map<String, dynamic> m) => GraphNode(
-    id: m['id'] as String? ?? '',
-    kind: m['kind'] as String? ?? '',
-    label: m['label'] as String? ?? '',
-    text: m['text'] as String? ?? '',
-    visibility: m['visibility'] as String? ?? '',
-    pageType: m['page_type'] as String? ?? '',
-    subtitle: m['subtitle'] as String? ?? '',
-    imageUrl: m['image_url'] as String? ?? '',
-  );
+  /// Where tapping this node goes, from the server's `open` object:
+  /// `appearance_report` / `webfind_report` (both with an [openId]) or `image`
+  /// (uses [imageUrl] + [text]). Empty when the node only shows a detail panel.
+  final String openType;
+  final String openId;
+
+  /// A node the user can navigate FROM — opens a report or a photo on tap.
+  bool get isOpenable => openType.isNotEmpty;
+
+  factory GraphNode.fromMap(Map<String, dynamic> m) {
+    final open = (m['open'] as Map?)?.cast<String, dynamic>();
+    return GraphNode(
+      id: m['id'] as String? ?? '',
+      kind: m['kind'] as String? ?? '',
+      label: m['label'] as String? ?? '',
+      text: m['text'] as String? ?? '',
+      visibility: m['visibility'] as String? ?? '',
+      pageType: m['page_type'] as String? ?? '',
+      subtitle: m['subtitle'] as String? ?? '',
+      imageUrl: m['image_url'] as String? ?? '',
+      openType: open?['type'] as String? ?? '',
+      openId: open?['id'] as String? ?? '',
+    );
+  }
 }
 
 /// `GET /profile/graph` — person at the centre, sections around it, bullets

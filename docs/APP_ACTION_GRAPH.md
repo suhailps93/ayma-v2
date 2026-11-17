@@ -331,10 +331,21 @@ Bullet editor (embedded in the story screen, `bullet_sections_editor.dart`, driv
 
 ### 15a. My person graph (`/profile/graph`) — `person_graph_screen.dart`
 
+A neural-network-style map of **everything in the graph store** (Nov 16 2026
+founder direction): the person is the central neuron, each section a hub, and
+every leaf node — story bullets **and** the Appearance / web-findings reports,
+photos, skills and Ayma's assessment — a smaller neuron clustered around its
+hub, wired by glowing synapses. Built by `profile_graph.get_graph` from
+`person_graph_store.effective` (owner sees all visibilities; another member's
+`public_graph` shows public nodes only). Pinch to zoom, drag to pan.
+
 | Control | Does | Ayma |
 |---|---|---|
-| Section node / list row (tap) | Expand or collapse that section's bullets around the graph | `UI` |
-| Bullet node (tap) | Show its text and visibility (colour: public / private / Ayma-only) | `UI` |
+| Pinch / drag the canvas | Zoom + pan the whole web (`InteractiveViewer`) | `UI` |
+| Report node (tap) | Open its report — Appearance (`/appearance/current`) or web findings (`/deep-dive/{id}`), from the node's `open` target | `UI` / `open_screen` |
+| Photo node (tap) | Open the photo with Ayma's read (`PhotoViewer` caption) | `UI` |
+| Fact / skill / assessment node (tap) | Show its text + visibility in the detail panel | `UI` |
+| Info button → legend | What the node colours/kinds mean | `UI` |
 | Profile tab row "My person graph" | Open the graph | COVERED `open_screen person_graph` |
 
 ## 16. Profile details (`/settings/profile`) — `profile_settings_screen.dart`, `partner_preferences_fields.dart`
