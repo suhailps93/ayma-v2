@@ -3396,10 +3396,16 @@ class ApiClient {
         jsonDecode(r.body) as Map<String, dynamic>);
   }
 
-  /// `GET /s/{token}/data` — the public, unauthenticated snapshot behind a
-  /// share link, in the same shape as [getReport].
-  Future<LivingReport> sharedReport(String token) async {
-    final r = await _http.get(_uri('/s/${Uri.encodeComponent(token)}/data'));
+  /// `GET /s/{token}/tree` — the public, unauthenticated share snapshot as a
+  /// Node-Visualiser tree (2o P5), the token-scoped counterpart of
+  /// [reportTree]. It sends NO auth header: the unguessable token is the only
+  /// thing granting read access, and the server never runs the owner-checked
+  /// `/report/.../tree` path — so the shared report renders through the shared
+  /// GraphTreeView without widening who can see it. A revoked / unknown token
+  /// comes back as a 404 [ApiException], which the view turns into its "no
+  /// longer available" empty state.
+  Future<GraphTree> sharedReportTree(String token) async {
+    final r = await _http.get(_uri('/s/${Uri.encodeComponent(token)}/tree'));
     if (r.statusCode != 200) {
       throw ApiException(
         'shared report failed.',
@@ -3407,7 +3413,7 @@ class ApiClient {
         body: r.body,
       );
     }
-    return LivingReport.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
+    return GraphTree.fromMap(jsonDecode(r.body) as Map<String, dynamic>);
   }
 
   /// `POST /report/{report_type}/{report_id}/correct` — one tap-to-correct

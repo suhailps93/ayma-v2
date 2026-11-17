@@ -586,10 +586,34 @@ visualiser the report node kinds.
   **`GET /report/{type}/{id}/tree`** (same 403/404 semantics as the block
   reader); client `ApiClient.reportTree(type, id)` → `GraphTree`.
 - Report nodes are display-only: visibility is always `public`, `editable`
-  carries the block's own flag. Tests: `tests/test_report_tree.py` (9),
-  `test/node_visualiser_test.dart` (+3). Next: P2/P3 point the appearance /
-  deep-dive / match screens at `reportTree` + `GraphTreeView`, deleting
-  `LivingReportView` + those screens' old bodies in the same change (P6).
+  carries the block's own flag. Tests: `tests/test_report_tree.py`,
+  `test/node_visualiser_test.dart` (+3).
+- **Shared-report snapshot tree (P5)** — a share link (`/s/{token}`) is a FROZEN,
+  public, unauthenticated snapshot (`share.fetch_public`); it must NOT go
+  through the owner-checked `report_node_tree`/`/report/.../tree` or a
+  token-holder who isn't the owner would be denied the body. So
+  `report_tree.snapshot_node_tree(snapshot)` converts the snapshot's already-
+  authorized `{title, sections}` straight to a node tree (reusing the same
+  `_sections_to_tree`/`_block_to_nodes` as the live path), forcing `meta =
+  {owner_uid:"", viewer_can_edit:False}` — identical to `/s/{token}/data`.
+  Served at **`GET /s/{token}/tree`** (the same public `_public_snapshot` path
+  as `/s/{token}/data`, `/s/` public rate limit); client
+  `ApiClient.sharedReportTree(token)` → `GraphTree`, no auth header.
+  `SharedReportScreen` renders it through `GraphTreeView(loader: …,
+  isOwner:false, surface:report)` — a new `loader` callback on `GraphTreeView`
+  for the token path (it can't use `reportType`/`reportId`, which hit the
+  owner-checked endpoint). The old `LivingReportView` body (and the now-orphaned
+  `ApiClient.sharedReport`/`/data` client method) were deleted. Read-only:
+  `isOwner:false` suppresses every node chat/edit/correct affordance. Tests:
+  `tests/test_report_tree.py` snapshot cases, `tests/test_share.py`
+  `test_tree_is_public_and_unknown_token_404s`, `test/share_report_test.dart`
+  (renders through the tree unauthed; a revoked/unknown token shows no body).
+- Remaining real `LivingReportView(` hosts after P5 (this staging base):
+  `story_editor_screen.dart:769` (Your Story report body) and
+  `match_report_screen.dart:356` (match body — P3's migration not yet in this
+  base). `public_profile_screen.dart` already renders `GraphTreeView` here. Every
+  other `LivingReportView` mention in `lib/` is a doc-comment reference, not a
+  host. P6 deletes `living_report_view.dart` once its last host migrates.
 
 ## NOTE 250 visualiser follow-ups (Nov 17 2026)
 

@@ -5205,6 +5205,21 @@ async def share_data(token: str) -> dict[str, object]:
     }
 
 
+@app.get("/s/{token}/tree")
+async def share_tree(token: str) -> dict[str, object]:
+    """The snapshot as a Node-Visualiser tree, for the app's read-only
+    shared-report deep-link view (2o P5). The token-scoped counterpart to
+    ``/report/{type}/{id}/tree``: it goes through the SAME public,
+    unauthenticated ``_public_snapshot`` path as ``/s/{token}/data`` (no owner
+    check, ``meta.viewer_can_edit`` always False), so a token holder who isn't
+    the owner still sees the report and the owner-only tree endpoint is never
+    reached — the share's access scope is unchanged."""
+    snap = await _public_snapshot(token)
+    import report_tree
+
+    return await asyncio.to_thread(report_tree.snapshot_node_tree, snap)
+
+
 @app.get("/s/{token}/card.png")
 async def share_card(token: str, format: Literal["story", "link"] = "link") -> Response:
     """The branded share card: ``link`` 1200x630 (og:image) or ``story``
