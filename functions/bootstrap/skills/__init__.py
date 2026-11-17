@@ -55,6 +55,7 @@ from . import (
     fact_source,
     followup,
     guided_tour,
+    node_dedupe,
     person_graph_tools,
     physical_attributes,
     propose_date_plan,
@@ -118,6 +119,17 @@ def _person_graph_tool_skills() -> list[Skill]:
     from config import CONFIG
 
     return list(person_graph_tools.SKILLS) if CONFIG.person_graph_tools else []
+
+
+def _node_dedupe_skills() -> list[Skill]:
+    """The node-dedupe cross-check/resolution tools (``node_dedupe.SKILLS``),
+    present only when ``NODE_DEDUPE`` is on in this process. Off by default; the
+    find pass is read-only and resolution only ever runs on the user's explicit
+    choice (never silent). Checked per call, so the flag flips without a
+    restart. Composed into both surfaces (text + voice)."""
+    from config import CONFIG
+
+    return list(node_dedupe.SKILLS) if CONFIG.node_dedupe else []
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,
@@ -286,7 +298,7 @@ def session_tool_declarations(
     ``read_recent_failures``, the analysis-mode-only failure-log reader."""
     reg = (
         list(_REGISTRY) + _recall_skills() + _web_search_skills()
-        + _person_graph_tool_skills() + _TEXT_ONLY_REGISTRY
+        + _person_graph_tool_skills() + _node_dedupe_skills() + _TEXT_ONLY_REGISTRY
         + _FEEDBACK_REGISTRY + _STORY_MANAGE_REGISTRY + app_control.COMMAND_SKILLS
     )
     if story:
@@ -363,7 +375,7 @@ def make_session_tool_fns(
     """
     out: dict[str, Callable[..., str]] = {}
     for s in (_REGISTRY + _recall_skills() + _web_search_skills()
-              + _person_graph_tool_skills()):
+              + _person_graph_tool_skills() + _node_dedupe_skills()):
         if s.name in ("remember", *_PROVENANCE_NAMES) and session_ctx:
             out[s.name] = s.bind(db, uid, **session_ctx)
         elif s.name == "find_fact_source" and deep_dive_ctx:
@@ -797,7 +809,7 @@ def make_livekit_tools(
     tools = []
     for s in (
         list(_REGISTRY) + _recall_skills() + _web_search_skills()
-        + _person_graph_tool_skills() + _STORY_MANAGE_REGISTRY
+        + _person_graph_tool_skills() + _node_dedupe_skills() + _STORY_MANAGE_REGISTRY
         + app_control.VOICE_SKILLS + guided_tour.VOICE_SKILLS
         + _ANALYSIS_REGISTRY
     ):

@@ -127,6 +127,33 @@ def _entry(overlay: dict[str, dict], node_id: str) -> dict:
     return dict(e) if isinstance(e, dict) else {}
 
 
+def _dedupe_collapse_id(
+    db, uid: str, text: str, *, section: str | None = None
+) -> Optional[str]:
+    """Write-time prevention (node-dedupe, founder Nov 17). When
+    ``CONFIG.node_dedupe_prevention`` is on and ``text`` is an EXACT normalized
+    match for an existing node's content, return that node's id so the caller
+    reuses it instead of minting a duplicate. Exact-only = high precision, no
+    silent fuzzy merge — near/semantic duplicates route to the user-confirmed
+    cross-check resolution, never a silent write.
+
+    Flag-off (the default) returns ``None`` so every creation path behaves
+    exactly as before; best-effort — any failure returns ``None`` and never
+    blocks a write. Kept here as a single localized hook (one call site per
+    free-minting path) so Track A's image-node changes merge cleanly."""
+    from config import CONFIG
+
+    if not getattr(CONFIG, "node_dedupe_prevention", False):
+        return None
+    try:
+        import person_graph_index as _index
+
+        idx = _index.build_index(db, uid)
+        return _index.find_exact_match(idx, text, section=section)
+    except Exception:  # noqa: BLE001 - prevention is best-effort, never blocks
+        return None
+
+
 # --- the five tools (design §8.2) -----------------------------------------
 
 
@@ -245,6 +272,14 @@ def add_node(
     if sec not in question_tree.section_meta():
         raise ValueError(f"unknown section {sec!r} for emergent node")
 
+    # Write-time prevention: an off-script fact that exactly restates an
+    # existing node reuses it instead of minting a duplicate (answer-bearing
+    # nodes only — a bare structural label is never collapsed).
+    if node_id is None and answer is not None:
+        hit = _dedupe_collapse_id(db, uid, str(answer), section=sec)
+        if hit is not None:
+            return hit
+
     nid = node_id or f"emergent.{secrets.token_hex(4)}"
     if nid in overlay or pg.seed_node(nid) is not None:
         raise ValueError(f"node id {nid!r} already exists")
@@ -295,6 +330,11 @@ def add_loose_node(
         raise ValueError("add_loose_node needs a non-empty fact")
     if section not in question_tree.section_meta():
         raise ValueError(f"unknown section {section!r} for loose node")
+    # Write-time prevention: an exact restatement reuses the existing node.
+    if node_id is None:
+        hit = _dedupe_collapse_id(db, uid, fact, section=section)
+        if hit is not None:
+            return hit
     overlay = load_overlay(db, uid)
     nid = node_id or f"emergent.{secrets.token_hex(4)}"
     if nid in overlay or pg.seed_node(nid) is not None:
@@ -812,6 +852,173 @@ def query_nodes(
     return out
 
 
+# --- node dedupe: resolution + write-time prevention -----------------------
+# These are the user-confirmed resolution primitives for the node-dedupe
+# cross-check (founder Nov 17). Nothing here runs silently: Ayma surfaces a
+# candidate group in chat (``skills/node_dedupe.py``) and the user's choice —
+# merge / link-as-related / keep-both — calls one of these.
+
+
+def link_related(
+    db, uid: str, a: str, b: str, *, label: str | None = None
+) -> bool:
+    """Link two non-parent/child nodes as RELATED (Contract 4) — a two-way typed
+    ``related`` link (a reference, never a copy). Safe to re-run (``add_link`` is
+    idempotent). Returns True if any link was newly added. At least one side must
+    be an overlay node (a seed node's links are fixed); the link is placed on
+    whichever side(s) are overlay nodes."""
+    rel = pg.StrictLinkType.RELATED.value
+    added = False
+    if isinstance(load_overlay(db, uid).get(a), dict):
+        added |= add_link(db, uid, a, b, rel, label=label)
+    if isinstance(load_overlay(db, uid).get(b), dict):
+        added |= add_link(db, uid, b, a, rel, label=label)
+    return added
+
+
+def merge_nodes(db, uid: str, survivor_id: str, dup_id: str) -> dict:
+    """Fold the duplicate node ``dup_id`` into ``survivor_id`` and remove it —
+    the user-confirmed "merge" resolution. NEVER silent, NEVER automatic.
+
+    The duplicate's live answer is retired to the survivor's Ayma-only dated
+    ``history`` (a change of record is itself a fact, mirroring ``set_answer``);
+    its children are rehomed onto the survivor; its links are carried over; and
+    any OTHER node that pointed at ``dup_id`` (parent or link target) is
+    repointed at the survivor so no dangling reference is left. Then ``dup_id``
+    is deleted. ``dup_id`` must be an overlay (emergent) node — a seed node is a
+    shared template and is never deleted; to merge toward a seed node, make the
+    seed node the survivor. Returns a summary dict. Raises ``ValueError`` on a
+    bad request."""
+    if survivor_id == dup_id:
+        raise ValueError("merge_nodes: survivor and duplicate are the same node")
+    if pg.seed_node(dup_id) is not None:
+        raise ValueError(
+            f"merge_nodes: {dup_id!r} is a seed node and cannot be deleted; "
+            "merge toward it instead (make it the survivor)"
+        )
+    overlay = load_overlay(db, uid)
+    if dup_id not in overlay:
+        raise ValueError(f"merge_nodes: duplicate {dup_id!r} not found in overlay")
+    if pg.seed_node(survivor_id) is None and survivor_id not in overlay:
+        raise ValueError(f"merge_nodes: survivor {survivor_id!r} not found")
+
+    dup = dict(overlay[dup_id])
+    surv_is_overlay = survivor_id in overlay
+    surv = _entry(overlay, survivor_id)
+
+    # 1) retire the duplicate's live answer to the survivor's history.
+    if surv_is_overlay:
+        dup_answer = dup.get("answer")
+        if dup_answer not in (None, "") and dup_answer != surv.get("answer"):
+            history = list(surv.get("history") or [])
+            history.append(
+                {
+                    "answer": dup_answer,
+                    "date": pg.now_iso(),
+                    "provenance": dup.get("provenance") or Provenance.STATED.value,
+                }
+            )
+            surv["history"] = history
+
+        # 2) rehome the duplicate's own child bullets onto the survivor.
+        dup_children = list(dup.get("children") or [])
+        if dup_children:
+            surv["children"] = list(surv.get("children") or []) + dup_children
+
+        # 3) carry the duplicate's links over (minus any self/survivor targets).
+        dup_links = [
+            l for l in (dup.get("links") or [])
+            if isinstance(l, dict) and l.get("target") not in (dup_id, survivor_id)
+        ]
+        if dup_links:
+            surv_links = list(surv.get("links") or [])
+            have = {(l.get("target"), l.get("type")) for l in surv_links if isinstance(l, dict)}
+            for l in dup_links:
+                if (l.get("target"), l.get("type")) not in have:
+                    surv_links.append(l)
+                    have.add((l.get("target"), l.get("type")))
+            surv["links"] = surv_links
+
+        surv["updated_at"] = pg.now_iso()
+        overlay[survivor_id] = OverlayNode.model_validate(surv).model_dump(exclude_none=True)
+
+    # 4) repoint every OTHER overlay node that referenced the duplicate.
+    rehomed_children = 0
+    for nid, e in overlay.items():
+        if nid in (dup_id, survivor_id) or not isinstance(e, dict):
+            continue
+        changed = False
+        if e.get("parent") == dup_id:
+            e["parent"] = survivor_id
+            rehomed_children += 1
+            changed = True
+        links = e.get("links")
+        if links:
+            new_links: list = []
+            have: set = set()
+            for l in links:
+                if isinstance(l, dict) and l.get("target") == dup_id:
+                    l = dict(l)
+                    l["target"] = survivor_id
+                if isinstance(l, dict):
+                    if l.get("target") == nid:  # repointing made it a self-link
+                        continue
+                    sig = (l.get("target"), l.get("type"))
+                    if sig in have:  # collapsed onto an existing link; drop dup
+                        continue
+                    have.add(sig)
+                new_links.append(l)
+            if new_links != links:
+                e["links"] = new_links
+                changed = True
+        if changed:
+            overlay[nid] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+
+    # 5) drop the duplicate.
+    del overlay[dup_id]
+    replace_overlay(db, uid, overlay)
+    return {
+        "survivor": survivor_id,
+        "removed": dup_id,
+        "rehomed_children": rehomed_children,
+    }
+
+
+def _dedupe_ref(db, uid: str):
+    # A sibling document in the user's own graph collection (NOT ``main``): the
+    # overlay doc is rewritten whole by ``replace_overlay`` (merge=False), which
+    # would wipe a field stored there, so "keep both" decisions live next to it.
+    return (
+        db.collection("users").document(uid)
+        .collection(_GRAPH_COLLECTION).document("dedupe")
+    )
+
+
+def dedupe_dismiss(db, uid: str, a: str, b: str) -> None:
+    """Record a "keep both" decision for the pair ``(a, b)`` so the cross-check
+    never re-surfaces it. Stored on a ``dedupe`` sibling doc in the user's graph
+    collection (no parallel store), as a list of sorted ``"a|b"`` keys."""
+    key = "|".join(sorted((str(a), str(b))))
+    snap = _dedupe_ref(db, uid).get()
+    data = snap.to_dict() if snap and snap.exists else None
+    kept = list((data or {}).get("dedupe_dismissed") or [])
+    if key not in kept:
+        kept.append(key)
+        _dedupe_ref(db, uid).set({"dedupe_dismissed": kept}, merge=True)
+
+
+def dedupe_dismissed(db, uid: str) -> set[tuple[str, str]]:
+    """The set of "keep both" pair keys the user has dismissed."""
+    snap = _dedupe_ref(db, uid).get()
+    data = snap.to_dict() if snap and snap.exists else None
+    out: set[tuple[str, str]] = set()
+    for k in (data or {}).get("dedupe_dismissed") or []:
+        parts = str(k).split("|")
+        if len(parts) == 2:
+            out.add((parts[0], parts[1]))
+    return out
+
+
 # --- relationship-type registry (design §2.4) ------------------------------
 
 # Strict types are always present; free-form types are added here and reused
@@ -825,6 +1032,7 @@ _STRICT_REGISTRY = {
         pg.StrictLinkType.SAME_TOPIC: "same subject, different home",
         pg.StrictLinkType.SAME_PERSON: "about the same person",
         pg.StrictLinkType.CONTRADICTS: "the two nodes conflict",
+        pg.StrictLinkType.RELATED: "same entity/topic, not identical, not parent/child",
     }.items()
 }
 

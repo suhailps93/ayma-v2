@@ -437,3 +437,59 @@ Your Story / public / grounding bullet.
   fresh reports generate from the nodes. Flag OFF is byte-identical (prod still
   runs the collections until its own cutover).
 - Tests: `tests/test_reports_as_nodes.py` (11) + `tests/test_reports_as_nodes_web.py` (8).
+
+## Node dedupe — index, cross-check, resolution (founder Nov 17 2026)
+
+Founder's ask: "a way to index and cross check the nodes to find related nodes
+that is not parent and child so that there is no duplicated content." Branch
+`fleet/node-dedupe-index`. Additive and behind flags (`NODE_DEDUPE`,
+`NODE_DEDUPE_PREVENTION`, both default off); flag-off is byte-identical to today.
+
+- **Index** — `person_graph_index.build_index(db, uid)` projects the whole
+  effective graph (`seed ⊕ overlay`, every kind) to flat `NodeIndexEntry`s: id,
+  parent/section path, visibility, kind (`seed`/`grounding`/`bullet`/`image`/
+  `report_doc`), the node's content text, and a deterministic lexical signature
+  (normalized text + content-token set). An IMAGE node indexes its `image_read`
+  (Contract 1, not the storage URL); a `report_doc` node its flattened payload
+  strings. Read-only, derived on demand — no parallel store, no second index DB.
+- **Embedding facility:** there is NO LiveKit-routed TEXT-embedding endpoint
+  (the only embedding model, `CONFIG.image_embedding_model`, is a Vertex
+  multimodal photo call, and `AGENTS.md` forbids routing inference off LiveKit).
+  So the "semantic embedding" is served in two layers that stay on existing
+  backend patterns: a lexical signature in the index, plus a SEMANTIC judge over
+  the bounded ambiguous candidate set run through the existing LiveKit gateway
+  (`gemini.generate_json`) — not a stored vector.
+- **Cross-check** — `person_graph_crosscheck.find_candidates(index)` compares
+  every non-ancestor/descendant pair: exact (same normalized text) and
+  near-duplicate (difflib ratio / token Jaccard) → duplicate pairs/groups;
+  shared-entity mid-band overlap → related (Contract 4) candidates. `O(n²)` over
+  a few-hundred-node graph is trivial. `classify_pairs(...)` optionally promotes
+  the ambiguous set with the LiveKit semantic judge (`duplicate`/`related`/
+  `unrelated`), bounded by a pair cap; best-effort (inference failure keeps the
+  lexical result). Finds dups across sections/branches and between report
+  grounding nodes and story bullets — career facts + photo-reads-vs-facts are
+  the known hunting grounds.
+- **Contract 4 (related links):** `links:[{target, type:"related", label?}]` —
+  a new first-class `StrictLinkType.RELATED` (so deterministic code and Track C's
+  graph highlight act on it); `label` is the short human reason. Same `Link`
+  shape as every other typed link; a reference, never a copy. Registered in the
+  relationship-type registry.
+- **Resolution — NEVER silent.** Nothing is auto-merged/deleted. Ayma surfaces a
+  candidate group in chat (`skills/node_dedupe.py`: `pg_find_duplicates` read-only,
+  `pg_resolve_duplicate` applies the user's choice) behind `NODE_DEDUPE`:
+  - **merge** → `store.merge_nodes(survivor, dup)`: fold the duplicate's answer
+    to the survivor's Ayma-only history, rehome its children, carry its links,
+    repoint every reference, delete it (seed nodes never deleted — merge toward);
+  - **link** → `store.link_related(a, b, label)`: two-way `related` link;
+  - **keep** → `store.dedupe_dismiss(a, b)`: stored on the graph doc so the pair
+    is never re-raised.
+- **Write-time prevention** — `NODE_DEDUPE_PREVENTION` on: the free-minting
+  creation paths (`add_loose_node`, off-script `add_node`) first check the index
+  and REUSE an existing node on an EXACT content match instead of duplicating
+  (one localized `_dedupe_collapse_id` hook). Exact-only = high precision, no
+  silent fuzzy merge; near/semantic dups still route to the user-confirmed flow.
+  Stable-id upsert paths (`upsert_fact_node`/`upsert_report_node`) are untouched.
+- **Staging runner** (read-only, never mutates the graph):
+  `PYTHONPATH=. python3 tools/person_graph_dedupe_run.py <uid> --project=ayma-staging [--semantic] [--limit=N]`.
+  Prints duplicate groups + related pairs with ids/kind/section/visibility/snippet.
+- Tests: `tests/test_node_dedupe.py` (12).

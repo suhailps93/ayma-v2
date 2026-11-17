@@ -69,6 +69,14 @@ class StrictLinkType(str, Enum):
     SAME_TOPIC = "same_topic"
     SAME_PERSON = "same_person"
     CONTRADICTS = "contradicts"
+    # Contract 4 (node-dedupe, founder Nov 17): two nodes that are strongly
+    # RELATED — same entity/topic, NOT identical and NOT ancestor/descendant —
+    # linked after the cross-check surfaces them and the user keeps both. A
+    # first-class strict type so deterministic code (the graph-highlight
+    # consumer and write-time prevention) acts on it; ``label`` carries the
+    # short human reason ("both about your time at Google"). A reference, never
+    # a copy — the two nodes stay where they are.
+    RELATED = "related"
 
 
 _STRICT_LINK_VALUES = {t.value for t in StrictLinkType}
