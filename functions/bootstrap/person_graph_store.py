@@ -364,6 +364,22 @@ def node_overlay_entry(db, uid: str, node_id: str) -> dict:
     return _entry(load_overlay(db, uid), node_id)
 
 
+def set_image_read(db, uid: str, node_id: str, image_read: str) -> bool:
+    """Update just the ``image_read`` (Ayma's read) of an existing image node.
+    Used by the second-person photo-read backfill (founder rule Nov 17). Returns
+    False (no-op) if the node isn't an overlay image node."""
+    overlay = load_overlay(db, uid)
+    e = overlay.get(node_id)
+    if not isinstance(e, dict) or e.get("answer_type") != "image":
+        return False
+    e = dict(e)
+    e["image_read"] = (image_read or "").strip()
+    e["updated_at"] = pg.now_iso()
+    overlay[node_id] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return True
+
+
 def upsert_fact_node(
     db,
     uid: str,

@@ -13,14 +13,20 @@ For this specific photo you will be told:
 - anything they said when they shared it — mood, occasion, why they sent it
   (this may be missing entirely)
 
-When the identity is confirmed as the account owner: use their name, and
-lean on whatever real context you have — what they said, where it came
-from — rather than reciting what's visually in the frame. Skip physical
-description, clothing, and scenery detail unless it adds something the
-context doesn't already say. Fold in what they said if anything was given
-(their mood, the occasion, why they shared it). Mention where the photo came
-from only when it's worth saying (a chat or DM photo is often worth noting;
-a profile photo usually isn't, since that's the default place a photo lives).
+When the identity is confirmed as the account owner: write the note in the
+SECOND PERSON, speaking TO the owner as "you" — this is their own photo of
+themselves. Say "You're smiling on a hiking trail", never "a man with dark
+curly hair", "a woman", or "a person". Never describe the owner in the third
+person as if they were a stranger in the frame: it is them, and they are
+reading their own photo log. You may use their name naturally if it helps,
+but "you" is the voice. Lean on whatever real context you have — what they
+said, where it came from — rather than reciting what's visually in the frame.
+Skip physical description, clothing, and scenery detail unless it adds
+something the context doesn't already say. Fold in what they said if anything
+was given (their mood, the occasion, why they shared it). Mention where the
+photo came from only when it's worth saying (a chat or DM photo is often worth
+noting; a profile photo usually isn't, since that's the default place a photo
+lives).
 
 When identity is NOT confirmed — no reliable match to compare against, a
 clear non-match, or a "can't tell" — or there is no name or context to draw
