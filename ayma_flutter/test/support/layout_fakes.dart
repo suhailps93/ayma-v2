@@ -177,6 +177,85 @@ Map<String, dynamic> _report() => {
   'meta': {'owner_uid': 'me', 'viewer_can_edit': true},
 };
 
+/// A deliberately TALL Node-Visualiser tree (`…/tree` reads): a web-findings
+/// "Facts" section of many long narrative nodes plus stat / confidence / link /
+/// candidate nodes — the exact shape that overflowed the web-research report
+/// (founder build 2488, "BOTTOM OVERFLOWED BY 466 PIXELS"). Served for every
+/// report, shared-report and other-user graph tree read so the layout matrix
+/// pumps real, scroll-length report content; a report body that is NOT wrapped
+/// in a scroll view overflows here and fails the matrix.
+List<Map<String, dynamic>> _factsSections() => [
+  {
+    'page_type': 'facts',
+    'title': 'Facts',
+    'order': 0,
+    'nodes': [
+      for (var i = 0; i < 12; i++)
+        {
+          'id': 'fact_$i',
+          'section': 'facts',
+          'label': 'Finding number $i found on the open web',
+          'text': kLongText,
+          'answer_type': 'narrative',
+          'visibility': 'public',
+          'subtree_visibility': 'public',
+          'editable': true,
+          'source_kind': 'web',
+          'source_ref': 'https://example.com/finding/$i',
+        },
+      for (var i = 0; i < 3; i++)
+        {
+          'id': 'stat_$i',
+          'section': 'facts',
+          'label': 'A very long statistic label number $i that wraps across lines',
+          'text': kLongText,
+          'answer_type': 'stat',
+          'stat_value': 7.5,
+          'stat_text': '7.5',
+          'stat_basis': kLongText,
+          'visibility': 'public',
+          'subtree_visibility': 'public',
+          'editable': false,
+        },
+      {
+        'id': 'confidence',
+        'section': 'facts',
+        'label': 'Overall confidence in these web findings, a long label to wrap',
+        'text': 'Medium',
+        'answer_type': 'stat',
+        'stat_text': 'Medium',
+        'visibility': 'public',
+        'subtree_visibility': 'public',
+      },
+      for (var i = 0; i < 4; i++)
+        {
+          'id': 'link_$i',
+          'section': 'facts',
+          'label': 'A very long social or profile link label number $i that keeps going',
+          'text': '',
+          'answer_type': 'link',
+          'link_url': 'https://example.com/a/very/long/path/that/keeps/going/$i',
+          'link_platform': ['linkedin', 'github', 'youtube', ''][i],
+          'visibility': 'public',
+          'subtree_visibility': 'public',
+        },
+      // A pending reverse-image-search candidate — the deep-dive report wires
+      // its "This is me" / "Not me" buttons, so the matrix exercises that row.
+      {
+        'id': 'cand_0',
+        'section': 'facts',
+        'label': '',
+        'text': kLongText,
+        'answer_type': 'candidate',
+        'image_url': 'https://cdn/candidate0.jpg',
+        'candidate_id': 'c0',
+        'visibility': 'public',
+        'subtree_visibility': 'public',
+      },
+    ],
+  },
+];
+
 Object? _bodyFor(String path) {
   if (path == '/dm/assist') {
     // Coach mode with the longest plausible chips + tip, so the matrix holds
@@ -220,13 +299,16 @@ Object? _bodyFor(String path) {
       'visibilities': ['public', 'private', 'ai_only'],
     };
   }
-  if (path == '/profile/graph/tree') {
+  if (path.startsWith('/profile/graph/tree')) {
     // A Career section with a dated and an undated entry + long text, so the
     // matrix holds the dedicated Career view's timeline rows at every viewport,
-    // scale and direction.
+    // scale and direction — PLUS the tall web-findings Facts section so Your
+    // Story / public-profile pump real scroll-length node content (a
+    // non-scrolling body would overflow here, build 2488).
     return {
-      'surface': 'story',
+      'surface': path == '/profile/graph/tree' ? 'story' : 'public_profile',
       'sections': [
+        ..._factsSections(),
         {
           'page_type': 'career',
           'title': 'Career',
@@ -430,6 +512,14 @@ Object? _bodyFor(String path) {
     // The match report carries the embedded "Taste match"
     // section so the matrix exercises it on the match-report route.
     return {..._report(), 'taste': {..._tastePayload(), 'status': 'ok'}};
+  }
+  // A report / shared-report as a Node-Visualiser TREE (`…/tree`): the tall
+  // web-findings Facts tree so the matrix pumps full-length report content
+  // (deep_dive / appearance / match / story_ai_notes / shared). Must precede
+  // the living-report block shape below, which `/report/` also matches.
+  if (path.endsWith('/tree') &&
+      (path.startsWith('/report/') || path.startsWith('/s/'))) {
+    return {'surface': 'report', 'sections': _factsSections()};
   }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
