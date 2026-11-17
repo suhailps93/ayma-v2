@@ -16,6 +16,7 @@ import '../services/auth_service.dart';
 import '../services/biometric_consent.dart';
 import '../services/legal_links.dart';
 import '../services/profile_service.dart';
+import '../services/report_cache.dart';
 import '../services/sign_in_voice_intent.dart';
 import '../services/transcript_store.dart';
 import '../services/voice_session_controller.dart';
@@ -319,8 +320,12 @@ class _SignInScreenState extends State<SignInScreen>
     _resumeTimer?.cancel();
     setState(() => _busy = true);
     try {
-      await action();
+      final cred = await action();
       if (!mounted || currentEpoch != _runEpoch) return;
+      final uid = cred.user?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(ReportCache.instance.writeBootRoute(uid, '/'));
+      }
       await _hydrateAccent();
       if (!mounted || currentEpoch != _runEpoch) return;
       await _stopVoice();

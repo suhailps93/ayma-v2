@@ -193,6 +193,10 @@ class GraphSim {
         var dx = ni.x - nj.x;
         var dy = ni.y - nj.y;
         var d2 = dx * dx + dy * dy;
+        // Bounded repulsion radius (400px): beyond this, inverse-square force
+        // is imperceptible (<0.001) but computing math.sqrt across tens of
+        // thousands of node pairs stalls the UI thread (NOTE 250 ANR 04:22).
+        if (d2 > 400 * 400) continue;
         if (d2 < 1e-4) {
           dx = (i - j).isEven ? 0.1 : -0.1;
           dy = 0.1;

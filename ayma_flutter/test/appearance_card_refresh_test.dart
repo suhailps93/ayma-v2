@@ -5,6 +5,7 @@
 // paints the last cached report instantly (stale-while-revalidate) and then
 // fetches fresh; this proves the card rebuilds from the FRESH report when it
 // lands instead of leaving the cache-restored one on screen.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -316,5 +317,83 @@ void main() {
     // the test (the card is unaffected — it already shows the fresh run).
     await tester.pump(const Duration(seconds: 20));
     expect(find.text('7.4'), findsOneWidget);
+  });
+
+  testWidgets(
+      'NOTE 250 Leg 1: re-run with a new report id (Vo2iuT4) overwrites '
+      'the cache and repaints the card with fresh scores',
+      (tester) async {
+    const uid = 'demo-test1';
+    // Stale run from 06:47Z cached under the user's uid key: scores 7.5 / 6.0
+    SharedPreferences.setMockInitialValues({
+      'report_cache:$uid:appearance:$uid': jsonEncode(_report(
+        faceScore: 7.5,
+        bodyScore: 6.0,
+        bodyPhotoId: 'seed_body',
+        bodyPhotoUrl: 'body.jpg',
+        createdAt: '2026-11-17T06:47:00Z',
+      )),
+    });
+
+    final img = await _decoded(tester);
+
+    // Network request gate: holds the network response so we can assert the
+    // cached scores paint first.
+    final netGate = Completer<Map<String, dynamic>>();
+    final api = ApiClient(
+      httpClient: MockClient((req) async {
+        final payload = await netGate.future;
+        return http.Response(
+          jsonEncode(payload),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+
+    // Screen opened with the new run id Vo2iuT4
+    await tester.pumpWidget(MaterialApp(
+      home: AppearanceReportScreen(
+        reportId: 'Vo2iuT4',
+        myUid: uid,
+        apiClient: api,
+        imageFor: (_) => DecodedImage(img),
+      ),
+    ));
+
+    // Stale cache restores and paints (6.0 renders as '6' per score formatting):
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.text('7.5'), findsOneWidget);
+    expect(find.text('6'), findsOneWidget);
+
+    // Fresh run Vo2iuT4 from 11:33:27Z lands: scores 7.8 / 6.2
+    netGate.complete(_report(
+      faceScore: 7.8,
+      bodyScore: 6.2,
+      bodyPhotoId: 'seed_body',
+      bodyPhotoUrl: 'body.jpg',
+      createdAt: '2026-11-17T11:33:27Z',
+    ));
+
+    // Let the fresh fetch land and swap in:
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    // Card repaints with fresh scores:
+    expect(find.text('7.8'), findsOneWidget);
+    expect(find.text('6.2'), findsOneWidget);
+    expect(find.text('7.5'), findsNothing);
+    expect(find.text('6'), findsNothing);
+
+    // Cache is overwritten with the fresh payload:
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('report_cache:$uid:appearance:$uid');
+    expect(cached, isNotNull);
+    final cachedJson = jsonDecode(cached!) as Map<String, dynamic>;
+    expect(cachedJson['meta']['created_at'], '2026-11-17T11:33:27Z');
   });
 }

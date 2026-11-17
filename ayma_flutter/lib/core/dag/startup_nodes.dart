@@ -256,7 +256,7 @@ class StartupNodes {
   /// behind it — forever.
   static Future<void> _waitForSplashFirstPaint() async {
     try {
-      await SplashFirstPaint.done.timeout(const Duration(seconds: 10));
+      await SplashFirstPaint.done.timeout(const Duration(seconds: 2));
     } catch (_) {
       // The splash never painted in time: proceed rather than hang startup.
     }

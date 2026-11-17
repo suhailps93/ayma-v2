@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import '../models/story_node.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
+import '../util/cold_start_retry.dart';
 import 'node_visualiser.dart';
 
 class GraphTreeView extends StatefulWidget {
@@ -115,9 +116,12 @@ class GraphTreeViewState extends State<GraphTreeView>
       _notFound = false;
     });
     try {
-      final tree = widget.reportType != null
-          ? await _api.reportTree(widget.reportType!, widget.reportId ?? '')
-          : await _api.graphTree(uid: widget.uid, surface: widget.surface.name);
+      final tree = await withColdStartRetry(
+        () async => widget.reportType != null
+            ? await _api.reportTree(widget.reportType!, widget.reportId ?? '')
+            : await _api.graphTree(
+                uid: widget.uid, surface: widget.surface.name),
+      );
       if (!mounted) return;
       setState(() {
         _tree = tree;

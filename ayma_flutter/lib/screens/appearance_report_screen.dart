@@ -157,6 +157,14 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   }
 
   @override
+  void didUpdateWidget(AppearanceReportScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reportId != widget.reportId) {
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
   void initState() {
     super.initState();
     reassertScreenContext();

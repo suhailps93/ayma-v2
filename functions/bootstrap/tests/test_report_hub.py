@@ -24,6 +24,8 @@ def _run(coro):
 
 def test_resolve_owner_appearance_and_story_are_self_owned():
     assert report_hub.resolve_owner("appearance", "u1", "viewer") == "u1"
+    assert report_hub.resolve_owner("appearance", "current", "u1") == "u1"
+    assert report_hub.resolve_owner("appearance", "Vo2iuT4", "u1") == "u1"
     assert report_hub.resolve_owner("story_private", "u1", "viewer") == "u1"
     assert report_hub.resolve_owner("story_public", "u1", "viewer") == "u1"
     assert report_hub.resolve_owner("story_ai_notes", "u1", "viewer") == "u1"
@@ -60,6 +62,12 @@ def test_get_report_owner_can_read_appearance(monkeypatch):
     out = report_hub.get_report(object(), "appearance", "owner-uid", "owner-uid")
     assert out["meta"]["owner_uid"] == "owner-uid"
     assert out["meta"]["viewer_can_edit"] is True
+
+    # NOTE 250 Leg 1: appearance requested via "current" or a run id resolves to the owner
+    out_curr = report_hub.get_report(object(), "appearance", "current", "owner-uid")
+    assert out_curr["meta"]["owner_uid"] == "owner-uid"
+    out_run = report_hub.get_report(object(), "appearance", "Vo2iuT4", "owner-uid")
+    assert out_run["meta"]["owner_uid"] == "owner-uid"
 
 
 def test_get_report_non_owner_can_read_story_public(monkeypatch):

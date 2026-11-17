@@ -3,6 +3,7 @@
 // tappable node opening its report or photo. These cover the routing logic and
 // that the renderer handles every new node kind without breaking.
 import 'package:ayma_flutter/models/story_node.dart';
+import 'package:ayma_flutter/screens/person_graph_layout.dart';
 import 'package:ayma_flutter/screens/person_graph_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/widgets/node_visualiser.dart' show NodeVisualiser;
@@ -157,6 +158,71 @@ class _ImageOnlyApi extends ApiClient {
       });
 }
 
+PersonGraph _photoAdjacentBulletGraph() => PersonGraph.fromMap({
+      'center': {'id': 'me', 'label': 'You'},
+      'sections': const [],
+      'nodes': [
+        {'id': 'me', 'kind': 'person', 'label': 'You'},
+        {'id': 'sec:appearance', 'kind': 'section', 'label': 'Appearance'},
+        {
+          'id': 'emergent.image.p1',
+          'kind': 'image',
+          'label': 'Photo',
+          'text': 'A man smiling outdoors',
+          'image_url': 'https://cdn/p1.jpg',
+          'visibility': 'public',
+          'open': {
+            'type': 'image',
+            'url': 'https://cdn/p1.jpg',
+            'read': 'A man smiling outdoors',
+          },
+        },
+        {'id': 'b:1', 'kind': 'bullet', 'text': 'Grew up in Lahore.', 'visibility': 'public'},
+      ],
+      'edges': [
+        {'from': 'me', 'to': 'sec:appearance'},
+        {'from': 'sec:appearance', 'to': 'emergent.image.p1'},
+        {'from': 'sec:appearance', 'to': 'b:1'},
+      ],
+    });
+
+class _PhotoAdjacentBulletApi extends ApiClient {
+  _PhotoAdjacentBulletApi() : super(auth: MockFirebaseAuth(signedIn: true));
+  @override
+  Future<PersonGraph> profileGraph({String? uid}) async =>
+      _photoAdjacentBulletGraph();
+  @override
+  Future<GraphTree> graphTree({String? uid, String surface = 'story'}) async =>
+      GraphTree.fromMap({
+        'surface': 'graphDetail',
+        'sections': [
+          {
+            'page_type': 'appearance',
+            'title': 'Appearance',
+            'order': 1,
+            'nodes': [
+              {
+                'id': 'emergent.image.p1',
+                'label': 'Photo',
+                'text': 'A man smiling outdoors',
+                'answer_type': 'image',
+                'image_url': 'https://cdn/p1.jpg',
+                'image_read': 'A man smiling outdoors',
+                'visibility': 'public',
+              },
+              {
+                'id': '1',
+                'label': '',
+                'text': 'Grew up in Lahore.',
+                'answer_type': 'text',
+                'visibility': 'public',
+              },
+            ],
+          },
+        ],
+      });
+}
+
 GraphNode _node(Map<String, dynamic> open) =>
     GraphNode.fromMap({'id': 'x', 'kind': 'report', 'open': open});
 
@@ -288,6 +354,111 @@ void main() {
 
     // The visualiser is now mounted with a node (scrub resolved to a node).
     expect(find.byType(NodeVisualiser), findsWidgets);
+  });
+
+  group('distanceToGraphNode & hit-test resolution (NOTE 250 Leg 3)', () {
+    test('photo node uses square bounds and returns 0.0 inside rect', () {
+      final sim = SimNode(id: 'photo', level: 2)
+        ..x = 100
+        ..y = 100;
+      final photo = GraphNode.fromMap({
+        'id': 'photo',
+        'kind': 'image',
+        'open': {'type': 'image', 'url': 'https://cdn/p.jpg', 'read': 'test'},
+      });
+      // At level 2, radius is 9.5. Half-width is 9.5 * 1.7 / 2 = 8.075.
+      // Bounds: [91.925, 108.075] in x and y.
+      expect(distanceToGraphNode(sim, photo, const Offset(100, 100)), 0.0);
+      expect(distanceToGraphNode(sim, photo, const Offset(108, 100)), 0.0);
+      expect(distanceToGraphNode(sim, photo, const Offset(100, 92)), 0.0);
+
+      // Outside to the right by 2.0 units:
+      final dRight =
+          distanceToGraphNode(sim, photo, const Offset(110.075, 100));
+      expect(dRight, closeTo(2.0, 1e-4));
+    });
+
+    test(
+        'photo node next to bullet resolves to photo node when tap is inside photo bounds',
+        () {
+      final photoSim = SimNode(id: 'photo', level: 2)
+        ..x = 100
+        ..y = 100;
+      final photoNode = GraphNode.fromMap({
+        'id': 'photo',
+        'kind': 'image',
+        'open': {'type': 'image', 'url': 'https://cdn/p.jpg', 'read': 'photo'},
+      });
+      // Adjacent bullet at x=123, y=100 with radius 7.5 (level 3).
+      final bulletSim = SimNode(id: 'b:1', level: 3)
+        ..x = 123
+        ..y = 100;
+      final bulletNode = GraphNode.fromMap(
+          {'id': 'b:1', 'kind': 'bullet', 'text': 'fact'});
+
+      // Tap lands on the right side of the photo node (x=107.5, y=100),
+      // which is inside the photo square bounds [91.925, 108.075].
+      const tap = Offset(107.5, 100);
+      final distPhoto = distanceToGraphNode(photoSim, photoNode, tap);
+      final distBullet = distanceToGraphNode(bulletSim, bulletNode, tap);
+
+      expect(distPhoto, 0.0);
+      // Distance from tap (107.5) to bullet center (123) is 15.5; minus radius 7.5 = 8.0.
+      expect(distBullet, closeTo(8.0, 1e-4));
+      expect(distPhoto < distBullet, isTrue);
+    });
+
+    test(
+        'circular bullet node returns 0.0 inside circle and distance outside',
+        () {
+      final bulletSim = SimNode(id: 'b:1', level: 3)
+        ..x = 120
+        ..y = 100;
+      final bulletNode = GraphNode.fromMap(
+          {'id': 'b:1', 'kind': 'bullet', 'text': 'fact'});
+      // Bullet radius at level 3 is 7.5.
+      expect(distanceToGraphNode(bulletSim, bulletNode, const Offset(120, 100)),
+          0.0);
+      expect(distanceToGraphNode(bulletSim, bulletNode, const Offset(125, 100)),
+          0.0);
+      expect(distanceToGraphNode(bulletSim, bulletNode, const Offset(130, 100)),
+          closeTo(2.5, 1e-4));
+    });
+
+    testWidgets(
+        'photo node adjacent to bullet: tap resolves to photo and second tap opens photo viewer',
+        (tester) async {
+      await tester.pumpWidget(_reducedMotionApp(_PhotoAdjacentBulletApi()));
+      await tester.pump();
+      await tester.pump();
+
+      final canvas = tester.getRect(find.byType(PersonGraphScreen));
+      // Sweep the canvas until a tap lands on the photo node.
+      Offset? photoTapPos;
+      for (var y = canvas.top + 60;
+          y < canvas.bottom - 8 && photoTapPos == null;
+          y += 18) {
+        for (var x = canvas.left + 8;
+            x < canvas.right - 8 && photoTapPos == null;
+            x += 18) {
+          await tester.tapAt(Offset(x, y));
+          await tester.pump();
+          if (find.widgetWithText(TextButton, 'Open').evaluate().isNotEmpty) {
+            photoTapPos = Offset(x, y);
+          }
+        }
+      }
+      expect(photoTapPos, isNotNull,
+          reason:
+              'a tap must resolve to the photo node even when a bullet sits adjacent');
+      expect(find.byType(NodeVisualiser), findsWidgets);
+      expect(find.textContaining('A man smiling outdoors'), findsWidgets);
+
+      // Tapping Open on the selected photo node opens the PhotoViewer dialog.
+      await tester.tap(find.widgetWithText(TextButton, 'Open'));
+      await tester.pump();
+      expect(find.byType(PhotoViewer), findsOneWidget);
+    });
   });
 
   group('related-link highlight (Contract 4)', () {

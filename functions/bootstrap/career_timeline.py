@@ -114,23 +114,35 @@ def get_linkedin_url(db, uid: str) -> str:
     return ""
 
 
-def set_linkedin_url(db, uid: str, url: str) -> str:
+def set_linkedin_url(db, uid: str, url: str | None) -> str:
     """Store the user's own LinkedIn profile URL, given with their explicit
     consent, so a future self deep-dive can hand it straight to Gemini's
     ``url_context`` tool (see :func:`deep_dive.run`) instead of asking again.
     This is the ONLY LinkedIn mechanism in this app: no scraper, no
     unofficial API call — just a user-supplied URL read by a tool Gemini
     already has attached to the research call. Raises ``ValueError`` for
-    anything that isn't plausibly a linkedin.com link."""
-    url = (url or "").strip()
-    if not is_linkedin_url(url):
+    anything that isn't plausibly a linkedin.com link.
+
+    A present LinkedIn URL can NEVER be overwritten with None, empty, or an
+    invalid URL (NOTE 250 Leg 3 data protection) — if a valid URL is already on
+    file, an empty/None update preserves the existing URL."""
+    cleaned = (url or "").strip()
+    if not is_linkedin_url(cleaned):
+        existing = get_linkedin_url(db, uid)
+        if existing:
+            return existing
         raise ValueError("that doesn't look like a linkedin.com URL")
-    schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: url}, merge=True)
+    schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: cleaned}, merge=True)
+    try:
+        schema.user_doc(db, uid).set({schema.PF_LINKEDIN_URL: cleaned}, merge=True)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         import supplemental
+
         supplemental.record_supplemental(
-            db, uid, "career", "LinkedIn profile", url, status="answered"
+            db, uid, "career", "LinkedIn profile", cleaned, status="answered"
         )
     except Exception:  # noqa: BLE001
         pass
-    return url
+    return cleaned

@@ -13,6 +13,7 @@ import '../routing/entry.dart';
 import '../services/accent_color_controller.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/auth_service.dart';
 import '../services/biometric_consent.dart';
 import '../services/deep_link_queue.dart';
 import '../services/report_cache.dart';
@@ -48,6 +49,7 @@ class SplashScreen extends StatefulWidget {
     this.apiClient,
     this.auth,
     this.accentController,
+    this.authService,
   });
 
   static const path = '/splash';
@@ -85,6 +87,7 @@ class SplashScreen extends StatefulWidget {
   final ApiClient? apiClient;
   final FirebaseAuth? auth;
   final AccentColorController? accentController;
+  final AuthService? authService;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -130,7 +133,7 @@ abstract final class SplashFirstPaint {
     }
     try {
       await WidgetsBinding.instance.waitUntilFirstFrameRasterized
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(milliseconds: 600));
     } catch (_) {
       // No rasterization signal in time: proceed rather than hang startup.
     }
@@ -281,7 +284,18 @@ class _SplashScreenState extends State<SplashScreen> {
     // `MainShellScreen`), guarded by a per-user seen-state — never before
     // sign-in. The Developer panel still previews it on demand.
     final auth = widget.auth ?? FirebaseAuth.instance;
-    final user = auth.currentUser;
+    var user = auth.currentUser;
+    if (user == null && (widget.auth == null || widget.authService != null)) {
+      BootTrace.mark('splash _resolve: currentUser is null, awaiting ensureAuthReady');
+      try {
+        final authSvc = widget.authService ?? AuthService.instance;
+        user = await authSvc
+            .ensureAuthReady()
+            .timeout(const Duration(seconds: 2), onTimeout: () => auth.currentUser);
+      } catch (_) {
+        user = auth.currentUser;
+      }
+    }
     final anonymousLanding = user == null || user.isAnonymous;
     BootTrace.mark('splash _resolve: currentUser=${user?.uid ?? 'null'} '
         'anon=$anonymousLanding');
@@ -300,6 +314,14 @@ class _SplashScreenState extends State<SplashScreen> {
     final cachedRoute = cachedConfig?.entryRoute ??
         await ReportCache.instance.readBootRoute(user.uid);
     BootTrace.mark('splash _resolve: cachedRoute=$cachedRoute');
+    if ((cachedRoute == null || cachedRoute.isEmpty) && mounted) {
+      final router = GoRouter.of(context);
+      if (await _tryFirestoreCacheFallback(user.uid)) {
+        BootTrace.mark('splash _resolve: navigated via firestore cache fallback');
+        unawaited(_backgroundBootstrap(user.uid, auth, MainShellScreen.path, router));
+        return;
+      }
+    }
     if (cachedRoute != null && cachedRoute.isNotEmpty && mounted) {
       // Hold the splash for the minimum dwell so the wake line is actually
       // visible: without this the navigation below lands before the splash
@@ -320,23 +342,16 @@ class _SplashScreenState extends State<SplashScreen> {
 
     _attempt++;
     try {
-      // No short client-side cap here: [ApiClient.bootstrap] already bounds
-      // itself (ID-token refresh + POST) with cold-start-tolerant timeouts, so
-      // the first call rides through a ~18s+ Cloud Run cold start instead of
-      // being force-failed after a couple of seconds (the old 2500ms cap was
-      // the "almost every cold open hard-fails" bug). The exponential-backoff
-      // retries and the overall [startupDeadline] watchdog still bound startup.
-      final results = await Future.wait([
-        widget.apiClient!.bootstrap(sessionId: ''),
-        (widget.accentController ?? accentColorControllerGlobal)
-            .syncRemoteIfMissing(),
-      ]);
-      final result = results[0] as BootstrapResult;
+      BootTrace.mark('splash _resolve: foreground bootstrap enter');
+      unawaited((widget.accentController ?? accentColorControllerGlobal)
+          .syncRemoteIfMissing());
+      final result = await widget.apiClient!.bootstrap(sessionId: '');
       if (!mounted) return;
       final route = await _resolveRoute(result);
       if (!mounted) return;
       _cacheEntryRoute(user.uid, result, route);
       DeepLinkQueue.instance.notifyNavigationSettled();
+      BootTrace.mark('splash NAVIGATE to $route');
       context.go(route);
     } on AuthSessionException catch (e) {
       // The restored auth session is unusable (keystore / decrypt failure after
@@ -468,12 +483,9 @@ class _SplashScreenState extends State<SplashScreen> {
       String uid, FirebaseAuth auth, String shownRoute, GoRouter router) async {
     for (var attempt = 0; attempt < SplashScreen.maxStartupAttempts; attempt++) {
       try {
-        final results = await Future.wait([
-          widget.apiClient!.bootstrap(sessionId: ''),
-          (widget.accentController ?? accentColorControllerGlobal)
-              .syncRemoteIfMissing(),
-        ]);
-        final result = results[0] as BootstrapResult;
+        unawaited((widget.accentController ?? accentColorControllerGlobal)
+            .syncRemoteIfMissing());
+        final result = await widget.apiClient!.bootstrap(sessionId: '');
         final route = await _resolveRoute(result);
         _cacheEntryRoute(uid, result, route);
         if (route != shownRoute) router.go(route);
