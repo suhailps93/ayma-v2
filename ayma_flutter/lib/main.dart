@@ -210,6 +210,7 @@ Future<void> askStartupLocationPermission({
   await (waitFirstPaint ?? _defaultWaitFirstPaint)();
   await (settle ?? (d) => Future<void>.delayed(d))(startupLocationAskSettle);
 
+  BootTrace.mark('askStartupLocationPermission: prompt start');
   final doAsk = ask ?? const LocationService().ensurePermission;
   final check = checkPermission ?? const LocationService().checkPermission;
   final checkCompeting = isCompetingDialogShowing ??
@@ -218,6 +219,7 @@ Future<void> askStartupLocationPermission({
       waitForIdle ?? () => PermissionCoordinator.instance.waitForIdle();
 
   var granted = await doAsk();
+  BootTrace.mark('askStartupLocationPermission: result granted=$granted');
   if (granted) return;
 
   // The first request returned empty / still denied (e.g. Android dropped the
