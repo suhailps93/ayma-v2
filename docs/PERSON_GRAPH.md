@@ -615,3 +615,35 @@ Refinements on the adopted visualiser surfaces:
   it's you" (never "hasn't checked yet") when the node is `is_you: unknown` but
   carries a real image read. The node chat window's image context card applies
   the same two rules.
+
+## P4 carousel — one image-node renderer (Nov 17 2026)
+
+The profile photo carousel (`ProfilePhotoHeader`, `public_profile_screen.dart`)
+now renders **each page through the ONE shared Node-Visualiser image-node
+renderer** instead of a bespoke raw `AymaPhoto`:
+
+- **`NodeImage` (`widgets/node_visualiser.dart`)** is the single renderer for a
+  person-graph image node's photo. The inline `NodeVisualiser` uses it bounded
+  (a 240px square + Ayma's read caption, tap handled by the node row); the
+  carousel uses it `fill: true` — a full-bleed cover page, no caption. The
+  visualiser's `_imageContent` was refactored onto it, so there is exactly one
+  image-node renderer and the carousel can never drift from the inline one. The
+  old bespoke per-photo `AymaPhoto` call inside the carousel `PageView` is
+  **deleted**.
+- The carousel's photos stay the profile's **own curated set** (`photos`;
+  public readers read `photos` only), wrapped as minimal `StoryNode.image`
+  nodes (`models/story_node.dart`) carrying only the URL — no read / is-you /
+  provenance, since a curated profile photo is not a graph image node. The pager
+  swipe, the `InlinePhotoStrip`/`_Filmstrip` filmstrip, the
+  **`PhotoCarouselRegistry`** hook (so "show the Nth picture" over voice and
+  chat still lands on the right page), and the owner inline **set-primary /
+  delete** controls are all unchanged.
+- Tapping a carousel page still opens the carousel's **own** fullscreen viewer
+  (`AymaImageViewer.openGallery`, pinch/double-tap zoom, founder Nov 8), per
+  `NodeVisualiser.onImageTap`'s documented contract ("the carousel passes its
+  own viewer") — the carousel is **not** switched to the inline node-chat tap.
+- `LivingReportView` is **not** touched (its deletion is P6). Tests:
+  `test/carousel_node_visualiser_test.dart` (carousel renders image nodes +
+  "show the Nth picture" lands), plus the unchanged
+  `test/photo_carousel_command_test.dart` and
+  `test/profile_photo_fullscreen_test.dart`.
