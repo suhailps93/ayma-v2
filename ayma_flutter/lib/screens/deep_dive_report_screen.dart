@@ -252,28 +252,35 @@ class _DeepDiveReportScreenState extends State<DeepDiveReportScreen> {
                     child: AymaWingLoader(lines: AymaLoaderLines.deepDive),
                   )
                 // The body renders through the shared Node-Visualiser (2o P2).
-                : GraphTreeView(
-                    key: _reportKey,
-                    surface: NodeVisualiserSurface.report,
-                    reportType: 'deep_dive',
-                    reportId: widget.reportId,
-                    api: _api,
-                    // "This is me" / "Not me" on a pending web-image candidate
-                    // routes to the report's own confirm/reject, then reloads.
-                    onCandidateVerdict: _onCandidateVerdict,
-                    // A clean 404 means no dive has ever been run for this
-                    // subject — an empty state with a "Run web search" action, not
-                    // the "Couldn't load" error a real fetch failure gets.
-                    emptyBuilder: (context) => _NoResearchYet(
-                      busy: _reRunning,
-                      onRun: () {
-                        final t = _runTarget();
-                        _startRun(
-                          targetUid: t.targetUid,
-                          name: t.name,
-                          firstRun: true,
-                        );
-                      },
+                // [GraphTreeView] returns a non-scrolling `Column`, so it MUST
+                // sit inside this screen's own scroll view (the same way the
+                // appearance / match / shared / public-profile hosts wrap it) —
+                // otherwise a long Facts/web-findings tree overflows the pinned
+                // `Expanded` box ("BOTTOM OVERFLOWED BY …", founder build 2488).
+                : SingleChildScrollView(
+                    child: GraphTreeView(
+                      key: _reportKey,
+                      surface: NodeVisualiserSurface.report,
+                      reportType: 'deep_dive',
+                      reportId: widget.reportId,
+                      api: _api,
+                      // "This is me" / "Not me" on a pending web-image candidate
+                      // routes to the report's own confirm/reject, then reloads.
+                      onCandidateVerdict: _onCandidateVerdict,
+                      // A clean 404 means no dive has ever been run for this
+                      // subject — an empty state with a "Run web search" action,
+                      // not the "Couldn't load" error a real fetch failure gets.
+                      emptyBuilder: (context) => _NoResearchYet(
+                        busy: _reRunning,
+                        onRun: () {
+                          final t = _runTarget();
+                          _startRun(
+                            targetUid: t.targetUid,
+                            name: t.name,
+                            firstRun: true,
+                          );
+                        },
+                      ),
                     ),
                   ),
           ),

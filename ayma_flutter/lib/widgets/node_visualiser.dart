@@ -377,14 +377,17 @@ class NodeVisualiser extends StatelessWidget {
         if (onCandidateVerdict != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Row(
+            // `Wrap` (not a `Row`) so the two verdict buttons flow onto a
+            // second line on a narrow/scaled viewport instead of overflowing.
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 FilledButton.tonal(
                   key: Key('node_candidate_me_${node.id}'),
                   onPressed: () => onCandidateVerdict!(node, true),
                   child: const Text('This is me'),
                 ),
-                const SizedBox(width: 8),
                 OutlinedButton(
                   key: Key('node_candidate_notme_${node.id}'),
                   onPressed: () => onCandidateVerdict!(node, false),
