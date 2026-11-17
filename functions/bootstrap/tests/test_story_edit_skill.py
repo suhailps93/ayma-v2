@@ -96,6 +96,34 @@ def test_edit_passage_replaces_just_the_span(monkeypatch):
     assert saved["body"] == "keep that later."
 
 
+def test_edit_passage_declaration_guides_rewrite_in_my_tone():
+    # NOTE 251 item 3: the "Rewrite in my tone" chip sends a reword request; the
+    # tool must tell the model what "my tone" means (the user's own first-person
+    # voice) and to always return the finished text, so it never fails to edit.
+    from skills import story_edit
+
+    desc = story_edit._EDIT_DECL["description"].lower()
+    assert "rewrite in my tone" in desc
+    assert "first-person" in desc and "voice" in desc
+
+
+def test_edit_passage_applies_a_tone_rewrite_like_any_other(monkeypatch):
+    # The tone rewrite is just an edit_passage call with the rewritten text.
+    saved = {}
+    monkeypatch.setattr(
+        story, "_require_page", lambda *a: (None, {"ai_body": "I am an analyst."})
+    )
+    monkeypatch.setattr(story, "_display_body", lambda *a: "I am an analyst.")
+    monkeypatch.setattr(
+        story, "save_section",
+        lambda db, uid, pid, body, **k: saved.update(body=body),
+    )
+    fn = _bound("edit_passage", _Db({}), page_id="p1", passage="I am an analyst.")
+    assert fn(new_text="Honestly? I crunch numbers all day and love it.") \
+        == "updated that passage"
+    assert saved["body"] == "Honestly? I crunch numbers all day and love it."
+
+
 def test_remove_from_profile_wraps_ai_only_instead_of_deleting(monkeypatch):
     saved = {}
     monkeypatch.setattr(

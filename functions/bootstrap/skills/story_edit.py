@@ -51,7 +51,15 @@ _EDIT_DECL = {
     "name": "edit_passage",
     "description": (
         "Replace the highlighted passage with a rewritten version. Pass the "
-        "full replacement text for that passage only — not the whole section."
+        "full replacement text for that passage only — not the whole section. "
+        "Use this for every reword request, including 'make it more concise', "
+        "'add more details', and 'rewrite in my tone'. For 'rewrite in my tone' "
+        "(or 'in my voice'/'how I'd say it'): keep the same facts, but rewrite "
+        "the passage in the USER's own authentic first-person voice — natural "
+        "and conversational, the way they actually talk about themselves in "
+        "their chats and their other Story bullets — not a polished third-person "
+        "bio. Always call this tool with the finished text; never answer that "
+        "you don't know their tone."
     ),
     "parameters": {
         "type": "object",
