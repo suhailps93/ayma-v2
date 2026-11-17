@@ -220,6 +220,56 @@ Object? _bodyFor(String path) {
       'visibilities': ['public', 'private', 'ai_only'],
     };
   }
+  if (path == '/profile/graph/tree') {
+    // A Career section with a dated and an undated entry + long text, so the
+    // matrix holds the dedicated Career view's timeline rows at every viewport,
+    // scale and direction.
+    return {
+      'surface': 'story',
+      'sections': [
+        {
+          'page_type': 'career',
+          'title': 'Career',
+          'order': 3,
+          'nodes': [
+            {
+              'id': 'career.linkedin',
+              'section': 'career',
+              'label': 'LinkedIn',
+              'text': 'LinkedIn',
+              'answer_type': 'link',
+              'link_url': 'https://www.linkedin.com/in/example',
+              'link_platform': 'linkedin',
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': false,
+            },
+            {
+              'id': 'career_role_narrative',
+              'section': 'career',
+              'label': 'Role',
+              'text': kLongText,
+              'answer_type': 'narrative',
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': true,
+              'dated': '2021-06 — present',
+            },
+            {
+              'id': 'education_level',
+              'section': 'career',
+              'label': 'Education',
+              'text': kLongText,
+              'answer_type': 'narrative',
+              'visibility': 'private',
+              'subtree_visibility': 'private',
+              'editable': true,
+            },
+          ],
+        },
+      ],
+    };
+  }
   if (path == '/profile/graph') {
     return {
       'center': {'id': 'me', 'label': 'Me'},

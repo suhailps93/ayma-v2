@@ -137,9 +137,6 @@ const String kReleaseNotes = r'''
   score.
 - Photos and web-research findings show as small teasers right in the
   document, linking out to their full screens — nothing about them is lost.
-- Career & Education can now show a real timeline — company, role, dates —
-  once Ayma is confident enough in it, built from your conversations and,
-  if you add your LinkedIn URL, a direct read of that page.
 
 ## 1.19.1 — 13 Sep 2026
 - Voice waves now have a soft peach fill inside the composer: bottom for your voice, top for Ayma.

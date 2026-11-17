@@ -51,6 +51,7 @@ class StoryNode {
     this.linkUrl = '',
     this.linkPlatform = '',
     this.candidateId = '',
+    this.dated = '',
     this.children = const [],
   });
 
@@ -122,6 +123,11 @@ class StoryNode {
   /// `candidate` node — the reverse-image-search candidate id (is-me/not-me).
   final String candidateId;
 
+  /// A date the node ALREADY carries (the first `Link.dated` on it), or `''`.
+  /// The dedicated Career view renders it timeline-style where present and
+  /// omits it where empty — no date is ever invented (founder Nov 17).
+  final String dated;
+
   final List<StoryNode> children;
 
   /// A minimal image node wrapping an already-curated photo URL — the profile
@@ -179,6 +185,7 @@ class StoryNode {
       linkUrl: m['link_url'] as String? ?? '',
       linkPlatform: m['link_platform'] as String? ?? '',
       candidateId: m['candidate_id'] as String? ?? '',
+      dated: m['dated'] as String? ?? '',
       children: ((m['children'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => StoryNode.fromMap(e.cast<String, dynamic>()))

@@ -604,7 +604,6 @@ client identifier fails.
   `edit_profile_section`, `set_profile_section_visibility`,
   `edit_story_entry`, `remove_story_entry`, `edit_passage`,
   `remove_from_profile`, `set_passage_privacy`, `set_section_privacy`,
-  `edit_career_timeline_entry`, `delete_career_timeline_entry`,
   `next_questions`, `record_answer`, `set_relationship_intent`,
   `add_followup_question`, `remember`, `recall`, `set_user_steering`,
   `find_fact_source`.

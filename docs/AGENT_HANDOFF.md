@@ -23,6 +23,14 @@ post-Qloo for the Meta hackathon** — see the "POST-QLOO" item in `docs/TODO_QU
 Ayma is an AI matchmaker/dating app. An AI persona ("Ayma") interviews users by text and voice, builds a
 profile wiki, and scores matches. Users see **credits**, never dollars.
 
+The person graph (`docs/PERSON_GRAPH.md`) is the one data model behind every profile surface, rendered by the
+shared Node-Visualiser. Career/education has a **dedicated Career view** (`CareerViewScreen`, `/profile/career`,
+Profile-tab "Career & education" row): an editable list over the graph Career section + all its children (seed
+nodes, the injected LinkedIn link node, any emergent `page_type:"career"` children), timeline-style with a date
+only where a node already carries one (`Link.dated`). No career date schema exists — never add dated start/end
+fields or migrate nodes; the deleted wiki-timeline subsystem stays deleted. Editing reuses the generic
+`/profile/graph/node/*` paths.
+
 | Piece | Where | Notes |
 |---|---|---|
 | Mobile app | `ayma_flutter/` (Flutter, Android + iOS, package `com.ayma.aymaFlutter`) | version in `pubspec.yaml` (`1.30.0+2077` at time of writing) |

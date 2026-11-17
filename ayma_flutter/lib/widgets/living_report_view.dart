@@ -143,7 +143,7 @@ class LivingReportView extends StatefulWidget {
   /// — for a caller (Story's editor screen — § generic reports) that embeds
   /// this widget as one item inside ITS OWN outer scrollable alongside other,
   /// not-yet-block-modeled content (cover stats, the photo gallery, the
-  /// career timeline, the merged Appearance card) rather than giving this
+  /// merged Appearance card) rather than giving this
   /// report the whole screen the way deep-dive/My-public-profile do.
   /// Default `false` (an independently scrolling full-screen list) is
   /// unchanged for every other caller.
