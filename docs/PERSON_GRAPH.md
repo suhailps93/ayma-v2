@@ -493,3 +493,37 @@ that is not parent and child so that there is no duplicated content." Branch
   `PYTHONPATH=. python3 tools/person_graph_dedupe_run.py <uid> --project=ayma-staging [--semantic] [--limit=N]`.
   Prints duplicate groups + related pairs with ids/kind/section/visibility/snippet.
 - Tests: `tests/test_node_dedupe.py` (12).
+
+## Live image-node ingestion on every source path (2l, Nov 17 2026)
+
+"Images are nodes" now fires on **all four ingest paths**, not just chat — every
+image Ayma sees becomes an `answer_type == "image"` node carrying the structured
+`is_you` verdict and the SOURCE provenance (`source_kind` ∈
+`chat|profile_grid|appearance_report|web`, `source_ref` the conversation /
+media / report id or source page, `source_created_at` the first-ingest time).
+
+- **One helper, one identity.** `person_graph_store.home_image(...)` is the
+  single idempotent entry point (thin wrapper over `add_photo_fact`), and the
+  node id is content-addressed: `image_node_id_for_bytes(bytes)` for any path
+  that has the bytes (chat / grid / appearance) and `image_node_id_for_url(url)`
+  for web (no bytes retained). The same photo shared in chat, added to the grid
+  AND read in an appearance report therefore collapses onto **one** node — a
+  later path just upserts a fresher read / verdict / source in place.
+- **chat** — `main._enrich_turns_with_photo` (already live): bytes in hand,
+  caption = read, `source_ref` = session id. Refactored onto `home_image`.
+- **profile grid** — `photo_pipeline._enrich` when `source == "profile"`: the
+  grid add has no "fact" said about it, so the caption is both read and fact;
+  `source_ref` = media id.
+- **appearance report** — `appearance_engine.run_appearance` homes the analysed
+  face/body picks after persist (`_home_appearance_photos`), reusing the bytes
+  already in hand (no re-fetch), `is_you="yes"` (own photos), read = the axis
+  verdict note, `source_ref` = report id. User-initiated runs only (never the
+  silent `auto` reconcile).
+- **web** — `deep_dive._home_web_images` after `store_dive`: each verified
+  web photo becomes a node on the subject's graph, `is_you` = yes/unknown from
+  the face-verify, `source_ref` = source page — so web photos show in the graph
+  instead of living only inside the webfind report digest.
+
+All four are gated on `person_graph_reads` and best-effort (a graph-home failure
+never undoes a stored photo / report / dive). Tests:
+`tests/test_image_node_ingestion.py` (8).

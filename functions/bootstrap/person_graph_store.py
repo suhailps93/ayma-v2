@@ -1068,6 +1068,69 @@ def add_photo_fact(
     return fact_id, image_id
 
 
+def image_node_id_for_bytes(img_bytes: bytes) -> str:
+    """The canonical, content-addressed image-node id (design §6, "images are
+    nodes"): the SAME photo bytes always map to the SAME node, so a re-ingest of
+    identical content on any path (chat / profile grid / appearance report)
+    collapses onto one node instead of minting a duplicate. Web images have no
+    stable bytes in hand and key on their URL instead (see
+    :func:`image_node_id_for_url`)."""
+    import hashlib
+
+    return "emergent.image." + hashlib.sha1(img_bytes).hexdigest()[:8]
+
+
+def image_node_id_for_url(url: str) -> str:
+    """Content-free image-node id for a web image: keyed on its stable URL (the
+    bytes aren't retained on the web-ingest path, and the URL is the asset's
+    identity there). Distinct identity space from
+    :func:`image_node_id_for_bytes` on purpose — a web photo and an uploaded
+    photo of the same person are different assets."""
+    import hashlib
+
+    return "emergent.image." + hashlib.sha1(url.strip().encode("utf-8")).hexdigest()[:8]
+
+
+def home_image(
+    db,
+    uid: str,
+    *,
+    image_url: str,
+    image_read: str,
+    node_id: str,
+    source_kind: str,
+    source_ref: str = "",
+    is_you: str = "",
+    fact_text: str | None = None,
+    visibility: Visibility | str = Visibility.PRIVATE,
+) -> tuple[str, str] | None:
+    """The ONE idempotent entry point every ingest path uses to home an image
+    in the person graph (2l — live image-node creation on the chat, profile
+    grid, appearance report and web paths). Thin wrapper over
+    :func:`add_photo_fact`: creates (or upserts, on ``node_id``) the image node
+    under its fact, carrying the structured ``is_you`` verdict and the SOURCE
+    provenance (``source_kind`` ∈ chat|profile_grid|appearance_report|web,
+    ``source_ref`` the conversation / media / report id or source page).
+
+    Returns ``(fact_id, image_id)`` on a fresh home, or ``None`` when the node
+    already existed and was refreshed in place — so a caller can tell new from
+    repeat without having to query. Never dedupes across identity spaces: the
+    caller picks ``node_id`` via :func:`image_node_id_for_bytes` (local bytes)
+    or :func:`image_node_id_for_url` (web)."""
+    return add_photo_fact(
+        db,
+        uid,
+        image_url=image_url,
+        image_read=image_read,
+        fact_text=fact_text if fact_text is not None else image_read,
+        visibility=visibility,
+        image_node_id=node_id,
+        is_you=is_you,
+        source_kind=source_kind,
+        source_ref=source_ref,
+    )
+
+
 def query_nodes(
     db,
     uid: str,

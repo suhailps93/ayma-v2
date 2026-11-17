@@ -3188,7 +3188,6 @@ async def _run_chat_followups(
                 # Best-effort + idempotent; never affects the caption ingest.
                 if CONFIG.person_graph_reads:
                     try:
-                        import hashlib
                         import person_graph_store as pg_store
                         from public_profile import _photo_url
 
@@ -3198,22 +3197,20 @@ async def _run_chat_followups(
                             # re-uploads the same photo to a fresh Storage path on
                             # each send, so a path-derived id minted a duplicate
                             # image+fact node for identical content (NOTE 235
-                            # defect 3). Hashing the bytes makes a re-send of the
-                            # same photo reuse the existing node (add_photo_fact is
-                            # idempotent on this id → no second node).
-                            img_node_id = (
-                                "emergent.image."
-                                + hashlib.sha1(img_bytes).hexdigest()[:8]
-                            )
+                            # defect 3). The content-addressed id (2l) makes a
+                            # re-send of the same photo reuse the existing node —
+                            # the SAME canonical id every ingest path keys on, so
+                            # a photo shared in chat, added to the grid and read in
+                            # an appearance report all collapse onto one node.
                             # Structured is-you verdict on the node (founder Nov
                             # 16: a real field, not just folded into the caption
                             # prose) from the face-match result, plus the chat
                             # source provenance (which conversation it came from).
                             await asyncio.to_thread(
-                                pg_store.add_photo_fact,
+                                pg_store.home_image,
                                 get_db(), uid,
-                                image_url=url, image_read=caption, fact_text=caption,
-                                image_node_id=img_node_id,
+                                image_url=url, image_read=caption,
+                                node_id=pg_store.image_node_id_for_bytes(img_bytes),
                                 is_you=pg_store.is_you_from_verdict(match),
                                 source_kind="chat", source_ref=session_id,
                             )
