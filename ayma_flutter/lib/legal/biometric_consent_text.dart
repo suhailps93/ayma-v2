@@ -1,6 +1,6 @@
 // The face-matching (biometric) consent every Ayma member gives before using
 // the app. Kept in step with the "Biometric information" sections of
-// docs/PRIVACY.md / docs/TERMS.md (and privacy_text.dart / terms_text.dart).
+// docs/PRIVACY.md / docs/TERMS.md (and privacy_text.dart).
 // The version must match `CONSENT_VERSION` in
 // functions/bootstrap/biometric_consent.py — the server refuses any other.
 // Wording to be reviewed by an attorney before store release.

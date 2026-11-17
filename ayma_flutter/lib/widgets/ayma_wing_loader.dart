@@ -249,8 +249,8 @@ class _AymaWingLoaderState extends State<AymaWingLoader>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Same reduced-motion contract as AymaLogoLoader: never spin a controller
-    // up at all when motion is off.
+    // Reduced-motion contract: never spin a controller up at all when motion
+    // is off.
     if (_reduceMotion) {
       _controller?.stop();
       return;
