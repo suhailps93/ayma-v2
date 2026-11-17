@@ -31,6 +31,22 @@ def test_non_numeric_stat_becomes_a_confidence_node_without_a_value():
     assert n["stat_text"] == "Low"
 
 
+def test_percent_string_score_becomes_a_banded_score_bar_not_a_band_pill():
+    # A match report's top-line "Match score" is a percent STRING ("52%", from
+    # `report_adapters.match_blocks`). It must render as a banded 0..100
+    # ScoreBar — the same graphic its sub-dimension scores get — not the flat
+    # CONFIDENCE band pill reserved for non-numeric words (2o P3; founder: "the
+    # match report lost its graphics").
+    n = _nodes(
+        rb.stat_block("score", "Match score", "52%",
+                      basis="High confidence", editable=False)
+    )[0]
+    assert n["answer_type"] == "stat"
+    assert n["stat_value"] == 52.0          # numeric → ScoreBar
+    assert n["stat_text"] == "52%"          # the "%" is kept for the readout
+    assert n["stat_basis"] == "High confidence"
+
+
 def test_link_block_becomes_a_link_node_with_platform():
     n = _nodes(rb.link_block("link:0", "https://x.com/jane", label="Jane", tag="x"))[0]
     assert n["answer_type"] == "link"
@@ -120,3 +136,19 @@ def test_report_node_tree_propagates_permission_error(monkeypatch):
     monkeypatch.setattr(report_hub, "get_report", _boom)
     with pytest.raises(PermissionError):
         report_tree.report_node_tree(None, "appearance", "current", "other")
+
+
+def test_report_node_tree_propagates_key_error_for_a_non_participant_match(monkeypatch):
+    # 2o P3 — a match report is readable only by its two participants. A
+    # non-participant resolves to no owner (`report_hub.resolve_owner` → None),
+    # so `get_report` raises `KeyError`; the tree adapter must propagate it
+    # (the route maps it to a 404), never leak the score to a stranger.
+    import pytest
+
+    def _not_found(db, report_type, report_id, viewer_uid):
+        assert report_type == "match"
+        raise KeyError("No such report.")
+
+    monkeypatch.setattr(report_hub, "get_report", _not_found)
+    with pytest.raises(KeyError):
+        report_tree.report_node_tree(None, "match", "alice-uid__bob-uid", "eve-uid")

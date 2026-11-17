@@ -1,21 +1,24 @@
-// Tests for MatchReportScreen after it became a thin wrapper around the
-// shared LivingReportView (§ generic reports, report_type "match" — see
-// report_adapters.match_blocks / report_hub.py). Three things are
-// exercised:
-// - the ONLY bespoke screen chrome left outside the generic renderer (the
-//   two-person avatar row, Recalculate AppBar action), sourced
-//   from the existing `GET /match/{id}` fetch — score and confidence used
-//   to ALSO render here as a big digit + a separate chip; that duplication
-//   (§ founder screenshot) is fixed, and several tests below guard against
-//   it coming back (see the GUARDRAIL in `living_report_view.dart`);
-// - the whole screen scrolling as ONE region — the avatar chrome is no
-//   longer pinned above a separately-scrolling body;
-// - the report BODY, fetched separately via `GET /report/match/{id}` and
-//   rendered by LivingReportView — including the real-request-body proof
-//   that a tap on match content never posts to `/report/match/{id}/correct`
-//   (there is no correction path for this report type — see
-//   report_hub.py's module docstring) and instead always goes through
-//   plain, read-only `/chat`.
+// Tests for MatchReportScreen after it was migrated to render its report BODY
+// through the shared [GraphTreeView] Node-Visualiser (2o P3) via
+// `GET /report/match/{id}/tree` — the SAME pattern the appearance and
+// deep-dive report screens use. The old LivingReportView body was deleted.
+//
+// This file exercises the SCREEN wiring and the match-specific chrome:
+// - the only bespoke chrome left outside the generic renderer (the two-person
+//   avatar row + the Recalculate/Share AppBar actions), sourced from the
+//   existing `GET /match/{id}` fetch — score/confidence used to ALSO render
+//   here as a big digit + a separate chip; that duplication (§ founder
+//   screenshot) is fixed and guarded against below;
+// - the whole screen scrolling as ONE region;
+// - the report BODY, fetched separately via `GET /report/match/{id}/tree` and
+//   rendered by the Node-Visualiser — the score + dimensions as banded
+//   ScoreBars (founder: the match report must not "lose its graphics"), and a
+//   non-participant / never-scored pair getting the empty state, never a score.
+//
+// Per-node render + tap behavior (the read-only report node chat, the stat
+// bar vs confidence pill, candidate verdicts) is covered once, generically, in
+// `node_visualiser_test.dart`; this file proves the screen wires the right
+// report id/type and that its own chrome still works.
 import 'dart:convert';
 
 import 'package:ayma_flutter/screens/match_report_screen.dart';
@@ -29,53 +32,81 @@ import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:http/http.dart' as http;
 
-/// A minimal but real Living Report body shaped like
-/// `report_adapters.match_blocks`'s real output — `viewer_can_edit: false`
-/// always, per the founder direction that match reports have no correction
-/// path at all.
-Map<String, dynamic> _livingReport({
-  bool viewerCanEdit = false,
+/// A minimal but real Node-Visualiser tree shaped like
+/// `report_tree.report_node_tree`'s real output for a match — the top-line
+/// "Match score" as a numeric stat (its "52%" string is parsed to a 0..100
+/// ScoreBar by `report_tree._percent_value`), an explanation text node, and one
+/// dimension section with its own numeric stat + rationale. `viewer_can_edit`
+/// is always false (match reports have no correction path at all).
+Map<String, dynamic> _tree({
+  double score = 52.0,
+  String scoreText = '52%',
   List<Map<String, dynamic>>? extraSections,
 }) => {
+      'surface': 'report',
       'title': 'Match with Sam Vale',
       'sections': [
         {
-          'heading': 'Match',
-          'blocks': [
+          'page_type': 'match',
+          'title': 'Match',
+          'order': 0,
+          'nodes': [
             {
-              'block_id': 'score',
-              'type': 'stat',
-              'editable': false,
+              'id': 'score',
+              'section': 'match',
               'label': 'Match score',
-              'value': '52%',
-              'basis': 'High confidence',
+              'text': 'Match score',
+              'answer_type': 'stat',
+              'stat_value': score,
+              'stat_text': scoreText,
+              'stat_basis': 'High confidence',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': false,
             },
             {
-              'block_id': 'explanation:sent:0',
-              'type': 'text',
-              'editable': false,
+              'id': 'explanation:sent:0',
+              'section': 'match',
+              'label': '',
               'text': 'You two line up on the big things.',
+              'answer_type': 'text',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': false,
             },
           ],
         },
         {
-          'heading': 'Values & worldview',
-          'blocks': [
+          'page_type': 'values_worldview',
+          'title': 'Values & worldview',
+          'order': 1,
+          'nodes': [
             {
-              'block_id': 'dim:values',
-              'type': 'stat',
-              'editable': false,
+              'id': 'dim:values',
+              'section': 'values_worldview',
               'label': 'Values & worldview',
-              'value': 80.0,
-              'basis': '22% weight · measured',
+              'text': 'Values & worldview',
+              'answer_type': 'stat',
+              'stat_value': 80.0,
+              'stat_text': '80',
+              'stat_basis': '22% weight · measured',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': false,
             },
             {
-              'block_id': 'dim:values:rationale',
-              'type': 'fact',
-              'editable': false,
+              'id': 'dim:values:rationale',
+              'section': 'values_worldview',
+              'label': '',
               'text': 'Both prioritize family closely.',
-              'tag': 'rationale',
-              'confidence': 'high',
+              'answer_type': 'text',
+              'level': 1,
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'editable': false,
             },
           ],
         },
@@ -83,7 +114,7 @@ Map<String, dynamic> _livingReport({
       ],
       'meta': {
         'owner_uid': 'me',
-        'viewer_can_edit': viewerCanEdit,
+        'viewer_can_edit': false,
         'created_at': null,
         'updated_at': null,
       },
@@ -93,10 +124,9 @@ ApiClient _api({
   Map<String, dynamic>? matchMeta,
   int matchStatus = 200,
   Map<String, dynamic>? compat,
-  Map<String, dynamic>? livingReport,
-  int livingReportStatus = 200,
+  Map<String, dynamic>? tree,
+  int treeStatus = 200,
   List<Map<String, dynamic>>? correctCalls,
-  List<Map<String, dynamic>>? chatCalls,
 }) {
   return ApiClient(
     auth: MockFirebaseAuth(signedIn: true),
@@ -108,13 +138,14 @@ ApiClient _api({
         return http.Response(
             matchMeta == null ? 'no' : jsonEncode(matchMeta), matchStatus);
       }
-      if (req.method == 'GET' && req.url.path == '/report/match/a__me') {
+      if (req.method == 'GET' && req.url.path == '/report/match/a__me/tree') {
         return http.Response(
-          livingReport == null ? 'no' : jsonEncode(livingReport),
-          livingReportStatus,
+          treeStatus == 200 ? jsonEncode(tree ?? _tree()) : 'no',
+          treeStatus,
           headers: const {'content-type': 'application/json; charset=utf-8'},
         );
       }
+      // Match reports are read-only — a correct POST must never happen.
       if (req.method == 'POST' &&
           req.url.path == '/report/match/a__me/correct') {
         final body = jsonDecode(req.body) as Map<String, dynamic>;
@@ -127,15 +158,6 @@ ApiClient _api({
       }
       if (req.url.path == '/chat/stream') {
         return http.Response('stream unavailable', 500);
-      }
-      if (req.url.path == '/chat') {
-        final body = jsonDecode(req.body) as Map<String, dynamic>;
-        chatCalls?.add(body);
-        return http.Response(
-          jsonEncode({'reply': 'Sure, ask away.', 'usage_capped': false}),
-          200,
-          headers: const {'content-type': 'application/json; charset=utf-8'},
-        );
       }
       return http.Response('{}', 200);
     }),
@@ -156,13 +178,6 @@ Widget _routed(Widget screen) => MaterialApp.router(
         ],
       ),
     );
-
-Future<void> _sendComposer(WidgetTester tester, String text) async {
-  await tester.enterText(find.byType(TextField).last, text);
-  await tester.pump();
-  await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-  await tester.pumpAndSettle();
-}
 
 void main() {
   setUp(() {
@@ -197,12 +212,9 @@ void main() {
       };
 
   testWidgets(
-      'renders the two-person avatar header chrome, with no score digit or '
-      'confidence text of its own (§ duplication fix)', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(),
-    );
+      'renders the two-person avatar header chrome, with no bespoke score '
+      'digit or confidence chip of its own (§ duplication fix)', (tester) async {
+    final api = _api(matchMeta: matchMeta(), tree: _tree());
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
@@ -211,75 +223,58 @@ void main() {
 
     expect(find.text('You'), findsOneWidget);
     expect(find.text('Sam'), findsOneWidget); // avatar label = first name
-    // "52%" used to ALSO print as a big chrome number between the avatars —
-    // it doesn't any more. It now shows up exactly once, from the report
-    // body's own "Match score" stat block (see the next test).
-    expect(find.text('52%'), findsOneWidget);
-  });
-
-  testWidgets(
-      'confidence band renders exactly once, from the report body\'s stat '
-      'block — no separate bespoke confidence chip any more (§ duplication '
-      'fix)', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(
-        score: 0.61,
-        scoreConfidence: 0.82,
-        confidenceNote: 'High confidence - both profiles are detailed.',
-      ),
-      livingReport: _livingReport(),
-    );
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    // No standalone "Confidence: <band>" pill in the header any more.
+    // No standalone "Confidence: <band>" pill in the header any more; the
+    // confidence reads once, from the body's "Match score" stat basis.
     expect(find.textContaining('Confidence:'), findsNothing);
-    // The old chip's note text came from /match metadata, not the block
-    // model — it's gone entirely now. The block's own basis text (the
-    // fixture's score block: `basis: 'High confidence'`) is the only
-    // confidence readout left, and it shows up exactly once.
-    expect(find.text('High confidence - both profiles are detailed.'),
-        findsNothing);
     expect(find.text('High confidence'), findsOneWidget);
   });
 
   testWidgets(
-      'the report body renders via the shared LivingReportView from '
-      'GET /report/match/{id}', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(),
-    );
+      'the report body renders via the Node-Visualiser tree from '
+      'GET /report/match/{id}/tree', (tester) async {
+    final api = _api(matchMeta: matchMeta(), tree: _tree());
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
     await tester.pumpAndSettle();
 
-    // Chrome (avatar header) and generic block content both visible
-    // together — but "52%" itself renders exactly once now, from the
-    // adapter's own "score" stat block (§ duplication fix: the header used
-    // to ALSO print it).
-    expect(find.text('52%'), findsOneWidget);
     expect(find.text('You two line up on the big things.'), findsOneWidget);
-    expect(find.text('VALUES & WORLDVIEW'), findsOneWidget);
-    expect(find.textContaining('Both prioritize family closely.'),
-        findsOneWidget);
+    // Section titles render as-is from the tree (not uppercased).
+    expect(find.text('Values & worldview'), findsWidgets);
+    expect(find.text('Both prioritize family closely.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the score and each dimension render as banded ScoreBars end to end (§ '
+      'founder: the match report must not lose its graphics); every stat bar '
+      'is body-rendered — the header carries none', (tester) async {
+    final api = _api(matchMeta: matchMeta(), tree: _tree());
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
+    await tester.pumpAndSettle();
+
+    // The top-line "Match score" (52) and the dimension (80) both get the
+    // generic banded 0..100 bar treatment.
+    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
+    expect(bars, hasLength(2));
+    for (final bar in bars) {
+      expect(bar.max, 100);
+      expect(bar.colorFor, isNotNull); // banded green/amber/red
+    }
+    expect(bars.map((b) => b.value), containsAll(<double>[52.0, 80.0]));
+    // The numeric digits show beside each bar (no "%" suffix — the shipped
+    // Node-Visualiser convention the appearance/deep-dive screens already use).
+    expect(find.text('52'), findsOneWidget);
+    expect(find.text('80'), findsOneWidget);
   });
 
   testWidgets(
       'the whole screen scrolls as ONE region — the avatar header chrome '
       'moves with the body instead of staying pinned above it (§ founder: '
-      '"Don\'t keep this part frozen, let it also scroll" — the inverse of '
-      'the public-profile action rail, which deliberately DOES stay fixed)',
-      (tester) async {
-    // The file-level `setUp` above sizes the test viewport huge (1200x3200)
-    // for other tests' convenience — shrink it to a realistic phone size
-    // just for this test so a modest amount of extra content reliably
-    // overflows the viewport and there's real scrolling to prove.
+      '"Don\'t keep this part frozen, let it also scroll")', (tester) async {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     binding.platformDispatcher.views.first.physicalSize = const Size(400, 800);
     addTearDown(
@@ -287,16 +282,23 @@ void main() {
 
     final api = _api(
       matchMeta: matchMeta(),
-      livingReport: _livingReport(extraSections: [
+      tree: _tree(extraSections: [
         for (var i = 0; i < 12; i++)
           {
-            'heading': 'Dimension $i',
-            'blocks': [
+            'page_type': 'dim_$i',
+            'title': 'Dimension $i',
+            'order': i + 2,
+            'nodes': [
               {
-                'block_id': 'dim:extra$i',
-                'type': 'fact',
-                'editable': false,
+                'id': 'dim:extra$i',
+                'section': 'dim_$i',
+                'label': '',
                 'text': 'Rationale paragraph for dimension $i. ' * 10,
+                'answer_type': 'text',
+                'level': 1,
+                'visibility': 'public',
+                'subtree_visibility': 'public',
+                'editable': false,
               },
             ],
           },
@@ -312,93 +314,27 @@ void main() {
     expect(header, findsOneWidget);
     final rectBeforeScroll = tester.getRect(header);
 
-    // A MODEST, exact scroll via the controller (not `tester.drag`, whose
-    // release fling would carry well past any requested distance) — enough
-    // to move the header, not so much it scrolls clean out of the list's
-    // cache extent and gets unmounted. Unlike the pinned action rail this
-    // mirrors, the header is a normal scrollable list item, not an
-    // always-mounted Stack sibling.
     final scrollable = find.byType(Scrollable).first;
     final position = tester.state<ScrollableState>(scrollable).position;
     final before = position.pixels;
-    // A small, exact jump — well under the header card's own height — so
-    // it's still partially on screen afterwards (definitely still mounted,
-    // not just within some cache-extent guess) while its rect still
-    // measurably moves.
     position.jumpTo(before + 60);
     await tester.pump();
     final after = position.pixels;
-    // Confirm there was actually something to scroll through, otherwise
-    // this test would pass vacuously.
     expect(after, greaterThan(before));
 
-    // Unlike the profile action rail (deliberately pinned), the header card
-    // is NOT a sibling of the scrollable body — it's the body's own first
-    // item — so its on-screen position must have moved once the body
-    // scrolled underneath it.
     final rectAfterScroll = tester.getRect(header);
     expect(rectAfterScroll, isNot(rectBeforeScroll));
   });
 
   testWidgets(
-      'dimension stat blocks render real banded ScoreBars end to end (§ '
-      'founder: the match report lost its graphics after the Living Report '
-      'migration — this is the fix); the header chrome carries none of '
-      'these itself — every stat bar is block-rendered', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(extraSections: [
-        {
-          'heading': 'Shared interests',
-          'blocks': [
-            {
-              'block_id': 'dim:interests',
-              'type': 'stat',
-              'editable': false,
-              'label': 'Shared interests',
-              'value': 30.0,
-              'basis': '4% weight · estimated',
-            },
-          ],
-        },
-      ]),
-    );
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
-    await tester.pumpAndSettle();
-
-    // The header carries no score digit of its own any more (§ duplication
-    // fix) — the body's own top-line "Match score" stat block (from
-    // `_livingReport()`'s "Match" section) is itself a numeric stat getting
-    // the exact same generic bar treatment as the dimensions below it:
-    // score (52%) + dim:values (80) + dim:interests (30) = 3.
-    final bars = tester.widgetList<ScoreBar>(find.byType(ScoreBar)).toList();
-    expect(bars, hasLength(3));
-    for (final bar in bars) {
-      expect(bar.max, 100);
-      expect(bar.colorFor, isNotNull); // banded green/amber/red
-    }
-    expect(
-        bars.map((b) => b.value), containsAll(<double>[52.0, 80.0, 30.0]));
-    expect(find.text('80%'), findsOneWidget);
-    expect(find.text('30%'), findsOneWidget);
-    expect(find.text('MEASURED'), findsOneWidget);
-    expect(find.text('ESTIMATED'), findsOneWidget);
-  });
-
-  testWidgets(
-      'a tap on match report content opens plain, read-only chat and never '
-      'posts to /report/match/{id}/correct — match has no correction path',
-      (tester) async {
+      'tapping a match report node opens the read-only node sheet — no edit '
+      'bubbles — and never posts to /report/match/{id}/correct (match has no '
+      'correction path)', (tester) async {
     final correctCalls = <Map<String, dynamic>>[];
-    final chatCalls = <Map<String, dynamic>>[];
     final api = _api(
       matchMeta: matchMeta(),
-      livingReport: _livingReport(viewerCanEdit: false),
+      tree: _tree(),
       correctCalls: correctCalls,
-      chatCalls: chatCalls,
     );
 
     await tester.pumpWidget(MaterialApp(
@@ -406,59 +342,30 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Long-press never enters selection mode (no quick-actions for match).
-    await tester.longPress(
-        find.byKey(const ValueKey('livingReportBlock:dim:values:rationale')));
+    await tester.tap(find.byKey(const Key('node_row_dim:values:rationale')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('selected'), findsNothing);
 
-    // A short tap opens read-only Q&A chat instead.
-    await tester.tap(
-        find.byKey(const ValueKey('livingReportBlock:dim:values:rationale')));
-    await tester.pumpAndSettle();
-    expect(find.text('Ask Ayma'), findsWidgets);
-    expect(
-        find.text("Ask a question, or tell Ayma what to change."),
-        findsOneWidget);
+    // A non-editable report node: no owner edit bubbles at all.
     expect(find.text('Make public'), findsNothing);
+    expect(find.text('Make private'), findsNothing);
     expect(find.text('Delete'), findsNothing);
-
-    await _sendComposer(tester, 'why is this rated so high?');
-
+    // And nothing ever routes to the correction endpoint.
     expect(correctCalls, isEmpty);
-    expect(chatCalls, hasLength(1));
-    expect(chatCalls.single['message'], 'why is this rated so high?');
-    // `match_report_id` still rides along on the real /chat request body
-    // (`AskAymaContext.matchReportId`, wired in `LivingReportView._open`)
-    // even though this is the read-only `reportView` origin with
-    // `report_type`/`report_id` deliberately left blank — see
-    // `_match_edit_context` in main.py for what this briefs Ayma to do with
-    // it (correct the underlying fact, then point at Recalculate).
-    expect(chatCalls.single['match_report_id'], 'a__me');
-    expect(chatCalls.single['deep_dive_report_id'], '');
-    expect(chatCalls.single['appearance_finding_id'], '');
   });
 
-  testWidgets('Copy summary is gone from the report', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(),
-    );
-
-    await tester.pumpWidget(MaterialApp(
-      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
-    ));
+  testWidgets("the AppBar title always reads 'Match report'", (tester) async {
+    final api = _api(matchMeta: matchMeta(), tree: _tree());
+    await tester.pumpWidget(
+        MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
     await tester.pumpAndSettle();
 
-    expect(find.text('Copy summary'), findsNothing);
-    expect(find.byIcon(Icons.content_copy), findsNothing);
+    expect(find.text('Match report'), findsOneWidget);
+    expect(find.text('Compatibility'), findsNothing);
   });
 
-  testWidgets('Recalculate (and no Ask Ayma button) sits in the AppBar', (tester) async {
-    final api = _api(
-      matchMeta: matchMeta(),
-      livingReport: _livingReport(),
-    );
+  testWidgets('Recalculate (and no Ask Ayma button) sits in the AppBar',
+      (tester) async {
+    final api = _api(matchMeta: matchMeta(), tree: _tree());
 
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
@@ -475,18 +382,11 @@ void main() {
   });
 
   testWidgets(
-      'tapping Recalculate in the AppBar still triggers the same '
-      'recalculation flow (force re-run, then reload BOTH the /match '
-      'metadata AND the Living Report body — the score only ever renders '
-      'from the latter now, § duplication fix)', (tester) async {
-    // Non-queued (immediate) recalc path: no MatchActivity polling involved,
-    // so this can't leak background state into later tests. Returns a
-    // different score on the second fetch of each endpoint to prove BOTH
-    // reloaded — the header no longer has its own score digit to fall back
-    // on, so if the Living Report body isn't explicitly reloaded too, "71%"
-    // would never appear at all.
+      'tapping Recalculate force-re-runs then reloads BOTH the /match metadata '
+      'AND the Node-Visualiser body — the score only ever renders from the '
+      'latter now (§ duplication fix)', (tester) async {
     var matchCalls = 0;
-    var reportCalls = 0;
+    var treeCalls = 0;
     final compatCalls = <bool>[];
     final api = ApiClient(
       auth: MockFirebaseAuth(signedIn: true),
@@ -495,16 +395,15 @@ void main() {
           compatCalls.add(jsonDecode(req.body)['force'] == true);
           return http.Response(jsonEncode({'ok': true}), 200);
         }
-        if (req.url.path == '/report/match/a__me') {
-          reportCalls++;
-          final score = reportCalls == 1 ? '52%' : '71%';
+        if (req.url.path == '/report/match/a__me/tree') {
+          treeCalls++;
+          // A different score on the second load proves the body reloaded.
           return http.Response(
-            jsonEncode(_livingReport()
-              ..['sections'][0]['blocks'][0]['value'] = score),
+            jsonEncode(treeCalls == 1
+                ? _tree(score: 52.0, scoreText: '52%')
+                : _tree(score: 71.0, scoreText: '71%')),
             200,
-            headers: const {
-              'content-type': 'application/json; charset=utf-8'
-            },
+            headers: const {'content-type': 'application/json; charset=utf-8'},
           );
         }
         if (req.url.path.startsWith('/match/')) {
@@ -530,23 +429,23 @@ void main() {
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('52%'), findsOneWidget);
+    expect(find.text('52'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.refresh));
     await tester.pumpAndSettle();
 
     expect(compatCalls, [true]); // called with force: true
-    expect(reportCalls, greaterThanOrEqualTo(2)); // Living Report reloaded
-    expect(find.text('71%'), findsOneWidget); // report reloaded
-    expect(find.text('52%'), findsNothing); // stale value gone
+    expect(treeCalls, greaterThanOrEqualTo(2)); // body reloaded
+    expect(find.text('71'), findsOneWidget); // report reloaded
+    expect(find.text('52'), findsNothing); // stale value gone
   });
 
   testWidgets(
-      'a capped recalc shows an out-of-credits toast with an Upgrade '
-      'action that opens the plans screen', (tester) async {
+      'a capped recalc shows an out-of-credits toast with an Upgrade action '
+      'that opens the plans screen', (tester) async {
     final api = _api(
       matchMeta: matchMeta(),
-      livingReport: _livingReport(),
+      tree: _tree(),
       compat: {'ok': false, 'usage_capped': true},
     );
 
@@ -587,7 +486,6 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
-    // Drive the real backoff timers to completion (as the recovery test does).
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
@@ -598,7 +496,8 @@ void main() {
     expect(h, greaterThanOrEqualTo(48.0));
   });
 
-  testWidgets('a never-scored pair shows the empty state', (tester) async {
+  testWidgets('a never-scored pair shows the empty state (no score leaked)',
+      (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(
           matchId: 'a__me', apiClient: _api(matchMeta: null, matchStatus: 404)),
@@ -608,19 +507,36 @@ void main() {
     expect(find.textContaining("hasn't been scored"), findsOneWidget);
   });
 
-  testWidgets("the AppBar title always reads 'Match report'", (WidgetTester tester) async {
-    final api = _api(matchMeta: matchMeta(), livingReport: _livingReport());
-    await tester.pumpWidget(MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
+  testWidgets(
+      'a non-participant whose /report/match/{id}/tree 404s gets the body '
+      'empty state, never a score (owner-only read preserved end to end)',
+      (tester) async {
+    // The /match chrome fetch happens to resolve (e.g. a stale score the
+    // participant once had), but the tree — the actual report content — 404s.
+    // The body must show the empty CTA, never any score digit/bar.
+    final api = _api(
+      matchMeta: matchMeta(),
+      treeStatus: 404,
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: MatchReportScreen(matchId: 'a__me', apiClient: api),
+    ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Match report'), findsOneWidget);
-    expect(find.text('Compatibility'), findsNothing);
+    expect(find.text('Nothing to show for this report yet.'), findsOneWidget);
+    expect(find.byType(ScoreBar), findsNothing);
+    expect(find.text('52'), findsNothing);
+    expect(find.text('You two line up on the big things.'), findsNothing);
   });
 
-  testWidgets("the taste card is present and reachable in the report scroll (never skipped)", (WidgetTester tester) async {
+  testWidgets(
+      'the taste card is present and reachable in the report scroll (never '
+      'skipped)', (tester) async {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     binding.platformDispatcher.views.first.physicalSize = const Size(400, 800);
-    addTearDown(() => binding.platformDispatcher.views.first.resetPhysicalSize());
+    addTearDown(
+        () => binding.platformDispatcher.views.first.resetPhysicalSize());
 
     final meta = {
       ...matchMeta(),
@@ -642,25 +558,31 @@ void main() {
     };
     final api = _api(
       matchMeta: meta,
-      livingReport: _livingReport(
-        extraSections: [
-          for (var i = 0; i < 12; i++)
-            {
-              'heading': 'Dimension $i',
-              'blocks': [
-                {
-                  'block_id': 'dim:x$i',
-                  'type': 'fact',
-                  'editable': false,
-                  'text': 'Rationale $i. ' * 12,
-                },
-              ],
-            },
-        ],
-      ),
+      tree: _tree(extraSections: [
+        for (var i = 0; i < 12; i++)
+          {
+            'page_type': 'dim_$i',
+            'title': 'Dimension $i',
+            'order': i + 2,
+            'nodes': [
+              {
+                'id': 'dim:x$i',
+                'section': 'dim_$i',
+                'label': '',
+                'text': 'Rationale $i. ' * 12,
+                'answer_type': 'text',
+                'level': 1,
+                'visibility': 'public',
+                'subtree_visibility': 'public',
+                'editable': false,
+              },
+            ],
+          },
+      ]),
     );
 
-    await tester.pumpWidget(MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
+    await tester.pumpWidget(
+        MaterialApp(home: MatchReportScreen(matchId: 'a__me', apiClient: api)));
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
@@ -687,9 +609,9 @@ void main() {
           if (seen <= 2) return http.Response('transient', 503);
           return http.Response(jsonEncode(matchMeta()), 200);
         }
-        if (req.method == 'GET' && req.url.path == '/report/match/a__me') {
+        if (req.method == 'GET' && req.url.path == '/report/match/a__me/tree') {
           return http.Response(
-            jsonEncode(_livingReport()),
+            jsonEncode(_tree()),
             200,
             headers: const {'content-type': 'application/json; charset=utf-8'},
           );
@@ -704,21 +626,16 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: MatchReportScreen(matchId: 'a__me', apiClient: api),
     ));
-    // Drive the real backoff timers (~400ms, 900ms) to completion — a plain
-    // pumpAndSettle can't wait out a Future.delayed that schedules no frame.
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(seconds: 1));
     }
     await tester.pumpAndSettle();
 
-    // The founder's exact error screen never showed...
     expect(find.textContaining("Couldn't load this report"), findsNothing);
     expect(find.text('Retry'), findsNothing);
-    // ...and both the header chrome and the report body rendered.
     expect(find.text('You'), findsOneWidget);
-    expect(find.text('52%'), findsOneWidget);
-    // Initial GET + 2 silent retries, the third succeeding.
-    expect(seen, 3);
+    expect(find.text('You two line up on the big things.'), findsOneWidget);
+    expect(seen, 3); // Initial GET + 2 silent retries, the third succeeding.
     expect(tester.takeException(), isNull);
   });
 }

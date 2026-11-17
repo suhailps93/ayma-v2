@@ -36,6 +36,32 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+_PERCENT_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*%\s*$")
+
+
+def _percent_value(v: Any) -> float | None:
+    """The numeric value of a percent-formatted score string (``"52%"`` →
+    ``52.0``), or ``None`` when it isn't one.
+
+    A match report's top-line "Match score" is stored as a percent STRING
+    (``report_adapters.match_blocks`` — ``f"{round(score*100)}%"``), so without
+    this it would fall through to the non-numeric branch and render as a flat
+    CONFIDENCE band pill instead of the banded 0..100 ScoreBar its sub-dimension
+    scores (plain numbers) already get — the founder's "the match report lost
+    its graphics" complaint. A genuinely non-numeric value (a CONFIDENCE word
+    like "High"/"Medium"/"Low") doesn't match and still renders as a band pill.
+    """
+    if not isinstance(v, str):
+        return None
+    m = _PERCENT_RE.match(v)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
 def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
     """Convert ONE report block to one (or, for a photo grid, several) node
     dict(s) in the Node-Visualiser tree shape (``models/story_node.dart``).
@@ -77,6 +103,13 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
         val = block.get("value")
         if _is_number(val):
             base["stat_value"] = float(val)
+        else:
+            # A percent-formatted score string ("52%") is a numeric score too —
+            # give it the banded ScoreBar, not the band pill reserved for
+            # non-numeric CONFIDENCE words (see :func:`_percent_value`).
+            pct = _percent_value(val)
+            if pct is not None:
+                base["stat_value"] = pct
         base["stat_text"] = "" if val is None else str(val)
         base["stat_basis"] = str(block.get("basis") or "")
         base["text"] = base["label"]
