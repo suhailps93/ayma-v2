@@ -1619,47 +1619,6 @@ class ApiClient {
     return PersonGraph.fromMap(m);
   }
 
-  /// `GET /profile/public-text` — the public profile as one plain text (each
-  /// section under a `## Title` heading) for the manual editor.
-  Future<ProfileTextDoc> profilePublicText() async {
-    final m = await _getJson('/profile/public-text');
-    return ProfileTextDoc(
-      text: m['text'] as String? ?? '',
-      version: m['version'] as String? ?? '',
-      maxChars: (m['max_chars'] as num?)?.toInt() ?? 12000,
-    );
-  }
-
-  /// `PUT /profile/public-text` — save a manual edit. Throws
-  /// [ProfileTextRejected] with the server's user-facing reason when the text
-  /// is refused (contact info, moderation, too long, changed meanwhile).
-  Future<void> profilePublicTextSave({
-    required String text,
-    required String baseVersion,
-  }) async {
-    try {
-      await _sendJson('PUT', '/profile/public-text', {
-        'text': text,
-        'base_version': baseVersion,
-      });
-    } on ApiException catch (e) {
-      final code = e.statusCode;
-      if (code == 409 || code == 422 || code == 503) {
-        var message = "Couldn't save your profile text.";
-        try {
-          final detail = (jsonDecode(e.body ?? '') as Map)['detail'];
-          if (detail is Map && detail['message'] is String) {
-            message = detail['message'] as String;
-          }
-        } on FormatException {
-          // Keep the generic message when the error body isn't JSON.
-        }
-        throw ProfileTextRejected(message, stale: code == 409);
-      }
-      rethrow;
-    }
-  }
-
   /// `PUT /profile/preferences` — save the partner age range and/or distance
   /// preference where matching reads them. Throws [ApiException] (422 with the
   /// reason in the body) for a value the server refuses.
@@ -6493,32 +6452,6 @@ class StorySection {
     aiUpdatedSinceUser: aiUpdatedSinceUser,
     reportId: reportId,
   );
-}
-
-/// `GET /profile/public-text` result.
-class ProfileTextDoc {
-  const ProfileTextDoc({
-    required this.text,
-    required this.version,
-    required this.maxChars,
-  });
-
-  final String text;
-  final String version;
-  final int maxChars;
-}
-
-/// A manual profile-text save the server refused; [message] is user-facing.
-class ProfileTextRejected implements Exception {
-  ProfileTextRejected(this.message, {this.stale = false});
-
-  final String message;
-
-  /// The profile changed since the editor loaded (HTTP 409).
-  final bool stale;
-
-  @override
-  String toString() => 'ProfileTextRejected($message)';
 }
 
 /// One piece of a proposal's sentence diff: [op] is `same` | `add` | `remove`.

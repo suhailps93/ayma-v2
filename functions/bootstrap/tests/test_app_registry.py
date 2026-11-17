@@ -375,10 +375,6 @@ def test_every_parameterized_route_names_a_real_route_and_a_tool():
 # Sub-views and overlays that are intentionally NOT standalone routes: reached
 # only from inside their parent screen's own flow, never navigable by Ayma.
 _IMPERATIVE_SUBVIEWS = {
-    "ManualProfileEditScreen": (
-        "in-place profile editor pushed from My public profile; a sub-editor "
-        "of that page, not a standalone route"
-    ),
     "PracticeVoiceScreen": (
         "voice mode of a live Practice Date, pushed from the practice screen; "
         "part of that session, not a standalone page"

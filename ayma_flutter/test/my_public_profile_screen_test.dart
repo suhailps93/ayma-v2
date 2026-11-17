@@ -12,13 +12,46 @@ import 'dart:convert';
 import 'package:ayma_flutter/screens/my_public_profile_screen.dart';
 import 'package:ayma_flutter/screens/public_profile_screen.dart'
     show ProfileBody, ProfilePhotoHeader;
+import 'package:ayma_flutter/screens/story_editor_screen.dart'
+    show StoryEditorScreen;
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+/// A minimal backend for the My-public-profile screen: the photo header read
+/// and a tiny `story_public` report, enough to render the screen + its pencil.
+MockClient _profileBackend() => MockClient((request) async {
+      if (request.url.path == '/explore/profile/u1') {
+        return http.Response(
+          jsonEncode({
+            'uid': 'u1', 'self': true, 'blocked': false, 'name': 'Sam',
+            'age': 29, 'location': 'Lisbon',
+            'photos': ['https://example.com/p1.jpg'], 'pages': [],
+            'liked': false, 'score': null, 'thread_id': null,
+            'has_chatted': false,
+          }),
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'title': 'Story',
+          'sections': const [],
+          'meta': {
+            'owner_uid': 'u1', 'viewer_can_edit': true,
+            'created_at': null, 'updated_at': null,
+          },
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
 
 void main() {
   // A tall physical surface — same as public_profile_screen_test.dart — so
@@ -211,6 +244,47 @@ void main() {
           of: find.byType(ProfileBody), matching: find.byType(Scrollable)),
       findsWidgets,
     );
+  });
+
+  // Founder-hit Nov 16: the pencil (tooltip "Edit manually") used to open the
+  // legacy markdown editor (ManualProfileEditScreen) — the replaced paragraph
+  // path that should have been deleted when bullets shipped. The settled design
+  // is that manual editing IS the bullet editor (Your Story), so the pencil must
+  // route to StoryEditorScreen.path and no markdown editor may be reachable.
+  testWidgets('the pencil (Edit manually) opens the bullet editor '
+      '(StoryEditorScreen), not a markdown editor', (tester) async {
+    final api = ApiClient(
+        httpClient: _profileBackend(), auth: MockFirebaseAuth(signedIn: true));
+    var openedWiki = false;
+
+    final router = GoRouter(
+      initialLocation: '/me',
+      routes: [
+        GoRoute(
+          path: '/me',
+          builder: (_, __) =>
+              MyPublicProfileScreen(myUid: 'u1', apiClient: api),
+        ),
+        GoRoute(
+          path: StoryEditorScreen.path, // '/profile/wiki' — the bullet editor
+          builder: (_, __) {
+            openedWiki = true;
+            return const Scaffold(body: Text('BULLET EDITOR'));
+          },
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit manually'));
+    await tester.pumpAndSettle();
+
+    // The pencil navigated to the bullet editor route — not a pushed markdown
+    // editor (which no longer exists in the codebase at all).
+    expect(openedWiki, isTrue);
+    expect(find.text('BULLET EDITOR'), findsOneWidget);
   });
 
   // Jobs pass (cluster 8): the pending-updates MaterialBanner shares the

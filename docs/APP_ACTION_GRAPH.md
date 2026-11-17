@@ -309,7 +309,7 @@ and also `UI`:
 | Apply all | Apply every suggestion | `UI` |
 | Dismiss all | Drop every suggestion | EXCLUDED — founder-confirmed 2026-11-06 (bulk); refused by the `dismiss_all` deny rule |
 
-## 15. My story / wiki (`/profile/wiki`) — `story_editor_screen.dart`, `manual_profile_edit_screen.dart`
+## 15. My story / wiki (`/profile/wiki`) — `story_editor_screen.dart`
 
 | Control | Does | Ayma |
 |---|---|---|
@@ -317,7 +317,7 @@ and also `UI`:
 | "Why Ayma believes this" / sources | Show provenance | `UI`; she knows it via `find_fact_source` |
 | Add LinkedIn / sources rows | Add a source | `UI` |
 | Photos strip / web findings entries ("VIEW WEB FINDINGS", "VIEW FULL REPORT") | Open the linked report/photo | `UI` / `open_screen` |
-| Edit manually: text field + Save | Hand-edit the public profile text | COVERED `edit_profile_section` (same content, no UI driving needed) |
+| Edit manually (pencil on My public profile) | Opens THIS bullet editor — the public profile is bullets from the graph, so manual editing is the per-bullet editor (the legacy markdown editor was deleted Nov 16) | `UI`; edits COVERED by the story-edit tools above |
 | Appearance analysis / topics rows | Open the linked section | `UI` |
 
 Bullet editor (embedded in the story screen, `bullet_sections_editor.dart`, driven by `GET /profile/bullets`): every canonical section renders with its title + subtitle, even when empty.
