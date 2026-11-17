@@ -324,6 +324,16 @@ class Config:
     exact-only, additive, reversible — near/semantic dups still route to the
     never-silent user resolution flow. Checked per call."""
 
+    graph_embedding_dedupe: bool
+    """Strong dedupe candidate-finding (founder Nov 17): embed every graph node
+    with Gemini Embedding 2 (``graph_embeddings``) and find dedupe / related
+    candidates by NEAREST NEIGHBOUR over the stored vectors instead of the
+    lexical pre-filter. The LiveKit judge still decides each pair (never a silent
+    merge). Embeddings call Google DIRECTLY — the founder-approved exception
+    (LiveKit has no embedding endpoint), the same shape as image generation;
+    metered in the token ledger. **Off by default** (``GRAPH_EMBEDDING_DEDUPE=
+    true``) — gate on staging; flag-off keeps the lexical candidate path."""
+
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
     **web image search** — finding photos of a person online to face-verify
@@ -1371,6 +1381,8 @@ def _load() -> Config:
         == "true",
         node_dedupe=os.getenv("NODE_DEDUPE", "false").lower() == "true",
         node_dedupe_prevention=os.getenv("NODE_DEDUPE_PREVENTION", "false").lower()
+        == "true",
+        graph_embedding_dedupe=os.getenv("GRAPH_EMBEDDING_DEDUPE", "false").lower()
         == "true",
         graph_show_ai_only=os.getenv("GRAPH_SHOW_AI_ONLY", "true").lower()
         == "true",
