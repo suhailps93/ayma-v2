@@ -68,39 +68,6 @@ class DividerLabel extends StatelessWidget {
   }
 }
 
-/// The 14px gradient dot that stands in for Ayma wherever her voice appears in
-/// otherwise-static content (notes, tips, feedback prompts).
-class MiniOrb extends StatelessWidget {
-  const MiniOrb({super.key, this.size = 14});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          center: const Alignment(-0.3, -0.4),
-          radius: 0.9,
-          colors: [
-            Color.lerp(ac.accent, Colors.white, 0.55)!,
-            ac.accent,
-            Color.lerp(ac.accent, Colors.black, 0.45)!,
-          ],
-          stops: const [0, 0.5, 1],
-        ),
-        boxShadow: [
-          BoxShadow(color: ac.accentSoft, blurRadius: size * 0.45),
-        ],
-      ),
-    );
-  }
-}
-
 /// The header every tab opens with: a large serif display [title], an
 /// optional [subtitle], and an optional trailing [action] rendered as a
 /// ghost circle. Replaces the default [AppBar] on the main tabs. An optional
