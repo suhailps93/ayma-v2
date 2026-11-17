@@ -394,6 +394,7 @@ Map<String, dynamic> buildChatRequestBody({
   String imagePath = '',
   String storyPageId = '',
   String storyPassage = '',
+  String graphNodeId = '',
   String storyTimelineEntryId = '',
   String deepDiveReportId = '',
   String deepDiveTarget = '',
@@ -440,6 +441,8 @@ Map<String, dynamic> buildChatRequestBody({
           clampChatContext(storyPageId, ChatContextCaps.storyPageId),
       'story_passage':
           clampChatContext(storyPassage, ChatContextCaps.storyPassage),
+      'graph_node_id':
+          clampChatContext(graphNodeId, ChatContextCaps.storyPageId),
       'story_timeline_entry_id': clampChatContext(
           storyTimelineEntryId, ChatContextCaps.storyTimelineEntryId),
       'deep_dive_report_id': clampChatContext(
@@ -2918,6 +2921,7 @@ class ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -2966,6 +2970,7 @@ class ApiClient {
           recentTurns: recentTurns,
           imagePath: imagePath,
           storyPageId: storyPageId,
+          graphNodeId: graphNodeId,
           storyPassage: storyPassage,
           storyTimelineEntryId: storyTimelineEntryId,
           deepDiveReportId: deepDiveReportId,
@@ -3024,6 +3029,7 @@ class ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',
@@ -3065,6 +3071,7 @@ class ApiClient {
         recentTurns: recentTurns,
         imagePath: imagePath,
         storyPageId: storyPageId,
+        graphNodeId: graphNodeId,
         storyPassage: storyPassage,
         storyTimelineEntryId: storyTimelineEntryId,
         deepDiveReportId: deepDiveReportId,

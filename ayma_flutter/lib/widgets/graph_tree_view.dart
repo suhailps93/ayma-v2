@@ -24,7 +24,6 @@ class GraphTreeView extends StatefulWidget {
     this.api,
     this.isOwner = true,
     this.emptyMessage = 'Nothing here yet.',
-    this.onChatToEdit,
     this.onImageTap,
     this.onLoaded,
   });
@@ -43,9 +42,7 @@ class GraphTreeView extends StatefulWidget {
   /// Shown when the tree loaded but has no visible content.
   final String emptyMessage;
 
-  /// Host hook for the "Chat to edit" bubble (opens the shared chat overlay
   /// scoped to a node); forwarded to [NodeVisualiser].
-  final void Function(StoryNode node)? onChatToEdit;
 
   /// Overrides what tapping an image node does (e.g. the carousel's viewer).
   final void Function(StoryNode node)? onImageTap;
@@ -168,7 +165,6 @@ class GraphTreeViewState extends State<GraphTreeView>
             api: _api,
             isOwner: widget.isOwner,
             onChanged: _load,
-            onChatToEdit: widget.onChatToEdit,
             onImageTap: widget.onImageTap,
           ),
       ],

@@ -499,6 +499,20 @@ reroute to work around an empty response.
   still surfaces its honest error + Retry. (Same FAMILY as the guided-tour tap and scroll-ack bugs — a voice-mode
   action commits but a bounded client wait elapses/the ack races — though those live on the `app_commands` ack layer
   (`_await_ack` + `firestore.rules`), while this one is the direct report-correct HTTP path.)
+- *"Chat about it" on a person-graph node (the partial Ayma window)*: every node, on every owner surface (Your Story,
+  the owner's public profile, any report, the image carousel, the person-graph tap-detail), has a **"Chat about it"**
+  bubble in its node sheet (`node_chat_window.dart`, `bubble_chat_about`, gated by `_canChat` — shown on every owner
+  surface, including non-editable report nodes, not just editable ones). It closes the sheet and opens the REAL
+  half-screen docked chat (`showNodeChat` → `showAskAymaOverlay`, the one shared `ChatScreen`), with the node pinned as
+  the persistent context card above the composer for the whole session (text node → its quote card; image node →
+  `_NodeImageAttach`: the photo + its read + is-you verdict). The tap carries `AskAymaOrigin.graphNode` + `nodeId`
+  only; the server resolves the WHOLE node + everything connected to it on every message through the single graph
+  lookup (`chat_screen` → `graph_node_id` → `main._graph_node_context` → `person_graph_store.graph_lookup(node_id=…)`),
+  injected into the `story_context` chain like every other scoped origin. Turns save to the one main conversation — no
+  silo. This replaced the old person-graph `onChatToEdit` host-hook loop-back (deleted across `node_visualiser.dart` /
+  `graph_tree_view.dart` / `person_graph_screen.dart`) and unified the photo-strip "Chat about it"
+  (`story_editor_screen._openChatForPhoto`) onto the same window, so no bubble on any surface closes the sheet and does
+  nothing.
 - *Web research run status*: `POST /deep-dive` writes `users/{caller}/deep_dive_runs/{report_id}` as `running`
   before queueing the job. The job meters the spend exactly once inside `deep_dive.run` (never on the delivery retry,
   so no double-charge) and uses **deliver-then-mark**: its `finally` writes `done` only after the **card** is

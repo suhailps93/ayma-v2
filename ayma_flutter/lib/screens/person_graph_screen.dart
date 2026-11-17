@@ -10,7 +10,6 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
-import '../widgets/node_chat_window.dart';
 import '../widgets/node_visualiser.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/photo_gallery.dart';
@@ -672,20 +671,6 @@ class _GraphBodyState extends State<_GraphBody>
   /// re-renders with the edit.
   void _onTreeChanged() => unawaited(_loadTree());
 
-  /// The "Chat to edit" bubble hook — open the node chat window scoped to the
-  /// node so the owner can edit it by chat.
-  void _onChatToEdit(StoryNode n) {
-    unawaited(showNodeChatWindow(
-      context,
-      node: n,
-      surface: NodeVisualiserSurface.graphDetail,
-      api: widget.api,
-      isOwner: _isOwner,
-    ).then((changed) {
-      if (changed && mounted) _onTreeChanged();
-    }));
-  }
-
   // --- open full report / photo ----------------------------------------------
 
   void _openFull(GraphNode n) {
@@ -777,7 +762,6 @@ class _GraphBodyState extends State<_GraphBody>
           api: widget.api,
           isOwner: _isOwner,
           onOpenFull: _openFull,
-          onChatToEdit: _onChatToEdit,
           onChanged: _onTreeChanged,
         ),
       ],
@@ -910,7 +894,6 @@ class _VisualiserPanel extends StatelessWidget {
     required this.api,
     required this.isOwner,
     required this.onOpenFull,
-    required this.onChatToEdit,
     required this.onChanged,
   });
 
@@ -923,7 +906,6 @@ class _VisualiserPanel extends StatelessWidget {
   final ApiClient api;
   final bool isOwner;
   final void Function(GraphNode) onOpenFull;
-  final void Function(StoryNode) onChatToEdit;
   final VoidCallback onChanged;
 
   @override
@@ -996,7 +978,6 @@ class _VisualiserPanel extends StatelessWidget {
                 api: api,
                 isOwner: isOwner,
                 onChanged: onChanged,
-                onChatToEdit: onChatToEdit,
               ),
             ),
           ),

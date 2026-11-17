@@ -11,6 +11,7 @@ import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
 import '../widgets/ayma_toast.dart';
 import '../models/story_node.dart';
+import '../widgets/ask_ayma_overlay.dart';
 import '../widgets/graph_tree_view.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/living_report_view.dart';
@@ -147,19 +148,26 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   Future<void> _openChatForPhoto(AiNotePhoto p) async {
     if (!mounted) return;
     Navigator.of(context).pop(); // close the photo detail sheet first
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: context.ac.bg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    if (!mounted) return;
+    // Unified onto the node partial window (founder Nov 17): the photo's image
+    // NODE is attached as the persistent context card (image + read + is-you
+    // verdict), and Ayma resolves it server-side via the single graph lookup by
+    // node id. Same half-screen docked chat as every other node.
+    await showAskAymaOverlay(
+      context,
+      api: _notesApi,
+      ctx: AskAymaContext(
+        origin: AskAymaOrigin.graphNode,
+        nodeId: p.id,
+        quoteTitle: 'Photo',
+        quoteText: p.context,
+        nodeImageUrl: p.url,
+        nodeImageRead: p.context,
+        nodeIsYou: p.isUser,
       ),
-      builder: (ctx) => FractionallySizedBox(
-        heightFactor: 0.92,
-        child: ChatScreen(
-            apiClient: _notesApi, photoUrl: p.url, photoSource: p.source),
-      ),
+      onExchange: () {
+        if (mounted) unawaited(_loadPhotos());
+      },
     );
     if (mounted) await _loadPhotos();
   }

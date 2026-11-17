@@ -25,6 +25,7 @@ class _RecordingApi extends ApiClient {
     List<Map<String, String>> recentTurns = const [],
     String imagePath = '',
     String storyPageId = '',
+    String graphNodeId = '',
     String storyPassage = '',
     String storyTimelineEntryId = '',
     String deepDiveReportId = '',

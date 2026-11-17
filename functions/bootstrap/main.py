@@ -1472,6 +1472,7 @@ class ChatRequest(_TruncatingModel):
         "image_path": 256,
         "story_page_id": 80,
         "story_passage": 8000,
+        "graph_node_id": 80,
         "story_timeline_entry_id": 64,
         "deep_dive_report_id": 128,
         "deep_dive_target": 2200,
@@ -1521,6 +1522,10 @@ class ChatRequest(_TruncatingModel):
     # gets these as context plus the story-edit tools bound to that section.
     story_page_id: str = Field(default="", max_length=80)
     story_passage: str = Field(default="", max_length=8000)
+    # The person-graph node this chat is scoped to (the "Chat about it" partial
+    # window). The server resolves the whole node + what's connected to it via
+    # the single graph lookup and briefs the model (see _graph_node_context).
+    graph_node_id: str = Field(default="", max_length=80)
     # Vestigial: scoped the retired career-timeline subsystem's per-entry edit.
     # Always empty now (that UI was removed); kept only so older clients that
     # still send the field don't 422.
@@ -2060,6 +2065,7 @@ async def _prepare_chat(
     window = _to_turns(req.recent_turns)
     story_page_id = req.story_page_id.strip()
     story_passage = req.story_passage.strip()
+    graph_node_id = req.graph_node_id.strip()
     story_timeline_entry_id = req.story_timeline_entry_id.strip()
     deep_dive_report_id = req.deep_dive_report_id.strip()
     deep_dive_target = req.deep_dive_target.strip()
@@ -2162,6 +2168,7 @@ async def _prepare_chat(
         story_context=_story_edit_context(
             story_page_id, story_passage, story_timeline_entry_id
         )
+        or _graph_node_context(get_db(), uid, graph_node_id)
         or _deep_dive_edit_context(deep_dive_report_id, deep_dive_target)
         or _appearance_edit_context(appearance_finding_id)
         or _match_edit_context(match_report_id)
@@ -2296,6 +2303,71 @@ def _story_edit_context(page_id: str, passage: str, timeline_entry_id: str = "")
             "No passage is highlighted — talk about the section as a whole. "
             "Use `set_section_privacy` for a whole-section visibility change."
         )
+    return "\n".join(lines)
+
+
+def _graph_node_context(db, uid: str, node_id: str) -> str:
+    """Brief the model about the person-graph node the user opened the "Chat
+    about it" partial window on, plus everything connected to it — resolved
+    through the SINGLE graph lookup (``graph_lookup`` by node id; no new read
+    path). Carries each node's text (or image read + is-you verdict), its
+    visibility, and its source so the model answers about exactly this node and
+    what hangs off it. Best-effort — a lookup failure just omits the context."""
+    node_id = (node_id or "").strip()
+    if not node_id:
+        return ""
+    try:
+        import person_graph_store as pg_store
+
+        res = pg_store.graph_lookup(db, uid, node_id=node_id)
+    except Exception:  # noqa: BLE001
+        return ""
+    nodes = res.get("nodes") or []
+    anchor_id = res.get("anchor")
+    anchor = next((n for n in nodes if n.id == anchor_id), None)
+    if anchor is None:
+        return ""
+
+    def _src(n) -> str:
+        kind = (getattr(n, "source_kind", "") or "").strip()
+        if not kind:
+            return ""
+        ref = (getattr(n, "source_ref", "") or "").strip()
+        label = {
+            "chat": "a conversation",
+            "appearance_report": "an appearance report",
+            "profile_grid": "their photos",
+            "web": "the web",
+        }.get(kind, kind)
+        return f" (source: {label}{(' ' + ref) if ref else ''})"
+
+    def _line(n) -> str:
+        if getattr(n, "answer_type", "") == "image":
+            read = (getattr(n, "image_read", "") or "").strip() or "a photo"
+            verdict = {
+                "yes": "confirmed to be the user",
+                "no": "not the user",
+            }.get(getattr(n, "is_you", ""), "unconfirmed if it's the user")
+            body = f"[photo — {read}; {verdict}]"
+        else:
+            body = str(n.answer if n.answer is not None else n.prompt or "").strip()
+        vis = getattr(getattr(n, "visibility", None), "value", "") or ""
+        return f"{body}  [{vis}]{_src(n)}"
+
+    lines = [
+        "GRAPH NODE: the user opened this chat from one node in their person "
+        "graph (their Story / profile) to talk about it. THIS node:",
+        f"• {_line(anchor)}",
+    ]
+    connected = [n for n in nodes if n.id != anchor_id]
+    if connected:
+        lines.append("Connected to it (its details / related points):")
+        for n in connected[:40]:
+            lines.append(f"  - {_line(n)}")
+    lines.append(
+        "Answer about THIS node and what's connected to it. If they ask you to "
+        "change it, use your normal profile/story tools; don't invent a node id."
+    )
     return "\n".join(lines)
 
 

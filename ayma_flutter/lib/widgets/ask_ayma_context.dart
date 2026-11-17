@@ -43,6 +43,16 @@ enum AskAymaOrigin {
   /// resolve to a mutation attempt (§ founder: never present UI that implies
   /// a non-owner can edit someone else's report).
   reportView,
+
+  /// "Chat about it" on a person-graph NODE (any surface — Your Story, public
+  /// profile, a report, the image carousel, the graph tap-detail). Carries
+  /// [nodeId]; the server resolves the whole node + what's connected to it via
+  /// the single graph lookup (`graph_node_id` → `_graph_node_context`). The
+  /// node renders as the persistent context card above the composer (text, or
+  /// for an image node the image + its read + is-you verdict). Free-text chat
+  /// about the node — the owner actions stay as bubbles on the node sheet, so
+  /// no quick-action chips here. Turns save to the one main conversation.
+  graphNode,
 }
 
 /// What one Ask Ayma turn is scoped to. For [AskAymaOrigin.story], carries
@@ -86,6 +96,10 @@ class AskAymaContext {
     this.blockIds = const [],
     this.scope = 'block',
     this.isCandidate = false,
+    this.nodeId = '',
+    this.nodeImageUrl = '',
+    this.nodeImageRead = '',
+    this.nodeIsYou = '',
   });
 
   final AskAymaOrigin origin;
@@ -153,6 +167,18 @@ class AskAymaContext {
   /// [quickSuggestionsFor]. Ignored for every other origin.
   final bool isCandidate;
 
+  /// [AskAymaOrigin.graphNode] only: the person-graph node this chat is about.
+  /// Sent as `graph_node_id`; the server resolves the full node + connected
+  /// context via the single graph lookup. The image fields drive the persistent
+  /// context card for an image node (empty for a text node — the card then uses
+  /// [quoteTitle]/[quoteText]).
+  final String nodeId;
+  final String nodeImageUrl;
+  final String nodeImageRead;
+  final String nodeIsYou;
+
+  bool get isGraphNode => origin == AskAymaOrigin.graphNode;
+
   bool get isTimelineEntry => timelineEntryId.isNotEmpty;
 
   /// The request body `POST /report/{report_type}/{report_id}/correct`
@@ -204,4 +230,7 @@ List<String> quickSuggestionsFor(AskAymaContext ctx) => switch (ctx.origin) {
   // Read-only Q&A about someone else's report: no chips at all — see
   // [AskAymaOrigin.reportView]'s doc.
   AskAymaOrigin.reportView => const [],
+  // "Chat about it" on a graph node is free-text chat; the owner actions live
+  // as bubbles on the node sheet, so no quick-action chips here.
+  AskAymaOrigin.graphNode => const [],
 };
