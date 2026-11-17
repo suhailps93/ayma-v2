@@ -207,15 +207,45 @@ def test_taste_sync_writes_public_taste_node(monkeypatch):
     assert taste and any("Music:" in b for b in taste[0]["bullets"])
 
 
-def test_assessment_writes_off_wiki_doc(monkeypatch):
+def test_assessment_writes_graph_nodes_not_wiki_or_doc(monkeypatch):
+    # Founder Nov 17, part (a): the assessment's authoritative home with reads on
+    # is Ayma-only person-graph nodes — no ``assessment/main`` doc, no wiki page.
     import ai_assessment
+    import person_graph_store as store
 
     db = FakeDb()
     _set_reads(monkeypatch, True)
-    ref = ai_assessment._page_ref(db, "u1")
-    ref.set({"ai_body": "private judgment"}, merge=True)
-    assert ("users", "u1", "assessment", "main") in db.docs
+    notes = [
+        {"observation": "Guarded until she trusts you", "evidence": "chats",
+         "polarity": "neutral", "severity": "low"},
+        {"observation": "Kind and curious with her matches", "evidence": "DM to Dillu",
+         "polarity": "green", "severity": "medium"},
+    ]
+    book = {"input_hash": "h", "flagged_hash": "f",
+            "dm_watermark_ms": 5, "generated_at_ms": 123}
+    ai_assessment._write_result(
+        db, "u1", notes, book, prior_state={"exists": False, "ai_body": ""}
+    )
+
+    # No separate off-wiki doc, no wiki page.
+    assert ("users", "u1", "assessment", "main") not in db.docs
     assert not _wiki_pages(db)
+
+    # Content nodes (one per non-empty polarity) + the meta node, all ayma_only,
+    # each content node source-stamped.
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.assessment.green" in overlay
+    assert "emergent.assessment.neutral" in overlay
+    assert "emergent.assessment.red" not in overlay  # no red note this run
+    assert overlay["emergent.assessment.green"]["visibility"] == "ayma_only"
+    assert overlay["emergent.assessment.green"].get("source_kind") == "assessment"
+    assert overlay["emergent.assessment.green"].get("source_ref") == "green"
+    assert overlay["emergent.assessment.meta"]["answer_type"] == "report_doc"
+
+    # Digest + notes read back from the graph; bookkeeping round-trips the gate.
+    assert ai_assessment.digest(db, "u1").startswith("GREEN(medium):")
+    assert len(ai_assessment.read_notes(db, "u1")) == 2
+    assert ai_assessment._read_state(db, "u1")["dm_watermark_ms"] == 5
 
 
 # --- 3. Your Story editor write-back ---------------------------------------

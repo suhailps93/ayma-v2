@@ -11,17 +11,30 @@ with other members (including moderation-flagged messages), the profile /
 questionnaire, and web-derived findings already in the wiki — so matching can
 weigh who the person actually is, not just what they say.
 
-The assessment lives as ONE wiki page, ``wiki_pages/ayma-assessment`` with
-``page_type: "assessment"``, always ``visibility: ai_only``:
+Storage (two homes, one per read mode — ``CONFIG.person_graph_reads``):
 
-* it shows up automatically on the existing "Ayma's Notes" screen
-  (``story.get_ai_notes`` includes ``ai_only`` pages) with no client change,
-  and never in the Story editor or the public profile;
-* ``page_type: "assessment"`` is deliberately NOT in ``wiki_schema.json``, so
-  ``wiki_ingest._valid_op`` rejects any model attempt to write it through the
-  normal ingest path — this module is the page's only writer;
-* account wipe / purge already delete ``wiki_pages`` wholesale, so the
-  judgments are wiped with everything else.
+* **Graph-authoritative** (``person_graph_reads`` ON, the live path): the
+  judgment lives as Ayma-only emergent person-graph nodes (founder decision
+  Nov 17, assessment follow-on part (a)) — one content node per polarity group
+  (``emergent.assessment.{red,green,neutral}``, provenance ``inferred``, source
+  stamped ``assessment``) that renders on the "Ayma's Notes" screen exactly like
+  any other Ayma-only node, plus one non-rendering report node
+  (``emergent.assessment.meta``) that carries the compiled digest, the raw notes
+  (for carry-forward), and the incremental-refresh bookkeeping (input/flagged
+  hashes, DM watermark, generated-at). There is NO separate ``assessment/main``
+  document any more — every reader (the AI-notes screen via ``get_ai_notes`` →
+  graph sections, and matching via :func:`digest`) reads the graph.
+* **Legacy wiki** (``person_graph_reads`` OFF, reversible fallback): the old
+  single wiki page ``wiki_pages/ayma-assessment`` with ``page_type:
+  "assessment"``, always ``visibility: ai_only`` — unchanged, so a flag
+  roll-back behaves exactly as before. ``page_type: "assessment"`` is
+  deliberately NOT in ``wiki_schema.json`` (``wiki_ingest._valid_op`` rejects it
+  through the normal ingest path — this module is the page's only writer).
+
+Either home shows up automatically on the existing "Ayma's Notes" screen with no
+client change, and never in the Story editor or the public profile. Account wipe
+/ purge already delete ``wiki_pages`` and ``graph/main`` wholesale, so the
+judgments are wiped with everything else.
 
 Context inclusion (deliberate): the assessment is EXCLUDED from Ayma's
 standing chat/voice context (``EXCLUDED_FROM_CHAT_CONTEXT`` at the two
@@ -66,6 +79,21 @@ logger = logging.getLogger("ayma.assessment")
 
 PAGE_ID = "ayma-assessment"
 PAGE_TYPE = "assessment"
+
+# Graph-authoritative home (person_graph_reads ON): one content node per
+# polarity group + one non-rendering meta/bookkeeping report node. The
+# ``emergent.assessment.`` id prefix is registered in person_graph_render
+# (→ page_type "assessment", so the context-diet filters still exclude it from
+# chat grounding) and reserved in person_graph_store (a live-writer prefix the
+# Your Story editor never touches). Source is stamped ``assessment`` per the
+# founder's every-node-carries-a-source rule.
+_GRAPH_SOURCE_KIND = "assessment"
+_GRAPH_NODE_PREFIX = "emergent.assessment."
+_META_NODE_ID = _GRAPH_NODE_PREFIX + "meta"
+
+
+def _content_node_id(polarity: str) -> str:
+    return _GRAPH_NODE_PREFIX + polarity
 
 # Page types kept OUT of Ayma's standing chat/voice context (main.py's
 # unfiltered read_wiki_context call sites) — see the module docstring.
@@ -138,27 +166,57 @@ def _date_of(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).date().isoformat()
 
 
-def _page_ref(db, uid: str):
-    # Person-graph authoritative: the wiki is frozen, so Ayma's assessment (its
-    # body + the incremental-refresh bookkeeping: input/flagged hashes, DM
-    # watermark, compiled digest — state that does not fit a graph content node)
-    # lives in its own off-wiki doc ``users/{uid}/assessment/main``. The match
-    # report still reads it via :func:`digest`; it is excluded from the chat
-    # grounding exactly as before (EXCLUDED_FROM_CHAT_CONTEXT). Flag off → the
-    # legacy wiki page, unchanged, so prod behaviour is untouched.
-    from config import CONFIG
-
-    if CONFIG.person_graph_reads:
-        return (
-            db.collection("users").document(uid)
-            .collection("assessment").document("main")
-        )
+def _wiki_page_ref(db, uid: str):
+    """The legacy wiki page ref (``person_graph_reads`` OFF only)."""
     return (
         db.collection("users")
         .document(uid)
         .collection("wiki_pages")
         .document(PAGE_ID)
     )
+
+
+def _graph_reads_on() -> bool:
+    from config import CONFIG
+
+    return bool(CONFIG.person_graph_reads)
+
+
+def _read_state(db, uid: str) -> dict:
+    """The stored assessment state both reads and the refresh gate need, from
+    whichever home is authoritative: ``exists`` (was anything stored before),
+    the incremental-refresh bookkeeping (``input_hash`` / ``flagged_hash`` /
+    ``dm_watermark_ms`` / ``generated_at_ms``), the raw ``notes`` (carried
+    forward), the compiled ``digest``, and the prior ``ai_body`` (only the wiki
+    path needs it, to decide ``ai_body_updated_at``)."""
+    if _graph_reads_on():
+        import person_graph_store as store
+
+        payload = store.report_node_payload(db, uid, _META_NODE_ID)
+        notes = payload.get("notes")
+        return {
+            "exists": bool(payload),
+            "input_hash": str(payload.get("input_hash") or ""),
+            "flagged_hash": str(payload.get("flagged_hash") or ""),
+            "dm_watermark_ms": int(payload.get("dm_watermark_ms") or 0),
+            "generated_at_ms": int(payload.get("generated_at_ms") or 0),
+            "notes": notes if isinstance(notes, list) else [],
+            "digest": str(payload.get("digest") or "").strip(),
+            "ai_body": "",
+        }
+    data = _wiki_page_ref(db, uid).get().to_dict() or {}
+    fm = data.get("frontmatter") or {}
+    notes = fm.get("notes")
+    return {
+        "exists": bool(data),
+        "input_hash": str(data.get("input_hash") or ""),
+        "flagged_hash": str(data.get("flagged_hash") or ""),
+        "dm_watermark_ms": int(data.get("dm_watermark_ms") or 0),
+        "generated_at_ms": int(data.get("generated_at_ms") or 0),
+        "notes": notes if isinstance(notes, list) else [],
+        "digest": str(fm.get("digest") or "").strip(),
+        "ai_body": str(data.get("ai_body") or "").strip(),
+    }
 
 
 # --- DM signals --------------------------------------------------------------
@@ -387,15 +445,25 @@ def compile_digest(notes: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _group_block(polarity: str, group: list[dict]) -> str:
+    """One polarity group's heading + bullets — the content a single
+    ``emergent.assessment.<polarity>`` node carries (graph path). Mirrors the
+    per-group section :func:`compile_body` builds for the wiki ``ai_body``."""
+    lines = [f"**{_GROUP_TITLES[polarity]}**"]
+    for n in group:
+        line = f"- ({n['severity']}) {n['observation']}"
+        if n["evidence"]:
+            line += f" — evidence: {n['evidence']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 # --- reads (matching + tools) --------------------------------------------------
 
 
 def read_notes(db, uid: str) -> list[dict]:
     try:
-        snap = _page_ref(db, uid).get()
-        fm = (snap.to_dict() or {}).get("frontmatter") or {}
-        notes = fm.get("notes")
-        return notes if isinstance(notes, list) else []
+        return _read_state(db, uid)["notes"]
     except Exception:  # noqa: BLE001
         return []
 
@@ -404,9 +472,7 @@ def digest(db, uid: str) -> str:
     """The stored judgment digest for ``uid``, or ``""`` — best-effort, never
     raises (matching must score fine for users with no assessment yet)."""
     try:
-        snap = _page_ref(db, uid).get()
-        fm = (snap.to_dict() or {}).get("frontmatter") or {}
-        return str(fm.get("digest") or "").strip()
+        return _read_state(db, uid)["digest"]
     except Exception:  # noqa: BLE001
         return ""
 
@@ -445,9 +511,8 @@ async def refresh(db, uid: str, *, force: bool = False) -> bool:
     """
     if not db or not uid:
         return False
-    ref = _page_ref(db, uid)
-    data = ref.get().to_dict() or {}
-    since_ms = int(data.get("dm_watermark_ms") or 0)
+    state = _read_state(db, uid)
+    since_ms = state["dm_watermark_ms"]
 
     wiki_text = wiki_query.read_wiki_context(
         db, uid, exclude_page_types=frozenset({PAGE_TYPE})
@@ -458,18 +523,18 @@ async def refresh(db, uid: str, *, force: bool = False) -> bool:
 
     if not force:
         gate = _hash(wiki_text, flagged_block, sample_block)
-        if gate == str(data.get("input_hash") or ""):
+        if gate == state["input_hash"]:
             return False  # nothing new anywhere
         flag_fp = hashlib.sha256(flagged_block.encode("utf-8")).hexdigest()
-        new_flags = flag_fp != str(data.get("flagged_hash") or "")
+        new_flags = flag_fp != state["flagged_hash"]
         if not new_flags:
-            age_s = (_now_ms() - int(data.get("generated_at_ms") or 0)) / 1000
+            age_s = (_now_ms() - state["generated_at_ms"]) / 1000
             if age_s < _MIN_REFRESH_INTERVAL_S:
                 return False  # debounced; the next post-turn pass catches it
     if not wiki_text.strip() and not flagged_block and not sample_block:
         return False  # nothing to judge yet
 
-    prior_notes = _clean_notes({"notes": data.get("frontmatter", {}).get("notes")})
+    prior_notes = _clean_notes({"notes": state["notes"]})
     result = await gemini.generate_json(
         _contents(wiki_text, prior_notes, flagged_block, sample_block),
         system_prompt=load_prompt_file(_PROMPT_PATH),
@@ -480,28 +545,122 @@ async def refresh(db, uid: str, *, force: bool = False) -> bool:
         temperature=0.0,
     )
     notes = _clean_notes(result)
+    book = {
+        # What an immediate re-check would see: same wiki + flags, an empty
+        # "new since watermark" sample — so the very next gate check skips.
+        "input_hash": _hash(wiki_text, flagged_block, ""),
+        "flagged_hash": hashlib.sha256(flagged_block.encode("utf-8")).hexdigest(),
+        "dm_watermark_ms": max(since_ms, int(sig["watermark_ms"] or 0)),
+        "generated_at_ms": _now_ms(),
+    }
+    _write_result(db, uid, notes, book, prior_state=state)
+    return True
+
+
+def _write_result(
+    db, uid: str, notes: list[dict], book: dict, *, prior_state: dict
+) -> None:
+    """Persist a fresh assessment to the authoritative home. Graph: content
+    nodes per polarity + the meta/bookkeeping report node. Wiki (flag off): the
+    single ``ayma-assessment`` page, unchanged."""
+    digest_str = compile_digest(notes)
+    if _graph_reads_on():
+        _write_graph(db, uid, notes, digest_str, book)
+        return
     body = compile_body(notes)
     payload: dict = {
         "page_type": PAGE_TYPE,
         # Always ai_only: judgments are Ayma's own, never profile material.
         "visibility": "ai_only",
         "ai_body": body,
-        "frontmatter": {"notes": notes, "digest": compile_digest(notes)},
+        "frontmatter": {"notes": notes, "digest": digest_str},
         "updated_at": firestore.SERVER_TIMESTAMP,
-        # What an immediate re-check would see: same wiki + flags, an empty
-        # "new since watermark" sample — so the very next gate check skips.
-        "input_hash": _hash(wiki_text, flagged_block, ""),
-        "flagged_hash": hashlib.sha256(
-            flagged_block.encode("utf-8")
-        ).hexdigest(),
-        "dm_watermark_ms": max(since_ms, int(sig["watermark_ms"] or 0)),
-        "generated_at_ms": _now_ms(),
+        **book,
     }
-    if not data:
+    if not prior_state["exists"]:
         payload["created_at"] = firestore.SERVER_TIMESTAMP
-    if body != str(data.get("ai_body") or "").strip():
+    if body != prior_state["ai_body"]:
         payload["ai_body_updated_at"] = firestore.SERVER_TIMESTAMP
-    ref.set(payload, merge=True)
+    _wiki_page_ref(db, uid).set(payload, merge=True)
+
+
+def _write_graph(
+    db, uid: str, notes: list[dict], digest_str: str, book: dict
+) -> None:
+    """Write the assessment as Ayma-only person-graph nodes (founder Nov 17).
+
+    One rendering content node per non-empty polarity group — these are what the
+    "Ayma's Notes" screen shows — and one non-rendering ``report_doc`` meta node
+    carrying the digest matching reads, the raw notes (carried forward on the
+    next run), and the incremental-refresh bookkeeping. A polarity group that is
+    now empty has its stale node deleted, so a dropped red flag never lingers."""
+    import person_graph_store as store
+
+    present: set[str] = set()
+    for polarity in _POLARITIES:
+        group = [n for n in _sorted_notes(notes) if n["polarity"] == polarity]
+        if not group:
+            continue
+        present.add(polarity)
+        store.upsert_fact_node(
+            db,
+            uid,
+            _content_node_id(polarity),
+            _group_block(polarity, group),
+            section="misc",
+            visibility="ayma_only",
+            provenance="inferred",
+            level=2,
+            label=f"Ayma's assessment — {_GROUP_TITLES[polarity]}",
+            answer_type="narrative",
+            source_kind=_GRAPH_SOURCE_KIND,
+            source_ref=polarity,
+        )
+    stale = [_content_node_id(p) for p in _POLARITIES if p not in present]
+    if stale:
+        store.delete_nodes(db, uid, stale)
+    store.upsert_report_node(
+        db,
+        uid,
+        _META_NODE_ID,
+        {"notes": notes, "digest": digest_str, **book},
+        label="assessment-meta",
+        section="misc",
+    )
+
+
+def backfill_to_graph(db, uid: str, *, delete_old: bool = True) -> bool:
+    """One-time, idempotent migration of a user's legacy ``assessment/main``
+    document into the person-graph nodes (founder Nov 17, part (a) cutover).
+
+    Reads the old off-wiki doc, writes the same content as graph nodes
+    (:func:`_write_graph`), and — unless ``delete_old=False`` — deletes the old
+    doc so nothing unused stays. Returns True when an old doc was found and
+    migrated, False when there was nothing to migrate (already done, or never
+    had one). Safe to re-run: the node ids are stable, so a repeat overwrites in
+    place; a second run finds no old doc and is a no-op. Runs ONLY where
+    ``person_graph_reads`` is on (the nodes are the authoritative home there).
+
+    This writes to Firestore; run it as an ops task per uid, never against prod
+    data without the founder's go-ahead."""
+    ref = (
+        db.collection("users").document(uid)
+        .collection("assessment").document("main")
+    )
+    data = ref.get().to_dict() or {}
+    if not data:
+        return False
+    fm = data.get("frontmatter") or {}
+    notes = _clean_notes({"notes": fm.get("notes")})
+    book = {
+        "input_hash": str(data.get("input_hash") or ""),
+        "flagged_hash": str(data.get("flagged_hash") or ""),
+        "dm_watermark_ms": int(data.get("dm_watermark_ms") or 0),
+        "generated_at_ms": int(data.get("generated_at_ms") or 0),
+    }
+    _write_graph(db, uid, notes, compile_digest(notes), book)
+    if delete_old:
+        ref.delete()
     return True
 
 

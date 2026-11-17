@@ -345,6 +345,11 @@ def persona_prose(
 _META_PREFIX_PAGE_TYPE: tuple[tuple[str, str], ...] = (
     ("emergent.steering.", "steering"),
     ("emergent.interaction.", "interactions"),
+    # ai_assessment's live graph home (founder Nov 17, part (a)); mapped to the
+    # "assessment" page_type so EXCLUDED_FROM_CHAT_CONTEXT keeps Ayma's private
+    # judgment OUT of the standing chat/voice grounding. Listed before the older
+    # ``emergent.assess.`` (migration-seeded) prefix: longest match first.
+    ("emergent.assessment.", "assessment"),
     ("emergent.assess.", "assessment"),
     ("emergent.webfind.", "web_findings"),
     ("emergent.appearance.", "appearance"),

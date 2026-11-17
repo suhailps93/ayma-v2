@@ -681,6 +681,7 @@ _RESERVED_EMERGENT_PREFIXES = (
     "emergent.skill.",
     "emergent.taste.",
     "emergent.steering.",
+    "emergent.assessment.",  # ai_assessment live graph home (founder Nov 17)
     "emergent.assess.",
     "emergent.webfind.",
     "emergent.appearance.",

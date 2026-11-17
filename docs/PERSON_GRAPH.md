@@ -316,7 +316,8 @@ at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
   block renders graph nodes grouped by a wiki-style **page_type**
   (`render.node_page_type`: a node's question-tree section, or its id-prefix for
   live-written meta — `emergent.steering.*`, `emergent.skill.*`,
-  `emergent.assess.*`), so the context-diet include/exclude filters
+  `emergent.assessment.*` (live) / `emergent.assess.*` (migration-seeded)), so
+  the context-diet include/exclude filters
   (`CORE_PAGE_TYPES`, `EXCLUDED_FROM_CHAT_CONTEXT`) keep working unchanged.
 - **Story / public reads.** `story.get_story` + `get_ai_notes` render from the
   graph (`story_reads._graph_sections`); `public_profile.public_bullet_sections`
@@ -328,9 +329,18 @@ at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
 - **Content writers → graph nodes** (`person_graph_store.upsert_fact_node`,
   stable ids): skill reports (`emergent.skill.<page_type>`), interactions,
   steering (`emergent.steering.rules`, ayma_only), the Qloo taste page
-  (`emergent.taste.qloo`, public in the `taste` section). `ai_assessment` moved
-  to an off-wiki `assessment/main` doc (its refresh bookkeeping does not fit a
-  content node).
+  (`emergent.taste.qloo`, public in the `taste` section), and **Ayma's
+  assessment** (`emergent.assessment.{red,green,neutral}`, ayma_only inferred,
+  source `assessment`; founder Nov 17 part (a)). The assessment's refresh
+  bookkeeping + digest + raw notes ride on a sibling non-rendering `report_doc`
+  node `emergent.assessment.meta` (so nothing needs an off-wiki doc). The old
+  `assessment/main` document and its read/write path are **deleted**; a one-time
+  idempotent `ai_assessment.backfill_to_graph(db, uid)` migrates existing users'
+  docs into the nodes. `node_page_type` maps the `emergent.assessment.` prefix to
+  page_type `assessment`, so `EXCLUDED_FROM_CHAT_CONTEXT` still keeps the private
+  judgment out of chat/voice grounding, and matching's `persona` (ayma_only
+  excluded) still omits it from the generic dump while `ai_assessment.digest`
+  feeds it as its own labeled block.
 - **Your Story editor write-back** (closes the NOTE 230 Phase-6b gap):
   `profile_bullets.save_bullets`/`create_bullet_section` and the in-chat edit
   primitives (`story_writes.save_section`/`create_section`/`set_visibility`/
