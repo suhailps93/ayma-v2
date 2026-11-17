@@ -428,19 +428,33 @@ void main() {
     testWidgets(
         'photo node adjacent to bullet: tap resolves to photo and second tap opens photo viewer',
         (tester) async {
+      // Pin a tall, deterministic surface. The force layout settles in its own
+      // coordinate space and is then scaled to fit the (ChromeColumn) graph
+      // canvas, so every node's on-screen region scales with the canvas size. A
+      // generous canvas gives the photo node an amply tappable target, immune to
+      // the ~30px the appBar + visibility-legend row take from the canvas (which
+      // on the default 600px surface collapses the photo's region below the grid
+      // step).
+      tester.view.physicalSize = const Size(800, 1100);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(_reducedMotionApp(_PhotoAdjacentBulletApi()));
       await tester.pump();
       await tester.pump();
 
-      final canvas = tester.getRect(find.byType(PersonGraphScreen));
-      // Sweep the canvas until a tap lands on the photo node.
+      // Sweep only the graph canvas itself (not the whole screen — its header
+      // filter bar and footer detail panel hold no graph nodes) until a tap
+      // lands on the photo node (the only openable node — its "Open" affordance
+      // marks a hit; the adjacent bullet is inert).
+      final canvas = tester.getRect(find.byWidgetPredicate(
+          (w) => w is CustomPaint && '${w.painter.runtimeType}' == '_GraphPainter'));
       Offset? photoTapPos;
-      for (var y = canvas.top + 60;
-          y < canvas.bottom - 8 && photoTapPos == null;
-          y += 18) {
-        for (var x = canvas.left + 8;
-            x < canvas.right - 8 && photoTapPos == null;
-            x += 18) {
+      for (var y = canvas.top + 6;
+          y < canvas.bottom - 6 && photoTapPos == null;
+          y += 8) {
+        for (var x = canvas.left + 6;
+            x < canvas.right - 6 && photoTapPos == null;
+            x += 8) {
           await tester.tapAt(Offset(x, y));
           await tester.pump();
           if (find.widgetWithText(TextButton, 'Open').evaluate().isNotEmpty) {

@@ -10,6 +10,7 @@ import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../theme.dart';
 import '../widgets/ayma_back_button.dart';
+import '../widgets/bullet_visibility_legend.dart';
 import '../widgets/node_visualiser.dart';
 import '../widgets/overflow_guards.dart';
 import '../widgets/photo_gallery.dart';
@@ -197,11 +198,28 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
             )
           : g == null
               ? const Center(child: CircularProgressIndicator())
-              : _GraphBody(
-                  key: ValueKey(identityHashCode(g)),
-                  graph: g,
-                  api: _api,
-                  uid: widget.uid,
+              : Column(
+                  children: [
+                    // A one-line key for the coloured visibility bullets the
+                    // node detail below shows (founder, build 2488) — the same
+                    // bullets as Your Story, so the same key explains them.
+                    // Reuses the exact bullet dots so it never drifts.
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: BulletVisibilityLegend(),
+                      ),
+                    ),
+                    Expanded(
+                      child: _GraphBody(
+                        key: ValueKey(identityHashCode(g)),
+                        graph: g,
+                        api: _api,
+                        uid: widget.uid,
+                      ),
+                    ),
+                  ],
                 ),
     );
   }
