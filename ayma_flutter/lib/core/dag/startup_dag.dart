@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+import 'boot_trace.dart';
+
 typedef NodeAction<T> = Future<T> Function(DAGContext context);
 
 enum NodeStatus { pending, scheduled, running, succeeded, failed, skipped }
@@ -31,6 +33,7 @@ class StartupNode<T> {
 
   Future<void> execute(DAGContext context) async {
     status = NodeStatus.running;
+    BootTrace.mark('node $id start');
     try {
       Future<T> computation = action(context);
       if (timeout != null) {
@@ -38,10 +41,12 @@ class StartupNode<T> {
       }
       result = await computation;
       status = NodeStatus.succeeded;
+      BootTrace.mark('node $id done');
       _completer.complete(result);
     } catch (e, stack) {
       status = NodeStatus.failed;
       error = e;
+      BootTrace.mark('node $id FAILED ($e)');
       if (critical) {
         _completer.completeError(e, stack);
         _completer.future.ignore();

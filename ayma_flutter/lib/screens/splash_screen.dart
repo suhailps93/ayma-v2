@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/dag/boot_trace.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/boot_config.dart';
 import '../routing/entry.dart';
@@ -259,8 +260,10 @@ class _SplashScreenState extends State<SplashScreen> {
   /// wake-ping fired in [initState] and the background bootstrap runs while
   /// the dwells hold.
   Future<void> _onFirstFrameBuilt() async {
+    BootTrace.mark('splash first-frame built (awaiting presentation)');
     await SplashFirstPaint.waitForPresentation();
     if (!mounted) return;
+    BootTrace.mark('splash first-frame PRESENTED (markPainted)');
     SplashFirstPaint.markPainted();
     unawaited(_resolve());
   }
@@ -268,6 +271,7 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _resolve() async {
     if (_inFlight) return;
     _inFlight = true;
+    BootTrace.mark('splash _resolve() enter');
 
     // Sign-in is required up front (§3.3) — no anonymous sessions. No user, or
     // an anonymous one left over from an older build, means "go sign in".
@@ -279,6 +283,8 @@ class _SplashScreenState extends State<SplashScreen> {
     final auth = widget.auth ?? FirebaseAuth.instance;
     final user = auth.currentUser;
     final anonymousLanding = user == null || user.isAnonymous;
+    BootTrace.mark('splash _resolve: currentUser=${user?.uid ?? 'null'} '
+        'anon=$anonymousLanding');
     if (anonymousLanding) {
       _inFlight = false;
       if (mounted) context.go(SignInScreen.path);
@@ -293,6 +299,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final cachedConfig = await ReportCache.instance.readBootConfig(user.uid);
     final cachedRoute = cachedConfig?.entryRoute ??
         await ReportCache.instance.readBootRoute(user.uid);
+    BootTrace.mark('splash _resolve: cachedRoute=$cachedRoute');
     if (cachedRoute != null && cachedRoute.isNotEmpty && mounted) {
       // Hold the splash for the minimum dwell so the wake line is actually
       // visible: without this the navigation below lands before the splash
@@ -305,6 +312,7 @@ class _SplashScreenState extends State<SplashScreen> {
       _inFlight = false;
       final router = GoRouter.of(context);
       DeepLinkQueue.instance.notifyNavigationSettled();
+      BootTrace.mark('splash NAVIGATE to cached $cachedRoute');
       router.go(cachedRoute);
       unawaited(_backgroundBootstrap(user.uid, auth, cachedRoute, router));
       return;

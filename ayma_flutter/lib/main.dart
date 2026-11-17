@@ -9,6 +9,7 @@ import 'package:logging/logging.dart';
 
 import 'build_awareness.dart';
 import 'core/app_recovery.dart';
+import 'core/dag/boot_trace.dart';
 import 'core/dag/launch_intent_resolver.dart';
 import 'core/dag/startup_nodes.dart';
 import 'core/session_teardown.dart';
@@ -35,6 +36,8 @@ import 'widgets/keyboard_dismiss.dart';
 import 'widgets/tour_host.dart';
 
 Future<void> main() async {
+  BootTrace.start();
+  BootTrace.mark('main() entered');
   // Route LiveKit's internal client logs in debug builds
   if (kDebugMode) {
     Logger.root.level = Level.ALL;
@@ -48,8 +51,18 @@ Future<void> main() async {
     router: appRouter,
   );
 
-  // Extract initial launch intent and dynamically configure critical path
-  final intent = await LaunchIntentResolver.extract();
+  // Resolve the launch intent and tune the DAG's routing edges for it. This
+  // runs BEFORE runApp (N8), so it is the ONLY unbounded await on the
+  // pre-first-frame path: a slow or hung `getInitialMessage()` / native
+  // platform-channel call here would delay the first frame itself. Bound it to
+  // the same 1s the DAG's own N6:launch_intent uses so it can never gate the
+  // first frame — on timeout the normal icon-launch intent is assumed. This is
+  // safe for deep links: N12:destination_routing routes from N6's re-resolved
+  // intent (N6 carries the identical 1s bound), not from this value, which only
+  // promotes an edge (e.g. a paywall deep link waiting on RevenueCat init).
+  BootTrace.mark('LaunchIntentResolver.resolveForStartup() start');
+  final intent = await LaunchIntentResolver.resolveForStartup();
+  BootTrace.mark('LaunchIntentResolver.resolveForStartup() done ($intent)');
   LaunchIntentResolver.configureDAGForIntent(dag, intent);
 
   // Run pre-frame DAG to first frame mount (N8:first_frame_mount). N8 depends
@@ -60,7 +73,9 @@ Future<void> main() async {
   // — before the DAG ran N7 — was the P0 boot crash (`PushService()` threw
   // `[core/no-app]`, aborting main() on the splash). See startup_nodes_test.dart
   // for the "run-to-N8 guarantees N7" regression guard.
+  BootTrace.mark('dag.run(N8) await start');
   await dag.run(targetNodes: {'N8:first_frame_mount'});
+  BootTrace.mark('dag.run(N8) await returned');
 
   // From the first frame on, record any frame that stalls the UI thread
   // (NOTE 133: the 02:41 ANR's trace was taken after the blocking work
@@ -91,7 +106,12 @@ Future<void> main() async {
   unawaited(askStartupLocationPermission());
 
   String? lastKnownUid;
+  var sawFirstAuthTick = false;
   FirebaseAuth.instance.authStateChanges().listen((user) {
+    if (!sawFirstAuthTick) {
+      sawFirstAuthTick = true;
+      BootTrace.mark('authStateChanges FIRST tick (user=${user?.uid ?? 'null'})');
+    }
     if (user == null) {
       // Only tear down when a real session actually ended. On cold start
       // `lastKnownUid` is null (the initial settling tick before KeyStore
