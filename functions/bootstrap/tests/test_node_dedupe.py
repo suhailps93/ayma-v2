@@ -1,10 +1,12 @@
 """Tests for the node-dedupe index, cross-check, and resolution (founder Nov 17)."""
 
+import asyncio
 import dataclasses
 
 import pytest
 
 import config
+import gemini
 import person_graph as pg
 import person_graph_crosscheck as crosscheck
 import person_graph_index as index_mod
@@ -296,3 +298,160 @@ def test_write_time_prevention_off_by_default_creates_node(monkeypatch):
     nid = store.add_loose_node(db, UID, "i love thai food!")
     assert nid != "existing"
     assert len(store.load_overlay(db, UID)) == 2
+
+
+# --- write-time CONFLICT raising (founder Nov 17, assessment part d) --------
+
+
+def _stub_judge(monkeypatch, verdict):
+    """Monkeypatch the LiveKit judge to a fixed reply (``verdict`` is the dict
+    gemini.generate_json returns, or an Exception instance to simulate failure)."""
+    calls = {"n": 0}
+
+    async def _fake(*a, **k):
+        calls["n"] += 1
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    return calls
+
+
+def test_candidates_for_text_same_topic_excludes_exact_and_unrelated():
+    graph = {
+        "job": _node("job", "career", 2, answer="I work at Google as a product manager"),
+        "food": _node("food", "misc", 2, answer="I love Thai food"),
+    }
+    idx = index_mod.index_from_graph(graph)
+    cands = crosscheck.candidates_for_text(
+        idx, "I work at Amazon as a product manager now"
+    )
+    ids = [c.node_id for c in cands]
+    assert "job" in ids  # same topic (work / product manager) surfaced
+    assert "food" not in ids  # unrelated topic not surfaced
+    # an EXACT restatement is a duplicate, never a conflict candidate
+    assert crosscheck.candidates_for_text(
+        idx, "I work at Google as a product manager"
+    ) == []
+
+
+def test_classify_conflict_returns_entry_on_verdict(monkeypatch):
+    graph = {
+        "job": _node("job", "career", 2, answer="I work at Google as a product manager"),
+    }
+    idx = index_mod.index_from_graph(graph)
+    new = "I work at Amazon as a product manager now"
+    cands = crosscheck.candidates_for_text(idx, new)
+    _stub_judge(monkeypatch, {"conflict_i": 0})
+    hit = asyncio.run(crosscheck.classify_conflict(new, cands))
+    assert hit is not None and hit.node_id == "job"
+
+
+def test_classify_conflict_none_when_no_conflict(monkeypatch):
+    graph = {"job": _node("job", "career", 2, answer="I work at Google as a PM")}
+    idx = index_mod.index_from_graph(graph)
+    cands = crosscheck.candidates_for_text(idx, "I work at Google, love my team")
+    _stub_judge(monkeypatch, {"conflict_i": None})
+    assert asyncio.run(crosscheck.classify_conflict("x", cands)) is None
+
+
+def test_classify_conflict_none_on_judge_failure(monkeypatch):
+    graph = {"job": _node("job", "career", 2, answer="I work at Google as a PM")}
+    idx = index_mod.index_from_graph(graph)
+    cands = crosscheck.candidates_for_text(idx, "I work at Amazon as a product manager")
+    _stub_judge(monkeypatch, RuntimeError("livekit 429"))
+    # best-effort: a judge failure never blocks — no conflict, the write proceeds
+    assert asyncio.run(crosscheck.classify_conflict("x", cands)) is None
+
+
+def _conflict_db():
+    nodes = {
+        "job": {
+            "prompt": "job", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "I work at Google as a product manager",
+            "state": "answered", "visibility": "private", "provenance": "stated",
+        },
+    }
+    return FakeDb({**_profile(UID), **_overlay_doc(UID, nodes)})
+
+
+def _remember_fn(db):
+    from skills import remember as remember_skill
+
+    return remember_skill.SKILL.bind(
+        db, UID, session_id="sess1", turn_index=3, turns=[]
+    )
+
+
+def test_remember_raises_conflict_and_does_not_write_second_node(monkeypatch):
+    # The exact founder path (part d): a NEW fact in chat that contradicts an
+    # existing node is RAISED IN CHAT and NOT stored as a second node.
+    db = _conflict_db()
+    monkeypatch.setattr(
+        config, "CONFIG",
+        dataclasses.replace(
+            config.CONFIG, person_graph_reads=True, node_conflict_raise=True
+        ),
+    )
+    _stub_judge(monkeypatch, {"conflict_i": 0})
+    out = asyncio.run(_remember_fn(db)(highlight="I work at Amazon as a product manager now"))
+    assert out.startswith("CONFLICT")
+    assert "job" in out  # names the existing node for pg_resolve_conflict
+    overlay = store.load_overlay(db, UID)
+    assert list(overlay.keys()) == ["job"]  # no second, contradictory node written
+
+
+def test_remember_writes_when_judge_finds_no_conflict(monkeypatch):
+    db = _conflict_db()
+    monkeypatch.setattr(
+        config, "CONFIG",
+        dataclasses.replace(
+            config.CONFIG, person_graph_reads=True, node_conflict_raise=True
+        ),
+    )
+    _stub_judge(monkeypatch, {"conflict_i": None})
+    out = asyncio.run(_remember_fn(db)(highlight="I also mentor two junior PMs at Google"))
+    assert out == "noted — added to your story"
+    assert len(store.load_overlay(db, UID)) == 2  # non-conflicts still save
+
+
+def test_remember_conflict_off_by_default_writes_without_judge(monkeypatch):
+    db = _conflict_db()
+    monkeypatch.setattr(
+        config, "CONFIG",
+        dataclasses.replace(
+            config.CONFIG, person_graph_reads=True, node_conflict_raise=False
+        ),
+    )
+    called = _stub_judge(monkeypatch, {"conflict_i": 0})
+    out = asyncio.run(_remember_fn(db)(highlight="I work at Amazon as a product manager now"))
+    assert out == "noted — added to your story"
+    assert len(store.load_overlay(db, UID)) == 2
+    assert called["n"] == 0  # flag off: no LiveKit call at all
+
+
+def test_resolve_conflict_incoming_overwrites_and_retires_old():
+    db = _conflict_db()
+    from skills import node_dedupe
+
+    resolve = node_dedupe._bind_resolve_conflict(db, UID)
+    msg = resolve("job", "incoming", new_value="I work at Amazon as a product manager")
+    assert "updated job" in msg
+    overlay = store.load_overlay(db, UID)
+    assert list(overlay.keys()) == ["job"]  # still exactly one node
+    assert overlay["job"]["answer"] == "I work at Amazon as a product manager"
+    hist = overlay["job"].get("history") or []
+    assert any("Google" in str(h.get("answer")) for h in hist)  # old value kept
+
+
+def test_resolve_conflict_existing_keeps_old_unchanged():
+    db = _conflict_db()
+    from skills import node_dedupe
+
+    resolve = node_dedupe._bind_resolve_conflict(db, UID)
+    msg = resolve("job", "existing")
+    assert "kept your existing note" in msg
+    overlay = store.load_overlay(db, UID)
+    assert overlay["job"]["answer"] == "I work at Google as a product manager"
+    assert not overlay["job"].get("history")  # nothing changed

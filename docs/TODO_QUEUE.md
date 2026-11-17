@@ -1,6 +1,13 @@
 # Ayma work queue (kept in the repo so any agent can pick it up)
 
-Last updated: 2026-11-16. Update this file whenever an item changes; commit and push to main.
+Last updated: 2026-11-17. Update this file whenever an item changes; commit and push to main.
+
+## ASSESSMENT-DOC-TO-NODES — assessment follow-on part (a) (fleet/assessment-doc-to-nodes off staging 7883fe18, 2026-11-17) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
+- **Founder decision (Nov 17):** migrate the separate `users/{uid}/assessment/main` document into person-graph nodes and DELETE the separate-document path in the same change; every reader reads the graph, no user-visible behaviour change.
+- **What changed (`functions/bootstrap/ai_assessment.py`):** with `person_graph_reads` ON the assessment is now Ayma-only graph nodes — one content node per polarity group `emergent.assessment.{red,green,neutral}` (provenance `inferred`, source stamped `assessment`/`<polarity>`) that renders on the Ayma's-Notes screen, plus a non-rendering `report_doc` node `emergent.assessment.meta` holding the digest, raw notes (carry-forward) and refresh bookkeeping (hashes/watermark/generated-at). The old `assessment/main` write+read path is removed; the flag-off legacy `wiki_pages/ayma-assessment` path is untouched (reversible).
+- **Readers repointed:** (1) Ayma's-Notes screen (Flutter `/story/ai-notes` → `story_reads.get_ai_notes` → graph sections — no Flutter change, already graph-routed); (2) matching digest (`matching_skill.score_pair` → `ai_assessment.digest`, now reads the meta node). Privacy wiring: `person_graph_render._META_PREFIX_PAGE_TYPE` maps `emergent.assessment.` → page_type `assessment` so `EXCLUDED_FROM_CHAT_CONTEXT` still keeps the private judgment out of chat/voice grounding; `person_graph_store._RESERVED_EMERGENT_PREFIXES` reserves the prefix so the Your Story editor never deletes it.
+- **Backfill:** `ai_assessment.backfill_to_graph(db, uid)` — idempotent, reads the old doc → writes nodes → deletes the old doc. **PENDING OPS RUN** (needs deploy-env Firestore creds; do not run against prod/staging without founder go-ahead). Not run by this branch.
+- **Tests:** `functions/bootstrap/tests/test_ai_assessment.py` (15/15: 9 wiki + 6 new graph incl. backfill), `test_graph_read_write_switch.py` updated. Broad graph/story/matching/grounding suites green.
 
 ## NOTE-237-STORY-SCROLL-ANR — Story-scroll ANR regression on 2463 (fleet/story-scroll-anr-237 off staging 4d5de298, 2026-11-16) — DONE on branch, pushed, DO NOT MERGE (hourly sweep owns merges)
 - **Defect (Scout NOTE 237, build 2463):** ANR dialog during slow story scrolling (9 half-screen swipes at 3s pauses, first attempt after photo sends; `Waited 5001ms for MotionEvent, 12:54:40.083`), plus a second ANR trace stamped during re-run scroll. Regression vs NOTE 236 on build 2462 (zero ANR on 26 fast swipes).

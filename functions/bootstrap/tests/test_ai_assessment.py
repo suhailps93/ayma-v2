@@ -16,13 +16,16 @@ Covers, per the founder feature (2026-09-26):
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from datetime import datetime, timezone
 
 import ai_assessment
+import config
 import gemini
 import story
 import token_ledger
 import wiki_query
+from config import CONFIG
 from fake_firestore import FakeDb
 
 UID = "u1"
@@ -307,3 +310,156 @@ def test_excluded_from_chat_context_but_recall_reachable(monkeypatch):
     assert "unsolicited sexual message" in wiki_query.recall_snippets(
         db, UID, "any red flags or repulsive behaviour in assessment?"
     )
+
+
+# --- graph-authoritative path (person_graph_reads ON, founder Nov 17 part a) --
+
+
+def _graph_reads(monkeypatch) -> None:
+    monkeypatch.setattr(
+        config, "CONFIG", dataclasses.replace(CONFIG, person_graph_reads=True)
+    )
+
+
+def _meta(db):
+    import person_graph_store as store
+
+    return store.report_node_payload(db, UID, ai_assessment._META_NODE_ID)
+
+
+def test_graph_refresh_writes_nodes_not_doc_or_wiki(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = _db()
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini([]))
+
+    assert _run(ai_assessment.refresh(db, UID)) is True
+
+    # Neither the old off-wiki doc nor a wiki page is written.
+    assert ("users", UID, "assessment", "main") not in db.docs
+    assert _page(db) is None
+
+    import person_graph_store as store
+
+    overlay = store.load_overlay(db, UID)
+    # One content node per polarity present in the notes (red + green here),
+    # Ayma-only and source-stamped; plus the non-rendering meta node.
+    assert overlay["emergent.assessment.red"]["visibility"] == "ayma_only"
+    assert overlay["emergent.assessment.red"]["provenance"] == "inferred"
+    assert overlay["emergent.assessment.red"]["source_kind"] == "assessment"
+    assert overlay["emergent.assessment.red"]["source_ref"] == "red"
+    assert "emergent.assessment.green" in overlay
+    assert overlay["emergent.assessment.meta"]["answer_type"] == "report_doc"
+
+    # Readers (matching digest + notes carry-forward) read the graph meta node.
+    d = ai_assessment.digest(db, UID)
+    assert d.startswith("RED(high):") and "GREEN(medium):" in d
+    assert _meta(db)["digest"] == d
+    assert len(ai_assessment.read_notes(db, UID)) == 2
+
+
+def test_graph_assessment_shows_in_ai_notes_not_story_or_public(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = _db()
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini([]))
+    _run(ai_assessment.refresh(db, UID))
+
+    # The owner's AI-notes screen shows the judgment (Ayma-only bullets).
+    notes_bodies = " ".join(
+        s["body"] for s in story.get_ai_notes(db, UID)["sections"]
+    )
+    assert "Red flags" in notes_bodies
+    assert "Sent an unsolicited sexual message" in notes_bodies
+
+    # It never leaks to Your Story (owner public/private) or the public profile.
+    story_bodies = " ".join(
+        s["body"] for s in story.get_story(db, UID)["sections"]
+    )
+    assert "unsolicited sexual message" not in story_bodies
+
+
+def test_graph_assessment_excluded_from_chat_context(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = _db()
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini([]))
+    _run(ai_assessment.refresh(db, UID))
+
+    standing = wiki_query.read_wiki_context(
+        db, UID, exclude_page_types=ai_assessment.EXCLUDED_FROM_CHAT_CONTEXT
+    )
+    assert "unsolicited sexual message" not in standing
+    # Unfiltered AI grounding still sees it (the assessment nodes map to the
+    # "assessment" page_type, so only the explicit exclusion drops them).
+    assert "unsolicited sexual message" in wiki_query.read_wiki_context(db, UID)
+
+
+def test_graph_gating_matches_wiki_path(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = _db()
+    calls: list = []
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini(calls))
+
+    assert _run(ai_assessment.refresh(db, UID)) is True
+    assert _run(ai_assessment.refresh(db, UID)) is False  # nothing new
+    assert len(calls) == 1
+
+    # A new moderation flag bypasses the debounce, same as the wiki path.
+    db.docs[("dm_threads", "t1", "messages", "m2")] = dict(
+        db.docs[("dm_threads", "t1", "messages", "m2")],
+        moderated=True,
+        moderation_reason="sexual content",
+        moderation_categories=["sexual"],
+    )
+    assert _run(ai_assessment.refresh(db, UID)) is True
+    assert len(calls) == 2
+
+
+def test_graph_stale_polarity_node_is_deleted(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = _db()
+    import person_graph_store as store
+
+    # First run: red + green.
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini([]))
+    _run(ai_assessment.refresh(db, UID))
+    assert "emergent.assessment.red" in store.load_overlay(db, UID)
+
+    # Force a re-run that now yields ONLY a green note: the stale red node goes.
+    green_only = {"notes": [_MODEL_NOTES["notes"][1]]}
+    monkeypatch.setattr(gemini, "generate_json", _fake_gemini([], notes=green_only))
+    _run(ai_assessment.refresh(db, UID, force=True))
+    overlay = store.load_overlay(db, UID)
+    assert "emergent.assessment.red" not in overlay
+    assert "emergent.assessment.green" in overlay
+    assert not ai_assessment.digest(db, UID).startswith("RED(")
+
+
+def test_backfill_migrates_old_doc_idempotently(monkeypatch):
+    _graph_reads(monkeypatch)
+    db = FakeDb()
+    # A legacy off-wiki assessment doc as the old code wrote it.
+    db.docs[("users", UID, "assessment", "main")] = {
+        "page_type": "assessment",
+        "visibility": "ai_only",
+        "ai_body": "Ayma's candid assessment ...",
+        "frontmatter": {
+            "notes": _MODEL_NOTES["notes"],
+            "digest": "RED(high): x\nGREEN(medium): y",
+        },
+        "input_hash": "ih",
+        "flagged_hash": "fh",
+        "dm_watermark_ms": 777,
+        "generated_at_ms": 1234,
+    }
+
+    assert ai_assessment.backfill_to_graph(db, UID) is True
+    # Old doc removed; nodes written; bookkeeping preserved for the gate.
+    assert ("users", UID, "assessment", "main") not in db.docs
+    import person_graph_store as store
+
+    overlay = store.load_overlay(db, UID)
+    assert "emergent.assessment.red" in overlay
+    assert ai_assessment.digest(db, UID).startswith("RED(high):")
+    assert ai_assessment._read_state(db, UID)["dm_watermark_ms"] == 777
+
+    # Idempotent: a second run finds nothing to migrate.
+    assert ai_assessment.backfill_to_graph(db, UID) is False

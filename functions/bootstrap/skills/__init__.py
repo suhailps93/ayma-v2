@@ -123,13 +123,19 @@ def _person_graph_tool_skills() -> list[Skill]:
 
 def _node_dedupe_skills() -> list[Skill]:
     """The node-dedupe cross-check/resolution tools (``node_dedupe.SKILLS``),
-    present only when ``NODE_DEDUPE`` is on in this process. Off by default; the
-    find pass is read-only and resolution only ever runs on the user's explicit
-    choice (never silent). Checked per call, so the flag flips without a
-    restart. Composed into both surfaces (text + voice)."""
+    present only when ``NODE_DEDUPE`` is on in this process, plus the write-time
+    conflict resolution tool (``CONFLICT_SKILLS``) when ``NODE_CONFLICT_RAISE`` is
+    on. Off by default; the find pass is read-only and resolution only ever runs
+    on the user's explicit choice (never silent). Checked per call, so the flags
+    flip without a restart. Composed into both surfaces (text + voice)."""
     from config import CONFIG
 
-    return list(node_dedupe.SKILLS) if CONFIG.node_dedupe else []
+    skills = list(node_dedupe.SKILLS) if CONFIG.node_dedupe else []
+    # Write-time conflict raising (part d) rides its own flag and adds only the
+    # resolution tool the remember-tool conflict prompt tells Ayma to call.
+    if getattr(CONFIG, "node_conflict_raise", False):
+        skills += list(node_dedupe.CONFLICT_SKILLS)
+    return skills
 
 _REGISTRY: list[Skill] = [
     followup.SKILL,

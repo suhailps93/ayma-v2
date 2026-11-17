@@ -316,7 +316,8 @@ at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
   block renders graph nodes grouped by a wiki-style **page_type**
   (`render.node_page_type`: a node's question-tree section, or its id-prefix for
   live-written meta — `emergent.steering.*`, `emergent.skill.*`,
-  `emergent.assess.*`), so the context-diet include/exclude filters
+  `emergent.assessment.*` (live) / `emergent.assess.*` (migration-seeded)), so
+  the context-diet include/exclude filters
   (`CORE_PAGE_TYPES`, `EXCLUDED_FROM_CHAT_CONTEXT`) keep working unchanged.
 - **Story / public reads.** `story.get_story` + `get_ai_notes` render from the
   graph (`story_reads._graph_sections`); `public_profile.public_bullet_sections`
@@ -328,9 +329,18 @@ at deletion time — Phase 7). Flag off → today's wiki paths, unchanged.
 - **Content writers → graph nodes** (`person_graph_store.upsert_fact_node`,
   stable ids): skill reports (`emergent.skill.<page_type>`), interactions,
   steering (`emergent.steering.rules`, ayma_only), the Qloo taste page
-  (`emergent.taste.qloo`, public in the `taste` section). `ai_assessment` moved
-  to an off-wiki `assessment/main` doc (its refresh bookkeeping does not fit a
-  content node).
+  (`emergent.taste.qloo`, public in the `taste` section), and **Ayma's
+  assessment** (`emergent.assessment.{red,green,neutral}`, ayma_only inferred,
+  source `assessment`; founder Nov 17 part (a)). The assessment's refresh
+  bookkeeping + digest + raw notes ride on a sibling non-rendering `report_doc`
+  node `emergent.assessment.meta` (so nothing needs an off-wiki doc). The old
+  `assessment/main` document and its read/write path are **deleted**; a one-time
+  idempotent `ai_assessment.backfill_to_graph(db, uid)` migrates existing users'
+  docs into the nodes. `node_page_type` maps the `emergent.assessment.` prefix to
+  page_type `assessment`, so `EXCLUDED_FROM_CHAT_CONTEXT` still keeps the private
+  judgment out of chat/voice grounding, and matching's `persona` (ayma_only
+  excluded) still omits it from the generic dump while `ai_assessment.digest`
+  feeds it as its own labeled block.
 - **Your Story editor write-back** (closes the NOTE 230 Phase-6b gap):
   `profile_bullets.save_bullets`/`create_bullet_section` and the in-chat edit
   primitives (`story_writes.save_section`/`create_section`/`set_visibility`/
@@ -443,7 +453,8 @@ Your Story / public / grounding bullet.
 Founder's ask: "a way to index and cross check the nodes to find related nodes
 that is not parent and child so that there is no duplicated content." Branch
 `fleet/node-dedupe-index`. Additive and behind flags (`NODE_DEDUPE`,
-`NODE_DEDUPE_PREVENTION`, both default off); flag-off is byte-identical to today.
+`NODE_DEDUPE_PREVENTION`, `NODE_CONFLICT_RAISE`, all default off); flag-off is
+byte-identical to today.
 
 - **Index** — `person_graph_index.build_index(db, uid)` projects the whole
   effective graph (`seed ⊕ overlay`, every kind) to flat `NodeIndexEntry`s: id,
@@ -489,10 +500,32 @@ that is not parent and child so that there is no duplicated content." Branch
   (one localized `_dedupe_collapse_id` hook). Exact-only = high precision, no
   silent fuzzy merge; near/semantic dups still route to the user-confirmed flow.
   Stable-id upsert paths (`upsert_fact_node`/`upsert_report_node`) are untouched.
+- **Write-time CONFLICT raising (part d)** — `NODE_CONFLICT_RAISE` on: when a new
+  conversational fact CONTRADICTS a fact the graph already holds (same topic,
+  materially different answer — *not* a duplicate: the two answers can't both be
+  true), the free-minting write is **suppressed** and the conflict is **raised in
+  chat** for the user to resolve, so two contradictory nodes are never written
+  silently. Lives in the write path, before minting: the `remember` tool calls
+  `store.find_write_conflict(db, uid, fact)` → `ConflictFinding | None`. Same-topic
+  candidates come from the deterministic lexical pre-filter
+  (`crosscheck.candidates_for_text`, the same "related, not identical" band,
+  EXACT restatements excluded as duplicates); the CONTRADICTION verdict is the
+  LiveKit judge (`crosscheck.classify_conflict`, prompt
+  `prompts/node_conflict_judge.md`) — never rerouted off LiveKit, best-effort (a
+  judge/quota failure returns no-conflict and the write proceeds, never blocks).
+  On a conflict, `remember` returns a chat prompt that surfaces BOTH values (the
+  owner's own notes, owner-only surface) and tells Ayma to ask which is right,
+  then call `pg_resolve_conflict(node_id, keep='existing'|'incoming', new_value)`:
+  `existing` discards the new fact; `incoming` overwrites the stored node's answer
+  via `set_answer` (old value retired to Ayma-only history), so exactly **one**,
+  resolved node remains. Distinct from the duplicate path above and from the
+  read-time tidy flow (`pg_find_duplicates`). Fully-reworded conflicts that share
+  no topic words fall to the embedding candidate path (`GRAPH_EMBEDDING_DEDUPE`),
+  the same two-layer framing as dedupe above.
 - **Staging runner** (read-only, never mutates the graph):
   `PYTHONPATH=. python3 tools/person_graph_dedupe_run.py <uid> --project=ayma-staging [--semantic] [--limit=N]`.
   Prints duplicate groups + related pairs with ids/kind/section/visibility/snippet.
-- Tests: `tests/test_node_dedupe.py` (12).
+- Tests: `tests/test_node_dedupe.py` (22 — incl. write-time conflict raising).
 
 ## Live image-node ingestion on every source path (2l, Nov 17 2026)
 

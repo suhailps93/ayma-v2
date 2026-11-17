@@ -171,9 +171,69 @@ def _bind_resolve(db, uid: str) -> Callable[..., str]:
     return pg_resolve_duplicate
 
 
+# --- resolve a write-time CONFLICT (founder Nov 17, assessment part d) ------
+
+_RESOLVE_CONFLICT = {
+    "name": "pg_resolve_conflict",
+    "description": (
+        "Apply the user's decision about a CONFLICT the remember tool raised — a "
+        "new fact that contradicted a note already in their graph (not a "
+        "duplicate; the two answers can't both be true). Call ONLY after the user "
+        "says which is right. keep='existing' discards the new fact and keeps the "
+        "stored note unchanged. keep='incoming' overwrites the stored note's "
+        "answer with new_value (the old value is retired to history, never shown "
+        "publicly), so exactly one, resolved node remains — never two "
+        "contradictory ones."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "node_id": {
+                "type": "string",
+                "description": "the existing node the new fact conflicted with",
+            },
+            "keep": {"type": "string", "enum": ["existing", "incoming"]},
+            "new_value": {
+                "type": "string",
+                "description": "the new value to store when keep='incoming'",
+            },
+        },
+        "required": ["node_id", "keep"],
+    },
+}
+
+
+def _bind_resolve_conflict(db, uid: str) -> Callable[..., str]:
+    def pg_resolve_conflict(
+        node_id: str, keep: str, new_value: str = ""
+    ) -> str:
+        choice = (keep or "").strip().lower()
+        if choice == "existing":
+            return "kept your existing note; discarded the new one"
+        if choice == "incoming":
+            value = (new_value or "").strip()
+            if not value:
+                return "error: keep='incoming' needs new_value (the fact to store)"
+            try:
+                store.set_answer(db, uid, node_id, value)
+            except ValueError as exc:
+                return f"error: {exc}"
+            return f"updated {node_id} to the new value (old value kept in history)"
+        return f"error: unknown keep {keep!r} (use 'existing' or 'incoming')"
+
+    return pg_resolve_conflict
+
+
 SKILLS: list[Skill] = [
     Skill(declaration=_FIND, bind=_bind_find),
     Skill(declaration=_RESOLVE, bind=_bind_resolve),
 ]
 
-SKILL_NAMES = {s.name for s in SKILLS}
+# Write-time conflict raising (part d) is gated on its own flag, so its
+# resolution tool is composed separately (``skills/__init__``) — present only
+# when ``NODE_CONFLICT_RAISE`` is on.
+CONFLICT_SKILLS: list[Skill] = [
+    Skill(declaration=_RESOLVE_CONFLICT, bind=_bind_resolve_conflict),
+]
+
+SKILL_NAMES = {s.name for s in SKILLS} | {s.name for s in CONFLICT_SKILLS}
