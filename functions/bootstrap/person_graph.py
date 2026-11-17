@@ -85,6 +85,50 @@ _STRICT_LINK_VALUES = {t.value for t in StrictLinkType}
 VALID_ANSWER_TYPES = question_tree.VALID_KINDS
 
 
+# --- Contract 2: the `standard` node classification -----------------------
+#
+# A STANDARD node is a known structured field that exists for every user — the
+# dating-profile identity facts and their equivalents in other sections (name,
+# age, gender, location, interested-in, ethnic/cultural origin, …). It is marked
+# on the node itself (``GraphNode.standard``) the same way an image node is
+# marked by ``answer_type == "image"``, so the visualiser can render it as a
+# labelled, consistently-formatted field in a fixed canonical order BEFORE the
+# conversational (plain-bullet) nodes (founder Nov 16 fixed-order rule, folded
+# into the Node Visualiser chunk).
+#
+# ``STANDARD_FIELDS`` is the registry: seed node id -> {label, order}. ``label``
+# is the field's display label (e.g. "Name", "Age"); ``order`` is its position
+# in the section's fixed order (lower renders first). The founder-specified
+# About Me order is Name, Age, Gender, Location, Interested in, Ethnic & cultural
+# origin. The registry is the single source for "is this node standard", its
+# label, and its fixed-order rank — extend it here to mark a new structured
+# field; nothing else changes.
+STANDARD_FIELDS: dict[str, dict[str, Any]] = {
+    # About Me (identity) — the founder-specified canonical order.
+    "legal_first_name": {"label": "Name", "order": 0},
+    "date_of_birth": {"label": "Age", "order": 1},
+    "gender_identity": {"label": "Gender", "order": 2},
+    "primary_location": {"label": "Location", "order": 3},
+    "target_match_genders": {"label": "Interested in", "order": 4},
+    "ethnic_cultural_origin": {"label": "Ethnic & cultural origin", "order": 5},
+}
+
+
+def is_standard(node_id: str) -> bool:
+    """True when ``node_id`` is a known structured (standard) field."""
+    return node_id in STANDARD_FIELDS
+
+
+def standard_label(node_id: str) -> Optional[str]:
+    meta = STANDARD_FIELDS.get(node_id)
+    return meta["label"] if meta else None
+
+
+def standard_order(node_id: str) -> Optional[int]:
+    meta = STANDARD_FIELDS.get(node_id)
+    return meta["order"] if meta else None
+
+
 # --- leaf models -----------------------------------------------------------
 
 
@@ -249,6 +293,12 @@ class GraphNode(BaseModel):
     source_kind: Optional[str] = None
     source_ref: Optional[str] = None
     source_created_at: Optional[str] = None
+    # Contract 2: this node is a known structured (standard) field — rendered as a
+    # labelled field in a fixed order first. ``standard_field_label`` /
+    # ``standard_field_order`` carry its display label and canonical rank.
+    standard: bool = False
+    standard_field_label: Optional[str] = None
+    standard_field_order: Optional[int] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -421,6 +471,11 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.source_ref = o.source_ref
     if o.source_created_at is not None:
         base.source_created_at = o.source_created_at
+    # Contract 2: mark the known structured (standard) fields from the registry.
+    if is_standard(base.id):
+        base.standard = True
+        base.standard_field_label = standard_label(base.id)
+        base.standard_field_order = standard_order(base.id)
     return base
 
 

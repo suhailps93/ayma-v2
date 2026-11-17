@@ -290,6 +290,14 @@ class Config:
     alone is safe/additive for testing. Checked per call, so the flag flips
     without a restart."""
 
+    graph_show_ai_only: bool
+    """Node Visualiser developer flag (founder Nov 17): when ON, AI-only
+    (ayma_only) nodes show in Your Story and the person graph — OWNER views only,
+    never the public profile (which stays public-only). Founder order: keep it ON
+    for now, so AI-only content is always visible to the owner. Default ``true``
+    (``GRAPH_SHOW_AI_ONLY=false`` to hide). Checked per call; flips without a
+    restart."""
+
     person_graph_reads: bool
     """Route live consumers to READ the person graph instead of the old stores
     (design §8.1, Phase 5b): the deterministic scorer reads merged graph nodes
@@ -1364,6 +1372,8 @@ def _load() -> Config:
         == "true",
         node_dedupe=os.getenv("NODE_DEDUPE", "false").lower() == "true",
         node_dedupe_prevention=os.getenv("NODE_DEDUPE_PREVENTION", "false").lower()
+        == "true",
+        graph_show_ai_only=os.getenv("GRAPH_SHOW_AI_ONLY", "true").lower()
         == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
