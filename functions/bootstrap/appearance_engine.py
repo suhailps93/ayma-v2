@@ -8,6 +8,7 @@ Split out of ``appearance.py`` (Tier-2 sweep item #10).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import body_report
@@ -35,6 +36,65 @@ from appearance_storage import (
 logger = logging.getLogger("ayma.appearance")
 
 _MAX_PHOTOS = 6
+
+
+def _appearance_read(axis_report: dict | None, axis: str) -> str:
+    """A concise human read for an appearance image node (2l): the axis
+    verdict note, else the verdict, else a generic label. Never empty."""
+    r = axis_report if isinstance(axis_report, dict) else {}
+    note = str(r.get("verdict_note") or "").strip()
+    verdict = str(r.get("verdict") or "").strip()
+    label = "Face" if axis == "face" else "Body"
+    return note or verdict or f"{label} appearance analysis"
+
+
+def _home_appearance_photos(
+    db,
+    uid: str,
+    report_id: str,
+    face_picks: list,
+    face_read: str,
+    body_picks: list,
+    body_read: str,
+) -> None:
+    """Home each analysed appearance photo as a person-graph image node (2l).
+    Synchronous (run via ``asyncio.to_thread``); best-effort per photo so one
+    bad image can't drop the rest. The picks are ``(bytes, mime, storage_path)``
+    tuples, so the content-addressed node id and the public URL both come from
+    data already in hand."""
+    import person_graph_store as pg_store
+    import public_profile
+
+    seen: set[str] = set()
+    for picks, read in ((face_picks, face_read), (body_picks, body_read)):
+        for item in picks or []:
+            try:
+                img_bytes, _mime, storage_path = item
+            except (ValueError, TypeError):
+                continue
+            if not img_bytes:
+                continue
+            node_id = pg_store.image_node_id_for_bytes(img_bytes)
+            # One photo can be analysed on both axes — home it once (the first
+            # axis wins the read), so we don't thrash the same node.
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            url = (public_profile._photo_url(storage_path) or "") if storage_path else ""
+            if not url:
+                continue
+            try:
+                pg_store.home_image(
+                    db, uid,
+                    image_url=url, image_read=read, node_id=node_id,
+                    is_you="yes",
+                    source_kind="appearance_report", source_ref=report_id,
+                )
+            except Exception:  # noqa: BLE001 - per-photo best-effort
+                logger.exception(
+                    "appearance: image-node home failed for %s (%s)",
+                    uid, storage_path,
+                )
 
 
 def _grid_photos(db, uid: str) -> list[dict]:
@@ -485,9 +545,14 @@ async def run_appearance(
 
     # --- face: ALL ticked face photos -> ONE combined read of the same person
     face: dict = dict(NEEDS_FACE)
+    # Keep the analysed (bytes, mime, storage_path) picks so the person-graph
+    # home below (2l) reuses the bytes already in hand — no second download.
+    face_picks: list = []
+    body_picks: list = []
     if want_face:
         picks = pick_all_fn(photos, extra, "usable_for_face", only_media_ids=face_sel)
         if picks:
+            face_picks = picks
             report = await face_mod.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 face = report
@@ -499,6 +564,7 @@ async def run_appearance(
     if want_body:
         picks = pick_all_fn(photos, extra, "usable_for_body", only_media_ids=body_sel)
         if picks:
+            body_picks = picks
             report = await body_mod.run(picks, uid=uid)
             if isinstance(report, dict) and report.get("usable", True):
                 body = report
@@ -546,6 +612,27 @@ async def run_appearance(
         db, uid, "ok", source,
         f"produced={'+'.join(produced) or 'none'} photos={photo_count}",
     )
+
+    # Person-graph home for the analysed APPEARANCE-REPORT photos (2l — live
+    # image-node creation on the appearance path). Each selected photo is the
+    # user's own (the read analyses "the same person"), so is_you="yes"; the
+    # face/body verdict note is the image read, and source_ref is the report id.
+    # Content-addressed + idempotent: the same photo already homed from the grid
+    # or chat lands on the SAME node, now carrying the appearance read + source.
+    # Only on a user-initiated run (never the silent `auto` reconcile) and under
+    # the person-graph flag; best-effort — never sinks the report. The analysed
+    # bytes are already in hand (face_picks/body_picks), so there is no re-fetch.
+    if CONFIG.person_graph_reads and source != "auto" and doc.get("id"):
+        try:
+            await asyncio.to_thread(
+                _home_appearance_photos,
+                db, uid, str(doc["id"]),
+                face_picks, _appearance_read(face, "face"),
+                body_picks, _appearance_read(body, "body"),
+            )
+        except Exception:  # noqa: BLE001 - graph home is best-effort
+            logger.exception("appearance: person-graph home failed for %s", uid)
+
     # Completion notification: a user-initiated run is fired unawaited by the
     # client (POST /appearance/report), so the open report screen can't learn
     # it landed once the user navigates away. Fire an in-app "report ready"

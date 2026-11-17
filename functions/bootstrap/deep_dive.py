@@ -71,6 +71,40 @@ def _graph_reads_on() -> bool:
     return bool(CONFIG.person_graph_reads)
 
 
+def _home_web_images(db, subject_uid: str, name: str, web_images: list) -> None:
+    """Home each verified web-found photo as a person-graph image node (2l —
+    live image-node creation on the WEB path), on the subject's own graph.
+    URL-keyed (the bytes aren't retained on this path) and idempotent, so a
+    re-run of the dive refreshes the same nodes rather than duplicating them.
+    ``is_you`` is "yes" for a face-verified match, "unknown" otherwise;
+    ``source_ref`` is the page the photo was found on. Best-effort per image."""
+    import person_graph_store as pg_store
+
+    who = (name or "").strip() or "this person"
+    for img in web_images or []:
+        if not isinstance(img, dict):
+            continue
+        url = str(img.get("url") or "").strip()
+        if not url:
+            continue
+        source_page = str(img.get("source_page") or "").strip()
+        platform = str(img.get("platform") or "").strip()
+        where = platform or source_page or "the web"
+        read = f"Photo of {who} found on {where}."
+        try:
+            pg_store.home_image(
+                db, subject_uid,
+                image_url=url, image_read=read,
+                node_id=pg_store.image_node_id_for_url(url),
+                is_you="yes" if img.get("verified") else "unknown",
+                source_kind="web", source_ref=source_page or url,
+            )
+        except Exception:  # noqa: BLE001 - per-image best-effort
+            logger.exception(
+                "deep-dive: web image-node home failed for %s", subject_uid
+            )
+
+
 def _dive_node_id(key: str) -> str:
     return _WEBFIND_NODE_PREFIX + key
 
@@ -1934,6 +1968,20 @@ async def run(
                 kept["is_self"] = is_self
                 return kept
         store_dive(db, subject_uid, result, target_uid=target_uid, name=name)
+        # Home the verified web photos as individual image nodes on the
+        # subject's graph (2l), so they show in the person graph with WEB
+        # provenance — not only buried inside the webfind report's digest.
+        # Best-effort + flag-gated; never affects the stored report.
+        if _graph_reads_on() and web_images:
+            try:
+                await asyncio.to_thread(
+                    _home_web_images, db, subject_uid, name, web_images
+                )
+            except Exception:  # noqa: BLE001 - graph home is best-effort
+                logger.exception(
+                    "deep-dive: web image-node home step failed for %s",
+                    subject_uid,
+                )
         if target_uid and not is_self:
             # Also land it at the subject's own name-keyed self-dive slot —
             # the same doc `dive_report_id(name=...)` / "Search the web about

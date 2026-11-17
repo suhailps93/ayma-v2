@@ -285,6 +285,35 @@ async def _enrich(
                 uid, storage_path, exc_info=True,
             )
 
+        # Person-graph home for a PROFILE-GRID photo (2l — live image-node
+        # creation on the grid path; chat/DM home themselves in main). An
+        # add-to-grid has no "fact" said about it, so the caption is the read
+        # AND the fact. Content-addressed + idempotent: a grid photo also shared
+        # in chat or read in an appearance report lands on the SAME node. Gated
+        # on the person-graph flag; best-effort — never undoes a stored photo.
+        if source == "profile":
+            try:
+                from config import CONFIG as _CFG
+
+                if _CFG.person_graph_reads:
+                    import person_graph_store as pg_store
+                    import public_profile
+
+                    grid_url = public_profile._photo_url(storage_path) or ""
+                    if grid_url:
+                        pg_store.home_image(
+                            db, uid,
+                            image_url=grid_url, image_read=caption,
+                            node_id=pg_store.image_node_id_for_bytes(image),
+                            is_you=pg_store.is_you_from_verdict(match),
+                            source_kind="profile_grid", source_ref=media_id,
+                        )
+            except Exception:  # noqa: BLE001 - graph home is best-effort
+                logger.exception(
+                    "photo_pipeline: grid graph-home failed for %s/%s",
+                    uid, media_id,
+                )
+
         if wiki_uids:
             source_id = f"photo-{media_id}"
             text = caption_turn_text(caption, shot_type=shot_type, match=match)
