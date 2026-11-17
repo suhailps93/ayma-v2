@@ -301,6 +301,21 @@ class Config:
     migration is verified against the account under test (the graph must be
     populated first)."""
 
+    node_dedupe: bool
+    """Offer the node-dedupe cross-check/resolution tools
+    (``skills/node_dedupe.py``) to Ayma — find duplicate/related nodes and apply
+    the user-confirmed merge / link-as-related / keep-both. **Off by default**
+    (``NODE_DEDUPE=true``). Read side is read-only; resolution only ever runs on
+    the user's explicit choice in chat (never silent). Checked per call."""
+
+    node_dedupe_prevention: bool
+    """Write-time prevention for the node-dedupe cross-check: every free-minting
+    node-creation path (``add_loose_node``, off-script ``add_node``) first checks
+    the index and REUSES an existing node on an EXACT content match instead of
+    creating a duplicate. **Off by default** (``NODE_DEDUPE_PREVENTION=true``):
+    exact-only, additive, reversible — near/semantic dups still route to the
+    never-silent user resolution flow. Checked per call."""
+
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
     **web image search** — finding photos of a person online to face-verify
@@ -1346,6 +1361,9 @@ def _load() -> Config:
         person_graph_tools=os.getenv("PERSON_GRAPH_TOOLS", "false").lower()
         == "true",
         person_graph_reads=os.getenv("PERSON_GRAPH_READS", "false").lower()
+        == "true",
+        node_dedupe=os.getenv("NODE_DEDUPE", "false").lower() == "true",
+        node_dedupe_prevention=os.getenv("NODE_DEDUPE_PREVENTION", "false").lower()
         == "true",
         image_search_api_key=os.getenv("IMAGE_SEARCH_API_KEY", ""),
         image_search_cse_id=os.getenv("IMAGE_SEARCH_CSE_ID", ""),
