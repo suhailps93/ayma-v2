@@ -718,13 +718,30 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
 
 
 def test_open_screen_still_rejects_deliberately_excluded_screens():
-    # Auth/onboarding, the deliberately-hidden Google/Instagram linking
-    # screens and the developer panel stay unreachable, with an honest answer.
-    for screen in ("sign-in", "google_account", "instagram", "developer panel"):
+    # Auth/onboarding and the developer panel stay unreachable, with an honest
+    # answer. (Google/Instagram linking is now reachable via the Connectors
+    # screen — see test_open_screen_opens_connectors.)
+    for screen in ("sign-in", "developer panel"):
         db = _Db()
         out = _run(app_control._bind_open_screen(db, "me")(screen))
         assert out.startswith(("There is no", "Not available")), out
         assert _PENDING not in db.store
+
+
+def test_open_screen_opens_connectors():
+    # Founder order Nov 2026: the new Connectors screen connects Google (Gmail
+    # + Calendar) and Instagram, so these aliases now navigate there instead of
+    # being rejected as unavailable.
+    for words in (
+        "connectors",
+        "connect google",
+        "connect instagram",
+        "google account",
+    ):
+        db = _acking_db()
+        out = _run(app_control._bind_open_screen(db, "me")(words))
+        assert out.startswith("navigated: screen=connectors"), (words, out)
+        assert db.store[_PENDING]["path"] == "/settings/connectors"
 
 
 def test_open_screen_opens_the_profile_completeness_card():

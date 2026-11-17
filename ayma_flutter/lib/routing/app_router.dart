@@ -38,6 +38,7 @@ import '../screens/messages_screen.dart';
 import '../screens/notification_center_screen.dart';
 import '../screens/notification_prefs_screen.dart';
 import '../screens/connect_agent_screen.dart';
+import '../screens/connectors_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
@@ -411,6 +412,11 @@ final appRouter = GoRouter(
       path: ConnectAgentScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: ConnectAgentScreen()),
+    ),
+    GoRoute(
+      path: ConnectorsScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: ConnectorsScreen()),
     ),
     GoRoute(
       path: InstagramScreen.path,

@@ -272,6 +272,14 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     icon: Icons.hub_outlined,
   ),
   TourFeature(
+    featureId: 'connectors',
+    headline: 'Connect your accounts',
+    subtitle: 'Link Google (Gmail + Calendar) — and Instagram when enabled — '
+        'from Settings › Connectors, so Ayma can learn from them. You choose '
+        'what to connect and can disconnect any time.',
+    icon: Icons.link_outlined,
+  ),
+  TourFeature(
     featureId: 'default_assistant',
     headline: 'Ayma, anywhere',
     subtitle: 'Open Settings › Ayma Assistant to make Ayma your default '

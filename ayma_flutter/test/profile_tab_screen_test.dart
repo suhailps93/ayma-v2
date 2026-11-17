@@ -115,21 +115,14 @@ void main() {
     expect(MetaIntegrations.parse({'enabled': true}), isTrue);
   });
 
-  testWidgets('meta_integrations off hides the Connect Instagram row',
-      (tester) async {
-    MetaIntegrations.enabled.value = false;
-    await tester.pumpWidget(_host(_api()));
-    await tester.pumpAndSettle();
-    expect(find.text('Connect Instagram', skipOffstage: false), findsNothing);
-  });
-
-  testWidgets('meta_integrations on shows the Connect Instagram row',
-      (tester) async {
+  testWidgets('the Connect Instagram row no longer lives on the Profile tab '
+      '(moved to Settings → Connectors)', (tester) async {
+    // The meta flag used to gate a Profile-tab Instagram row; connectors now
+    // live on the dedicated Connectors screen, so the row is gone either way.
     MetaIntegrations.enabled.value = true;
     await tester.pumpWidget(_host(_api()));
     await tester.pumpAndSettle();
-    expect(
-        find.text('Connect Instagram', skipOffstage: false), findsOneWidget);
+    expect(find.text('Connect Instagram', skipOffstage: false), findsNothing);
   });
 
   testWidgets('the Invite friends row renders and taps through',

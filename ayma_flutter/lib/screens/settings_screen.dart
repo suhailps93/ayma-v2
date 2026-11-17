@@ -13,6 +13,7 @@ import '../widgets/ayma_back_button.dart';
 import 'appearance_settings_screen.dart';
 import 'assistant_screen.dart';
 import 'connect_agent_screen.dart';
+import 'connectors_screen.dart';
 import 'developer_screen.dart';
 import 'main_shell_screen.dart';
 import 'notification_prefs_screen.dart';
@@ -213,6 +214,17 @@ class _SettingsScreenState extends State<SettingsScreen>
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
             trailing: Icon(Icons.chevron_right, color: ac.fgMute),
             onTap: () => context.push(ConnectAgentScreen.path),
+          ),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+            key: const Key('ayma_settings_connectors'),
+            leading: Icon(Icons.link_outlined, color: ac.fgDim),
+            title: Text('Connectors',
+                style: AymaType.sans(size: 15, color: ac.fg)),
+            subtitle: Text('Connect Google, Instagram and more',
+                style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
+            trailing: Icon(Icons.chevron_right, color: ac.fgMute),
+            onTap: () => context.push(ConnectorsScreen.path),
           ),
           KeyedSubtree(
             key: TourAnchors.keyFor(TourAnchors.settingsAssistantRow),

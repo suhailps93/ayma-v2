@@ -277,7 +277,6 @@ and also `UI`:
 | Search the web about me | `my_web_research` |
 | Appearance | `my_appearance` |
 | Settings | `settings` |
-| Connect Instagram | (screen exists; connecting is `unavailable` in this version — registry says so honestly) |
 | Plan | `credits` |
 | Invite friends | `invite_friends` |
 | Send feedback | `feedback` |
@@ -396,6 +395,7 @@ and top-up live on Plan (`/profile/plan`).
 |---|---|---|
 | Ayma's models row (Settings top level, plain line item) | Open Ayma's models | COVERED `open_screen voice_preference` |
 | Connect an agent (MCP) row (Settings top level, plain line item) | Open Connect-agent | COVERED `open_screen connect_agent` |
+| Connectors row (Settings top level, plain line item) | Open Connectors (`/settings/connectors`) — connect Google (Gmail + Calendar), and Instagram when `meta_integrations` is on | COVERED `open_screen connectors` |
 | **"Wipe what Ayma has learned" (+ confirm dialog)** — inside Privacy, directly above Delete account | **Clear her memory** | **`EXCLUDED` clear_memory — user-only; she opens the Privacy page only (`open_screen privacy_settings`)** |
 
 ## 21. Ayma's models (`voice_preference_screen.dart`, `brain_selector_control.dart`, `voice_engine_control.dart`)

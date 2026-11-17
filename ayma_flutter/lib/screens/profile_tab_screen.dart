@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/profile_service.dart';
-import '../services/meta_integrations.dart';
 import '../services/credits_balance.dart';
 import '../services/push_service.dart';
 import '../services/tour_anchors.dart';
@@ -20,7 +19,6 @@ import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
 import 'feedback_screen.dart';
 import 'invite_friends_screen.dart';
-import 'instagram_screen.dart';
 import 'settings_screen.dart';
 import 'report_run_flows.dart';
 import 'sign_in_screen.dart';
@@ -132,16 +130,8 @@ class ProfileTabScreen extends StatelessWidget {
             hint: 'Theme, matching, verification',
             onTap: () => context.push(SettingsScreen.path),
           ),
-          // Connect Google: built and working, deferred out of the visible UI
-          // for v1. Connect Instagram: V2, shown only when the
-          // `meta_integrations` flag is on (default off).
-          if (MetaIntegrations.enabled.value)
-            _Item(
-              icon: Icons.camera_alt_outlined,
-              label: 'Connect Instagram',
-              hint: 'Import photos from your Instagram account',
-              onTap: () => context.push(InstagramScreen.path),
-            ),
+          // Connectors (Google, Instagram, …) now live on the dedicated
+          // Connectors screen under Settings → Connectors.
         ],
       ),
       (
