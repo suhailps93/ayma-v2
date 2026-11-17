@@ -201,9 +201,12 @@ class _FakeApi extends ApiClient {
   Future<void> profileBulletsCreate(String pageType, List<StoryBullet> bullets) async =>
       bulletCreates.add((pageType, bullets));
 
+  Object? failStoryGet;
+
   @override
   Future<StoryData> storyGet() async {
     calls.add('get');
+    if (failStoryGet != null) throw failStoryGet!;
     return data;
   }
 
@@ -1127,5 +1130,36 @@ void main() {
     expect(find.text('Never smoke.'), findsOneWidget);
     expect(find.text('Close to parents.'), findsOneWidget);
     expect(find.text('Brother in Chicago.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Story load 408 does not trigger infinite reload loop and displays Retry',
+      (tester) async {
+    final api = _FakeApi()
+      ..failStoryGet = ApiException('Request timed out — please try again.', statusCode: 408);
+
+    await _pumpWithRouter(tester, api);
+    // Advance past retry budget (45s)
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(seconds: 8));
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pump(const Duration(seconds: 20));
+    await tester.pump();
+
+    // Verify error is shown and not an infinite loop
+    expect(find.textContaining('Could not load your story'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Retry'), findsOneWidget);
+
+    // Initial load attempted
+    expect(api.calls.where((c) => c == 'get').isNotEmpty, isTrue);
+
+    // Verify tapping Retry clears error and can succeed
+    api.failStoryGet = null;
+    await tester.tap(find.widgetWithText(FilledButton, 'Retry'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Could not load your story'), findsNothing);
   });
 }

@@ -605,6 +605,11 @@ class _GraphBodyState extends State<_GraphBody>
     _multiInit = false;
     _downPos = d.localFocalPoint;
     _maxMove = 0;
+    // Touch takes over: stop active force-directed physics so the UI thread
+    // never fights gesture handling during scrubs/taps (ANR 04:22 graph scrub),
+    // and suppress auto-fit viewport shifts while the user touches the canvas.
+    _userAdjusted = true;
+    if (_ticker.isTicking) _ticker.stop();
   }
 
   void _onScaleUpdate(ScaleUpdateDetails d) {
@@ -629,7 +634,7 @@ class _GraphBodyState extends State<_GraphBody>
     } else if (!_multi) {
       // Single finger: scrub. Never pans. The node under the finger opens.
       final hit = _hitTest(d.localFocalPoint);
-      if (hit != null) _select(hit);
+      if (hit != null && hit.id != _selected?.id) _select(hit);
     }
   }
 

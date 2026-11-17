@@ -20,6 +20,7 @@ import 'chat_screen.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/share_kit.dart';
 import '../widgets/ayma_share_sheet.dart';
+import '../util/cold_start_retry.dart';
 
 /// Your Story — "a living portrait of the person Ayma has come to know."
 ///
@@ -325,26 +326,27 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       }
     });
     try {
-      final data = await _api.storyGet();
+      final data = await withColdStartRetry(() => _api.storyGet());
       if (!mounted) return;
       setState(() {
         _sections = data.sections;
         _loadedForUid = loadUid;
         _loading = false;
       });
+      unawaited(_loadPhotos());
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = 'Could not load your story ($e).';
+        _loadedForUid = loadUid;
         _loading = false;
       });
     }
-    unawaited(_loadPhotos());
   }
 
   /// Re-fetch the section list after a skill runs / a report finishes.
   Future<void> _refreshStorySections() async {
-    final data = await _api.storyGet();
+    final data = await withColdStartRetry(() => _api.storyGet());
     if (!mounted) return;
     setState(() {
       _sections = data.sections;
@@ -605,12 +607,13 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
       _error = null;
     });
     try {
-      final sections = await _api.storyAiNotes();
+      final sections = await withColdStartRetry(() => _api.storyAiNotes());
       if (!mounted) return;
       setState(() {
         _aiSections = sections;
         _loading = false;
       });
+      unawaited(_loadPhotos());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -618,12 +621,11 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
         _loading = false;
       });
     }
-    unawaited(_loadPhotos());
   }
 
   /// Re-fetch the AI-notes sections after an appearance report finishes.
   Future<void> _refreshAiNotes() async {
-    final sections = await _api.storyAiNotes();
+    final sections = await withColdStartRetry(() => _api.storyAiNotes());
     if (!mounted) return;
     setState(() {
       _aiSections = sections;

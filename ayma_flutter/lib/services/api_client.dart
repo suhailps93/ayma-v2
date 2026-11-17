@@ -70,6 +70,10 @@ class BudgetHttpClient extends http.BaseClient {
     '/verification/selfie', // POST: moderate+embed selfie, seeds the initial Appearance read
     '/taste/pair', // POST: taste cross-domain affinity (same resolution /match/ warm-returns in ~13–15s)
     '/chat', // POST: non-stream model turn (tool use / cold start); fallback for /chat/stream
+    '/story', // GET/POST: narrative story read/update, cold-start sensitive (NOTE 250)
+    '/story/ai-notes', // GET: Ayma story notes read (NOTE 250)
+    '/profile/graph', // GET: person graph layout/nodes (NOTE 250)
+    '/profile/graph/tree', // GET: person graph tree surface (NOTE 250)
   };
 
   // Matched by PREFIX (a whole family of long builds / reads under one root).
@@ -77,6 +81,7 @@ class BudgetHttpClient extends http.BaseClient {
     '/practice/', // builds the match persona + runs the model; first call after cold start (~18s)
     '/match/', // match-report read resolves taste affinity (~13–15s)
     '/report/match/', // the same match report via the generic report hub
+    '/profile/graph/tree/', // other user's person-graph tree reads (NOTE 250)
   ];
 
   static bool _isLongBudgetPath(String path) {
