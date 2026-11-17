@@ -21,6 +21,8 @@ import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Caches this activity's [FlutterEngine] so [CallForegroundService] can call
@@ -69,6 +71,10 @@ class MainActivity : FlutterActivity() {
     private var micYieldManager: MicYieldManager? = null
     private var installReferrerManager: InstallReferrerManager? = null
     private var assistantChannel: MethodChannel? = null
+
+    /** Off-main-thread executor for the assistant status IPC (NOTE 251 §4). */
+    private val assistantExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -337,8 +343,21 @@ class MainActivity : FlutterActivity() {
         ).also { channel ->
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "isDefaultAssistant" ->
-                        result.success(isDefaultAssistant())
+                    // The default-assistant status read does synchronous
+                    // RoleManager + Settings.Secure (contentResolver) IPC. It is
+                    // called on EVERY resume of the assistant / settings screens
+                    // (didChangeAppLifecycleState), so running it inline on the
+                    // platform main thread risks an input-dispatch ANR when that
+                    // IPC is slow (NOTE 251 item 4). Run it off the main thread
+                    // and post the result back.
+                    "isDefaultAssistant" -> {
+                        assistantExecutor.execute {
+                            val v = try { isDefaultAssistant() } catch (e: Exception) { false }
+                            runOnUiThread {
+                                if (!isDestroyed) result.success(v)
+                            }
+                        }
+                    }
                     "openDefaultAssistantSettings" ->
                         result.success(openDefaultAssistantSettings())
                     "takePendingAssist" ->
@@ -363,6 +382,7 @@ class MainActivity : FlutterActivity() {
         micYieldManager = null
         installReferrerManager?.detach()
         installReferrerManager = null
+        assistantExecutor.shutdown()
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
