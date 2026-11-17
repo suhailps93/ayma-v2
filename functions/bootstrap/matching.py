@@ -215,3 +215,88 @@ def source_and_score(db, uid: str, limit: int | None = None) -> list[dict]:
             }
         )
     return out
+
+
+# --- Match input freshness -------------------------------------------------
+# Shared by the on-demand report path (``main._match_doc_is_stale`` — keyed on
+# ``updated_at`` to recompute the *displayed report* on any change) and the
+# cron re-score sweep (``score_is_stale`` — keyed on ``scored_at`` to decide
+# whether the *score itself* has fallen behind the inputs). Both need the same
+# "newest match-relevant input change" signal, so it lives here, importable by
+# both ``main`` and ``matching_cron`` without a cycle.
+
+
+def latest_ts(*values):
+    """Return the newest timezone-aware datetime among args, ignoring invalid types."""
+    valid = [
+        v for v in values
+        if v is not None and not isinstance(v, str) and hasattr(v, "isoformat")
+    ]
+    return max(valid) if valid else None
+
+
+def match_inputs_mtime(db, uid: str):
+    """Newest match-relevant input change for ``uid`` (partner age range,
+    location, interested_in, relocation radius, questionnaire answers), so a
+    cached or previously-scored match can detect stale inputs."""
+    stamps = []
+    try:
+        doc = db.collection("users").document(uid).collection("profile").document("main").get()
+        data = doc.to_dict() if doc else None
+        if data and "updated_at" in data:
+            stamps.append(data.get("updated_at"))
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to fetch profile updated_at for %s", uid, exc_info=True)
+
+    # Late import so a test (or a live config swap) that patches ``config.CONFIG``
+    # is honoured — the module-level ``CONFIG`` here is import-time-bound.
+    from config import CONFIG as _CONFIG
+
+    if _CONFIG.person_graph_reads:
+        # Graph-authoritative: profile-field and questionnaire-answer edits now
+        # land on the graph overlay, which stamps `updated_at` on every write.
+        # That single stamp captures what the questionnaire-doc scan used to, so
+        # a graph-only edit (after the writer swap) still invalidates a cached
+        # match. profile/main `updated_at` is still read above for non-tool
+        # writes (photos, preboarding).
+        try:
+            import person_graph_store as _pg_store
+
+            stamps.append(_pg_store.overlay_mtime(db, uid))
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch graph overlay mtime for %s", uid, exc_info=True)
+    else:
+        try:
+            for doc in db.collection("users").document(uid).collection("questionnaire").stream():
+                data = doc.to_dict()
+                if data and "updated_at" in data:
+                    stamps.append(data.get("updated_at"))
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to fetch questionnaire updated_at for %s", uid, exc_info=True)
+
+    return latest_ts(*stamps)
+
+
+def score_is_stale(db, d: dict | None, a: str, b: str) -> bool:
+    """True when a pair's inputs changed since its score was LAST computed.
+
+    Keyed strictly on ``scored_at`` — the score's own provenance — never on
+    ``updated_at``. ``updated_at`` bumps on every write to the pair doc (a
+    like, a pass, an accept, a status flip), so a doc whose score is weeks old
+    can still carry a recent ``updated_at`` and wrongly look fresh. That is
+    exactly why the match cron re-score must not reuse the report-staleness
+    check (``main._match_doc_is_stale``, which keys on ``updated_at`` on
+    purpose, to recompute the displayed report on any change).
+
+    Conservative: returns False whenever it cannot positively tell (no
+    ``scored_at``, or an unreadable stamp), so a fresh pair is never needlessly
+    re-scored."""
+    try:
+        scored_at = d.get("scored_at") if d else None
+        if not (hasattr(scored_at, "isoformat") and not isinstance(scored_at, str)):
+            return False
+        newest_input = latest_ts(match_inputs_mtime(db, a), match_inputs_mtime(db, b))
+        return newest_input is not None and newest_input > scored_at
+    except Exception:  # noqa: BLE001
+        logger.warning("score staleness check failed", exc_info=True)
+        return False
