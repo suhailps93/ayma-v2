@@ -12,6 +12,7 @@ import '../features/practice_date/practice_models.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/living_report.dart';
 import '../models/report_share.dart';
+import '../models/story_node.dart';
 import '../models/share_link.dart';
 import 'biometric_consent.dart';
 
@@ -1617,6 +1618,73 @@ class ApiClient {
       uid == null ? '/profile/graph' : '/profile/graph/${Uri.encodeComponent(uid)}',
     );
     return PersonGraph.fromMap(m);
+  }
+
+  /// `GET /profile/graph/tree` (mine) or `GET /profile/graph/tree/{uid}`
+  /// (another member's, public nodes only) — the person graph as a recursive
+  /// Node-Visualiser tree. [surface] selects the owner visibility set
+  /// (`story` | `report` | `graphDetail`); ignored for another member's tree
+  /// (always the public profile).
+  Future<GraphTree> graphTree({String? uid, String surface = 'story'}) async {
+    final m = uid == null
+        ? await _getJson('/profile/graph/tree', {'surface': surface})
+        : await _getJson('/profile/graph/tree/${Uri.encodeComponent(uid)}');
+    return GraphTree.fromMap(m);
+  }
+
+  /// `POST /profile/graph/node/{id}/visibility` — set a node's visibility WITH
+  /// the cascade (every descendant takes the same visibility; AI-only exempt).
+  /// Returns the number of nodes changed.
+  Future<int> graphNodeSetVisibility(String nodeId, String visibility) async {
+    final m = await _sendJson(
+      'POST',
+      '/profile/graph/node/${Uri.encodeComponent(nodeId)}/visibility',
+      {'visibility': visibility},
+    );
+    return (m['changed'] as num?)?.toInt() ?? 0;
+  }
+
+  /// `POST /profile/graph/node/{parent}/add-child` — add a child line under a
+  /// node at any level. Returns the new node id.
+  Future<String> graphAddChild(
+    String parentId,
+    String label, {
+    String answer = '',
+    String visibility = 'private',
+  }) async {
+    final m = await _sendJson(
+      'POST',
+      '/profile/graph/node/${Uri.encodeComponent(parentId)}/add-child',
+      {'label': label, 'answer': answer, 'visibility': visibility},
+    );
+    return m['id'] as String? ?? '';
+  }
+
+  /// `POST /profile/graph/node/{id}/text` — edit one node's text manually.
+  Future<void> graphSetNodeText(String nodeId, String text) => _sendJson(
+        'POST',
+        '/profile/graph/node/${Uri.encodeComponent(nodeId)}/text',
+        {'text': text},
+      );
+
+  /// `GET /profile/graph/node/{id}/delete-count` — how many descendant nodes a
+  /// delete would take with it (the number the confirmation names).
+  Future<int> graphDeleteCount(String nodeId) async {
+    final m = await _getJson(
+      '/profile/graph/node/${Uri.encodeComponent(nodeId)}/delete-count',
+    );
+    return (m['descendants'] as num?)?.toInt() ?? 0;
+  }
+
+  /// `POST /profile/graph/node/{id}/delete` — delete a node and its subtree.
+  /// Returns the number of nodes removed.
+  Future<int> graphDeleteNode(String nodeId) async {
+    final m = await _sendJson(
+      'POST',
+      '/profile/graph/node/${Uri.encodeComponent(nodeId)}/delete',
+      {},
+    );
+    return (m['removed'] as num?)?.toInt() ?? 0;
   }
 
   /// `PUT /profile/preferences` — save the partner age range and/or distance

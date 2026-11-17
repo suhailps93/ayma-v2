@@ -441,6 +441,131 @@ def report_node_payload(db, uid: str, node_id: str) -> dict:
     return dict(ans) if isinstance(ans, dict) else {}
 
 
+def set_visibility_cascade(
+    db, uid: str, node_id: str, visibility: Visibility | str
+) -> int:
+    """Set ``node_id`` AND every descendant to ``visibility`` (the Node Visualiser
+    cascade rule, founder Nov 17): making a parent public/private makes its whole
+    subtree the same — EXCEPT ayma_only nodes, which are exempt and keep their
+    ayma_only visibility (read-only Ayma knowledge). Individual children can be
+    changed afterwards (which is how a parent becomes mixed again). Only overlay
+    nodes are written; a seed node gets a visibility override in the overlay like
+    ``set_visibility`` does. Returns the count of nodes changed."""
+    import person_graph_tree as tree
+
+    vis = visibility.value if isinstance(visibility, Visibility) else str(visibility)
+    if vis not in {v.value for v in Visibility}:
+        raise ValueError(f"invalid visibility {vis!r}")
+    if pg.seed_node(node_id) is None and node_id not in load_overlay(db, uid):
+        raise ValueError(f"set_visibility_cascade on unknown node {node_id!r}")
+
+    graph = effective(db, uid)
+    targets = [node_id] + tree.descendant_ids(graph, node_id)
+    overlay = load_overlay(db, uid)
+    changed = 0
+    for nid in targets:
+        node = graph.get(nid)
+        # ayma_only nodes are exempt — the cascade never touches Ayma's knowledge.
+        if node is not None and node.visibility is Visibility.AYMA_ONLY:
+            continue
+        e = _entry(overlay, nid)
+        if e.get("visibility") == vis:
+            continue
+        e["visibility"] = vis
+        e["updated_at"] = pg.now_iso()
+        overlay[nid] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+        changed += 1
+    if changed:
+        _save_overlay(db, uid, overlay)
+    return changed
+
+
+def add_child_node(
+    db,
+    uid: str,
+    parent_id: str,
+    label: str,
+    *,
+    answer: Any = None,
+    answer_type: str | None = None,
+    visibility: Visibility | str | None = None,
+    node_id: str | None = None,
+) -> str:
+    """Add a child node under ``parent_id`` inside the visualiser — the manual
+    "add a line at any level" path (replaces per-section Add). Thin wrapper over
+    :func:`add_node`; optionally sets the child's visibility after creation (a
+    child defaults private like any emergent node). A manual line's TEXT is its
+    content, so when no explicit ``answer`` is given the ``label`` becomes the
+    answer (an emergent node renders its answer verbatim) — a bare label with no
+    answer would otherwise not render. Returns the new node's id."""
+    nid = add_node(
+        db, uid, parent_id, label,
+        answer=answer if answer is not None else label,
+        answer_type=answer_type or "narrative",
+        node_id=node_id,
+    )
+    if visibility is not None:
+        set_visibility(db, uid, nid, visibility)
+    return nid
+
+
+def set_node_text(db, uid: str, node_id: str, text: str) -> str:
+    """Edit one node's text manually (the "Edit manually" bubble). A seed node's
+    answer goes through :func:`set_answer` (answer history preserved); an
+    editor-owned emergent node has its ``answer`` (and ``prompt``, which an
+    emergent node renders verbatim) replaced, superseded text retired to Ayma-only
+    history. Returns ``node_id``. Raises on an unknown or non-editable node."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("set_node_text needs non-empty text")
+    if pg.seed_node(node_id) is not None:
+        set_answer(db, uid, node_id, text)
+        return node_id
+    overlay = load_overlay(db, uid)
+    e = overlay.get(node_id)
+    if not isinstance(e, dict):
+        raise ValueError(f"set_node_text on unknown node {node_id!r}")
+    if e.get("visibility") == Visibility.AYMA_ONLY.value:
+        raise ValueError("ayma_only nodes are read-only")
+    prev = e.get("answer")
+    if prev is not None and str(prev) != text:
+        history = list(e.get("history") or [])
+        history.append(
+            {
+                "answer": prev,
+                "date": pg.now_iso(),
+                "provenance": e.get("provenance") or Provenance.STATED.value,
+            }
+        )
+        e["history"] = history
+    e = dict(e)
+    e["answer"] = text
+    e["prompt"] = text[:120]
+    e["state"] = NodeState.ANSWERED.value
+    e["updated_at"] = pg.now_iso()
+    overlay[node_id] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return node_id
+
+
+def descendant_count(db, uid: str, node_id: str) -> int:
+    """How many descendant nodes go with ``node_id`` if it is deleted — the count
+    the delete-confirmation names ("delete this and its N children?")."""
+    import person_graph_tree as tree
+
+    return len(tree.descendant_ids(effective(db, uid), node_id))
+
+
+def delete_node_with_descendants(db, uid: str, node_id: str) -> int:
+    """Delete ``node_id`` and its whole subtree. Only EDITOR-owned emergent nodes
+    are actually removed (a seed node or a reserved live-writer node is left in
+    place, as :func:`delete_nodes` already guards). Returns the count removed."""
+    import person_graph_tree as tree
+
+    ids = [node_id] + tree.descendant_ids(effective(db, uid), node_id)
+    return delete_nodes(db, uid, ids)
+
+
 def delete_nodes(db, uid: str, node_ids: Iterable[str]) -> int:
     """Remove emergent overlay nodes by id (no-op for a seed node or an id the
     user doesn't have). Returns the count removed. Used by the Your Story editor

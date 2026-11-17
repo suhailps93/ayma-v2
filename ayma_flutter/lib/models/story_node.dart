@@ -1,0 +1,185 @@
+/// The recursive person-graph node the [NodeVisualiser] renders — one data
+/// model, one renderer, every surface (Your Story, public profile, every
+/// report, the image carousel, the person-graph tap-detail).
+///
+/// This is the client side of the backend node-tree payload
+/// (`person_graph_tree.node_tree`). A node carries its own content plus all its
+/// child nodes recursively, so the visualiser renders a node and its whole
+/// subtree from one object.
+library;
+
+/// Which surface a [NodeVisualiser] renders on. The ONLY behavioural
+/// differences are the visibility filter (public profile shows public nodes
+/// only) and whether the owner action bubbles appear (owner surfaces only).
+enum NodeVisualiserSurface { story, publicProfile, report, graphDetail }
+
+/// A node's visibility / a parent's subtree colour.
+/// `public` = green, `private` = yellow, `ayma_only` = the AI-only colour,
+/// `mixed` = a subtree holding both public and private (the split bullet).
+class NodeVis {
+  static const public = 'public';
+  static const private = 'private';
+  static const aymaOnly = 'ayma_only';
+  static const mixed = 'mixed';
+}
+
+/// One node of the person graph, with its children.
+class StoryNode {
+  const StoryNode({
+    required this.id,
+    required this.section,
+    required this.label,
+    required this.text,
+    required this.answerType,
+    required this.level,
+    required this.visibility,
+    required this.subtreeVisibility,
+    required this.standard,
+    this.standardLabel,
+    this.standardOrder,
+    required this.editable,
+    this.imageUrl = '',
+    this.imageRead = '',
+    this.isYou = 'unknown',
+    this.sourceKind = '',
+    this.sourceRef = '',
+    this.sourceCreatedAt = '',
+    this.children = const [],
+  });
+
+  final String id;
+  final String section;
+
+  /// The node's display label. For a standard field this is its field label
+  /// ("Name", "Age"); otherwise the node's prompt.
+  final String label;
+
+  /// The node's value / content text. For an image node this is Ayma's read of
+  /// the image.
+  final String text;
+
+  /// `image` for an image node, `narrative`/`bool`/… otherwise.
+  final String answerType;
+
+  /// Depth in the tree — used only for the bullet indentation when a subtree is
+  /// rendered standalone; children are normally indented relative to the parent.
+  final int level;
+
+  /// `public` | `private` | `ayma_only`.
+  final String visibility;
+
+  /// `public` | `private` | `ayma_only` | `mixed` — the bullet colour (a `mixed`
+  /// subtree paints the split yin-yang bullet).
+  final String subtreeVisibility;
+
+  /// A known structured field (name/age/gender/…) — rendered as a labelled field.
+  final bool standard;
+  final String? standardLabel;
+  final int? standardOrder;
+
+  /// False for `ayma_only` (read-only) nodes — no owner action bubbles act on it.
+  final bool editable;
+
+  // --- image node (Contract 1) ---
+  final String imageUrl;
+  final String imageRead;
+
+  /// `yes` | `no` | `unknown` — the structured is-you verdict.
+  final String isYou;
+  final String sourceKind;
+  final String sourceRef;
+  final String sourceCreatedAt;
+
+  final List<StoryNode> children;
+
+  bool get isImage => answerType == 'image' && imageUrl.isNotEmpty;
+
+  factory StoryNode.fromMap(Map<String, dynamic> m) {
+    return StoryNode(
+      id: m['id'] as String? ?? '',
+      section: m['section'] as String? ?? '',
+      label: m['label'] as String? ?? '',
+      text: m['text'] as String? ?? '',
+      answerType: m['answer_type'] as String? ?? 'text',
+      level: (m['level'] as num?)?.toInt() ?? 1,
+      visibility: m['visibility'] as String? ?? NodeVis.private,
+      subtreeVisibility:
+          m['subtree_visibility'] as String? ?? m['visibility'] as String? ?? NodeVis.private,
+      standard: m['standard'] as bool? ?? false,
+      standardLabel: m['standard_label'] as String?,
+      standardOrder: (m['standard_order'] as num?)?.toInt(),
+      editable: m['editable'] as bool? ?? true,
+      imageUrl: m['image_url'] as String? ?? '',
+      imageRead: m['image_read'] as String? ?? '',
+      isYou: m['is_you'] as String? ?? 'unknown',
+      sourceKind: m['source_kind'] as String? ?? '',
+      sourceRef: m['source_ref'] as String? ?? '',
+      sourceCreatedAt: m['source_created_at'] as String? ?? '',
+      children: ((m['children'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => StoryNode.fromMap(e.cast<String, dynamic>()))
+          .toList(),
+    );
+  }
+
+  /// Every image node in this subtree (self + descendants), for the carousel.
+  List<StoryNode> collectImages() {
+    final out = <StoryNode>[];
+    void walk(StoryNode n) {
+      if (n.isImage) out.add(n);
+      for (final c in n.children) {
+        walk(c);
+      }
+    }
+
+    walk(this);
+    return out;
+  }
+}
+
+/// One section group of root nodes in the tree payload.
+class GraphTreeSection {
+  const GraphTreeSection({
+    required this.pageType,
+    required this.title,
+    required this.order,
+    required this.nodes,
+  });
+
+  final String pageType;
+  final String title;
+  final int order;
+  final List<StoryNode> nodes;
+
+  factory GraphTreeSection.fromMap(Map<String, dynamic> m) => GraphTreeSection(
+        pageType: m['page_type'] as String? ?? '',
+        title: m['title'] as String? ?? '',
+        order: (m['order'] as num?)?.toInt() ?? 0,
+        nodes: ((m['nodes'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => StoryNode.fromMap(e.cast<String, dynamic>()))
+            .toList(),
+      );
+}
+
+/// The whole Node-Visualiser tree payload (`GET /profile/graph/tree`).
+class GraphTree {
+  const GraphTree({required this.surface, required this.sections});
+
+  final String surface;
+  final List<GraphTreeSection> sections;
+
+  /// Every image node across every section — the carousel's source.
+  List<StoryNode> allImages() => [
+        for (final s in sections)
+          for (final n in s.nodes) ...n.collectImages(),
+      ];
+
+  factory GraphTree.fromMap(Map<String, dynamic> m) => GraphTree(
+        surface: m['surface'] as String? ?? 'story',
+        sections: ((m['sections'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => GraphTreeSection.fromMap(e.cast<String, dynamic>()))
+            .toList(),
+      );
+}

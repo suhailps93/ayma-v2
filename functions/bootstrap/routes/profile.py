@@ -207,6 +207,136 @@ async def profile_graph_other(
     )
 
 
+class NodeVisibilityRequest(BaseModel):
+    visibility: Literal["public", "private", "ayma_only"]
+
+
+class AddChildRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=400)
+    answer: str = Field(default="", max_length=4000)
+    visibility: Literal["public", "private"] = "private"
+
+
+def _tree_payload(uid: str, surface: str) -> dict:
+    import person_graph_store
+    import person_graph_tree
+    from config import CONFIG
+
+    graph = person_graph_store.effective(get_db(), uid)
+    return person_graph_tree.node_tree(
+        graph,
+        surface=surface,
+        include_ayma_only=CONFIG.graph_show_ai_only,
+    )
+
+
+@router.get("/profile/graph/tree")
+async def profile_graph_tree(
+    surface: str = "story", uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """The caller's person graph as a Node-Visualiser tree (one payload for Your
+    Story / reports / graph-detail). ``surface`` ∈ story|report|graphDetail
+    selects the owner visibility set; AI-only nodes are included per the
+    developer flag (``graph_show_ai_only``)."""
+    sfc = surface if surface in {"story", "report", "graphDetail"} else "story"
+    return await asyncio.to_thread(_tree_payload, uid, sfc)
+
+
+@router.get("/profile/graph/tree/{target_uid}")
+async def profile_graph_tree_other(
+    target_uid: str, uid: str = Depends(require_adult_uid)
+) -> dict[str, object]:
+    """Another member's person graph as a Node-Visualiser tree — public nodes
+    only, never private or AI-only (the public profile surface)."""
+    return await asyncio.to_thread(_tree_payload, target_uid.strip(), "publicProfile")
+
+
+@router.post("/profile/graph/node/{node_id}/visibility")
+async def profile_graph_node_visibility(
+    node_id: str, req: NodeVisibilityRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Set a node's visibility WITH the cascade: every descendant takes the same
+    visibility, except AI-only nodes, which are exempt."""
+    import person_graph_store
+
+    try:
+        changed = await asyncio.to_thread(
+            person_graph_store.set_visibility_cascade,
+            get_db(), uid, node_id, req.visibility,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"changed": changed}
+
+
+@router.post("/profile/graph/node/{parent_id}/add-child")
+async def profile_graph_add_child(
+    parent_id: str, req: AddChildRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Add a child node under ``parent_id`` (the manual add-a-line path inside the
+    visualiser, at any level)."""
+    import person_graph_store
+
+    try:
+        nid = await asyncio.to_thread(
+            person_graph_store.add_child_node,
+            get_db(), uid, parent_id, req.label.strip(),
+            answer=(req.answer.strip() or None),
+            visibility=req.visibility,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": nid}
+
+
+class NodeTextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/profile/graph/node/{node_id}/text")
+async def profile_graph_node_text(
+    node_id: str, req: NodeTextRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Edit one node's text manually (the Edit-manually bubble)."""
+    import person_graph_store
+
+    try:
+        await asyncio.to_thread(
+            person_graph_store.set_node_text, get_db(), uid, node_id, req.text.strip()
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": node_id}
+
+
+@router.get("/profile/graph/node/{node_id}/delete-count")
+async def profile_graph_delete_count(
+    node_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """How many descendant nodes a delete of ``node_id`` would take with it — the
+    number the delete confirmation names."""
+    import person_graph_store
+
+    n = await asyncio.to_thread(
+        person_graph_store.descendant_count, get_db(), uid, node_id
+    )
+    return {"descendants": n}
+
+
+@router.post("/profile/graph/node/{node_id}/delete")
+async def profile_graph_delete_node(
+    node_id: str, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Delete ``node_id`` and its whole subtree (editor-owned emergent nodes
+    only; seed and live-writer nodes are left in place)."""
+    import person_graph_store
+
+    removed = await asyncio.to_thread(
+        person_graph_store.delete_node_with_descendants, get_db(), uid, node_id
+    )
+    return {"removed": removed}
+
+
 @router.get("/profile/proposals")
 async def profile_proposals(uid: str = Depends(require_uid)) -> dict[str, object]:
     """Ayma's pending public-profile updates, grouped by section — each change

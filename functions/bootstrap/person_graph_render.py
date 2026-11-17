@@ -135,6 +135,28 @@ def _answer_text(node: GraphNode) -> str:
     return f"{node.prompt}: {text}"
 
 
+def node_display_text(node: GraphNode) -> str:
+    """Public accessor for a node's display text — the Node Visualiser (tree
+    render) reuses the exact same humanisation the story/public bullets use, so
+    one node has one rendering everywhere (the whole point of the visualiser
+    chunk). For a standard field the label is carried separately
+    (``standard_field_label``) so the client formats "Label: value"; this returns
+    the bare value in that case."""
+    if node.standard:
+        a = node.answer
+        if a is None:
+            return ""
+        if isinstance(a, str) and a.strip().lower() in _META_SENTINELS:
+            return ""
+        return _format_value(node, a)
+    return _answer_text(node)
+
+
+def is_renderable(node: GraphNode) -> bool:
+    """Public alias — a node carries content (an answer or a child)."""
+    return _is_renderable(node)
+
+
 def _is_renderable(node: GraphNode) -> bool:
     """A node renders as a bullet once it carries content — an answer or at
     least one child. Unanswered seed scaffolding does not render."""
