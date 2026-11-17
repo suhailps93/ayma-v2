@@ -250,8 +250,16 @@ class OverlayNode(BaseModel):
     # from, ``source_ref`` the conversation/session or report id ("" if none),
     # ``source_created_at`` the ISO time it was first ingested. Only on image nodes.
     is_you: Optional[str] = None
+    # SOURCE provenance on ANY node, not just images (founder Nov 17: "every node
+    # has a source"). ``source_kind`` ∈ chat|appearance_report|profile_grid|web|
+    # report|…; ``source_ref`` the conversation/session id, web link, or report
+    # run id; ``source_message_id`` the exact message within a chat (so tapping
+    # the source opens that conversation scrolled to it); ``source_created_at``
+    # the ISO time the fact was captured. Stamped at write time on every creation
+    # path; older sourceless nodes are fine (no backfill — founder waived it).
     source_kind: Optional[str] = None
     source_ref: Optional[str] = None
+    source_message_id: Optional[str] = None
     source_created_at: Optional[str] = None
 
 
@@ -292,6 +300,7 @@ class GraphNode(BaseModel):
     is_you: Optional[str] = None
     source_kind: Optional[str] = None
     source_ref: Optional[str] = None
+    source_message_id: Optional[str] = None
     source_created_at: Optional[str] = None
     # Contract 2: this node is a known structured (standard) field — rendered as a
     # labelled field in a fixed order first. ``standard_field_label`` /
@@ -469,6 +478,8 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.source_kind = o.source_kind
     if o.source_ref is not None:
         base.source_ref = o.source_ref
+    if o.source_message_id is not None:
+        base.source_message_id = o.source_message_id
     if o.source_created_at is not None:
         base.source_created_at = o.source_created_at
     # Contract 2: mark the known structured (standard) fields from the registry.

@@ -83,7 +83,16 @@ def _bind(
             if not fact:
                 return "nothing to save yet"
             try:
-                store.add_loose_node(db, uid, fact)
+                # Stamp the conversation source at write time (founder Nov 17):
+                # the fact came from THIS chat turn, so the node carries the
+                # session id + the message index, so tapping its source later
+                # opens this conversation scrolled to the message.
+                store.add_loose_node(
+                    db, uid, fact,
+                    source_kind="chat",
+                    source_ref=session_id,
+                    source_message_id=str(turn_index) if session_id else "",
+                )
                 return "noted — added to your story"
             except Exception:  # noqa: BLE001 - never crash the turn on a write error
                 logger.exception("remember: graph write failed for %s", uid)
