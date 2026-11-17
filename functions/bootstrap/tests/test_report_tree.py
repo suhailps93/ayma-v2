@@ -152,3 +152,40 @@ def test_report_node_tree_propagates_key_error_for_a_non_participant_match(monke
     monkeypatch.setattr(report_hub, "get_report", _not_found)
     with pytest.raises(KeyError):
         report_tree.report_node_tree(None, "match", "alice-uid__bob-uid", "eve-uid")
+def test_snapshot_node_tree_shapes_sections_without_report_hub(monkeypatch):
+    # The token-scoped (2o P5) path must NOT re-fetch through report_hub: the
+    # public /s/{token} read is authorized by the token alone. If it tried,
+    # this would blow up.
+    def _boom(*a, **k):  # pragma: no cover - must never run
+        raise AssertionError("snapshot_node_tree must not call report_hub")
+
+    monkeypatch.setattr(report_hub, "get_report", _boom)
+    snapshot = {
+        "title": "Shared research",
+        "report_type": "deep_dive",
+        "sections": [
+            {
+                "heading": "Overview",
+                "blocks": [
+                    rb.text_block("t:0", "Hello from a snapshot."),
+                    rb.stat_block("score", "Score", 7, basis="measured"),
+                ],
+            }
+        ],
+    }
+    tree = report_tree.snapshot_node_tree(snapshot)
+    assert tree["surface"] == "report"
+    assert tree["title"] == "Shared research"
+    # meta mirrors /s/{token}/data verbatim — no owner, never editable.
+    assert tree["meta"] == {"owner_uid": "", "viewer_can_edit": False}
+    assert [s["title"] for s in tree["sections"]] == ["Overview"]
+    nodes = tree["sections"][0]["nodes"]
+    assert nodes[0]["text"] == "Hello from a snapshot."
+    assert nodes[1]["answer_type"] == "stat" and nodes[1]["stat_value"] == 7.0
+
+
+def test_snapshot_node_tree_tolerates_empty_or_malformed_snapshot():
+    assert report_tree.snapshot_node_tree({})["sections"] == []
+    assert report_tree.snapshot_node_tree({"sections": [None, "bad"]})[
+        "sections"
+    ] == []

@@ -43,19 +43,27 @@ MockClient _backend(List<http.Request> seen) => MockClient((req) async {
             }),
             200);
       }
-      if (req.url.path.endsWith('/data')) {
+      if (req.url.path.endsWith('/tree')) {
+        // The token-scoped Node-Visualiser tree (2o P5): same public,
+        // unauthenticated `/s/{token}/tree` path, meta never editable.
         return http.Response(
             jsonEncode({
+              'surface': 'report',
               'title': 'Shared thing',
               'sections': [
                 {
-                  'heading': 'Overview',
-                  'blocks': [
+                  'page_type': 'overview',
+                  'title': 'Overview',
+                  'order': 0,
+                  'nodes': [
                     {
-                      'block_id': 't',
-                      'type': 'text',
-                      'editable': false,
+                      'id': 't',
+                      'section': 'overview',
                       'text': 'Hello from a snapshot.',
+                      'answer_type': 'text',
+                      'visibility': 'public',
+                      'subtree_visibility': 'public',
+                      'editable': false,
                     },
                   ],
                 },
@@ -173,16 +181,41 @@ void main() {
     expect(captured?.subject, 'Web research on Dillu');
   });
 
-  testWidgets('SharedReportScreen renders the public snapshot',
+  testWidgets(
+      'SharedReportScreen renders the snapshot through the node tree, unauthed',
       (tester) async {
     final seen = <http.Request>[];
     await tester.pumpWidget(MaterialApp(
       home: SharedReportScreen(token: _token, apiClient: _api(_backend(seen))),
     ));
     await tester.pumpAndSettle();
+    // The body is the shared Node-Visualiser (2o P5), not LivingReportView.
     expect(find.text('Hello from a snapshot.'), findsOneWidget);
-    expect(seen.single.url.path, '/s/$_token/data');
+    // Fetched by the token-scoped tree path — NOT the owner-checked
+    // `/report/.../tree`, and with no auth header: the token is the only
+    // thing granting read access, so the share's access scope is unchanged.
+    expect(seen.single.url.path, '/s/$_token/tree');
+    expect(seen.single.url.path.startsWith('/report/'), isFalse);
     expect(seen.single.headers.containsKey('authorization'), isFalse);
+  });
+
+  testWidgets(
+      'SharedReportScreen shows no body for a revoked / unknown token (access '
+      'scope preserved)', (tester) async {
+    // A revoked or unknown token 404s server-side (`_public_snapshot`), so an
+    // unauthorized viewer must get the empty state, never the report body.
+    final seen = <http.Request>[];
+    final backend = MockClient((req) async {
+      seen.add(req);
+      return http.Response('{"detail":"This link isn\'t available."}', 404);
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: SharedReportScreen(token: 'revoked', apiClient: _api(backend)),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('This report is no longer available.'), findsOneWidget);
+    expect(find.text('Hello from a snapshot.'), findsNothing);
+    expect(seen.single.url.path, '/s/revoked/tree');
   });
 }
 
