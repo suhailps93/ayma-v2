@@ -27,7 +27,10 @@ note (e.g. "legs not visible") instead of inventing a confident answer.
 Analyse the physique across ALL the provided photos (all the same person) and
 return ONE combined structured report. Give an `overall_score` (0-10, one decimal
 is fine) and a short `verdict` such as "Above average" with a one-sentence
-`verdict_note`. Score each visible feature (frame, proportions, posture,
+`verdict_note`. Write gist-first: the `verdict` plus that single `verdict_note`
+sentence is the headline a reader sees at a glance, so make it punchy and
+self-contained; keep every feature `note` to a brief phrase, never a
+multi-sentence paragraph. Score each visible feature (frame, proportions, posture,
 muscularity, leanness, symmetry, v_taper, skin_and_grooming, presence) with a
 0-10 `score` and a specific `note`. Fill `quick_facts` (body_type,
 est_height_impression, build, estimated_body_fat_range, dominant_strength,

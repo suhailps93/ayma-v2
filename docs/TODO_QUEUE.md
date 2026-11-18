@@ -973,3 +973,18 @@ Built and verified up to the model boundary; see HACKATHON_STATUS dated line +
 - **More device configs.** Boot Fold / small-screen AVDs (or `adb connect` a
   remote device) and run each scenario per serial to build a cross-form-factor
   report set.
+
+## Gist-first writing (less-text-heavy program, Part 3) ✅ (Nov 17 2026, branch `fleet/gist-first-writing`)
+Every node-creation path now emits a short one-line `gist` headline + at most a
+brief detail (no long third-person essays). Shared contract with Part 1
+(`fleet/gist-first-rendering`): field name **`gist`** on `OverlayNode`/`GraphNode`,
+merged in `merge_node`, stored by the store mint paths without touching
+`visibility` (founder P0). Writers wired: `pg_add_node` + `remember`
+(conversation), `deep_dive` digest + `skill_memory` web-findings (web research),
+face/body/physical reports + `ai_assessment` (reports/notes), `matching_skill`
+(match report). Prompts updated in files only (`deep_dive.md`, `face_report.md`,
+`body_report.md`, `ai_assessment.md`, `matching_skill.md`); inference stays 100%
+on LiveKit; models from `config.py`. Tests: `tests/test_gist_first_writing.py`.
+See `docs/PERSON_GRAPH.md § Gist-first writing`. Follow-up (founder, queued): add
+a sibling `visual` field picked/stored at write time — the gist write is designed
+so adding it is trivial.

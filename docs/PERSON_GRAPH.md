@@ -858,3 +858,54 @@ Two founder-reported defects on the `/profile/graph` live force-directed view
   evidence: `test/goldens/person_graph_all_chips.png`,
   `test/goldens/person_graph_tapped.png`. No backend/inference change (100%
   LiveKit unaffected).
+
+## Gist-first writing — the `gist` field (less-text-heavy program, Part 3, Nov 17 2026)
+
+Every node written **going forward** carries a short one-line **`gist`** headline
+(aim ≤ ~80 chars) plus at most a brief detail. The longer text stays in the
+node's existing `answer`/prose field but shortened — never a long third-person
+essay paragraph. Readers (Part 1, `fleet/gist-first-rendering`) render `gist` by
+default and derive a fallback for OLD, gist-less nodes; this part makes the
+**writers** emit `gist`. No backfill of old nodes.
+
+- **Field.** `gist: Optional[str]` on `OverlayNode` and `GraphNode`
+  (`person_graph.py`), merged in `merge_node`. Stored as `e["gist"]` by the store
+  mint paths **only when non-empty**, alongside (never replacing) the node's
+  other fields — so a node's `visibility` (private / public / ayma_only) and
+  everything else round-trips through the writer **unchanged** (founder P0). The
+  optional-param → `if gist: e["gist"] = gist` shape is deliberately trivial to
+  extend to a sibling field (e.g. a future `visual`).
+- **Store writers** accept an optional `gist=` kwarg: `set_answer`, `add_node`,
+  `add_loose_node`, `upsert_fact_node` (`person_graph_store.py`).
+  `upsert_report_node` is the non-rendering `report_doc` scaffold — no gist.
+- **Creation paths now gist-first:**
+  - *Conversation extraction* — `pg_add_node` (new required `gist` arg +
+    description) and `remember` (new `gist` arg; `highlight` stays the brief
+    detail) emit the headline directly; the LLM writes it.
+  - *Web research* — `deep_dive.py` digest emits a `gist` (schema +
+    `prompts/deep_dive.md § digest_system`, `summary` shortened to 1–2
+    sentences); `skill_memory.save_web_findings` stores it on
+    `emergent.skill.web_findings` (deterministic fallback headline when absent).
+  - *Reports* — face/body reports' short `verdict` + `verdict_note`
+    (`prompts/face_report.md`, `body_report.md`, now explicitly gist-first) become
+    the gist via `skill_memory.save_face_analysis` / `save_body_analysis`;
+    `save_physical_profile` derives a headline from the rendering's first line.
+  - *Ayma's assessment* — each polarity node's gist is its group title + top
+    observation (`ai_assessment._write_graph`; `prompts/ai_assessment.md`
+    observations held to one punchy line).
+  - *Match report* — `matching_skill` emits a required `gist` headline (schema +
+    `prompts/matching_skill.md`) on the `matches/{key}` report doc.
+- **Deliberately unchanged:** `set_profile_field` and raw questionnaire answers
+  write atomic one-liner values (name/phone/DOB/enums) and the taste/steering
+  nodes are short structured bodies, not essays — already gist-compliant by
+  construction; they rely on the reader's `answer` fallback rather than a
+  redundant per-node gist (keeps the rule generalizable, no per-node special
+  casing).
+- **Inference stays 100% on LiveKit** (the json writers are
+  `gemini.generate_json` / the vision provider served **through** LiveKit); model
+  names come only from `config.py`; every prompt lives in a `prompts/*.md` file —
+  no inline prompt was added, none needed moving (all writers already load from
+  files).
+- **Tests:** `tests/test_gist_first_writing.py` (mock inference only) covers a
+  conversation-extracted node, a report node, and a web-research node, plus the
+  visibility-round-trips invariant and the digest/match writer-contract schemas.

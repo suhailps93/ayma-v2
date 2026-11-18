@@ -149,6 +149,15 @@ as `dimensions` above applies here: solid backing means real data on both
 sides for the specific claim you're making, not a plausible-sounding
 extrapolation from a thin profile.
 
+## `gist`
+
+A short, punchy one-line headline (aim <= ~80 characters) capturing the fit at
+a glance — e.g. "Aligned on values and pace, light on shared interests" or
+"Strong chemistry signals, a real clash on kids". No lead-in, no "This match
+is…", just the headline. It is written gist-first: the one line a reader sees
+before the fuller `user_explanation`. Safe for either person to see — follow
+the same one-sided-claim rule as the narrative fields below.
+
 ## `user_explanation`
 
 `{ "A": "...", "B": "..." }` — 2-3 sentences written TO that person, second

@@ -41,7 +41,13 @@ unless you find independent evidence for it on the web this time.
 Turn the research notes into a compact JSON digest. Be conservative: only
 include a claim if the RESEARCH NOTES support it, and set confidence
 honestly. `is_them` on each link says how sure we are the link is about THIS
-person (same name alone is 'maybe'). Keep `summary` to 2-4 plain sentences.
+person (same name alone is 'maybe').
+
+Write gist-first. `gist` is a short, punchy one-line headline (aim <= ~80
+characters) that captures who this person is at a glance — e.g.
+"Product designer in Berlin, ex-Spotify, writes about typography". No lead-in,
+no "This person is…", just the headline itself. Then `summary` is at most a
+brief detail: 1-2 plain sentences, never a long third-person essay paragraph.
 
 **Never retype a URL from memory when you can point at it instead.** The
 SOURCE LINKS SEEN list is numbered. Whenever a fact's `source_url` or a

@@ -22,7 +22,10 @@ throughout — set `usable` to false and leave the analysis fields minimal.
 Analyse the face across ALL the provided photos (all the same person) and
 return ONE combined structured report. Give an `overall_score` (0-10, one
 decimal is fine) and a short `verdict` such as "Above average" with a
-one-sentence `verdict_note`. Score each visible feature (symmetry, proportions,
+one-sentence `verdict_note`. Write gist-first: the `verdict` plus that single
+`verdict_note` sentence is the headline a reader sees at a glance, so make it
+punchy and self-contained; keep every feature `note` to a brief phrase, never a
+multi-sentence paragraph. Score each visible feature (symmetry, proportions,
 bone_structure, skin_quality, eyes, brows, nose, lips, facial_hair, hair) with a
 0-10 `score` and a specific `note`; skip `facial_hair` if there is none. Fill
 `quick_facts` (face_shape, age_estimate, facial_hair_density, hair_thickness,

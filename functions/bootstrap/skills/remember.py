@@ -39,7 +39,9 @@ def _last_user_line(turns: list | None) -> str:
 DESCRIPTION = (
     "Fold something just learned about this person into your long-term notes "
     "— a value, preference, history, dealbreaker. Skip small talk or anything "
-    "already in your notes; one line on what stood out is enough."
+    "already in your notes. Write gist-first: 'gist' is a short, punchy one-line "
+    "headline (aim <= ~80 chars); 'highlight' adds at most a brief detail, never "
+    "a long third-person paragraph."
 )
 
 DECLARATION = {
@@ -48,10 +50,17 @@ DECLARATION = {
     "parameters": {
         "type": "object",
         "properties": {
+            "gist": {
+                "type": "string",
+                "description": (
+                    "a short punchy one-line headline for what stood out "
+                    "(aim <= ~80 chars)"
+                ),
+            },
             "highlight": {
                 "type": "string",
-                "description": "what stood out (optional)",
-            }
+                "description": "at most a brief extra detail (optional, keep it short)",
+            },
         },
     },
 }
@@ -65,7 +74,7 @@ def _bind(
     turn_index: int = 0,
     turns: list | None = None,
 ) -> Callable[..., str]:
-    async def remember(highlight: str = "") -> str:
+    async def remember(highlight: str = "", gist: str = "") -> str:
         from config import CONFIG
 
         # Graph-authoritative (NOTE 228): record the volunteered fact as a loose
@@ -79,7 +88,8 @@ def _bind(
         if CONFIG.person_graph_reads:
             import person_graph_store as store
 
-            fact = (highlight or "").strip() or _last_user_line(turns)
+            gist = (gist or "").strip()
+            fact = (highlight or "").strip() or gist or _last_user_line(turns)
             if not fact:
                 return "nothing to save yet"
             try:
@@ -106,6 +116,7 @@ def _bind(
                 # opens this conversation scrolled to the message.
                 store.add_loose_node(
                     db, uid, fact,
+                    gist=(gist or None),
                     source_kind="chat",
                     source_ref=session_id,
                     source_message_id=str(turn_index) if session_id else "",
@@ -135,8 +146,9 @@ def _bind(
             return "noted — I'll fold that into your story when we wrap up"
 
         window = list(turns or [])
-        if not window and highlight.strip():
-            window = [Turn(ROLE_AYMA, f"(worth remembering) {highlight.strip()}")]
+        seed = (highlight or gist or "").strip()
+        if not window and seed:
+            window = [Turn(ROLE_AYMA, f"(worth remembering) {seed}")]
         if not window:
             return "nothing to save yet"
 

@@ -74,10 +74,13 @@ def _skill_node_id(page_type: str) -> str:
     return f"emergent.skill.{page_type}"
 
 
-def _graph_upsert_skill(db, uid: str, page_type: str, ai_body: str) -> None:
+def _graph_upsert_skill(
+    db, uid: str, page_type: str, ai_body: str, gist: str = ""
+) -> None:
     """Upsert the compiled skill page as its graph node (idempotent by id). An
     earlier user promotion to public is preserved; ``interactions`` stays
-    ayma_only always."""
+    ayma_only always. ``gist`` is the node's short one-line headline (gist-first
+    writing); the long compiled body stays in the node answer."""
     import person_graph_store as store
 
     nid = _skill_node_id(page_type)
@@ -92,6 +95,7 @@ def _graph_upsert_skill(db, uid: str, page_type: str, ai_body: str) -> None:
         visibility=vis,
         provenance="inferred",
         label=page_type.replace("_", " "),
+        gist=(gist or None),
         source_kind="skill_memory", source_ref=page_type,
     )
 
@@ -109,13 +113,13 @@ def _page_ref_by_id(db, uid: str, page_id: str):
     )
 
 
-def _upsert(db, uid: str, page_type: str, ai_body: str) -> None:
+def _upsert(db, uid: str, page_type: str, ai_body: str, gist: str = "") -> None:
     ai_body = (ai_body or "").strip()
     if not uid or not ai_body:
         return
     if _graph_reads_on():
         try:
-            _graph_upsert_skill(db, uid, page_type, ai_body)
+            _graph_upsert_skill(db, uid, page_type, ai_body, gist=gist)
         except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
             logger.exception("skill_memory: %s graph save failed for %s", page_type, uid)
         return
@@ -244,12 +248,47 @@ def _report_md(report: dict, *, kind: str, noun: str) -> str:
     return "\n".join(lines).strip()
 
 
+# --- gist headlines (gist-first writing) ------------------------------------
+# A node's one-line headline. The web digest emits its own `gist` (gist-first
+# prompt); a report's gist is its short verdict line. Bounded so it stays a
+# headline, never a paragraph. The long compiled body stays in the node answer.
+_GIST_MAX = 100
+
+
+def _clip_gist(text: str) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= _GIST_MAX else text[: _GIST_MAX - 1].rstrip() + "…"
+
+
+def _web_findings_gist(digest: dict) -> str:
+    d = digest or {}
+    gist = str(d.get("gist", "")).strip()
+    if gist:
+        return _clip_gist(gist)
+    name = str(d.get("name", "")).strip() or "this person"
+    return _clip_gist(f"Web findings on {name}")
+
+
+def _report_gist(report: dict, *, noun: str) -> str:
+    r = report or {}
+    verdict = str(r.get("verdict", "")).strip()
+    note = str(r.get("verdict_note", "")).strip()
+    head = verdict or f"{noun} read"
+    if note:
+        head = f"{head} — {note}"
+    return _clip_gist(head)
+
+
 # --- public API ------------------------------------------------------------
 
 
 def save_web_findings(db, uid: str, digest: dict) -> None:
     """Compile a deep-dive digest into the ``web-findings`` ``private`` page."""
-    _upsert(db, uid, "web_findings", _web_findings_md(digest or {}))
+    _upsert(
+        db, uid, "web_findings",
+        _web_findings_md(digest or {}),
+        gist=_web_findings_gist(digest or {}),
+    )
 
 
 def save_face_analysis(db, uid: str, report: dict) -> None:
@@ -259,6 +298,7 @@ def save_face_analysis(db, uid: str, report: dict) -> None:
     _upsert(
         db, uid, "face_analysis",
         _report_md(report or {}, kind="Facial-analysis", noun="face"),
+        gist=_report_gist(report or {}, noun="Face"),
     )
 
 
@@ -269,6 +309,7 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
     _upsert(
         db, uid, "body_analysis",
         _report_md(report or {}, kind="Physique-analysis", noun="physique"),
+        gist=_report_gist(report or {}, noun="Physique"),
     )
 
 
@@ -278,7 +319,9 @@ def save_physical_profile(db, uid: str, body_md: str) -> None:
     appends); defaults to ``private`` and keeps an explicitly-set visibility
     (e.g. promoted to ``public``). The caller passes an already-rendered,
     source-tagged markdown block."""
-    _upsert(db, uid, "physical_profile", body_md or "")
+    first_line = next((ln.strip() for ln in (body_md or "").splitlines() if ln.strip()), "")
+    gist = _clip_gist(first_line) if first_line else "Physical attributes"
+    _upsert(db, uid, "physical_profile", body_md or "", gist=gist)
 
 
 # --- interactions log ------------------------------------------------------

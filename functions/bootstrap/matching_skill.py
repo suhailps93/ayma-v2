@@ -101,12 +101,18 @@ def _response_schema(dim_keys: list[str]) -> dict:
                 },
                 "required": ["A", "B"],
             },
+            "gist": {
+                "type": "string",
+                "description": "a short punchy one-line headline for this match "
+                "(aim <= ~80 chars) — the gist of the fit at a glance, not a "
+                "sentence of setup",
+            },
             "ai_explanation": {"type": "string"},
             "shared": {"type": "array", "items": {"type": "string"}},
             "tensions": {"type": "array", "items": {"type": "string"}},
             "missing": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["dimensions", "user_explanation", "ai_explanation"],
+        "required": ["dimensions", "user_explanation", "ai_explanation", "gist"],
     }
 
 
@@ -621,6 +627,7 @@ async def score_pair(
         "structured_score": structured["structured_overall"],
         "dimensions": dims,
         "omitted_dimensions": omitted_keys,
+        "gist": str(result.get("gist", "")).strip(),
         "user_explanation": {
             uid_a: str(ue.get("A", "")).strip(),
             uid_b: str(ue.get("B", "")).strip(),

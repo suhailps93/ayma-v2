@@ -261,6 +261,12 @@ class OverlayNode(BaseModel):
     source_ref: Optional[str] = None
     source_message_id: Optional[str] = None
     source_created_at: Optional[str] = None
+    # Gist-first writing (less-text-heavy program, Part 3): a short punchy
+    # one-line headline (aim <= ~80 chars) for this node, emitted by every writer
+    # going forward. The longer text stays in ``answer`` but shortened to a brief
+    # detail — never a multi-sentence third-person essay. Readers render ``gist``
+    # by default and fall back to ``answer`` for older, gist-less nodes.
+    gist: Optional[str] = None
 
 
 class GraphNode(BaseModel):
@@ -308,6 +314,9 @@ class GraphNode(BaseModel):
     standard: bool = False
     standard_field_label: Optional[str] = None
     standard_field_order: Optional[int] = None
+    # Gist-first writing (Part 3): short one-line headline for this node (see
+    # OverlayNode.gist). None on older nodes written before gist-first.
+    gist: Optional[str] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -491,6 +500,8 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.source_message_id = o.source_message_id
     if o.source_created_at is not None:
         base.source_created_at = o.source_created_at
+    if o.gist is not None:
+        base.gist = o.gist
     # Contract 2: mark the known structured (standard) fields from the registry.
     if is_standard(base.id):
         base.standard = True
