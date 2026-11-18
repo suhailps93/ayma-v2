@@ -45,6 +45,16 @@ PersonGraph _founderGraph() {
   for (var k = 0; k < 5; k++) {
     nodes.add({'id': 'orphan$k', 'kind': 'bullet', 'text': 'unlinked $k'});
   }
+  // Grounding nodes: one skill per section (scattered across lobes) + the lone
+  // Ayma-assessment hub whose single child is the assessment root (degree-1).
+  for (var s = 0; s < fans.length; s++) {
+    nodes.add({'id': 'sec$s.skill', 'kind': 'skill', 'text': 'skill $s'});
+    edges.add({'from': 'sec$s', 'to': 'sec$s.skill'});
+  }
+  nodes.add({'id': 'sec:assess', 'kind': 'section', 'label': "Ayma's assessment"});
+  edges.add({'from': 'me', 'to': 'sec:assess'});
+  nodes.add({'id': 'assessment', 'kind': 'assess', 'text': 'Ayma read'});
+  edges.add({'from': 'sec:assess', 'to': 'assessment'});
   return PersonGraph.fromMap({
     'center': {'id': 'me', 'label': 'You'},
     'sections': const [],
@@ -83,6 +93,20 @@ void main() {
     // Load the graph, then run the reduced-motion settle + fit (postFrame).
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // Turn the "Skills filter" ON: hide every kind chip except the grounding
+    // kinds (Skills + Ayma's read) and the structural You/Sections, mirroring
+    // the founder's filtered view where the lone assessment root appeared far.
+    const keep = {'You', 'Sections', 'Skills', "Ayma's read"};
+    for (final label in const ['Facts', 'Reports', 'Photos']) {
+      final chip = find.widgetWithText(FilterChip, label);
+      if (chip.evaluate().isNotEmpty) {
+        await tester.tap(chip.first);
+        await tester.pump();
+      }
+    }
+    expect(keep, isNotEmpty);
     await tester.pump(const Duration(milliseconds: 50));
 
     final boundary = tester.renderObject<RenderRepaintBoundary>(

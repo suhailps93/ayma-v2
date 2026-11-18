@@ -138,6 +138,19 @@ class GraphSim {
   // nestle among the real leaves rather than pile on the centre or float out.
   static const double _orphanAnchorRest = 170.0;
   static const double _orphanAnchorK = 0.045;
+  // Soft global containment: a self-scaling max radius beyond which ANY node
+  // (any degree) is pulled back toward the cluster, so no node — however it got
+  // there — can settle far enough out to dominate the fit bounds and crush the
+  // cluster (founder build 2491: a lone far node on one long edge). The bound
+  // tracks the live cluster scale (mean distance of non-centre nodes × a
+  // factor, floored) and sits BEYOND where a node's own spring reels it, so it
+  // is a pure safety net: interior and normally-sprung nodes feel nothing (the
+  // organic spread is untouched); only a genuine runaway past the bound gets a
+  // gentle linear pull back toward it.
+  static const double _boundFactor = 2.2;
+  static const double _boundMin = 600.0;
+  static const double _boundK = 0.02;
+  static const double _boundForceCap = 0.15;
 
   double alpha = 1.0;
   static const double alphaMin = 0.02;
@@ -351,6 +364,37 @@ class GraphSim {
         final f = _orphanAnchorK * (dist - rest) * a / dist;
         node.vx -= dx * f;
         node.vy -= dy * f;
+      }
+    }
+
+    // Soft global containment beyond a self-scaling bound: no node of any
+    // degree may settle past the cluster edge. The bound = max(_boundMin,
+    // _boundFactor × mean distance of non-centre nodes from the origin) — a
+    // cheap O(n) proxy for the cluster scale that holds at any node count and
+    // sits beyond where a spring reels a node, so normally-placed and
+    // spring-held nodes (dist ≤ bound) feel nothing and the organic spread is
+    // untouched. Only a genuine runaway beyond the bound gets a gentle, capped
+    // linear pull toward it. Most nodes sit inside, so the bound never collapses
+    // the cluster onto itself.
+    if (n > 1) {
+      var sum = 0.0;
+      var count = 0;
+      for (final node in nodes) {
+        if (node.id == centerId) continue;
+        sum += math.sqrt(node.x * node.x + node.y * node.y);
+        count++;
+      }
+      if (count > 0) {
+        final bound = math.max(_boundMin, _boundFactor * (sum / count));
+        for (final node in nodes) {
+          if (node.id == centerId) continue;
+          final dist = math.sqrt(node.x * node.x + node.y * node.y);
+          if (dist <= bound || dist < 1e-4) continue;
+          var f = _boundK * (dist - bound) / dist;
+          if (f > _boundForceCap) f = _boundForceCap;
+          node.vx -= node.x * f;
+          node.vy -= node.y * f;
+        }
       }
     }
 

@@ -896,3 +896,28 @@ thin **pink streak of edges shooting to one distant point** with every cluster
   `PersonGraphScreen` on founder-shaped data in reduced motion and captures the
   fitted open frame to `pg_layout_fitted.png` (fitted, spread, readable; no far
   streak). No backend/inference change (100% LiveKit unaffected).
+
+  **Extension (build 2491, 18:20 report): degree-1 + global containment.** A
+  second screenshot found the lone far node with the Skills filter ON was the
+  Ayma-assessment root — a DEGREE-1 node (one edge to its `sec:assess` hub), so
+  the degree-0 anchor didn't cover it. Verified against the backend topology
+  (`profile_graph._augment_with_store_nodes`: every store node hangs under its
+  own `sec:<page_type>` hub which links to "me") and reproduced in-tree: a
+  degree-1 node connected to the pinned centre (directly or via a hub) does NOT
+  drift — its spring holds it at ~80–140px even when flung to (4000,−3000) — so a
+  degree-1 drift is not a sim instability; the spring reels it. What the sim
+  could NOT previously bound is a **weakly-connected component with no tie to the
+  centre** (its internal spring satisfied far out, gravity too weak to reel it
+  within the settle): flung to 6000 it stays at ~4000 (ratio ~14). Fix: a **soft
+  global containment** in `GraphSim.step` — a self-scaling bound `max(600, 2.2 ×
+  mean non-centre radius)` beyond which any node of any degree gets a gentle,
+  capped (`_boundForceCap` 0.15) linear pull back toward it. The bound sits
+  beyond where a spring reels a node, so interior and normally-sprung nodes feel
+  nothing (the organic spread and the degree-0 anchor are untouched); only a
+  genuine runaway is caught. With it the flung component settles at ratio ~1.7.
+  Regression (`person_graph_outlier_fit_test.dart`): the degree-1 assessment
+  root settles ≤ 1.2× median AND a Skills-filtered fit (hub + assessment only)
+  frames it on-screen; a far-flung weakly-connected pair settles ≤ 2.5× median
+  (fail-before ~14×). The acceptance screenshot is re-rendered with the Skills
+  filter ON, showing the assessment inside the fitted cluster (no off-screen
+  edge).

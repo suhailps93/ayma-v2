@@ -21,7 +21,11 @@ import 'package:flutter_test/flutter_test.dart';
 /// A deterministic founder-shaped graph: a centre "You" + weighted sections,
 /// each with facts spread across the four surfaces (story / publicProfile /
 /// report / graphDetail) and an occasional depth-3 sub-fact, PLUS a handful of
-/// sparsely-connected (edgeless) cross-surface facts.
+/// sparsely-connected (edgeless) cross-surface facts AND the lone Ayma-assessment
+/// hub whose single child is the assessment root (a DEGREE-1 node with one long
+/// edge — the grounding meta-node the founder keeps hitting with Skills on). This
+/// mirrors the backend (`profile_graph._augment_with_store_nodes`): each store
+/// node hangs under its own `sec:<page_type>` hub, which links to "me".
 (List<SimNode>, List<(String, String)>, List<String>) founderShapedGraph() {
   final nodes = <SimNode>[SimNode(id: 'me', level: 0)];
   final edges = <(String, String)>[];
@@ -49,6 +53,11 @@ import 'package:flutter_test/flutter_test.dart';
     nodes.add(SimNode(id: id, level: 2));
     orphanIds.add(id);
   }
+  // Lone Ayma-assessment hub + its single assessment child (degree-1).
+  nodes.add(SimNode(id: 'sec:assess', level: 1));
+  edges.add(('me', 'sec:assess'));
+  nodes.add(SimNode(id: 'assessment', level: 2));
+  edges.add(('sec:assess', 'assessment'));
   return (nodes, edges, orphanIds);
 }
 
@@ -140,6 +149,84 @@ void main() {
       expect((midx - viewport.width / 2).abs(), lessThan(0.25 * viewport.width));
       expect((midy - viewport.height / 2).abs(), lessThan(0.25 * viewport.height));
       expect(usableH, greaterThan(0));
+    });
+
+    // Founder build 2491 (18:20 screenshot): with the Skills filter ON the lone
+    // far node was the AYMA ASSESSMENT root — a DEGREE-1 node with one long edge.
+    // It must settle inside the cluster like a leaf, and a Skills-filtered fit
+    // (only the assessment hub + assessment visible) must frame it on-screen.
+    test('the degree-1 assessment root settles inside and frames when filtered',
+        () {
+      final (nodes, edges, _) = founderShapedGraph();
+      final sim = GraphSim(nodes: nodes, edges: edges, centerId: 'me');
+      sim.settle();
+
+      final c = _centroid(sim);
+      final dists = {for (final n in sim.nodes) n.id: (n.pos - c).distance};
+      final sorted = dists.values.toList()..sort();
+      final median = sorted[sorted.length ~/ 2];
+      // Inside the cluster, within the same bound as an edgeless orphan — NOT on
+      // the far rim (pre-fix the lone grounding root dominated the fit bounds).
+      expect(dists['assessment']!, lessThanOrEqualTo(1.2 * median),
+          reason: 'assessment must settle inside the cluster like a leaf');
+
+      // Skills-filtered view: only the assessment hub + its child are visible.
+      final visible = sim.nodes
+          .where((s) => s.id == 'sec:assess' || s.id == 'assessment')
+          .toList();
+      const viewport = Size(380, 600);
+      const padding = 32.0;
+      final fit =
+          fitToViewport(graphBounds(visible), viewport, padding: padding);
+      for (final s in visible) {
+        final p = fit.toViewport(s.pos);
+        final r = s.radius * fit.scale;
+        expect(p.dx - r, greaterThanOrEqualTo(padding - 0.5),
+            reason: '${s.id} L on-screen');
+        expect(p.dx + r, lessThanOrEqualTo(viewport.width - padding + 0.5),
+            reason: '${s.id} R on-screen');
+        expect(p.dy - r, greaterThanOrEqualTo(padding - 0.5),
+            reason: '${s.id} T on-screen');
+        expect(p.dy + r, lessThanOrEqualTo(viewport.height - padding + 0.5),
+            reason: '${s.id} B on-screen');
+      }
+    });
+
+    // Soft global containment guarantee: no node of ANY degree can settle beyond
+    // the cluster bound and dominate the fit. A weakly-connected component whose
+    // internal spring is satisfied FAR from the graph (so neither the spring nor
+    // weak gravity reels it within the settle) escapes to a huge coordinate
+    // without containment — fail-before: ratio ~14 (max ~4000 over median ~290);
+    // pass-after: the gentle self-scaling bound reels it to the cluster edge.
+    test('a far-flung weakly-connected component is contained after settle', () {
+      final (nodes, edges, _) = founderShapedGraph();
+      // A degree-1 pair tied to each other but NOT to the centre, flung far.
+      final p1 = SimNode(id: 'drift1', level: 2);
+      final p2 = SimNode(id: 'drift2', level: 2);
+      nodes.addAll([p1, p2]);
+      edges.add(('drift1', 'drift2'));
+      final sim = GraphSim(nodes: nodes, edges: edges, centerId: 'me');
+      // Override the seed and fling the pair out together.
+      p1
+        ..x = 6000
+        ..y = -4500
+        ..vx = 0
+        ..vy = 0;
+      p2
+        ..x = 6050
+        ..y = -4500
+        ..vx = 0
+        ..vy = 0;
+      sim.settle();
+
+      final c = _centroid(sim);
+      final dists = sim.nodes.map((n) => (n.pos - c).distance).toList()..sort();
+      final median = dists[dists.length ~/ 2];
+      for (final n in sim.nodes) {
+        expect(n.x.isFinite && n.y.isFinite, isTrue, reason: '${n.id} finite');
+      }
+      expect(dists.last, lessThanOrEqualTo(2.5 * median),
+          reason: 'no node may settle beyond the cluster bound after a fling');
     });
   });
 }
