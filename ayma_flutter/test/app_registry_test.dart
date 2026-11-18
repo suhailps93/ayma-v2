@@ -55,6 +55,19 @@ void main() {
         reason: 'registry lists routes app_router.dart no longer has');
   });
 
+  test('the standalone Career view route is gone (career is part of Your Story)',
+      () {
+    // Founder order (build 2491): the dedicated "Career & education" screen was
+    // deleted — Career is a normal section inside Your Story. No route may point
+    // at a standalone career surface, and the registry must not list one.
+    expect(routes, isNot(contains('/profile/career')));
+    expect(_list('destinations').map((d) => d['path']),
+        isNot(contains('/profile/career')));
+    // "open my career" still resolves — folded into the My story destination.
+    final story = _list('destinations').firstWhere((d) => d['key'] == 'story');
+    expect((story['aliases'] as List), contains('my career'));
+  });
+
   test('every destination path navigates through the command service', () {
     for (final d in _list('destinations')) {
       final nav = <String>[];

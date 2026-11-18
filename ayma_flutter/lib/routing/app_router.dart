@@ -46,7 +46,6 @@ import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
 import '../screens/privacy_screen.dart';
 import '../screens/profile_tab_screen.dart';
-import '../screens/career_view_screen.dart';
 import '../screens/person_graph_screen.dart';
 import '../screens/story_editor_screen.dart';
 import '../screens/privacy_settings_screen.dart';
@@ -248,11 +247,6 @@ final appRouter = GoRouter(
       path: StoryEditorScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: StoryEditorScreen()),
-    ),
-    GoRoute(
-      path: CareerViewScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: CareerViewScreen()),
     ),
     GoRoute(
       path: '/dm/:threadId',

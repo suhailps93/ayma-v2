@@ -398,10 +398,11 @@ Object? _bodyFor(String path) {
   }
   if (path.startsWith('/profile/graph/tree')) {
     // A Career section with a dated and an undated entry + long text, so the
-    // matrix holds the dedicated Career view's timeline rows at every viewport,
-    // scale and direction — PLUS the tall web-findings Facts section so Your
-    // Story / public-profile pump real scroll-length node content (a
-    // non-scrolling body would overflow here, build 2488).
+    // matrix holds the Career section's rows (now a normal section inside Your
+    // Story, no longer a dedicated view) at every viewport, scale and direction
+    // — PLUS the tall web-findings Facts section so Your Story / public-profile
+    // pump real scroll-length node content (a non-scrolling body would overflow
+    // here, build 2488).
     return {
       'surface': path == '/profile/graph/tree' ? 'story' : 'public_profile',
       'sections': [
