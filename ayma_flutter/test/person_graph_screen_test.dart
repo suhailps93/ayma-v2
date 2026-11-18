@@ -2,6 +2,8 @@
 // store (reports, photos, skills, assessment, …), neural-network style, each
 // tappable node opening its report or photo. These cover the routing logic and
 // that the renderer handles every new node kind without breaking.
+import 'dart:ui' as ui;
+
 import 'package:ayma_flutter/models/story_node.dart';
 import 'package:ayma_flutter/screens/person_graph_layout.dart';
 import 'package:ayma_flutter/screens/person_graph_screen.dart';
@@ -10,6 +12,7 @@ import 'package:ayma_flutter/widgets/node_visualiser.dart' show NodeVisualiser;
 import 'package:ayma_flutter/widgets/photo_gallery.dart' show PhotoViewer;
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 PersonGraph _graph() => PersonGraph.fromMap({
@@ -628,19 +631,46 @@ void main() {
       await tester.pump();
       expect(chips(tester).every((c) => !c.selected), isTrue);
 
-      // Tapping one chip ('You') turns just that filter back ON — proof the
-      // per-chip toggle still drives the same shared state the master set.
+      // Tapping one chip ('You') turns that filter back ON *and actually renders
+      // its nodes*. Regression for build 2495: the old filter AND-gated kind AND
+      // level, and Hide all hid BOTH, so un-hiding one KIND left every level
+      // hidden → the chip lit but the canvas stayed EMPTY. The toggle now
+      // releases the vestigial all-levels-hidden block, so nodes come back.
       final you = find.widgetWithText(FilterChip, 'You');
       await tester.ensureVisible(you);
       await tester.tap(you);
       await tester.pump();
       expect(tester.widget<FilterChip>(you).selected, isTrue);
-      expect(chips(tester).where((c) => c.selected).length, 1);
 
-      // Tapping it again hides it — back to the all-off empty state, no crash.
+      // The canvas is NOT empty — the person node renders. Count non-background
+      // pixels in the graph canvas (the bug left it fully blank).
+      Future<int> litPixels() async {
+        final canvas = find.byWidgetPredicate((w) =>
+            w is CustomPaint && '${w.painter.runtimeType}' == '_GraphPainter');
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+            find.ancestor(of: canvas, matching: find.byType(RepaintBoundary)).first);
+        var lit = 0;
+        await tester.runAsync(() async {
+          final img = await boundary.toImage();
+          final data =
+              await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+          final bytes = data!.buffer.asUint8List();
+          for (var i = 0; i < bytes.length; i += 4) {
+            // non-near-black pixel = something was drawn
+            if (bytes[i] > 40 || bytes[i + 1] > 40 || bytes[i + 2] > 40) lit++;
+          }
+        });
+        return lit;
+      }
+
+      expect(await litPixels(), greaterThan(0),
+          reason: 'un-hiding a kind after Hide all must render its nodes');
+
+      // Tapping it again hides it — back to the empty canvas, no crash.
       await tester.tap(you);
       await tester.pump();
       expect(tester.widget<FilterChip>(you).selected, isFalse);
+      expect(await litPixels(), 0, reason: 'hiding it again empties the canvas');
       expect(tester.takeException(), isNull);
     });
   });

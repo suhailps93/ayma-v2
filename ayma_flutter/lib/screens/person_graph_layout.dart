@@ -162,6 +162,15 @@ class GraphSim {
   static const double _repelCutoff = 900.0;
   static const double _gravity = 0.0035;
   static const int _collisionIters = 2;
+  // Per-step velocity clamp. A high-degree hub (the founder's real graph has one
+  // `sec:assessment` hub with 96 co-located children) makes a single node
+  // accumulate repulsion from ~95 neighbours at once — up to ~95 × _repelCap of
+  // velocity in ONE step — which the alpha cooling and velocity decay cannot
+  // absorb, so coordinates blow up to ~1e6 and the fit crushes the whole graph
+  // into a knot with a long comet tail. Capping the speed each step keeps the
+  // integration stable (nodes spread gradually into the mesh) without changing
+  // the equilibrium the forces settle into.
+  static const double _maxSpeed = 40.0;
 
   bool get isSettled => alpha <= alphaMin;
 
@@ -412,6 +421,14 @@ class GraphSim {
       }
       node.vx *= _velocityDecay;
       node.vy *= _velocityDecay;
+      // Clamp the per-step speed so a high-degree hub can't fling a node (or
+      // itself, pulled by dozens of child springs) across the plane in one tick.
+      final speed = math.sqrt(node.vx * node.vx + node.vy * node.vy);
+      if (speed > _maxSpeed) {
+        final s = _maxSpeed / speed;
+        node.vx *= s;
+        node.vy *= s;
+      }
       node.x += node.vx;
       node.y += node.vy;
       if (!node.x.isFinite || !node.y.isFinite) {
