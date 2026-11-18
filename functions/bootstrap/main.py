@@ -5821,6 +5821,7 @@ def _photo_nodes_for_view(uid: str) -> list[dict[str, object]]:
     ``photo_notes`` assembly (``_ai_view_photos``) that orphaned on token
     rotation and timed out (Scout NOTE 248: 408 on /wiki/ai-view)."""
     import person_graph_store as pg_store
+    import public_profile
 
     rows = pg_store.image_nodes_for_view(get_db(), uid)
     out: list[dict[str, object]] = []
@@ -5828,7 +5829,10 @@ def _photo_nodes_for_view(uid: str) -> list[dict[str, object]]:
         out.append(
             {
                 "id": r["id"],
-                "url": r["url"],
+                # Re-mint the frozen node URL against the bucket we serve — a
+                # stale download token (re-upload / demo reset / prod↔staging
+                # copy) otherwise shows the broken-image glyph on every tile.
+                "url": public_profile.refresh_storage_url(r["url"]),
                 "source": _NODE_SOURCE_TO_VIEW.get(r["source_kind"], "chat"),
                 "context": r["read"],
                 "is_user": r["is_you"] if r["is_you"] != "unknown" else "",

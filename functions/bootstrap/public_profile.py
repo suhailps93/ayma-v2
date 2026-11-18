@@ -10,9 +10,10 @@ whether the caller has already liked them).
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from firebase_admin import storage
 
@@ -52,6 +53,46 @@ def _photo_url(storage_path: str) -> str | None:
     except Exception:  # noqa: BLE001 - a missing/broken photo just drops out
         logger.warning("photo url failed for %s", storage_path, exc_info=True)
         return None
+
+
+# A Firebase Storage download URL, ANY bucket (not just the running backend's):
+# ``.../v0/b/<bucket>/o/<url-encoded object path>?alt=media&token=…``. Used to
+# recover the object PATH from a stored URL so it can be re-minted against the
+# bucket this backend actually serves.
+_STORAGE_DOWNLOAD_URL_RE = re.compile(
+    r"^https://firebasestorage\.googleapis\.com/v0/b/([^/]+)/o/([^?]+)"
+)
+
+
+def refresh_storage_url(url: str) -> str:
+    """Re-resolve a stored image-node URL to one that is loadable in the bucket
+    THIS backend serves, re-minting the Firebase download token from the object
+    path at serve time.
+
+    Image-node URLs are frozen in the node's ``answer`` at ingest
+    (:func:`person_graph_store.add_image_node`). That frozen URL stops loading —
+    showing the broken-image glyph on every Story photo tile — when its object's
+    download token rotates (an object re-upload / demo ``--reset``) or when the
+    data is read in a different environment than it was minted in (a prod↔staging
+    copy, a bucket recreated under the same name): the token baked into the URL no
+    longer matches the object. The cover photo never hit this because the public
+    profile always re-mints its grid from the storage PATH; the node path served
+    the frozen URL verbatim and never re-resolved it.
+
+    This extracts the object path (bucket-agnostic) and re-mints via
+    :func:`_photo_url` against ``CONFIG.storage_bucket``. A non-Storage URL (a
+    web-search photo) is returned unchanged, and so is the original URL when the
+    object genuinely can't be resolved — an honest fallback that is never worse
+    than serving the frozen URL, never a fabricated placeholder."""
+    s = (url or "").strip()
+    if not s:
+        return s
+    m = _STORAGE_DOWNLOAD_URL_RE.match(s)
+    if not m:
+        return s  # an external / web-search photo — not ours to re-mint
+    path = unquote(m.group(2))
+    fresh = _photo_url(path)
+    return fresh or s
 
 
 def _variant_url(storage_path: str, spec: str, width: int) -> str | None:

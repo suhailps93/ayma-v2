@@ -257,11 +257,37 @@ def _tree_payload(uid: str, surface: str) -> dict:
         surface=surface,
         include_ayma_only=CONFIG.graph_show_ai_only,
     )
+    # Re-mint every image node's URL against the bucket we serve. The tree
+    # carries each image node's frozen ``image_url`` (the node's stored
+    # ``answer``); a stale download token otherwise shows the broken-image glyph
+    # wherever NodeImage renders it (Your Story narrative, the photo carousel).
+    _refresh_tree_image_urls(tree)
     # The Career "special visualiser": the public LinkedIn button on top of the
     # Career section, on Your Story and the public profile (NOTE 250 §3).
     if surface in ("story", "publicProfile"):
         _inject_linkedin_button(uid, surface, tree)
     return tree
+
+
+def _refresh_tree_image_urls(tree: dict) -> None:
+    """Walk the tree in place and re-resolve every image node's ``image_url`` to
+    a URL loadable in the bucket this backend serves (NOTE 252 — Story photo
+    tiles broken-glyph). Only non-empty image URLs are touched; a web-search
+    photo passes through :func:`public_profile.refresh_storage_url` unchanged."""
+    import public_profile
+
+    def _walk(node: dict) -> None:
+        url = node.get("image_url")
+        if isinstance(url, str) and url:
+            node["image_url"] = public_profile.refresh_storage_url(url)
+        for child in node.get("children") or ():
+            if isinstance(child, dict):
+                _walk(child)
+
+    for section in tree.get("sections") or ():
+        for node in section.get("nodes") or ():
+            if isinstance(node, dict):
+                _walk(node)
 
 
 def _inject_linkedin_button(uid: str, surface: str, tree: dict) -> None:
