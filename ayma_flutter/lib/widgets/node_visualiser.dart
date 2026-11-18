@@ -3,11 +3,13 @@
 /// One data model, one renderer: Your Story, the public profile, every report,
 /// the image carousel and the person-graph tap-detail all render through this
 /// widget. INPUT is a single [StoryNode]; it renders that node's content and
-/// all of its child nodes recursively — each row indented by its ACTUAL level
-/// in the tree (a level-2 node one step in from a level-1 one, level-3 one step
-/// further), so a conversational fact nests visibly under the standard block
-/// even when it is stored as a parentless section root. This removes the
-/// parallel-renderer defect class structurally (founder Nov 16/17).
+/// all of its child nodes recursively — each row indented ONLY by its real
+/// depth under a TRUE PARENT in the render recursion, so a section member sits
+/// FLUSH at the section base and a node nests only when it genuinely renders
+/// under a parent. A node's stored [StoryNode.level] never indents it (founder
+/// build 2495: a parentless level-2 fact must not read as a child of the
+/// standard item above it). This removes the parallel-renderer defect class
+/// structurally (founder Nov 16/17).
 ///
 /// Rules folded in:
 ///  - FIXED ORDER + STANDARD fields: the backend tree already orders standard
@@ -77,30 +79,35 @@ class NodeVisualiser extends StatelessWidget {
   /// the candidate shows as a plain pending photo.
   final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
 
-  /// Render depth — the floor for this node's indentation, so a child always
-  /// sits at least one step deeper than its parent even if a stored [level] is
-  /// stale. Hosts (a section list) leave it 0.
+  /// Render depth — how many TRUE PARENTS this node sits under in the render
+  /// recursion. A section member (a section root) renders at depth 0 and so
+  /// sits FLUSH at the section base; each real child renders one deeper. This
+  /// is the ONLY thing that drives indentation. Hosts (a section list) leave
+  /// it 0.
   final int depth;
 
-  /// One indent step, in dp, per tree level.
+  /// One indent step, in dp, per level of TRUE parentage.
   static const double _indentStep = 18;
 
-  /// The deepest level that still earns a fresh indent step. Past this, every
-  /// level shares the same inset and the content text wraps instead, so deep
-  /// nesting can't push a row off-screen at phone width / large text scale.
+  /// The deepest nesting that still earns a fresh indent step. Past this, every
+  /// deeper node shares the same inset and the content text wraps instead, so
+  /// deep nesting can't push a row off-screen at phone width / large text scale.
   static const int _maxIndentSteps = 5;
 
-  /// Indent steps for this node: its ACTUAL level in the tree (a level-2 node
-  /// sits one step in from a level-1 one), but never fewer than [depth] so a
-  /// nested child is always one step deeper than its parent. Capped at
-  /// [_maxIndentSteps]. This is what makes a parentless level-2 fact (the Your
-  /// Story editor / content writers mint these) indent even though it renders
-  /// as a flat section root — recursion depth alone would leave it flush.
+  /// Indent steps for this node: its real depth under a TRUE PARENT in the
+  /// render recursion ([depth]) — a section member sits FLUSH at the section
+  /// base (depth 0) and a node indents only when it renders UNDER a real parent
+  /// (depth > 0). Capped at [_maxIndentSteps].
+  ///
+  /// [StoryNode.level] NEVER drives this. A conversational/editor fact stored
+  /// at level 2 with NO parent is a FLAT section root; indenting it by level
+  /// pushed it one step in and read as a child of whatever standard item
+  /// preceded it (founder build 2495 — "this indentation does not make sense").
+  /// Level still drives node SIZE in the person-graph view; that is a separate
+  /// surface and is unaffected here.
   int get _indentSteps {
-    final byLevel = node.level - 1;
-    final steps = byLevel > depth ? byLevel : depth;
-    if (steps < 0) return 0;
-    return steps > _maxIndentSteps ? _maxIndentSteps : steps;
+    if (depth < 0) return 0;
+    return depth > _maxIndentSteps ? _maxIndentSteps : depth;
   }
 
   bool get _publicOnly => surface == NodeVisualiserSurface.publicProfile;
@@ -239,12 +246,13 @@ class NodeVisualiser extends StatelessWidget {
     final theme = Theme.of(context);
     // GIST-FIRST (less-text-heavy Part 1): the collapsed row shows the short
     // gist line, not the full prose. Tapping the row (see [_openChat]) opens the
-    // node chat window, which carries the full [text]. Capped to two lines with
-    // an ellipsis so a long node can never overflow at any size / text scale.
+    // node chat window, which carries the full [text]. The gist WRAPS to its
+    // full length — a body/gist line is NEVER chopped mid-sentence (founder
+    // build 2495: "no text should cut off partially"). The gist is written
+    // short (build 2493), so a wrapped row stays compact; a genuinely long one
+    // still renders in full rather than ending in "…".
     if (node.standard && (node.standardLabel ?? '').isNotEmpty) {
       return RichText(
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
         text: TextSpan(
           style: theme.textTheme.bodyLarge,
           children: [
@@ -261,8 +269,6 @@ class NodeVisualiser extends StatelessWidget {
     return Text(
       node.displayGist,
       style: theme.textTheme.bodyLarge,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -321,10 +327,11 @@ class NodeVisualiser extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Expanded(
+              // The bar's label/gist WRAPS in full — never chopped mid-sentence
+              // (founder build 2495). The value sits to its right; a long label
+              // wraps and the numeric readout stays put.
               child: Text(label.isNotEmpty ? label : node.displayGist,
-                  style: theme.textTheme.bodyLarge,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis),
+                  style: theme.textTheme.bodyLarge),
             ),
             const SizedBox(width: 8),
             Text(_trimNum(value),
@@ -401,6 +408,10 @@ class NodeVisualiser extends StatelessWidget {
     if (rows.isEmpty) return null;
     final ac = context.ac;
     final theme = Theme.of(context);
+    // A small_table cell is a FIXED column slot of genuine tabular data (short
+    // values, not prose) — an unbounded cell would misalign the whole grid, so
+    // the cap stays here by design (founder build 2495: body/gist text wraps in
+    // full; a strict fixed slot like a table cell may keep a clean cap).
     Widget cell(String s, {bool head = false}) => Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -457,7 +468,13 @@ class NodeVisualiser extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
+          // A numeric value shares a text baseline with the label; the
+          // confidence PILL has none, so baseline-aligning it floated the chip
+          // against the card edge (founder build 2495). The pill row aligns on
+          // the centre and lays the pill out INLINE (Flexible, not a right-
+          // anchored chip), so it never overlaps the card border.
+          crossAxisAlignment:
+              numeric ? CrossAxisAlignment.baseline : CrossAxisAlignment.center,
           textBaseline: TextBaseline.alphabetic,
           children: [
             Expanded(
@@ -473,7 +490,7 @@ class NodeVisualiser extends StatelessWidget {
                     ?.copyWith(fontWeight: FontWeight.w700),
               )
             else
-              _bandPill(context, node.statText),
+              Flexible(child: _bandPill(context, node.statText)),
           ],
         ),
         if (numeric)
@@ -917,10 +934,10 @@ Widget _timelineRowWidget(BuildContext context, StoryNode n, _NvCfg cfg,
               children: [
                 if (date.isNotEmpty)
                   Text(date, style: AymaType.mono(size: 11, color: ac.fgMute)),
+                // The timeline entry's title/gist WRAPS in full — never chopped
+                // mid-sentence (founder build 2495).
                 Text(_timelineTitleOf(n),
-                    style: Theme.of(context).textTheme.bodyLarge,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
+                    style: Theme.of(context).textTheme.bodyLarge),
               ],
             ),
           ),

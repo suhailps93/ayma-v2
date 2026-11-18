@@ -175,29 +175,23 @@ def _default_visual(
     section: str | None, answer_type: str | None, gist_val: str, dated: str
 ) -> dict:
     """The READ-TIME default visual for a node that carries no stored ``visual``
-    (every existing node — there is NO backfill). Derived generalizably from the
-    per-section palette default (``node_visual.default_for``), then enriched from
-    the node's OWN fields so an existing node renders visual-first with zero new
-    code: a list-like section's node becomes a one-item chip (sibling chips merge
-    into a set in the renderer), a dated-section node a timeline entry carrying
-    its gist + any date it already has. An image default stays a photo_carousel
-    (the renderer derives the photo from the node's own image fields). Anything
-    without enough to render visually degrades to ``gist_row``."""
-    vt = node_visual.default_for(section, answer_type or "text")
-    t = vt.get("type")
-    if t == node_visual.CHIP_SET and not vt.get("params", {}).get("items"):
-        return (
-            node_visual.chip_set([gist_val])
-            if gist_val
-            else node_visual.make(node_visual.GIST_ROW)
-        )
-    if t == node_visual.TIMELINE_ENTRY and not vt.get("params", {}).get("title"):
-        return (
-            node_visual.timeline_entry(gist_val, dated or None)
-            if gist_val
-            else node_visual.make(node_visual.GIST_ROW)
-        )
-    return vt
+    (every existing node — there is NO backfill).
+
+    A plain PROSE fact is a BULLET (``gist_row``) — never a chip, card or
+    timeline fabricated from a single sentence (founder build 2495: "I would
+    rather have bullet points"). Genuine structure only:
+      - an image node → a ``photo_carousel`` (the renderer derives the photo
+        from the node's own image fields);
+      - a node that ALREADY carries a DATE → a ``timeline_entry`` (a real date is
+        genuine structure — rule: timeline only with dates);
+      - everything else → ``gist_row``.
+    A writer that genuinely has discrete items / a scale stores that visual
+    explicitly and it is preserved upstream (``_node_visual``)."""
+    if answer_type == "image":
+        return node_visual.default_for(section, answer_type)
+    if dated and gist_val:
+        return node_visual.timeline_entry(gist_val, dated)
+    return node_visual.make(node_visual.GIST_ROW)
 
 
 def _node_visual(node: GraphNode, gist_val: str) -> dict:

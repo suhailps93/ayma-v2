@@ -124,7 +124,13 @@ def test_report_node_tree_reuses_get_report_and_shapes_sections(monkeypatch):
     score = tree["sections"][0]["nodes"]
     assert score[0]["answer_type"] == "stat" and score[0]["stat_value"] == 31.0
     assert score[1]["answer_type"] == "stat" and "stat_value" not in score[1]
-    assert tree["sections"][1]["nodes"][0]["text"] == "You both love hiking."
+    # REGRESSION (founder build 2495): a non-numeric CONFIDENCE word is a band
+    # pill, NOT a card/chip bubble — its read-time default visual is gist_row.
+    assert score[1]["visual"]["type"] == "gist_row"
+    prose = tree["sections"][1]["nodes"][0]
+    assert prose["text"] == "You both love hiking."
+    # A plain prose report fact derives a gist_row BULLET — never a card bubble.
+    assert prose["visual"]["type"] == "gist_row"
 
 
 def test_report_node_tree_propagates_permission_error(monkeypatch):

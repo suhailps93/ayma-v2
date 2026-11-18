@@ -399,13 +399,17 @@ def test_read_time_default_career_node_is_a_timeline_entry():
     assert node["visual"]["params"]["title"]
 
 
-def test_read_time_default_interest_node_is_a_chip():
-    """A list-like section's node with no stored visual derives a one-item
-    chip_set (sibling chips merge into a set in the renderer)."""
+def test_read_time_default_prose_interest_node_is_a_gist_row_bullet():
+    """REGRESSION (founder build 2495): a plain PROSE interests fact with no
+    stored visual derives a ``gist_row`` BULLET — never a chip/card bubble. A
+    single prose sentence is not discrete items, so no structure is fabricated
+    from it ("I would rather have bullet points")."""
     overlay = {
         "emergent.story.interests.0": {
-            "prompt": "Rock climbing", "section": "interests", "level": 2,
-            "answer_type": "narrative", "answer": "Rock climbing",
+            "prompt": "I love long trail runs in the hills on weekends",
+            "section": "interests", "level": 2,
+            "answer_type": "narrative",
+            "answer": "I love long trail runs in the hills on weekends",
             "state": "answered", "visibility": "public",
         },
     }
@@ -414,8 +418,7 @@ def test_read_time_default_interest_node_is_a_chip():
         n for s in t["sections"] for n in s["nodes"]
         if n["id"] == "emergent.story.interests.0"
     )
-    assert node["visual"]["type"] == "chip_set"
-    assert node["visual"]["params"]["items"] == ["Rock climbing"]
+    assert node["visual"]["type"] == "gist_row"
 
 
 def test_stored_visual_wins_over_read_time_default():

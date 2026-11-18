@@ -158,10 +158,11 @@ class StoryNode {
   /// `image` for an image node, `narrative`/`bool`/… otherwise.
   final String answerType;
 
-  /// Depth in the tree (1 = top level). Drives the row's left indent in the
-  /// [NodeVisualiser]: a level-2 node sits one step in from a level-1 one, so a
-  /// parentless conversational fact (stored at level 2) nests under the
-  /// standard block instead of sitting flush with it.
+  /// Depth in the tree (1 = top level). Drives node SIZE in the person-graph
+  /// view. It does NOT drive the [NodeVisualiser] list/tree indentation — that
+  /// is by real depth under a true parent only, so a parentless conversational
+  /// fact (stored at level 2) renders FLUSH at its section base rather than
+  /// reading as a child of the standard item above it (founder build 2495).
   final int level;
 
   /// `public` | `private` | `ayma_only`.
