@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import struct
 from typing import Optional
 
 import person_graph_index as index_mod
@@ -30,17 +31,39 @@ from config import CONFIG
 
 logger = logging.getLogger("ayma.graph_embeddings")
 
-# Side document holding the per-node vectors, separate from the overlay
+# Side documents holding the per-node vectors, separate from the overlay
 # (``graph/main``) so a 3072-float vector per node never bloats the hot read.
+#
+# SHARDED: a 3072-dim vector is ~12 KB packed, and a real graph has hundreds of
+# nodes, so ALL vectors in one document blows past Firestore's hard 1 MiB
+# per-document limit (NOTE 255 add.3: the founder's single doc hit 5.1 MB and
+# every write 400'd, so vectors silently never persisted and the candidate finder
+# stayed lexical-only forever). Vectors are therefore split across sibling docs
+# ``graph/vectors``, ``graph/vectors_1`` … of at most ``_SHARD_SIZE`` nodes each,
+# and each vector is packed as compact little-endian float32 BYTES (a quarter the
+# size of a Firestore double array, ample precision for a cosine pre-filter).
 _VEC_DOC = "vectors"
 _GRAPH_COLLECTION = "graph"
+# 48 nodes * ~12 KB (3072 float32) ≈ 0.6 MB per shard — a safe margin under 1 MiB
+# even for a higher-dimensional model.
+_SHARD_SIZE = 48
+_MAX_SHARDS = 2048  # hard safety stop when scanning shard docs
 
 
-def _vec_ref(db, uid: str):
+def _shard_ref(db, uid: str, i: int):
+    name = _VEC_DOC if i == 0 else f"{_VEC_DOC}_{i}"
     return (
         db.collection("users").document(uid)
-        .collection(_GRAPH_COLLECTION).document(_VEC_DOC)
+        .collection(_GRAPH_COLLECTION).document(name)
     )
+
+
+def _pack_vec(v: list[float]) -> bytes:
+    return struct.pack(f"<{len(v)}f", *(float(x) for x in v))
+
+
+def _unpack_vec(b: bytes) -> list[float]:
+    return list(struct.unpack(f"<{len(b) // 4}f", b))
 
 
 def _content_hash(text: str) -> str:
@@ -68,11 +91,23 @@ def _embed_backend(texts: list[str]) -> Optional[list[list[float]]]:
             )
         else:
             client = genai.Client()  # GOOGLE_API_KEY from the environment
-        resp = client.models.embed_content(
-            model=CONFIG.image_embedding_model,
-            contents=texts,
-        )
-        return [list(e.values) for e in resp.embeddings]
+        # ``gemini-embedding-2`` on Vertex embeds ONE content per call — passing a
+        # list returns a single vector, not one per text (confirmed against
+        # staging, genai 2.20). Embedding the list as a batch therefore silently
+        # dropped every vector but one, so ``refresh_vectors`` failed its
+        # len(vecs)==len(texts) check and stored NOTHING — the vectors never
+        # populated and the dedupe candidate finder was forever lexical-only
+        # (NOTE 255 add.3). Embed one text per call so the count always matches.
+        out: list[list[float]] = []
+        for text in texts:
+            resp = client.models.embed_content(
+                model=CONFIG.image_embedding_model,
+                contents=text,
+            )
+            if not getattr(resp, "embeddings", None):
+                return None
+            out.append(list(resp.embeddings[0].values))
+        return out
     except Exception:  # noqa: BLE001 - embedding is best-effort; fall back lexically
         logger.warning("graph embedding call failed", exc_info=True)
         return None
@@ -137,24 +172,60 @@ def refresh_vectors(db, uid: str, *, intent: str | None = None) -> int:
 
 
 def _load_raw(db, uid: str) -> dict:
+    """Merge every vector shard into one ``{node_id: {h, v}}`` map. ``v`` comes
+    back packed (bytes) or, for legacy docs, as a float list — both are handled by
+    :func:`load_vectors`."""
+    out: dict = {}
     try:
-        snap = _vec_ref(db, uid).get()
-        data = snap.to_dict() if snap and snap.exists else None
-        return dict((data or {}).get("nodes") or {})
+        for i in range(_MAX_SHARDS):
+            snap = _shard_ref(db, uid, i).get()
+            if not (snap and snap.exists):
+                break
+            out.update((snap.to_dict() or {}).get("nodes") or {})
     except Exception:  # noqa: BLE001
-        return {}
+        return out
+    return out
 
 
 def _save_raw(db, uid: str, nodes: dict) -> None:
-    _vec_ref(db, uid).set({"nodes": nodes, "model": CONFIG.image_embedding_model})
+    """Write the vectors sharded so no single document exceeds Firestore's 1 MiB
+    limit. Each vector is packed to float32 bytes. Trailing shards from a larger
+    previous save are removed so no stale vector lingers."""
+    packed: dict[str, dict] = {}
+    for nid, rec in nodes.items():
+        if not isinstance(rec, dict):
+            continue
+        v = rec.get("v")
+        if isinstance(v, list):
+            v = _pack_vec(v)
+        packed[nid] = {"h": rec.get("h"), "v": v}
+
+    items = list(packed.items())
+    shards = [items[k : k + _SHARD_SIZE] for k in range(0, len(items), _SHARD_SIZE)] or [[]]
+    for i, chunk in enumerate(shards):
+        _shard_ref(db, uid, i).set(
+            {"nodes": dict(chunk), "model": CONFIG.image_embedding_model}
+        )
+    # drop any higher-index shards a previous, larger save left behind.
+    for i in range(len(shards), _MAX_SHARDS):
+        ref = _shard_ref(db, uid, i)
+        snap = ref.get()
+        if not (snap and snap.exists):
+            break
+        ref.delete()
 
 
 def load_vectors(db, uid: str) -> dict[str, list[float]]:
     """node_id → vector, for the stored, still-live nodes."""
     out: dict[str, list[float]] = {}
     for nid, rec in _load_raw(db, uid).items():
-        if isinstance(rec, dict) and isinstance(rec.get("v"), list):
-            out[nid] = [float(x) for x in rec["v"]]
+        if not isinstance(rec, dict):
+            continue
+        v = rec.get("v")
+        if isinstance(v, (bytes, bytearray)):
+            out[nid] = _unpack_vec(bytes(v))
+        elif isinstance(v, list):  # legacy float-array docs
+            out[nid] = [float(x) for x in v]
     return out
 
 

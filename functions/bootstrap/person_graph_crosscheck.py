@@ -177,13 +177,20 @@ def find_candidates(index: list[NodeIndexEntry]) -> CrossCheckReport:
 
 
 def candidate_report(db, uid: str, index: list[NodeIndexEntry]) -> "CrossCheckReport":
-    """The ONE candidate entry point (no parallel read paths): nearest-neighbour
-    over Gemini-embedding vectors when ``CONFIG.graph_embedding_dedupe`` is on
-    (refreshing the vectors first), else the lexical pass. Degrades to lexical on
-    any embedding failure. The caller then runs the SAME judge (classify_pairs)
-    over ``report.ambiguous_pairs`` and raises real pairs in chat."""
+    """The ONE candidate entry point (no parallel read paths). The LEXICAL pass
+    always runs — it catches exact / near-duplicate / shared-entity pairs with
+    high precision (taste lists, seed-vs-seed restatements) that embedding cosine
+    alone can rank just under threshold. When ``CONFIG.graph_embedding_dedupe`` is
+    on, nearest-neighbour over Gemini-embedding vectors is UNIONED in on top (not
+    in place of the lexical pass), adding the low-overlap paraphrases lexical
+    misses (an assess-node vs a story-node of the same fact). Replacing lexical
+    with embeddings — the old behaviour — silently LOST every strong lexical
+    duplicate the moment the flag turned on (NOTE 255 add.3). Degrades to
+    lexical-only on any embedding failure. The caller runs the SAME judge
+    (classify_pairs) over ``report.ambiguous_pairs`` and raises real pairs."""
     from config import CONFIG
 
+    report = find_candidates(index)
     if CONFIG.graph_embedding_dedupe:
         try:
             import graph_embeddings
@@ -191,12 +198,34 @@ def candidate_report(db, uid: str, index: list[NodeIndexEntry]) -> "CrossCheckRe
             graph_embeddings.refresh_vectors(db, uid)
             vectors = graph_embeddings.load_vectors(db, uid)
             if vectors:
-                return find_candidates_semantic(index, vectors)
-        except Exception:  # noqa: BLE001 - fall back to lexical, never block
+                _union_candidates(report, find_candidates_semantic(index, vectors))
+        except Exception:  # noqa: BLE001 - keep the lexical report, never block
             logger.warning(
-                "semantic candidate finding failed; using lexical", exc_info=True
+                "semantic candidate finding failed; using lexical only",
+                exc_info=True,
             )
-    return find_candidates(index)
+    return report
+
+
+def _union_candidates(base: CrossCheckReport, extra: CrossCheckReport) -> None:
+    """Fold ``extra``'s findings into ``base`` in place, skipping any pair ``base``
+    already carries (keyed by the sorted id pair). A semantic duplicate is added
+    to ``duplicate_pairs``; every other new semantic pair joins ``related_pairs``
+    AND ``ambiguous_pairs`` so the judge still decides it. Bounded: both inputs are
+    already capped, so the union never explodes into O(n²) noise."""
+    seen = {p.key() for p in base.duplicate_pairs} | {p.key() for p in base.related_pairs}
+    for p in extra.duplicate_pairs:
+        if p.key() not in seen:
+            base.duplicate_pairs.append(p)
+            seen.add(p.key())
+    for p in extra.related_pairs:
+        if p.key() not in seen:
+            base.related_pairs.append(p)
+            base.ambiguous_pairs.append(p)
+            seen.add(p.key())
+    base.duplicate_pairs.sort(key=lambda p: -p.score)
+    base.related_pairs.sort(key=lambda p: -p.score)
+    base.ambiguous_pairs.sort(key=lambda p: -p.score)
 
 
 # Cosine cutoff for a NEAREST-NEIGHBOUR candidate (founder Nov 17: embeddings

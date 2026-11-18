@@ -26,7 +26,12 @@ LiveKit), and then:
     - merged visibility = the MORE PRIVATE of the two — a merge NEVER makes a
       fact more public (HARD privacy rule: private > ayma_only > public);
     - where one of the pair is a STANDARD node, the standard node survives
-      (settled build-2490 rule).
+      (settled build-2490 rule) — BUT only when the other node carries no fact
+      the standard value lacks; a richer bullet (one with extra content tokens
+      beyond the short standard value) is NEVER folded into a standard field,
+      because folding retires its answer to history and would DROP those extra
+      facts (NOTE 255 add.3: "…and speaks Malayalam and English" lost into
+      "San Jose, United States"). Such a pair is RAISED, never auto-merged.
 * RECORDS every UNCERTAIN pair (lexically near but not judge-confirmed, merely
   related, or disagreeing) with ``store.record_pending_dedupe`` so Ayma raises it
   in chat for the user to decide — the sweep never guesses and never merges an
@@ -179,22 +184,68 @@ async def sweep_user(
             logger.warning("dedupe sweep: judge failed for %s", uid, exc_info=True)
 
     dismissed = store.dedupe_dismissed(db, uid)
+    tokens_of = {e.node_id: e.tokens for e in index}
 
     def _same_section(p) -> bool:
         sa = section_of.get(p.a)
         return sa is not None and sa == section_of.get(p.b)
 
-    def _has_emergent(p) -> bool:
-        # A dedupe pair must involve at least one EMERGENT (user-/writer-minted)
-        # node — two curated seed/standard template fields are part of the fixed
-        # question tree, never duplicates of each other.
-        return pg.seed_node(p.a) is None or pg.seed_node(p.b) is None
+    def _mergeable(node_id: str) -> bool:
+        # A node that can genuinely duplicate another: an EMERGENT (user-/writer-
+        # minted) node, or a seed NARRATIVE node (freeform prose the user wrote
+        # into a seed slot — two can carry the same fact, e.g. a role narrative
+        # and a trajectory narrative both describing the same workday). A
+        # STRUCTURED seed field (enum/select/number) is a fixed question, never a
+        # duplicate of another field.
+        seed = pg.seed_node(node_id)
+        return seed is None or seed.answer_type == "narrative"
+
+    def _eligible(p) -> bool:
+        # At least one side must be mergeable; two fixed structured template
+        # fields are part of the question tree and are never duplicates. (Was
+        # ``_has_emergent`` — too strict: it dropped every seed-narrative vs
+        # seed-narrative restatement, so "coffee" (career) and the hybrid-finances
+        # pair never surfaced — NOTE 255 add.3.)
+        return _mergeable(p.a) or _mergeable(p.b)
 
     def _live(p) -> bool:
-        return p.key() not in dismissed and _same_section(p) and _has_emergent(p)
+        return p.key() not in dismissed and _same_section(p) and _eligible(p)
 
-    merge_pairs = [p for p in report.duplicate_pairs if _live(p) and p.relation in _AUTO_MERGE]
-    raise_pairs = [p for p in report.related_pairs if _live(p)]
+    def _has_deletable(p) -> bool:
+        # A merge DELETES the non-survivor, so at least one side must be an
+        # emergent (overlay) node — a seed node is a shared template and is never
+        # deleted. A duplicate pair of two SEED narratives can't be auto-merged;
+        # it is raised for the user instead (never silently dropped).
+        return pg.seed_node(p.a) is None or pg.seed_node(p.b) is None
+
+    def _standard_fold_loses_facts(p) -> bool:
+        # A merge folds the non-survivor's answer into the survivor's history, so
+        # it no longer renders. When exactly one side is a STANDARD field (a short
+        # canonical value like "San Jose, United States") and the other carries
+        # content tokens the standard value does NOT, auto-merging would DROP those
+        # extra facts (the folded "…and speaks Malayalam and English" — NOTE 255
+        # add.3). Such a pair is never auto-folded into the standard field; it is
+        # raised for the user to decide so no fact is lost.
+        sa, sb = pg.is_standard(p.a), pg.is_standard(p.b)
+        if sa == sb:
+            return False
+        std_id, other_id = (p.a, p.b) if sa else (p.b, p.a)
+        extra = tokens_of.get(other_id, frozenset()) - tokens_of.get(std_id, frozenset())
+        return bool(extra)
+
+    merge_pairs: list = []
+    raise_instead: list = []
+    for p in report.duplicate_pairs:
+        if not (_live(p) and p.relation in _AUTO_MERGE):
+            continue
+        # A richer bullet is never folded into a standard field (fact loss), and a
+        # pair of two seed nodes can't be auto-merged (no deletable side). Either
+        # way: RAISE for the user instead of silently dropping the pair.
+        if _standard_fold_loses_facts(p) or not _has_deletable(p):
+            raise_instead.append(p)
+        else:
+            merge_pairs.append(p)
+    raise_pairs = [p for p in report.related_pairs if _live(p)] + raise_instead
 
     out = SweepReport(
         found=len(merge_pairs) + len(raise_pairs),

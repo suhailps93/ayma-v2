@@ -723,23 +723,46 @@ flag-off writes and stores exactly as before).
   Runs when a conversation **session ends** (`post_turn.persist_and_ingest`, after
   ingest, concurrent + best-effort) and on a **nightly backstop**
   (`POST /cron/graph-dedupe` → `run_sweep`). Per section it finds near-dup pairs
-  (embedding-NN when `GRAPH_EMBEDDING_DEDUPE` on, else lexical — reusing
-  `crosscheck.candidate_report`), has the **LiveKit judge**
+  via `crosscheck.candidate_report`, has the **LiveKit judge**
   (`crosscheck.classify_pairs`) label every non-exact candidate, then:
   - **merges** the clear duplicates (exact text, or judge verdict "duplicate").
     Merge rules: the **FULLER text survives**; where one is a **STANDARD** node
-    the standard node survives (build-2490 rule); the survivor keeps **BOTH
-    sources** (`merge_nodes` retires the dup's answer + its source into history);
-    **merged visibility = the MORE PRIVATE of the two** — a merge **NEVER** widens
-    visibility (HARD rule: private > ayma_only > public; `apply_merge` only ever
-    *tightens* the survivor's visibility).
+    the standard node survives (build-2490 rule) — **BUT** a richer bullet (one
+    with content tokens the short standard value lacks) is **never** folded into a
+    standard field, because folding retires its answer to history and would DROP
+    those extra facts (NOTE 255 add.3: "…and speaks Malayalam and English" lost
+    into "San Jose, United States"); such a pair is **raised** instead. The
+    survivor keeps **BOTH sources** (`merge_nodes` retires the dup's answer +
+    source into history); **merged visibility = the MORE PRIVATE of the two** — a
+    merge **NEVER** widens visibility (HARD rule: private > ayma_only > public;
+    `apply_merge` only ever *tightens* the survivor's visibility).
   - **raises** every UNCERTAIN pair (lexically near but not judge-confirmed, merely
     related, or disagreeing) via `store.record_pending_dedupe` — the sweep never
-    guesses and never merges an uncertain pair silently. Pairs where **both** nodes
-    are curated seeds are skipped (the question tree is not a dup source).
+    guesses and never merges an uncertain pair silently. A judged-duplicate pair
+    that can't be auto-merged (**both** sides seed, so nothing is deletable; or
+    the standard-field fact-loss guard above) is **raised**, never dropped.
+  - **Eligibility** (`_eligible`): a pair needs at least one *mergeable* side — an
+    emergent node **or a seed NARRATIVE** (freeform prose a user wrote into a seed
+    slot, e.g. two career narratives both describing the same workday — the
+    "coffee" pair). Only two **structured** seed fields (enum/select/number) are
+    skipped — the fixed question tree is not a dup source. (Was `_has_emergent`,
+    which dropped every seed-narrative pair before it was judged — NOTE 255 add.3.)
   Recorded raises surface in chat through `pg_find_duplicates` ("NEEDS YOUR CALL")
   and clear on any `pg_resolve_duplicate` (`clear_pending_dedupe`), reusing the
   settled conflicts-in-chat resolution — never a new popup.
+- **Candidate generation** (`crosscheck.candidate_report`): the **lexical** pass
+  (`find_candidates`) **always** runs; when `GRAPH_EMBEDDING_DEDUPE` is on,
+  embedding nearest-neighbour (`find_candidates_semantic`) is **UNIONED in on top**
+  (not in place of it). Lexical keeps the high-precision exact/near-dup/shared-
+  entity classes (taste lists, seed-vs-seed restatements) that cosine can rank just
+  under threshold; embeddings add the low-overlap paraphrases lexical misses (an
+  `emergent.assess.*` vs an `emergent.story.*` of the same fact). The old code
+  **replaced** lexical with embeddings, silently losing every lexical duplicate the
+  moment the flag turned on (NOTE 255 add.3). Embedding vectors are populated by
+  `graph_embeddings._embed_backend`, which embeds **one text per call** —
+  `gemini-embedding-2` on Vertex returns a single vector regardless of how many
+  contents are passed, so the previous batch call stored nothing and the finder was
+  forever lexical-only.
 - **Staging runner** (project-pinned `ayma-staging`, dry-run default, `--apply`):
   `GRAPH_DEDUPE_SWEEP=true GRAPH_EMBEDDING_DEDUPE=true PYTHONPATH=. python3 tools/dedupe_sweep_run.py <uid> --project=ayma-staging [--apply]`.
   Reports pairs FOUND / MERGED / RAISED.
@@ -748,8 +771,11 @@ flag-off writes and stores exactly as before).
   `config.py` only.
 - Tests: `tests/test_graph_dedupe_sweep.py` (paraphrase detection + merge, fuller
   survives, both sources kept, more-private-wins, standard survives, uncertain
-  raises-not-merges, a parametrized privacy proof over every visibility pair, and
-  the Layer-1 write-time fold).
+  raises-not-merges, a parametrized privacy proof over every visibility pair, the
+  Layer-1 write-time fold, **a richer bullet is not folded into a standard field**,
+  **a seed-narrative duplicate is raised not dropped**, structured seed fields are
+  not a dup pair); `tests/test_graph_embeddings.py` (**one-text-per-call batch
+  embed**, **candidate_report unions lexical + semantic**).
 
 ## Live image-node ingestion on every source path (2l, Nov 17 2026)
 
