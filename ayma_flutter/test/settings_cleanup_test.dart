@@ -159,7 +159,6 @@ void main() {
         'Ayma’s models',
         'Connect an agent (MCP)',
         'Ayma Assistant',
-        'Default assistant app',
         'How to use Ayma',
       ],
     );
