@@ -7,6 +7,7 @@ import 'package:ayma_flutter/services/ayma_session.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_context.dart';
 import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/node_chat_window.dart';
+import 'package:ayma_flutter/widgets/node_visibility.dart';
 import 'package:ayma_flutter/widgets/node_visualiser.dart';
 import 'package:file/file.dart' as fs;
 import 'package:file/local.dart';
@@ -177,8 +178,10 @@ void main() {
       title: 'About Me',
       order: 0,
       nodes: [
+        // The standard "Interested in" field now renders as an ICON + value
+        // (no word label, founder build 2502).
         _node(
-          id: 'interested',
+          id: 'target_match_genders',
           text: 'Women',
           standard: true,
           standardLabel: 'Interested in',
@@ -197,15 +200,27 @@ void main() {
       ),
     ));
 
-    final baseX = tester.getTopLeft(
-      find.byWidgetPredicate(
-        (w) => w is RichText && w.text.toPlainText() == 'Interested in: Women',
-      ),
-    ).dx;
-    for (final t in ['Gender identity', 'Born in Dubai', 'Lives in San Jose']) {
-      expect(tester.getTopLeft(find.text(t)).dx, equals(baseX),
-          reason: '"$t" must sit flush at the section base, not indented');
+    // Flush is measured on each row's own InkWell left edge (its indent), so
+    // the standard icon row and the prose bullets are compared like-for-like.
+    final baseX = tester
+        .getTopLeft(find.byKey(const Key('node_row_target_match_genders')))
+        .dx;
+    for (final id in const [
+      'emergent.story.5c5470d1',
+      'emergent.editor.identity.5',
+      'emergent.story.b7aba075',
+    ]) {
+      expect(tester.getTopLeft(find.byKey(Key('node_row_$id'))).dx, equals(baseX),
+          reason: '"$id" must sit flush at the section base, not indented');
     }
+    // The standard field is icon + value, NOT a "label: value" row.
+    expect(find.byKey(const Key('node_field_icon_target_match_genders')),
+        findsOneWidget);
+    expect(find.text('Women'), findsOneWidget);
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText && w.text.toPlainText() == 'Interested in: Women'),
+        findsNothing);
   });
 
   // All six fixed About Me standard items render at the section base in the
@@ -242,36 +257,43 @@ void main() {
       ),
     ));
 
-    double fieldX(String label, String value) => tester.getTopLeft(
-          find.byWidgetPredicate((w) =>
-              w is RichText && w.text.toPlainText() == '$label: $value'),
-        ).dx;
-    double fieldY(String label, String value) => tester.getTopLeft(
-          find.byWidgetPredicate((w) =>
-              w is RichText && w.text.toPlainText() == '$label: $value'),
-        ).dy;
+    double rowX(String id) =>
+        tester.getTopLeft(find.byKey(Key('node_row_$id'))).dx;
+    double rowY(String id) =>
+        tester.getTopLeft(find.byKey(Key('node_row_$id'))).dy;
 
+    // Each row renders as ICON + value (no word label, founder build 2502),
+    // flush at the section base and in the fixed canonical order.
     final rows = [
-      ('Name', 'Sam'),
-      ('Age', '33'),
-      ('Gender', 'Man'),
-      ('Location', 'San Jose'),
-      ('Interested in', 'Women'),
-      ('Ethnic & cultural origin', 'South Asian'),
+      ('legal_first_name', 'Sam'),
+      ('date_of_birth', '33'),
+      ('gender_identity', 'Man'),
+      ('primary_location', 'San Jose'),
+      ('target_match_genders', 'Women'),
+      ('ethnic_cultural_origin', 'South Asian'),
     ];
-    final baseX = fieldX(rows.first.$1, rows.first.$2);
+    final baseX = rowX(rows.first.$1);
     double? prevY;
-    for (final (label, value) in rows) {
-      expect(fieldX(label, value), equals(baseX),
-          reason: '"$label" must render flush at the section base');
-      final y = fieldY(label, value);
+    for (final (id, value) in rows) {
+      expect(find.byKey(Key('node_field_icon_$id')), findsOneWidget,
+          reason: '"$id" must render its fixed field icon');
+      expect(find.text(value), findsOneWidget,
+          reason: '"$id" must show its value with no word label');
+      expect(rowX(id), equals(baseX),
+          reason: '"$id" must render flush at the section base');
+      final y = rowY(id);
       final prev = prevY;
       if (prev != null) {
         expect(y, greaterThan(prev),
-            reason: '"$label" must follow the one before it in fixed order');
+            reason: '"$id" must follow the one before it in fixed order');
       }
       prevY = y;
     }
+    // No standard field renders a "label: value" row any more.
+    expect(
+        find.byWidgetPredicate(
+            (w) => w is RichText && w.text.toPlainText() == 'Name: Sam'),
+        findsNothing);
   });
 
   // Deep nesting (past the indent cap) must never push a row off a narrow phone
@@ -465,7 +487,8 @@ void main() {
     expect(bandLeft, greaterThanOrEqualTo(labelRight));
   });
 
-  testWidgets('standard node renders as a labelled field, first', (tester) async {
+  testWidgets('standard node renders as ICON + value (no word label), first; '
+      'a prose node keeps its coloured bullet', (tester) async {
     final section = GraphTreeSection(
       pageType: 'identity',
       title: 'About Me',
@@ -487,14 +510,22 @@ void main() {
         surface: NodeVisualiserSurface.story,
       ),
     ));
-    // the standard label renders as a labelled field "Name: Sam" (a RichText)
-    final nameField = find.byWidgetPredicate(
-      (w) => w is RichText && w.text.toPlainText() == 'Name: Sam',
-    );
-    expect(nameField, findsOneWidget);
-    expect(find.text('Sam'), findsNothing); // 'Sam' is inside the RichText span
-    // standard node (Name) sits above the conversational node
-    final nameY = tester.getTopLeft(nameField).dy;
+    // The standard field: a fixed person ICON + the bare value, NO word label.
+    final icon = find.byKey(const Key('node_field_icon_legal_first_name'));
+    expect(icon, findsOneWidget);
+    expect(find.text('Sam'), findsOneWidget);
+    expect(
+        find.byWidgetPredicate(
+            (w) => w is RichText && w.text.toPlainText() == 'Name: Sam'),
+        findsNothing);
+    // The icon carries the node's visibility colour (public → green).
+    expect(tester.widget<Icon>(icon).color, nodeVisibilityColor(NodeVis.public));
+    // The prose node keeps its coloured bullet — no field icon.
+    expect(find.byKey(const Key('node_field_icon_conv')), findsNothing);
+    expect(find.text('Loves hiking'), findsOneWidget);
+    // Standard node (Name) sits above the conversational node.
+    final nameY =
+        tester.getTopLeft(find.byKey(const Key('node_row_legal_first_name'))).dy;
     final convY = tester.getTopLeft(find.text('Loves hiking')).dy;
     expect(nameY, lessThan(convY));
   });
@@ -1006,5 +1037,175 @@ void main() {
     await tester.tap(find.byKey(const Key('node_candidate_me_cand1')));
     await tester.tap(find.byKey(const Key('node_candidate_notme_cand1')));
     expect(verdicts, [true, false]);
+  });
+
+  // --- standard-field ICON render (founder build 2502) ---------------------
+
+  // The field icon carries the node's visibility COLOUR (green/yellow/violet),
+  // the same colour the bullet carried, so privacy reads at a glance.
+  testWidgets('standard field icon carries the visibility colour', (tester) async {
+    for (final vis in const [
+      NodeVis.public,
+      NodeVis.private,
+      NodeVis.aymaOnly,
+    ]) {
+      await tester.pumpWidget(_host(
+        NodeVisualiser(
+          node: _node(
+              id: 'gender_identity',
+              text: 'Man',
+              standard: true,
+              standardLabel: 'Gender',
+              vis: vis),
+          surface: NodeVisualiserSurface.story,
+        ),
+      ));
+      final icon =
+          tester.widget<Icon>(find.byKey(const Key('node_field_icon_gender_identity')));
+      expect(icon.color, nodeVisibilityColor(vis), reason: 'vis=$vis');
+    }
+  });
+
+  // A standard field with no fitting icon falls back to value-only under its
+  // visibility bullet (no confusing glyph) — tap still works.
+  testWidgets('a standard field with no mapped icon shows value-only, no glyph',
+      (tester) async {
+    final api = _FakeApi();
+    // `relationship_intent` is standard-shaped but not in the icon map.
+    final node = _node(
+      id: 'relationship_intent',
+      text: 'Long-term',
+      standard: true,
+      standardLabel: 'Relationship intent',
+      vis: NodeVis.private,
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiser(
+          node: node, surface: NodeVisualiserSurface.story, api: api),
+    ));
+    expect(find.byKey(const Key('node_field_icon_relationship_intent')),
+        findsNothing);
+    expect(find.text('Long-term'), findsOneWidget);
+    // Tap still opens the node chat with its controls.
+    await tester.tap(find.byKey(const Key('node_row_relationship_intent')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
+  });
+
+  // Tapping a standard icon row opens the node chat (tap unchanged).
+  testWidgets('tapping a standard icon row opens the node chat', (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeVisualiser(
+        node: _node(
+            id: 'legal_first_name',
+            text: 'Sam',
+            standard: true,
+            standardLabel: 'Name',
+            vis: NodeVis.public),
+        surface: NodeVisualiserSurface.story,
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('node_row_legal_first_name')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
+  });
+
+  // --- min/max range row (founder build 2502) ------------------------------
+
+  StoryNode barNode({
+    required String id,
+    required String label,
+    required num value,
+    num min = 18,
+    num max = 99,
+    String vis = NodeVis.public,
+  }) =>
+      StoryNode(
+        id: id,
+        section: 'looking_for',
+        label: label,
+        text: '$value',
+        gist: '$value',
+        answerType: 'scale',
+        level: 1,
+        visibility: vis,
+        subtreeVisibility: vis,
+        standard: false,
+        editable: true,
+        visual: NodeVisual(
+          type: NodeVisualType.barMeter,
+          params: {'value': value, 'min': min, 'max': max, 'label': label},
+        ),
+      );
+
+  testWidgets(
+      'a <base>_min + <base>_max pair renders ONE "Partner age preference" '
+      'range row and NO bar for either end', (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'looking_for',
+      title: 'Looking for',
+      order: 0,
+      nodes: [
+        barNode(id: 'partner_age_min', label: 'Youngest partner age', value: 21, max: 80),
+        barNode(id: 'partner_age_max', label: 'Oldest partner age', value: 56),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+          section: section, surface: NodeVisualiserSurface.story),
+    ));
+    // ONE combined range row with the founder-specified label + 21–56 value.
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText &&
+            w.text.toPlainText() == 'Partner age preference: 21–56'),
+        findsOneWidget);
+    // NO bar (ScoreBar) for EITHER end.
+    expect(find.byKey(const Key('node_bar_partner_age_min')), findsNothing);
+    expect(find.byKey(const Key('node_bar_partner_age_max')), findsNothing);
+    expect(find.byKey(const Key('node_bar_value_partner_age_min')), findsNothing);
+    expect(find.byKey(const Key('node_bar_value_partner_age_max')), findsNothing);
+  });
+
+  testWidgets('a lone min (no max) renders a plain row, no bar', (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'looking_for',
+      title: 'Looking for',
+      order: 0,
+      nodes: [
+        barNode(id: 'partner_age_min', label: 'Youngest partner age', value: 21, max: 80),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+          section: section, surface: NodeVisualiserSurface.story),
+    ));
+    // Plain labelled row, no combine, no bar.
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText &&
+            w.text.toPlainText() == 'Youngest partner age: 21'),
+        findsOneWidget);
+    expect(find.byKey(const Key('node_bar_partner_age_min')), findsNothing);
+  });
+
+  testWidgets('a genuine scale trait still renders as a bar', (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'personality',
+      title: 'Personality',
+      order: 0,
+      nodes: [
+        barNode(id: 'social_energy', label: 'Social energy', value: 7, min: 0, max: 10),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+          section: section, surface: NodeVisualiserSurface.story),
+    ));
+    // Still a bar — a genuine single scale trait is NOT combined/plained.
+    expect(find.byKey(const Key('node_bar_social_energy')), findsOneWidget);
+    expect(find.byKey(const Key('node_bar_value_social_energy')), findsOneWidget);
   });
 }
