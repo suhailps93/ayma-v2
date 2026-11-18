@@ -1234,6 +1234,10 @@ void main() {
             standard: true,
             standardLabel: 'Name',
             vis: NodeVis.public),
+        surface: NodeVisualiserSurface.story,
+        api: api,
+      ),
+    ));
     await tester.tap(find.byKey(const Key('node_row_legal_first_name')));
     await tester.pumpAndSettle();
     expect(find.byType(ChatScreen), findsOneWidget);

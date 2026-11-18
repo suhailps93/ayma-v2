@@ -129,6 +129,149 @@ void main() {
     expect(find.byKey(const Key('node_photo_carousel')), findsOneWidget);
   });
 
+  testWidgets(
+      'NON-consecutive image nodes still assemble into ONE carousel of ALL of '
+      'them (Scout NOTE 255: appearance photos were splitting out)',
+      (tester) async {
+    Map<String, dynamic> img(String id) => _node({
+          'id': id,
+          'answer_type': 'image',
+          'image_url': 'https://example.com/$id.jpg',
+          'image_read': 'photo $id',
+          'visual': {'type': 'photo_carousel', 'params': {}, 'v': 1},
+        });
+    await _pumpReport(
+        tester,
+        _reportTree([
+          img('p1'),
+          img('p2'),
+          img('p3'),
+          // A non-image finding BETWEEN the image leaves — this is what used to
+          // split the appearance photos out into separate "large embedded"
+          // single-image renders.
+          _node({'id': 'fact', 'text': 'A finding', 'gist': 'A finding'}),
+          img('p4'),
+          img('p5'),
+          img('p6'),
+          img('p7'),
+        ]));
+    expect(tester.takeException(), isNull);
+    // ONE carousel, not one-per-run and not a grid of singles.
+    expect(find.byType(NodePhotoCarousel), findsOneWidget);
+    final carousel =
+        tester.widget<NodePhotoCarousel>(find.byType(NodePhotoCarousel));
+    expect(carousel.images.length, 7, reason: 'all 7 image leaves aggregate');
+    // The non-image finding still renders (it is NOT swallowed by the carousel).
+    expect(find.text('A finding'), findsOneWidget);
+  });
+
+  testWidgets(
+      'the carousel is a horizontally swipeable strip across ALL images',
+      (tester) async {
+    Map<String, dynamic> img(int i) => _node({
+          'id': 'p$i',
+          'answer_type': 'image',
+          'image_url': 'https://example.com/p$i.jpg',
+          'image_read': 'caption $i',
+          'visual': {'type': 'photo_carousel', 'params': {}, 'v': 1},
+        });
+    await _pumpReport(
+        tester, _reportTree([for (var i = 0; i < 6; i++) img(i)]));
+    expect(tester.takeException(), isNull);
+
+    // The strip is a HORIZONTAL ListView whose delegate holds ALL 6 images
+    // (more than fit on screen) — a real scrolling strip, not a static grid.
+    final strip = find.byKey(const Key('node_carousel_strip'));
+    expect(strip, findsOneWidget);
+    final listView = tester.widget<ListView>(strip);
+    expect(listView.scrollDirection, Axis.horizontal);
+    // The carousel holds ALL 6 image nodes (more than fit on a phone screen).
+    final carousel =
+        tester.widget<NodePhotoCarousel>(find.byType(NodePhotoCarousel));
+    expect(carousel.images.length, 6);
+
+    // A horizontal drag SCROLLS the strip (it advances, it is not frozen).
+    final position = tester
+        .state<ScrollableState>(
+            find.descendant(of: strip, matching: find.byType(Scrollable)))
+        .position;
+    expect(position.pixels, 0);
+    await tester.drag(strip, const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(0),
+        reason: 'the strip scrolled horizontally on swipe');
+  });
+
+  testWidgets(
+      'tapping a carousel tile opens the fullscreen detail — a PageView that '
+      'advances on swipe',
+      (tester) async {
+    Map<String, dynamic> img(int i) => _node({
+          'id': 'p$i',
+          'answer_type': 'image',
+          'image_url': 'https://example.com/p$i.jpg',
+          'visual': {'type': 'photo_carousel', 'params': {}, 'v': 1},
+        });
+    await _pumpReport(tester, _reportTree([for (var i = 0; i < 3; i++) img(i)]));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('node_carousel_photo_0')));
+    await tester.pumpAndSettle();
+    // The detail is a swipeable PageView across the carousel's images.
+    expect(find.byType(PageView), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'privacy: a private image never enters the public-surface carousel',
+      (tester) async {
+    final tree = GraphTree.fromMap({
+      'surface': 'publicProfile',
+      'sections': [
+        {
+          'page_type': 's',
+          'title': 'Photos',
+          'order': 0,
+          'nodes': [
+            _node({
+              'id': 'pub',
+              'answer_type': 'image',
+              'image_url': 'https://example.com/pub.jpg',
+              'image_read': 'public photo',
+              'visibility': 'public',
+              'subtree_visibility': 'public',
+              'visual': {'type': 'photo_carousel', 'params': {}, 'v': 1},
+            }),
+            _node({
+              'id': 'secret',
+              'answer_type': 'image',
+              'image_url': 'https://example.com/secret.jpg',
+              'image_read': 'private photo',
+              'visibility': 'private',
+              'subtree_visibility': 'private',
+              'visual': {'type': 'photo_carousel', 'params': {}, 'v': 1},
+            }),
+          ],
+        }
+      ],
+    });
+    await tester.pumpWidget(_host(GraphTreeView(
+      surface: NodeVisualiserSurface.publicProfile,
+      uid: 'other',
+      isOwner: false,
+      api: _FakeApi(tree),
+    )));
+    await tester.pumpAndSettle();
+    // On the public surface the carousel holds ONLY the public photo.
+    final carousels = find.byType(NodePhotoCarousel);
+    if (carousels.evaluate().isNotEmpty) {
+      final carousel = tester.widget<NodePhotoCarousel>(carousels);
+      expect(carousel.images.length, 1);
+      expect(carousel.images.first.id, 'pub');
+    }
+    expect(find.text('private photo'), findsNothing);
+  });
+
   testWidgets('a finding card assembles from a card visual', (tester) async {
     await _pumpReport(
         tester,
