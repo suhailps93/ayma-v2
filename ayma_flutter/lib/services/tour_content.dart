@@ -288,7 +288,8 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     featureId: 'default_assistant',
     headline: 'Ayma, anywhere',
     subtitle: 'Open Settings › Ayma Assistant to make Ayma your default '
-        'assistant — then long-press Home in any app to summon her. '
+        'assistant — then long-press Home in any app and a floating Ayma '
+        'orb pops up over it, listening, without opening the app. '
         'Summon-only, never stored.',
     icon: Icons.smart_button_outlined,
     anchorId: TourAnchors.settingsAssistantRow,

@@ -44,13 +44,6 @@ class MainActivity : FlutterActivity() {
         /** Default-assistant channel: Dart's `AssistantService`. */
         const val ASSISTANT_CHANNEL = "ayma/assistant"
 
-        /** Action [AymaAssistantSession] launches this activity with. */
-        const val ACTION_ASSIST_LAUNCH =
-            "com.ayma.ayma_flutter.action.ASSIST_LAUNCH"
-
-        /** Boolean extra marking an intent as an assistant summon. */
-        const val EXTRA_FROM_ASSISTANT = "from_assistant"
-
         /**
          * Notification channel for FCM `notification`-payload pushes the system
          * displays on its own (web-search ready, new match, Ayma check-in …).
@@ -127,25 +120,29 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** True when [intent] is an assistant summon reaching this activity:
-     *  launched by [AymaAssistantSession], or a system ACTION_ASSIST. */
+    /**
+     * True when [intent] is an assistant summon reaching this activity.
+     *
+     * The rich summon path is the in-session floating orb
+     * ([AymaAssistantSession]), which never launches this activity. This
+     * activity only sees a summon via the bare system ACTION_ASSIST — a
+     * launcher that routes the assistant gesture to the activity instead of
+     * the voice-interaction session (the manifest's ACTION_ASSIST fallback
+     * filter). There is no session snapshot in that case.
+     */
     private fun isAssistantIntent(intent: Intent?): Boolean =
-        intent?.action == ACTION_ASSIST_LAUNCH ||
-            intent?.action == Intent.ACTION_ASSIST ||
-            intent?.getBooleanExtra(EXTRA_FROM_ASSISTANT, false) == true
+        intent?.action == Intent.ACTION_ASSIST
 
     /**
      * For a bare ACTION_ASSIST launch (some launchers route the gesture
      * to the activity instead of the voice-interaction session) there
-     * is no AssistBridge snapshot: seed an empty one so Dart opens the
-     * assistant surface in its "could not see that screen" state
-     * rather than dropping the summon. A real session snapshot is
-     * already in the bridge and is never overwritten here.
+     * is no AssistBridge snapshot: seed an empty one so Dart activates Ayma
+     * in its "could not see that screen" state rather than dropping the
+     * summon.
      */
     private fun noteAssistantIntent(intent: Intent?) {
         if (!isAssistantIntent(intent)) return
         if (AssistBridge.peek() != null) return
-        if (intent?.action == ACTION_ASSIST_LAUNCH) return
         AssistBridge.store(
             AssistSnapshotData(
                 capturedAtMillis = System.currentTimeMillis(),

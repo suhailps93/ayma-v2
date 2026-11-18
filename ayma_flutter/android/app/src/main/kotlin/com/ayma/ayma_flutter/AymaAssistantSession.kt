@@ -3,7 +3,6 @@ package com.ayma.ayma_flutter
 import android.app.assist.AssistContent
 import android.app.assist.AssistStructure
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
@@ -13,6 +12,13 @@ import android.service.voice.VoiceInteractionSession
 import android.view.Gravity
 import android.view.View
 import android.widget.TextView
+import io.flutter.FlutterInjector
+import io.flutter.embedding.android.FlutterTextureView
+import io.flutter.embedding.android.FlutterView
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.GeneratedPluginRegistrant
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
@@ -21,13 +27,21 @@ import kotlin.math.roundToInt
  * long-presses Home (or uses the assistant gesture) while Ayma is the
  * default digital assistant.
  *
- * Data flow, and ONLY this flow (the sanctioned Assist API route):
- * the system hands this session the foreground app's [AssistContent],
- * [AssistStructure] and a screenshot — and only when the user enabled
- * "Use screen and app data" for Ayma. We read them once, hold the result
- * in memory ([AssistBridge]), open [MainActivity] on the assistant
- * surface, and finish. No Accessibility service, no background capture,
- * no storage: if the user never summons, this code never sees a screen.
+ * Behaviour (founder order, Nov 2026): a summon raises a FLOATING AYMA ORB
+ * over the current app and starts voice mode in the BACKGROUND — the full app
+ * Activity is NOT launched. The orb is the real [AymaOrb] widget running the
+ * real LiveKit voice stack, rendered by a [FlutterEngine] on the
+ * `assistantOrbMain` Dart entrypoint, hosted inside THIS session's own window
+ * (the only surface — no SYSTEM_ALERT_WINDOW overlay). Dismissing the orb
+ * finishes the session and returns the user to the app they were in.
+ *
+ * Screen-context data flow is UNCHANGED (the sanctioned Assist API route): the
+ * system hands this session the foreground app's [AssistContent],
+ * [AssistStructure] and a screenshot — only when the user enabled "Use screen
+ * and app data" for Ayma. We read them once, hold the result in memory
+ * ([AssistBridge]); the orb's Dart reads it back over `ayma/assistant` and
+ * folds it into the voice session's context. No Accessibility service, no
+ * background capture, no storage.
  *
  * Implementation note: only the long-standing callbacks are overridden.
  * On Android 11+ the framework's default `onHandleAssist(AssistState)`
@@ -38,7 +52,7 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
 
     companion object {
         /// How long to wait for the separate screenshot callback before
-        /// opening Ayma with whatever the assist payload already carried.
+        /// storing whatever the assist payload already carried.
         private const val FLUSH_DELAY_MS = 450L
 
         /// Screenshot downscale cap (same posture as the co-pilot share).
@@ -49,6 +63,14 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
         /// stall the summon.
         private const val MAX_NODES = 300
         private const val MAX_DEPTH = 24
+
+        /// The Dart entrypoint the orb engine runs — a single overlay surface,
+        /// never the full app `main()`.
+        private const val ORB_ENTRYPOINT = "assistantOrbMain"
+
+        /// Channel the orb's Dart uses to ask the session to close (returning
+        /// the user to the app they summoned from).
+        private const val ORB_CHANNEL = "ayma/assistant_orb"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -64,6 +86,11 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
     private var flushScheduled = false
     private var flushed = false
 
+    private var flutterEngine: FlutterEngine? = null
+    private var flutterView: FlutterView? = null
+    private var assistChannel: MethodChannel? = null
+    private var orbChannel: MethodChannel? = null
+
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         if (showFlags and SHOW_WITH_ASSIST != 0 ||
@@ -74,18 +101,20 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
             // only one of them fires.
             scheduleFlush()
         }
-        setContentView(buildLoadingView())
+        // Boot the floating orb straight away: the engine warms (Firebase init,
+        // auth restore, LiveKit connect) in parallel with the ~450ms assist
+        // flush window, and the orb's Dart polls AssistBridge for the snapshot.
+        startOrb()
     }
 
     override fun onHide() {
         super.onHide()
-        // The session window went away without a flush (user backed
-        // out): nothing is handed to the app.
         handler.removeCallbacksAndMessages(null)
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        teardownOrb()
         super.onDestroy()
     }
 
@@ -117,6 +146,11 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
         handler.postDelayed({ flush() }, FLUSH_DELAY_MS)
     }
 
+    /**
+     * Stores the captured screen snapshot in [AssistBridge] for the orb's Dart
+     * to read over `ayma/assistant`. It no longer launches [MainActivity] — the
+     * summon is served entirely by the in-session floating orb ([startOrb]).
+     */
     private fun flush() {
         if (flushed) return
         flushed = true
@@ -134,20 +168,80 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 source = "voice_interaction",
             )
         )
-        val intent = Intent(context, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_ASSIST_LAUNCH
-            putExtra(MainActivity.EXTRA_FROM_ASSISTANT, true)
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-            )
-        }
+    }
+
+    /**
+     * Creates the FlutterEngine + transparent FlutterView that renders the
+     * floating orb, and shows it as this session's content. On any failure the
+     * session falls back to an honest text view rather than a silent blank
+     * window (AGENTS.md: never a silent hang when the brain can't come up).
+     */
+    private fun startOrb() {
+        if (flutterEngine != null) return
         try {
-            context.startActivity(intent)
-        } finally {
-            finish()
+            val engine = FlutterEngine(context.applicationContext)
+            GeneratedPluginRegistrant.registerWith(engine)
+
+            // Register the session's channels BEFORE running Dart so the orb's
+            // first calls (snapshot read, dismiss) always resolve.
+            val messenger = engine.dartExecutor.binaryMessenger
+            assistChannel = MethodChannel(messenger, MainActivity.ASSISTANT_CHANNEL).also {
+                it.setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "takePendingAssist" -> result.success(AssistBridge.take()?.toMap())
+                        "hasPendingAssist" -> result.success(AssistBridge.peek() != null)
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+            orbChannel = MethodChannel(messenger, ORB_CHANNEL).also {
+                it.setMethodCallHandler { call, result ->
+                    when (call.method) {
+                        "dismiss" -> {
+                            result.success(null)
+                            // Close the session window; onDestroy tears the
+                            // engine down and the user returns to their app.
+                            finish()
+                        }
+                        else -> result.notImplemented()
+                    }
+                }
+            }
+
+            val appBundlePath =
+                FlutterInjector.instance().flutterLoader().findAppBundlePath()
+            engine.dartExecutor.executeDartEntrypoint(
+                DartExecutor.DartEntrypoint(appBundlePath, ORB_ENTRYPOINT)
+            )
+
+            // Transparent texture surface so only the orb (and the expanded
+            // scrim) paints over the foreground app.
+            val textureView = FlutterTextureView(context).apply { isOpaque = false }
+            val view = FlutterView(context, textureView)
+            view.attachToFlutterEngine(engine)
+            engine.lifecycleChannel.appIsResumed()
+
+            flutterEngine = engine
+            flutterView = view
+            setContentView(view)
+        } catch (e: Exception) {
+            teardownOrb()
+            setContentView(buildErrorView())
         }
+    }
+
+    private fun teardownOrb() {
+        assistChannel?.setMethodCallHandler(null)
+        orbChannel?.setMethodCallHandler(null)
+        assistChannel = null
+        orbChannel = null
+        flutterView?.detachFromFlutterEngine()
+        flutterView = null
+        flutterEngine?.let { engine ->
+            engine.lifecycleChannel.appIsDetached()
+            engine.destroy()
+        }
+        flutterEngine = null
     }
 
     private fun encodeScreenshot(bitmap: Bitmap) {
@@ -193,11 +287,12 @@ class AymaAssistantSession(context: Context) : VoiceInteractionSession(context) 
         return convert(structure.getWindowNodeAt(0).rootViewNode, 0)
     }
 
-    private fun buildLoadingView(): View {
+    /// Honest fallback shown only if the orb engine could not be created.
+    private fun buildErrorView(): View {
         return TextView(context).apply {
-            text = "Opening Ayma..."
+            text = "Ayma couldn't start here. Open the app to talk to her."
             setTextColor(Color.WHITE)
-            textSize = 16f
+            textSize = 15f
             gravity = Gravity.CENTER
             setBackgroundColor(Color.rgb(26, 23, 20))
             setPadding(48, 48, 48, 48)
