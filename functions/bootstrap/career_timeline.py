@@ -61,9 +61,45 @@ def linkedin_link_node(db, uid: str) -> dict | None:
     }
 
 
+def _mirror_durable(db, uid: str, url: str) -> None:
+    """Write a known-good LinkedIn URL to ALL THREE stores it can live in —
+    ``profile/main``, the user doc, and a ``questionnaire_supplemental`` entry —
+    so the value survives any later ``profile/main`` rewrite.
+
+    This is the durability net behind NOTE 250 / OPEN 2u item 1 (the founder's
+    LinkedIn kept returning to ``None``): no ``profile/main`` writer carries
+    ``linkedin_url``, so a user whose URL lived *only* on ``profile/main`` lost
+    it permanently the next time that doc was overwritten, with nothing to
+    self-heal from. Mirroring to the user doc and supplemental (which no
+    profile rewrite touches) makes :func:`get_linkedin_url` able to recover it
+    every time. Best-effort per store — one write failing never blocks the
+    others or raises."""
+    try:
+        schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: url}, merge=True)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        schema.user_doc(db, uid).set({schema.PF_LINKEDIN_URL: url}, merge=True)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import supplemental
+
+        supplemental.record_supplemental(
+            db, uid, "career", "LinkedIn profile", url, status="answered"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def get_linkedin_url(db, uid: str) -> str:
     """The user's own LinkedIn URL, if they've given Ayma one. Best-effort —
-    a read failure reads as "none on file", never an error."""
+    a read failure reads as "none on file", never an error.
+
+    Recovery from a fallback store re-mirrors the value to ALL stores
+    (:func:`_mirror_durable`), so a URL found in only one place becomes
+    durable everywhere and a later ``profile/main`` overwrite can never make it
+    permanently unrecoverable again (OPEN 2u item 1 recurrence)."""
     if not uid:
         return ""
     # 1. Profile document
@@ -80,10 +116,7 @@ def get_linkedin_url(db, uid: str) -> str:
         u_data = schema.user_doc(db, uid).get().to_dict() or {}
         url = str(u_data.get(schema.PF_LINKEDIN_URL) or u_data.get("linkedin") or "").strip()
         if url and is_linkedin_url(url):
-            try:
-                schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: url}, merge=True)
-            except Exception:  # noqa: BLE001
-                pass
+            _mirror_durable(db, uid, url)
             return url
     except Exception:  # noqa: BLE001
         pass
@@ -103,10 +136,7 @@ def get_linkedin_url(db, uid: str) -> str:
                     m = _LINKEDIN_RE.search(val)
                     url = m.group(0).rstrip(".,;") if m else ""
                 if url and is_linkedin_url(url):
-                    try:
-                        schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: url}, merge=True)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    _mirror_durable(db, uid, url)
                     return url
     except Exception:  # noqa: BLE001
         pass
@@ -132,17 +162,7 @@ def set_linkedin_url(db, uid: str, url: str | None) -> str:
         if existing:
             return existing
         raise ValueError("that doesn't look like a linkedin.com URL")
-    schema.profile_doc(db, uid).set({schema.PF_LINKEDIN_URL: cleaned}, merge=True)
-    try:
-        schema.user_doc(db, uid).set({schema.PF_LINKEDIN_URL: cleaned}, merge=True)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        import supplemental
-
-        supplemental.record_supplemental(
-            db, uid, "career", "LinkedIn profile", cleaned, status="answered"
-        )
-    except Exception:  # noqa: BLE001
-        pass
+    # Write to all three stores so the URL survives any later profile/main
+    # rewrite (OPEN 2u item 1 — see _mirror_durable).
+    _mirror_durable(db, uid, cleaned)
     return cleaned

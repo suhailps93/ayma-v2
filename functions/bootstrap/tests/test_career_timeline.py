@@ -138,3 +138,41 @@ def test_set_linkedin_url_never_overwrites_present_url_with_none_or_empty():
     assert res_new == new_url
     assert career_timeline.get_linkedin_url(db, "u1") == new_url
     assert db.docs[("users", "u1", "profile", "main")]["linkedin_url"] == new_url
+
+
+def test_linkedin_url_survives_profile_main_overwrite():
+    """OPEN 2u item 1 recurrence / 2j regression — the founder's exact path.
+
+    A captured LinkedIn URL must survive a later FULL overwrite of
+    ``profile/main`` (any non-merge rewrite that doesn't carry
+    ``linkedin_url``). Before the durability net it lived ONLY on
+    ``profile/main`` for a user with no supplemental/user-doc fallback, so the
+    overwrite dropped it permanently. ``set_linkedin_url`` now mirrors it to the
+    user doc AND ``questionnaire_supplemental``, and ``get_linkedin_url``
+    recovers and re-backfills it — forever."""
+    db = FakeDb()
+    url = "https://www.linkedin.com/in/suhailpallathsulaiman"
+    career_timeline.set_linkedin_url(db, "founder", url)
+
+    # The capture must have populated all three durable stores.
+    assert db.docs[("users", "founder", "profile", "main")]["linkedin_url"] == url
+    assert db.docs[("users", "founder")]["linkedin_url"] == url
+    assert db.docs[("users", "founder", "questionnaire_supplemental", "linkedin-profile")]["value"] == url
+
+    # A profile/main writer rebuilds the whole doc WITHOUT linkedin_url
+    # (full overwrite — the recurring dropper pattern).
+    db.docs[("users", "founder", "profile", "main")] = {"name": "Suhail", "updated_at": 1}
+    assert "linkedin_url" not in db.docs[("users", "founder", "profile", "main")]
+
+    # Recovery self-heals profile/main from the fallback stores.
+    assert career_timeline.get_linkedin_url(db, "founder") == url
+    assert db.docs[("users", "founder", "profile", "main")]["linkedin_url"] == url
+
+    # Even if BOTH profile/main AND the user doc are later wiped, the
+    # supplemental entry still recovers it — never permanently lost.
+    db.docs[("users", "founder", "profile", "main")] = {"name": "Suhail"}
+    db.docs[("users", "founder")] = {}
+    assert career_timeline.get_linkedin_url(db, "founder") == url
+    assert db.docs[("users", "founder", "profile", "main")]["linkedin_url"] == url
+    # Recovery re-mirrored to the user doc too (durability reinforced).
+    assert db.docs[("users", "founder")]["linkedin_url"] == url
