@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 import node_gist
+import node_visual
 import report_blocks as rb
 import report_hub
 
@@ -117,6 +118,13 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
         base["stat_text"] = "" if val is None else str(val)
         base["stat_basis"] = str(block.get("basis") or "")
         base["text"] = base["label"]
+        # A numeric score renders through the palette's bar_meter (less-text-heavy
+        # Part 2); a non-numeric CONFIDENCE word keeps the default gist_row and
+        # falls back to its band pill. The 0..10 vs 0..100 band matches the client.
+        sv = base.get("stat_value")
+        if sv is not None:
+            mx = 100.0 if sv > 10 else 10.0
+            base["visual"] = node_visual.bar_meter(sv, 0.0, mx, base["label"])
         return [base]
 
     if btype == rb.LINK:
@@ -188,6 +196,14 @@ def _sections_to_tree(sections: Any) -> list[dict]:
         # future report block that carries one) wins; else the fallback.
         for n in nodes:
             n["gist"] = node_gist.derive_gist(n.get("text", ""), stored=n.get("gist"))
+            # Write-time VISUAL (less-text-heavy Part 2): the block writer sets one
+            # for a numeric stat / … else the read-time per-kind default (an image
+            # block → photo_carousel, everything else → gist_row). The client's
+            # palette renders it; an unknown type falls back to gist_row.
+            n.setdefault(
+                "visual",
+                node_visual.default_for(n.get("section"), n.get("answer_type")),
+            )
         sections_out.append(
             {
                 "page_type": slug,

@@ -360,6 +360,103 @@ def test_ayma_only_node_is_not_editable():
     assert node["editable"] is False
 
 
+# --- Part 2: write-time / read-time VISUAL surfacing -----------------------
+
+
+def test_every_node_carries_a_visual_descriptor():
+    """Every tree node surfaces a ``{type, params, v}`` visual (the thin client
+    palette dispatches on it); no node is ever without one."""
+    overlay = {
+        "legal_first_name": {"answer": "Sam", "state": "answered"},
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    nodes = [n for s in t["sections"] for n in s["nodes"]]
+    assert nodes
+    for n in nodes:
+        assert isinstance(n.get("visual"), dict)
+        assert n["visual"].get("type")
+        assert "params" in n["visual"] and "v" in n["visual"]
+
+
+def test_read_time_default_career_node_is_a_timeline_entry():
+    """A dated career node with NO stored visual derives a timeline_entry at read
+    time (no backfill), carrying its gist as the title and its existing date."""
+    overlay = {
+        "emergent.story.career.0": {
+            "prompt": "Senior engineer at Acme", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Senior engineer at Acme",
+            "state": "answered", "visibility": "public",
+            "links": [{"target": "x", "type": "same_topic", "dated": "2021-06"}],
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    node = next(
+        n for s in t["sections"] for n in s["nodes"]
+        if n["id"] == "emergent.story.career.0"
+    )
+    assert node["visual"]["type"] == "timeline_entry"
+    assert node["visual"]["params"]["date"] == "2021-06"
+    assert node["visual"]["params"]["title"]
+
+
+def test_read_time_default_interest_node_is_a_chip():
+    """A list-like section's node with no stored visual derives a one-item
+    chip_set (sibling chips merge into a set in the renderer)."""
+    overlay = {
+        "emergent.story.interests.0": {
+            "prompt": "Rock climbing", "section": "interests", "level": 2,
+            "answer_type": "narrative", "answer": "Rock climbing",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    node = next(
+        n for s in t["sections"] for n in s["nodes"]
+        if n["id"] == "emergent.story.interests.0"
+    )
+    assert node["visual"]["type"] == "chip_set"
+    assert node["visual"]["params"]["items"] == ["Rock climbing"]
+
+
+def test_stored_visual_wins_over_read_time_default():
+    """A writer-stored visual (any palette type, even an unknown/newer one) is
+    surfaced untouched — the client falls back to gist_row for one it can't draw."""
+    overlay = {
+        "emergent.story.interests.0": {
+            "prompt": "Rock climbing", "section": "interests", "level": 2,
+            "answer_type": "narrative", "answer": "Rock climbing",
+            "state": "answered", "visibility": "public",
+            "visual": {"type": "small_table", "params": {"columns": ["a"],
+                                                          "rows": [["1"]]}, "v": 1},
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    node = next(
+        n for s in t["sections"] for n in s["nodes"]
+        if n["id"] == "emergent.story.interests.0"
+    )
+    assert node["visual"]["type"] == "small_table"
+    assert node["visual"]["params"]["columns"] == ["a"]
+
+
+def test_plain_section_node_defaults_to_gist_row():
+    """A node in a non-list, non-dated section defaults to gist_row (the universal
+    fallback) — no visual is ever forced where the node can't fill its params."""
+    overlay = {
+        "emergent.story.goals.0": {
+            "prompt": "Find my person", "section": "goals", "level": 2,
+            "answer_type": "narrative", "answer": "Find my person",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    node = next(
+        n for s in t["sections"] for n in s["nodes"]
+        if n["id"] == "emergent.story.goals.0"
+    )
+    assert node["visual"]["type"] == "gist_row"
+
+
 # --- split bullet: mixed subtree -------------------------------------------
 
 
