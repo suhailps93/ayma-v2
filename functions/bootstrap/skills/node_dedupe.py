@@ -86,6 +86,22 @@ def _bind_find(db, uid: str) -> Callable[..., str]:
                     f"  {p.a} [{snip.get(p.a,'')}] ~ {p.b} [{snip.get(p.b,'')}] — {p.reason}"
                 )
 
+        # Pairs the background data-dedupe sweep (Layer 2) flagged as UNSURE and
+        # recorded for the user to decide — the never-silent raise (founder Nov
+        # 17). Surfaced here so Ayma brings them up in chat on the next session.
+        try:
+            pending = store.pending_dedupe(db, uid)
+        except Exception:  # noqa: BLE001
+            pending = []
+        pending = [p for p in pending if (p["a"], p["b"]) not in dismissed]
+        if pending:
+            lines.append("NEEDS YOUR CALL (the dedupe sweep was unsure):")
+            for p in pending[:_FIND_LIMIT]:
+                reason = f" — {p['reason']}" if p.get("reason") else ""
+                lines.append(
+                    f"  {p['a']} [{snip.get(p['a'],'')}] ? {p['b']} [{snip.get(p['b'],'')}]{reason}"
+                )
+
         if not lines:
             return "no duplicate or related candidates found"
         lines.append(
@@ -146,6 +162,12 @@ def _bind_resolve(db, uid: str) -> Callable[..., str]:
         action: str, survivor_id: str, duplicate_id: str, label: str = ""
     ) -> str:
         act = (action or "").strip().lower()
+        # Whatever the user decides, this pair is resolved — stop the Layer-2
+        # sweep from re-raising it in chat (founder Nov 17).
+        try:
+            store.clear_pending_dedupe(db, uid, survivor_id, duplicate_id)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             if act == "merge":
                 res = store.merge_nodes(db, uid, survivor_id, duplicate_id)

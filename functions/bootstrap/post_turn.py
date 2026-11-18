@@ -192,13 +192,31 @@ async def persist_and_ingest(
             )
         timings["summary"] = _elapsed_ms(step)
 
+    async def _dedupe() -> None:
+        # Layer-2 data dedupe (founder Nov 17): after this session's facts are
+        # ingested, merge any duplicate nodes the user created in different words
+        # and record uncertain pairs for the in-chat raise. Gated behind
+        # ``CONFIG.graph_dedupe_sweep`` (a no-op when off) and fully best-effort —
+        # a dedupe failure never affects the session flush.
+        step = time.monotonic()
+        try:
+            import person_graph_dedupe_sweep
+
+            await person_graph_dedupe_sweep.sweep_user(db, uid, dry_run=False)
+        except Exception:  # noqa: BLE001 - dedupe is best-effort, never blocks
+            logger.exception("session-end dedupe failed for %s/%s", uid, session_id)
+        timings["dedupe"] = _elapsed_ms(step)
+
     await asyncio.gather(_ingest(), _summary())
+    # Dedupe runs AFTER ingest so this session's new nodes are already in the
+    # graph (it reads the merged graph, not a mid-ingest one).
+    await _dedupe()
     logger.info(
         "session-flush persisted uid=%s session=%s turns=%d persist_ms=%d "
-        "ingest_ms=%d summary_ms=%d total_ms=%d",
+        "ingest_ms=%d summary_ms=%d dedupe_ms=%d total_ms=%d",
         uid, session_id, len(turns), timings["persist"],
         timings.get("ingest", -1), timings.get("summary", -1),
-        _elapsed_ms(started),
+        timings.get("dedupe", -1), _elapsed_ms(started),
     )
 
 
