@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+import node_visual
 import person_graph_store as store
 from person_graph import NodeState, Provenance, Visibility
 
@@ -160,7 +161,10 @@ _ADD_NODE = {
         "Create a new person-graph node for an off-script fact that no existing "
         "node covers, as a child of the closest parent node (parent_id, from "
         "pg_query_nodes). The new node sits one level deeper than its parent and "
-        "is private by default. Returns the new node's id."
+        "is private by default. Write gist-first: 'gist' is a short, punchy "
+        "one-line headline (aim <= ~80 chars) that captures the fact at a glance; "
+        "'answer' holds at most a brief extra detail, never a long third-person "
+        "essay paragraph. Returns the new node's id."
     ),
     "parameters": {
         "type": "object",
@@ -173,23 +177,49 @@ _ADD_NODE = {
                 "type": "string",
                 "description": "a short prompt/label naming what this node is about",
             },
+            "gist": {
+                "type": "string",
+                "description": (
+                    "a short punchy one-line headline for this fact (aim <= ~80 "
+                    "chars) — the gist the user sees at a glance"
+                ),
+            },
             "answer": {
                 "type": "string",
-                "description": "the fact itself, in the user's words (optional)",
+                "description": (
+                    "at most a brief extra detail in the user's words (optional) "
+                    "— keep it to a line or two, never a long paragraph"
+                ),
+            },
+            "visual": {
+                "type": "string",
+                "enum": sorted(node_visual.PALETTE),
+                "description": (
+                    "how this node should render (optional): 'chip_set' for a "
+                    "list of short items, 'timeline_entry' for a dated item, "
+                    "'gauge'/'bar_meter' for a score, 'card' for a finding, "
+                    "'photo_carousel' for images, 'small_table' for a "
+                    "comparison, else 'gist_row'. Omit to let the default pick."
+                ),
             },
             "section": {
                 "type": "string",
                 "description": "override the home section (defaults to the parent's)",
             },
         },
-        "required": ["parent_id", "label"],
+        "required": ["parent_id", "label", "gist"],
     },
 }
 
 
 def _bind_add_node(db, uid: str) -> Callable[..., str]:
     def pg_add_node(
-        parent_id: str, label: str, answer: str = "", section: str = ""
+        parent_id: str,
+        label: str,
+        gist: str = "",
+        answer: str = "",
+        visual: str = "",
+        section: str = "",
     ) -> str:
         try:
             nid = store.add_node(
@@ -201,6 +231,10 @@ def _bind_add_node(db, uid: str) -> Callable[..., str]:
                 section=(section or None),
                 answer_type=("narrative" if answer else None),
                 provenance=Provenance.STATED,
+                gist=(gist or None),
+                # Ayma may name a visual type; an unknown/absent one falls back
+                # to the per-section default inside the store (never blocks).
+                visual=(node_visual.make(visual) if visual else None),
                 # The pg_add_node binder gets only (db, uid), no session — stamp
                 # the agent-tool source so the node is never sourceless.
                 source_kind="chat",

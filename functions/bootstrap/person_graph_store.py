@@ -21,6 +21,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
+import node_visual
 import person_graph as pg
 import question_tree
 from person_graph import NodeState, OverlayNode, Provenance, Visibility
@@ -252,6 +253,8 @@ def set_answer(
     *,
     provenance: Provenance | str = Provenance.STATED,
     confidence: float | None = None,
+    gist: str | None = None,
+    visual: dict | None = None,
 ) -> OverlayNode:
     """Record an answer; set state answered and provenance. If the node already
     has a different live answer, the old one retires to an Ayma-only history
@@ -282,6 +285,11 @@ def set_answer(
     e["provenance"] = prov
     if confidence is not None:
         e["confidence"] = confidence
+    gist = (gist or "").strip()
+    if gist:
+        e["gist"] = gist
+    if visual:
+        e["visual"] = visual
     e["updated_at"] = pg.now_iso()
 
     model = OverlayNode.model_validate(e)  # per-node validation
@@ -340,6 +348,8 @@ def add_node(
     source_kind: str = "",
     source_ref: str = "",
     source_message_id: str = "",
+    gist: str | None = None,
+    visual: dict | None = None,
 ) -> str:
     """Create an emergent node under ``parent_id`` (design §2.3): level =
     parent level + 1, homed in the parent's section unless ``section`` is given,
@@ -393,6 +403,12 @@ def add_node(
     if answer is not None:
         e["answer"] = answer
         e["state"] = NodeState.ANSWERED.value
+    gist = (gist or "").strip()
+    if gist:
+        e["gist"] = gist
+    # Every minted node carries a write-time visual; default by its kind/home
+    # section when the writer didn't pick one (never changes visibility).
+    e["visual"] = visual or node_visual.default_for(sec, answer_type)
 
     model = OverlayNode.model_validate(e)
     overlay[nid] = model.model_dump(exclude_none=True)
@@ -433,6 +449,8 @@ def add_loose_node(
     source_kind: str = "",
     source_ref: str = "",
     source_message_id: str = "",
+    gist: str | None = None,
+    visual: dict | None = None,
 ) -> str:
     """Record a free-form fact the user volunteered — the graph write path for
     the ``remember`` tool when the person-graph is authoritative (NOTE 228).
@@ -474,6 +492,10 @@ def add_loose_node(
         "updated_at": pg.now_iso(),
         **_source_fields(source_kind, source_ref, source_message_id),
     }
+    gist = (gist or "").strip()
+    if gist:
+        e["gist"] = gist
+    e["visual"] = visual or node_visual.for_section(section)
     model = OverlayNode.model_validate(e)
     overlay[nid] = model.model_dump(exclude_none=True)
     _save_overlay(db, uid, overlay)
@@ -520,6 +542,8 @@ def upsert_fact_node(
     source_kind: str = "",
     source_ref: str = "",
     source_message_id: str = "",
+    gist: str | None = None,
+    visual: dict | None = None,
 ) -> str:
     """Create-or-overwrite a stand-alone emergent node at a **stable** id — the
     graph write path for the live content writers that used to upsert a single
@@ -560,6 +584,10 @@ def upsert_fact_node(
         e["confidence"] = confidence
     if children:
         e["children"] = children
+    gist = (gist or "").strip()
+    if gist:
+        e["gist"] = gist
+    e["visual"] = visual or node_visual.default_for(section, answer_type)
     model = OverlayNode.model_validate(e)
     overlay[node_id] = model.model_dump(exclude_none=True)
     _save_overlay(db, uid, overlay)

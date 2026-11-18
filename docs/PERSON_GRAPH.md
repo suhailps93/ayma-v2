@@ -927,3 +927,103 @@ without hiding anything — the full `text` stays on the node for the tap target
   the universal fallback text Part 2's `visual` field layers kind-keyed renderers
   on top of.
 - **Tests:** `tests/test_node_gist.py`, `ayma_flutter/test/node_gist_render_test.dart`.
+## Gist-first writing — the `gist` field (less-text-heavy program, Part 3, Nov 17 2026)
+
+Every node written **going forward** carries a short one-line **`gist`** headline
+(aim ≤ ~80 chars) plus at most a brief detail. The longer text stays in the
+node's existing `answer`/prose field but shortened — never a long third-person
+essay paragraph. Readers (Part 1, `fleet/gist-first-rendering`) render `gist` by
+default and derive a fallback for OLD, gist-less nodes; this part makes the
+**writers** emit `gist`. No backfill of old nodes.
+
+- **Field.** `gist: Optional[str]` on `OverlayNode` and `GraphNode`
+  (`person_graph.py`), merged in `merge_node`. Stored as `e["gist"]` by the store
+  mint paths **only when non-empty**, alongside (never replacing) the node's
+  other fields — so a node's `visibility` (private / public / ayma_only) and
+  everything else round-trips through the writer **unchanged** (founder P0). The
+  optional-param → `if gist: e["gist"] = gist` shape is deliberately trivial to
+  extend to a sibling field (e.g. a future `visual`).
+- **Store writers** accept an optional `gist=` kwarg: `set_answer`, `add_node`,
+  `add_loose_node`, `upsert_fact_node` (`person_graph_store.py`).
+  `upsert_report_node` is the non-rendering `report_doc` scaffold — no gist.
+- **Creation paths now gist-first:**
+  - *Conversation extraction* — `pg_add_node` (new required `gist` arg +
+    description) and `remember` (new `gist` arg; `highlight` stays the brief
+    detail) emit the headline directly; the LLM writes it.
+  - *Web research* — `deep_dive.py` digest emits a `gist` (schema +
+    `prompts/deep_dive.md § digest_system`, `summary` shortened to 1–2
+    sentences); `skill_memory.save_web_findings` stores it on
+    `emergent.skill.web_findings` (deterministic fallback headline when absent).
+  - *Reports* — face/body reports' short `verdict` + `verdict_note`
+    (`prompts/face_report.md`, `body_report.md`, now explicitly gist-first) become
+    the gist via `skill_memory.save_face_analysis` / `save_body_analysis`;
+    `save_physical_profile` derives a headline from the rendering's first line.
+  - *Ayma's assessment* — each polarity node's gist is its group title + top
+    observation (`ai_assessment._write_graph`; `prompts/ai_assessment.md`
+    observations held to one punchy line).
+  - *Match report* — `matching_skill` emits a required `gist` headline (schema +
+    `prompts/matching_skill.md`) on the `matches/{key}` report doc.
+- **Deliberately unchanged:** `set_profile_field` and raw questionnaire answers
+  write atomic one-liner values (name/phone/DOB/enums) and the taste/steering
+  nodes are short structured bodies, not essays — already gist-compliant by
+  construction; they rely on the reader's `answer` fallback rather than a
+  redundant per-node gist (keeps the rule generalizable, no per-node special
+  casing).
+- **Inference stays 100% on LiveKit** (the json writers are
+  `gemini.generate_json` / the vision provider served **through** LiveKit); model
+  names come only from `config.py`; every prompt lives in a `prompts/*.md` file —
+  no inline prompt was added, none needed moving (all writers already load from
+  files).
+- **Tests:** `tests/test_gist_first_writing.py` (mock inference only) covers a
+  conversation-extracted node, a report node, and a web-research node, plus the
+  visibility-round-trips invariant and the digest/match writer-contract schemas.
+
+## Write-time visual pick — the `visual` field (less-text-heavy program, Part 2 contract, Nov 17 2026)
+
+Sibling of `gist`: every node written going forward also carries a **`visual`**
+descriptor telling Part 2's renderers HOW to draw it, instead of defaulting
+everything to a text row. "The visual lives on the node", picked
+**deterministically at write time** so a bad pick is rare. Picking a visual
+**never changes visibility** and **never blocks a write** — where the params'
+data isn't readily available, only `{type, v}` is stored and the renderer
+derives/falls back.
+
+- **Shape.** `visual = {"type": <palette type>, "params": {...}, "v": 1}` on
+  `OverlayNode`/`GraphNode`, merged in `merge_node`; stored as `e["visual"]` by
+  the store mint paths alongside `gist`. Built via `node_visual.py` (the single
+  source of the palette + builders). Same optional-write shape as `gist`.
+- **PALETTE v1** (fixed, versioned — exact `type` strings): `gist_row`
+  (universal fallback, renders `node.gist`), `chip_set`, `timeline_entry`,
+  `bar_meter`, `gauge`, `card`, `photo_carousel`, `small_table`. Unknown/absent
+  `type` → the reader falls back to `gist_row`.
+- **`params` contract** (minimal, forward-compatible — what Part 2 reads):
+  - `gist_row`: `{}` (renders `node.gist`)
+  - `chip_set`: `{items: [string]}`
+  - `timeline_entry`: `{date: string|null, title: string}`
+  - `bar_meter` / `gauge`: `{value: number, min: number, max: number, label: string}`
+  - `card`: `{title: string, body: string}` (`body` = the brief detail)
+  - `photo_carousel`: `{image_refs: [...]}` (reuse the node's image ref fields;
+    may be `{}` — the renderer derives refs from the image node's own fields)
+  - `small_table`: `{columns: [string], rows: [[string]]}`
+- **Per-kind default** (`node_visual.default_for(section, answer_type)`), applied
+  in the store when a writer didn't pick one, so **no minted node is ever
+  visual-less**:
+  - image node (`answer_type == "image"`) → `photo_carousel`
+  - list-like section (interests / values / lifestyle / taste / social_circle) → `chip_set`
+  - dated section (career) → `timeline_entry`
+  - everything else → `gist_row`
+- **Explicit writer picks (unambiguous kind, set deterministically):**
+  - face/body report + physical profile → `card` (`title` = verdict, `body` =
+    verdict_note) via `skill_memory`
+  - deep-dive web findings → `card` (`title` = gist, `body` = summary)
+  - Ayma's assessment polarity node → `card` (`title` = group, `body` = top note)
+  - match report → `gauge` (`value` = score, `min` 0 / `max` 100) in the
+    `matches/{key}` doc payload
+  - `pg_add_node` may also let Ayma name a `visual` type (palette enum); an
+    unknown/absent one falls back to the per-section default.
+- **Forward note (founder):** the write path is the same optional-param shape as
+  `gist`, so `visual` dropped in with no new write mechanics — and any further
+  sibling field does too.
+- **Tests:** `tests/test_gist_first_writing.py` asserts the defaulted and
+  explicit `visual.type` + params per path (and visibility round-trips);
+  `tests/test_matching_skill.py` asserts the match gauge.

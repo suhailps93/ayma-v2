@@ -1442,6 +1442,12 @@ _CORRECTION_SCHEMA = {
 _DIGEST_SCHEMA = {
     "type": "object",
     "properties": {
+        "gist": {
+            "type": "string",
+            "description": "a short punchy one-line headline (aim <= ~80 chars) "
+            "capturing who this person is at a glance — the gist, not a sentence "
+            "of setup",
+        },
         "summary": {"type": "string"},
         "confidence": {
             "type": "string",
@@ -1934,6 +1940,7 @@ async def run(
         **link_stamp,
         "name": name,
         "is_self": is_self,
+        "gist": str(digest.get("gist", "")).strip(),
         "summary": str(digest.get("summary", "")).strip(),
         "confidence": str(digest.get("confidence", "not_found")),
         "facts": facts,
