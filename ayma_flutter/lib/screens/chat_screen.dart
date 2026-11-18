@@ -42,6 +42,7 @@ import '../util/cold_start_retry.dart';
 import '../widgets/ask_ayma_context.dart';
 import '../widgets/ayma_chat_modal.dart';
 import '../widgets/ayma_wing_loader.dart';
+import '../widgets/report_summary_card.dart';
 import '../widgets/voice_clip_row.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_primitives.dart';
@@ -4345,13 +4346,20 @@ class _TranscriptLineState extends State<_TranscriptLine> {
       // text (Ayma called the tool herself). Either way: strip the marker and
       // render the report card inline. `[1]`-style citation noise is also removed.
       final marker = turn.isFinal ? _reportMarker.firstMatch(turn.text) : null;
+      // Strip a COMPLETE trailing report marker from the visible text ALWAYS —
+      // even while the turn is still streaming — so the raw `[appearance:<id>]`
+      // marker is never shown before the turn finalizes (founder: "tapping
+      // toward a report shows raw text before it opens"). The inline report CARD
+      // still resolves only on a finished turn (`marker`, below), but the user
+      // never sees the bracket marker leak mid-stream.
+      final stripMatch = marker ?? _reportMarker.firstMatch(turn.text);
       final reportKind = turn.reportKind.isNotEmpty
           ? turn.reportKind
           : (marker != null ? _reportKindOf(marker.group(1)!) : null);
       final reportId = turn.reportId.isNotEmpty
           ? turn.reportId
           : marker?.group(2);
-      var displayText = marker != null
+      var displayText = stripMatch != null
           ? turn.text.replaceFirst(_reportMarker, '')
           : turn.text;
       if (reportKind != null) {
@@ -5117,11 +5125,6 @@ class _InlineReportCardState extends State<_InlineReportCard> {
   late final bool _isAppearance = widget.kind == 'appearance';
   late final bool _isMatch = widget.kind == 'match';
 
-  /// The match card reads the pair's current score (it may have been
-  /// recalculated since the result landed), so the label always matches the
-  /// report it opens.
-  late final Future<MatchReport?>? _matchFuture =
-      _isMatch ? widget.api?.matchReport(widget.reportId) : null;
   late final Future<Object>? _future =
       (_isDive || _isPhysical || _isAppearance || _isMatch)
       ? null
@@ -5195,42 +5198,49 @@ class _InlineReportCardState extends State<_InlineReportCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Node-backed reports (appearance / web-research / match) show a human
+    // SUMMARY card distilled from the SAME report node tree the full page
+    // renders — title, date, headline score, top finding — not a static label
+    // and never raw JSON (unified visual report framework, founder Nov 17).
     if (_isDive) {
-      // Web research is text-heavy — a compact "open it" card, not the report
-      // rendered inline.
-      return _compactCard(
-        context,
+      return ReportSummaryCard(
+        reportType: 'deep_dive',
+        reportId: widget.reportId,
         icon: Icons.public,
-        label: 'Web research report',
+        fallbackLabel: 'Web research report',
+        subjectImage: widget.subjectImage,
+        api: widget.api,
+        onTap: _openFull,
+      );
+    }
+    if (_isMatch) {
+      return ReportSummaryCard(
+        reportType: 'match',
+        reportId: widget.reportId,
+        icon: Icons.favorite_border,
+        fallbackLabel: 'Match report',
+        subjectImage: widget.subjectImage,
+        api: widget.api,
+        onTap: _openFull,
+      );
+    }
+    if (_isAppearance) {
+      return ReportSummaryCard(
+        reportType: 'appearance',
+        reportId: widget.reportId,
+        icon: Icons.auto_awesome_outlined,
+        fallbackLabel: 'Appearance report',
+        subjectImage: widget.subjectImage,
+        api: widget.api,
+        onTap: _openFull,
       );
     }
     if (_isPhysical) {
+      // Legacy physical profile (not a node tree) — a compact "open it" card.
       return _compactCard(
         context,
         icon: Icons.badge_outlined,
         label: 'Physical profile report',
-      );
-    }
-    if (_isMatch) {
-      return FutureBuilder<MatchReport?>(
-        future: _matchFuture,
-        builder: (context, snap) {
-          final score = snap.data?.score;
-          return _compactCard(
-            context,
-            icon: Icons.favorite_border,
-            label: score == null
-                ? 'Match report'
-                : 'Match report · ${(score * 100).round()}%',
-          );
-        },
-      );
-    }
-    if (_isAppearance) {
-      return _compactCard(
-        context,
-        icon: Icons.auto_awesome_outlined,
-        label: 'Appearance report',
       );
     }
     final ac = context.ac;

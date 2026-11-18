@@ -315,12 +315,41 @@ class GraphTreeSection {
       );
 }
 
-/// The whole Node-Visualiser tree payload (`GET /profile/graph/tree`).
+/// The whole Node-Visualiser tree payload (`GET /profile/graph/tree`, or a
+/// report tree `GET /report/{type}/{id}/tree`).
 class GraphTree {
-  const GraphTree({required this.surface, required this.sections});
+  const GraphTree({
+    required this.surface,
+    required this.sections,
+    this.title = '',
+    this.meta = const {},
+  });
 
   final String surface;
   final List<GraphTreeSection> sections;
+
+  /// The report's title (report trees only; the person graph leaves it empty).
+  /// Drives the pre-open summary card and any report header — the SAME tree the
+  /// opened page renders, no separate store.
+  final String title;
+
+  /// The report tree's `meta` — `viewer_can_edit`, `created_at`/`updated_at`,
+  /// `card_hidden_photos`, … carried through verbatim from `report_tree.py`.
+  final Map<String, dynamic> meta;
+
+  /// A human date line for this report (the run's `created_at`/`updated_at`/
+  /// `as_of`/`date`), or `''` when the tree carries none. Never invented.
+  String get reportDate {
+    for (final k in const ['created_at', 'updated_at', 'as_of', 'date']) {
+      final v = meta[k];
+      if (v is String && v.trim().isNotEmpty) return v.trim();
+    }
+    return '';
+  }
+
+  /// Whether the signed-in viewer owns this report (owner affordances show only
+  /// then). Reports default read-only unless `meta.viewer_can_edit` is true.
+  bool get viewerCanEdit => meta['viewer_can_edit'] == true;
 
   /// Every image node across every section — the carousel's source.
   List<StoryNode> allImages() => [
@@ -330,6 +359,10 @@ class GraphTree {
 
   factory GraphTree.fromMap(Map<String, dynamic> m) => GraphTree(
         surface: m['surface'] as String? ?? 'story',
+        title: m['title'] as String? ?? '',
+        meta: (m['meta'] is Map)
+            ? (m['meta'] as Map).map((k, v) => MapEntry(k.toString(), v))
+            : const {},
         sections: ((m['sections'] as List?) ?? const [])
             .whereType<Map>()
             .map((e) => GraphTreeSection.fromMap(e.cast<String, dynamic>()))

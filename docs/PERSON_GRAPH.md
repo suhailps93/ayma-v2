@@ -321,28 +321,56 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     references anywhere in `lib/` (pinned by
     `test/living_report_view_removed_test.dart`). Every report-like surface now
     renders through the shared `GraphTreeView` Node-Visualiser.
-  - *Appearance report — TEMPLATED, not bullets (build 2488, founder).* The
-    founder viewed a match's appearance report and the generic Node-Visualiser
-    bullet rows read badly for a face/physique analysis. Only the appearance
-    report now renders through a **designed templated page**
-    (`lib/widgets/appearance_templated_report.dart`,
-    `AppearanceTemplatedReport`) instead of `GraphTreeView`: fixed
-    **Physical attributes / Face / Physique** sections, each built ENTIRELY from
-    the SAME appearance node tree (`GET /report/appearance/{uid}/tree` via
-    `ApiClient.reportTree('appearance', uid)` — no second store, no duplicated
-    content), mapped to a section by the node tree's `page_type`
-    (`attributes`/`face`/`body`). Each section lays out a numeric **score
-    header** (the stat node + a `ScoreBar`), **attribute fields** (standard
-    labelled nodes), narrative findings (text nodes), and its analysed photos
-    **carousel-style** — a swipeable `PageView` of the ONE shared
-    `NodeImage` `fill` renderer with page dots + tap-to-open gallery, exactly
-    like the profile photo carousel, never bounded bullet-row thumbnails. Its
-    loading / 404-empty / retry states mirror `GraphTreeView` so the screen
-    chrome (card, Re-run, Updating… banner) is unchanged. The OLD appearance
-    body (`GraphTreeView(reportType:'appearance')`) was deleted in the same
-    change; `GraphTreeView` itself stays for deep-dive / match / shared / story.
-    Regression: `test/appearance_templated_report_test.dart` (asserts the
-    templated sections + carousel render and it is NOT the bullet tree).
+  - *ONE unified visual report framework (founder Nov 17) — supersedes the
+    bespoke appearance template.* Every report now renders through the SAME
+    general assembler: `GraphTreeView(surface: report)` → `NodeVisualiserSection`
+    → the palette, assembled purely from each node's own `visual`. There is no
+    per-report layout code: scores → gauge/bar, findings → card, comparisons →
+    `small_table`, lists → `chip_set`, dated items → `timeline_entry`, photos →
+    one swipeable carousel, plain facts → gist row. Three changes generalized the
+    designed look the appearance template used to own:
+    - **Section cards.** On the report surface `NodeVisualiserSection` renders
+      each section as a designed elevated card with a serif heading
+      (`cardStyle`, passed by `GraphTreeView` when `surface == report`); Your
+      Story / public profile / graph detail keep the plain rows. A section whose
+      nodes all filter out (private on a shared surface, or empty) renders
+      nothing — never an empty titled card.
+    - **Photo carousel aggregation.** `_siblingWidgets` merges consecutive IMAGE
+      leaf nodes on the report surface into ONE `NodePhotoCarousel`
+      (`lib/widgets/node_photo_carousel.dart`) — a swipeable square `PageView` of
+      the shared `NodeImage` `fill` renderer with page dots + tap-to-open
+      gallery, exactly what the appearance template did, now for every report's
+      photos. Your Story keeps inline thumbnails (not aggregated). A `candidate`
+      node (is-me/not-me) is never swept in.
+    - **Appearance migrated, bespoke layout deleted.** `appearance_report_screen`
+      now embeds `GraphTreeView(reportType: 'appearance')`; the bespoke
+      `appearance_templated_report.dart` (+ its test) were DELETED. The score
+      gauges, photo carousel, attribute fields and finding cards all come from
+      the appearance node tree's own palette visuals — same tree, same store.
+      The shareable card + Re-run + Updating… banner chrome is unchanged.
+    So a NEW report kind made of known node shapes renders correctly with ZERO
+    new client code. Never-breaking is structural: a missing / partial /
+    odd-shaped node degrades to a gist row or is omitted (never a crash,
+    overflow, raw JSON or empty page); an empty tree shows an honest empty
+    state. Because the report tree is already viewer-visibility-filtered by
+    `report_tree.py`, a shared/public report's visuals, scores and counts are
+    built ONLY from viewer-visible nodes (P0 privacy).
+    - *Pre-open SUMMARY cards (no raw JSON anywhere).* Every surface that points
+      AT a report before it opens — the chat report card, a graph node, a list
+      row — shows a human summary distilled from the SAME tree
+      (`ReportSummary.fromTree` → `ReportSummaryCard`,
+      `lib/models/report_summary.dart` / `lib/widgets/report_summary_card.dart`):
+      title, date, headline score and top finding. On a load failure it degrades
+      to a plain labelled row, never an error dump or a map. The chat inline
+      card (`chat_screen.dart` `_InlineReportCard`) uses it for appearance /
+      deep_dive / match; a streaming Ayma turn now also strips the trailing
+      `[appearance:<id>]` marker so the raw marker never leaks before the turn
+      finalizes. `GraphTree` now carries the report `title` + `meta`
+      (`created_at`/`viewer_can_edit`), previously dropped by `fromMap`.
+    Regression: `test/unified_report_framework_test.dart` (assembly + malformed/
+    partial degradation + privacy), `test/report_summary_test.dart`,
+    `test/report_summary_card_test.dart`, golden
+    `test/golden/unified_report_golden_test.dart`.
 ## Read/write switch FINISHED (Nov 16) — staging code no longer reads or writes wiki_pages (flag-on)
 
 Branch `fleet/graph-read-write-switch`. With `PERSON_GRAPH_READS` on, every live
