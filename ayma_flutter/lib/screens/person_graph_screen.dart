@@ -113,6 +113,44 @@ bool graphEdgeLit(
         String? selectedId, Set<String> highlight, String from, String to) =>
     selectedId != null && highlight.contains(from) && highlight.contains(to);
 
+/// A node passes the graph filters only when BOTH its [kind] and its [level] are
+/// shown (not in [hiddenKinds] / [hiddenLevels]). The two facets are AND-gated,
+/// which is why "Hide all" (hiding every kind AND every level) must be released
+/// carefully — see [toggleKindFilter]. Pure for tests.
+bool graphFilterPasses(
+        String kind, int level, Set<String> hiddenKinds, Set<int> hiddenLevels) =>
+    !hiddenKinds.contains(kind) && !hiddenLevels.contains(level);
+
+/// New (hiddenKinds, hiddenLevels) after tapping kind chip [k]. Toggling off adds
+/// [k] to hidden; toggling ON removes it — and, if EVERY level is currently hidden
+/// (the "Hide all" residue), also clears the hidden levels so the kind actually
+/// becomes visible (the founder's empty-canvas-after-Hide-all bug). Pure for tests.
+(Set<String>, Set<int>) toggleKindFilter(String k, Set<String> hiddenKinds,
+    Set<int> hiddenLevels, Iterable<int> depths) {
+  final hk = {...hiddenKinds};
+  final hl = {...hiddenLevels};
+  if (hk.remove(k)) {
+    if (depths.isNotEmpty && depths.every(hl.contains)) hl.clear();
+  } else {
+    hk.add(k);
+  }
+  return (hk, hl);
+}
+
+/// Symmetric to [toggleKindFilter] for a level chip: un-hiding a level from the
+/// all-hidden state also clears the hidden kinds. Pure for tests.
+(Set<String>, Set<int>) toggleLevelFilter(int lvl, Set<String> hiddenKinds,
+    Set<int> hiddenLevels, Iterable<String> kinds) {
+  final hk = {...hiddenKinds};
+  final hl = {...hiddenLevels};
+  if (hl.remove(lvl)) {
+    if (kinds.isNotEmpty && kinds.every(hk.contains)) hk.clear();
+  } else {
+    hl.add(lvl);
+  }
+  return (hk, hl);
+}
+
 /// The indexed StoryNode (Track B's tree) for a flat node id: the raw id, or a
 /// bullet's `b:`-stripped id. Null when the tree holds no such node (a section
 /// hub or the person centre, which the screen synthesizes). Pure for tests.
@@ -562,9 +600,7 @@ class _GraphBodyState extends State<_GraphBody>
     final n = _byId[id];
     if (n == null) return false;
     final k = n.kind.isEmpty ? 'fact' : n.kind;
-    if (_hiddenKinds.contains(k)) return false;
-    if (_hiddenLevels.contains(_levels[id] ?? 2)) return false;
-    return true;
+    return graphFilterPasses(k, _levels[id] ?? 2, _hiddenKinds, _hiddenLevels);
   }
 
   // --- selection + highlight -------------------------------------------------
@@ -696,7 +732,13 @@ class _GraphBodyState extends State<_GraphBody>
 
   void _toggleKind(String k) {
     setState(() {
-      if (!_hiddenKinds.remove(k)) _hiddenKinds.add(k);
+      final (hk, hl) = toggleKindFilter(k, _hiddenKinds, _hiddenLevels, _depths);
+      _hiddenKinds
+        ..clear()
+        ..addAll(hk);
+      _hiddenLevels
+        ..clear()
+        ..addAll(hl);
       _fitToVisible();
       _repaint.value++;
     });
@@ -704,7 +746,13 @@ class _GraphBodyState extends State<_GraphBody>
 
   void _toggleLevel(int lvl) {
     setState(() {
-      if (!_hiddenLevels.remove(lvl)) _hiddenLevels.add(lvl);
+      final (hk, hl) = toggleLevelFilter(lvl, _hiddenKinds, _hiddenLevels, _kinds);
+      _hiddenKinds
+        ..clear()
+        ..addAll(hk);
+      _hiddenLevels
+        ..clear()
+        ..addAll(hl);
       _fitToVisible();
       _repaint.value++;
     });
