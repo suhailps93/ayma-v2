@@ -314,22 +314,9 @@ async def classify_pairs(
     return report
 
 
-# Pairs judged per LiveKit call. A single call over a large candidate set
-# overflows the JSON completion budget and the reply TRUNCATES
-# (finish_reason=length) — the whole array then fails to parse and EVERY verdict
-# is lost, silently degrading the sweep to the lexical split (NOTE 252: the
-# 68-pair Daniel fixture judge returned 2302 chars cut off mid-array, so nothing
-# merged). Batch so a reply never exceeds its budget; each item already carries
-# its own GLOBAL ``i`` (classify_pairs stamps it), so verdicts merge back
-# positionally across batches with no remapping.
-_JUDGE_BATCH = 24
-
-
 async def _judge(items: list[dict], *, uid: str | None) -> Optional[dict]:
     """Ask the LiveKit gateway to label each pair duplicate/related/unrelated.
-    Returns ``{global_index: verdict}`` or ``None`` on total failure. Pairs are
-    judged in bounded batches so a large candidate set never truncates the reply;
-    a single failing batch is skipped without discarding the others' verdicts."""
+    Returns ``{pair_key_tuple: verdict}`` or ``None`` on failure."""
     import gemini
 
     system = (
@@ -339,32 +326,29 @@ async def _judge(items: list[dict], *, uid: str | None) -> Optional[dict]:
         "different things = 'related'; or are unrelated = 'unrelated'. Reply "
         "with ONLY a JSON array of {\"i\": <int>, \"verdict\": <string>}."
     )
+    payload = json.dumps(items, ensure_ascii=False)
+    try:
+        result = await gemini.generate_json(
+            payload, system,
+            uid=uid, feature="graph_dedupe", enforce_cap=False,
+            temperature=0.0, max_tokens=1024,
+        )
+    except Exception:  # noqa: BLE001 - best-effort, never blocks the report
+        logger.warning("graph_dedupe: semantic judge failed", exc_info=True)
+        return None
+
+    rows = result if isinstance(result, list) else (result or {}).get("pairs")
+    if not isinstance(rows, list):
+        return None
     out: dict = {}
-    for start in range(0, len(items), _JUDGE_BATCH):
-        chunk = items[start : start + _JUDGE_BATCH]
-        payload = json.dumps(chunk, ensure_ascii=False)
-        try:
-            # ~48 tokens per verdict object leaves ample headroom over the actual
-            # ~12-18, so the reply for this batch never hits finish_reason=length.
-            result = await gemini.generate_json(
-                payload, system,
-                uid=uid, feature="graph_dedupe", enforce_cap=False,
-                temperature=0.0, max_tokens=256 + len(chunk) * 48,
-            )
-        except Exception:  # noqa: BLE001 - best-effort; a bad batch never blocks
-            logger.warning("graph_dedupe: semantic judge failed", exc_info=True)
-            continue
-        rows = result if isinstance(result, list) else (result or {}).get("pairs")
-        if not isinstance(rows, list):
-            continue
-        for row in rows:
-            if isinstance(row, dict) and "i" in row:
-                try:
-                    out[int(row["i"])] = str(row.get("verdict", ""))
-                except (TypeError, ValueError):
-                    continue
-    # keyed by the global index classify_pairs assigned each pair.
-    return out or None
+    for row in rows:
+        if isinstance(row, dict) and "i" in row:
+            try:
+                out[int(row["i"])] = str(row.get("verdict", ""))
+            except (TypeError, ValueError):
+                continue
+    # keyed by the positional index classify_pairs assigned each pair.
+    return out
 
 
 # --- write-time conflict raising (founder Nov 17, assessment part d) --------

@@ -201,19 +201,6 @@ def text_restates_standard_fact(
         return True
     if labelvalue_tokens and index_mod.token_set(text) == labelvalue_tokens:
         return True
-    # A "<label>: <value>" bullet whose OWN label wording differs from the
-    # standard field's canonical label (NOTE 252 leg 28: an editor bullet
-    # "Gender identity: Man" beside the standard Gender row "Man" — the import's
-    # label "Gender identity" is not the field label "Gender", so neither the
-    # bare-value nor the label+value token check above fires and the restatement
-    # survived). Match when the text after the FIRST colon normalises exactly to
-    # the bare value: high precision — a longer distinct sentence never has a
-    # colon tail equal to the bare value, and the caller restricts the compare to
-    # the same section's standard facts.
-    if value_norm and ":" in text:
-        tail = text.split(":", 1)[1]
-        if index_mod.normalize_text(tail) == value_norm:
-            return True
     return False
 
 

@@ -163,47 +163,6 @@ def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
         assert len(norms) == len(set(norms)), f"section {s['page_type']} repeats a fact"
 
 
-def test_editor_bullet_with_differently_worded_label_restates_standard_fact():
-    """NOTE 252 leg 28 (build 2493 FAIL, Daniel fixture): the editor bullet
-    "Gender identity: Man" rendered BESIDE the standard Gender row "Man". Its own
-    label ("Gender identity") is not the standard field label ("Gender"), so the
-    label+value token set ({gender, identity, man}) never equalled the field's
-    ({gender, man}) and the bullet survived — the Gender pair Scout saw twice. The
-    render must suppress it (its colon tail is the bare value), while a genuinely
-    distinct fact in the section survives."""
-    overlay = {
-        "gender_identity": {"answer": "Man", "state": "answered", "visibility": "public"},
-        # editor import bullet whose label differs by a word from the field label
-        "emergent.editor.identity.1": {
-            "prompt": "Gender identity: Man", "section": "identity", "level": 2,
-            "answer_type": "narrative", "answer": "Gender identity: Man",
-            "state": "answered", "visibility": "public",
-        },
-        # a genuinely distinct identity fact must NOT be over-suppressed
-        "emergent.story.identity.9": {
-            "prompt": "Grounded and reflective", "section": "identity", "level": 2,
-            "answer_type": "narrative", "answer": "Grounded and reflective",
-            "state": "answered", "visibility": "public",
-        },
-    }
-    g = _graph(overlay)
-    t = tree.node_tree(g, surface="story")
-    ident = next(s for s in t["sections"] if s["page_type"] == "identity")
-    surviving = {n["id"] for n in ident["nodes"] if n["text"]}
-    # the standard Gender row stays (bare value); the restating bullet is dropped
-    gender_row = next(n for n in ident["nodes"] if n["id"] == "gender_identity")
-    assert gender_row["text"] == "Man"
-    assert "emergent.editor.identity.1" not in surviving, "Gender restatement not suppressed"
-    assert "emergent.story.identity.9" in surviving
-    # "Man" is not repeated anywhere in the section
-    def _all_texts(nodes):
-        for n in nodes:
-            if n.get("text"):
-                yield n["text"]
-            yield from _all_texts(n.get("children", []))
-    assert list(_all_texts(ident["nodes"])).count("Gender identity: Man") == 0
-
-
 def test_unmerged_graph_collapses_two_distinct_restatement_nodes_in_a_section():
     """NOTE 252 leg 28 (build 2490 FAIL): on an UNMERGED graph, two DISTINCT
     emergent nodes restate the same fact in one section — neither is a standard
