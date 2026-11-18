@@ -710,6 +710,33 @@ class _GraphBodyState extends State<_GraphBody>
     });
   }
 
+  /// Master control: turn EVERY filter on (show all types and levels) in one
+  /// tap — just clears the hidden sets, so individual chips keep toggling.
+  void _showAllFilters() {
+    setState(() {
+      _hiddenKinds.clear();
+      _hiddenLevels.clear();
+      _fitToVisible();
+      _repaint.value++;
+    });
+  }
+
+  /// Master control: turn EVERY filter off (hide all types and levels) in one
+  /// tap. The canvas then renders the clean empty state — the painter skips any
+  /// node/edge that fails the filter, so nothing floats.
+  void _hideAllFilters() {
+    setState(() {
+      _hiddenKinds
+        ..clear()
+        ..addAll(_kinds);
+      _hiddenLevels
+        ..clear()
+        ..addAll(_depths);
+      _fitToVisible();
+      _repaint.value++;
+    });
+  }
+
   // --- detail (Track B NodeVisualiser) ---------------------------------------
 
   /// The StoryNode Track B's visualiser renders for a tapped flat node. The
@@ -789,6 +816,8 @@ class _GraphBodyState extends State<_GraphBody>
           hiddenLevels: _hiddenLevels,
           onToggleKind: _toggleKind,
           onToggleLevel: _toggleLevel,
+          onShowAll: _showAllFilters,
+          onHideAll: _hideAllFilters,
           onFit: _resetFit,
         ),
       ],
@@ -862,6 +891,8 @@ class _FilterBar extends StatelessWidget {
     required this.hiddenLevels,
     required this.onToggleKind,
     required this.onToggleLevel,
+    required this.onShowAll,
+    required this.onHideAll,
     required this.onFit,
   });
 
@@ -871,6 +902,8 @@ class _FilterBar extends StatelessWidget {
   final Set<int> hiddenLevels;
   final void Function(String) onToggleKind;
   final void Function(int) onToggleLevel;
+  final VoidCallback onShowAll;
+  final VoidCallback onHideAll;
   final VoidCallback onFit;
 
   static String _kindLabel(String k) => switch (k) {
@@ -933,6 +966,26 @@ class _FilterBar extends StatelessWidget {
                 foregroundColor: ac.fgDim,
                 visualDensity: VisualDensity.compact,
               ),
+            ),
+            const SizedBox(width: 4),
+            // Master controls: set the whole filter state in one tap. They only
+            // drive the shared hidden-sets, so individual chips keep toggling
+            // exactly as before afterwards.
+            TextButton(
+              onPressed: onShowAll,
+              style: TextButton.styleFrom(
+                foregroundColor: ac.fgDim,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('Show all'),
+            ),
+            TextButton(
+              onPressed: onHideAll,
+              style: TextButton.styleFrom(
+                foregroundColor: ac.fgDim,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('Hide all'),
             ),
             const SizedBox(width: 4),
             for (final k in kinds)
