@@ -592,6 +592,15 @@ standard value. Three layers, all surgical, closing the loop:
    suppression can never drop the only copy of a fact nor pull a private value
    onto the public profile (and vice-versa). Suppressing a node blanks its own
    line only — distinct children still render.
+   **Unmerged-graph restatements (NOTE 252 leg 28):** the layer-3 data merge ran
+   only on the founder's uid, so other users still carry two *distinct* emergent
+   restatements of one fact whose normalized text differs by a stopword /
+   punctuation / word-order (so the exact-norm check above misses them). A
+   SECTION-SCOPED **content-token-set** dedup (`index.token_set`, stopwords
+   dropped, order-insensitive) collapses them to one — same precision bar as the
+   `<label> <value>` token form, so genuinely distinct facts (different token set)
+   and a fact legitimately shared across two sections are untouched. Render-only:
+   no stored data is merged.
 2. **Write-time prevention (merge-not-mint)** — the gap that let the editor
    import create the duplicates. The editor write-back
    (`person_graph_store.replace_section_bullets`) renders the standard facts into

@@ -79,6 +79,15 @@ def _keep_set(surface: str, *, include_ayma_only: bool) -> set[str]:
 #     value, or "<label>: <value>") is suppressed; the standard row survives.
 #  2. EXACT duplicate — a node (or child bullet) whose normalized text was
 #     already emitted earlier in the walk is suppressed.
+#  3. CONTENT-TOKEN restatement (zero-duplicates leg 28, NOTE 252) — a node whose
+#     content-token SET (stopwords dropped, order-insensitive) already rendered in
+#     the SAME section is suppressed. This collapses two distinct restatement
+#     nodes of one fact on an UNMERGED graph — where neither is a standard row and
+#     their normalized text DIFFERS by a stopword/punctuation/word-order ("Ethnic
+#     & cultural origin: South Asian" vs "ethnic and cultural origin south asian")
+#     so rule 2 misses them — at the same precision bar as the standard matcher's
+#     token-set form. Section-scoped, so a fact legitimately shared across two
+#     sections is untouched.
 #
 # Both are SURFACE-AWARE: a standard fact only suppresses a restatement on a
 # surface where that standard row itself renders (its visibility is in ``keep``),
@@ -179,13 +188,15 @@ def _build_node(
     seen: set[str],
     std_by_section: dict[str, list[tuple[str, frozenset[str]]]],
     seen_texts: set[str],
+    seen_tokens: dict[str, set[frozenset[str]]],
 ) -> Optional[dict]:
     """Render one node + its descendants, filtered to ``keep``. Returns None when
     neither the node nor any descendant survives the visibility filter.
 
-    ``std_by_section`` / ``seen_texts`` drive the zero-duplicates guarantee: a
-    non-standard node whose text restates a rendering standard fact, or whose
-    normalized text already appeared earlier in the walk, has its OWN line
+    ``std_by_section`` / ``seen_texts`` / ``seen_tokens`` drive the
+    zero-duplicates guarantee: a non-standard node whose text restates a rendering
+    standard fact, whose normalized text already appeared earlier in the walk, or
+    whose content-token set already rendered in the same section, has its OWN line
     suppressed (its distinct children, if any, still render)."""
     if node.id in seen:
         return None
@@ -195,19 +206,28 @@ def _build_node(
     text = render.node_display_text(node)
     is_image = node.answer_type == "image"
     norm = index_mod.normalize_text(text)
+    toks = index_mod.token_set(text)
+    sec_tokens = seen_tokens.setdefault(node.section, set())
 
     own_renderable = bool(text) or is_image
     own_kept = own_vis in keep and own_renderable
     # Zero-duplicates: never suppress a standard labelled row (it is the keeper);
     # suppress a non-standard node that restates a standard fact rendering in the
-    # same section, or whose text was already emitted (exact duplicate).
+    # same section, whose text was already emitted (exact duplicate), or whose
+    # content-token set already rendered in this section (restatement on an
+    # unmerged graph — rule 3).
     if own_kept and not node.standard and not is_image:
-        if _restates_standard(text, node.section, std_by_section) or (
-            norm and norm in seen_texts
+        if (
+            _restates_standard(text, node.section, std_by_section)
+            or (norm and norm in seen_texts)
+            or (toks and toks in sec_tokens)
         ):
             own_kept = False
+    # register BEFORE children, so the row wins over its restatements
     if own_kept and norm:
-        seen_texts.add(norm)  # register BEFORE children, so the row wins over its restatements
+        seen_texts.add(norm)
+    if own_kept and not is_image and toks:
+        sec_tokens.add(toks)
 
     # child NODES (parent links) rendered recursively, in fixed order
     child_nodes = sorted(
@@ -216,7 +236,9 @@ def _build_node(
     )
     children: list[dict] = []
     for c in child_nodes:
-        built = _build_node(c, graph, adj, keep, seen, std_by_section, seen_texts)
+        built = _build_node(
+            c, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens
+        )
         if built is not None:
             children.append(built)
 
@@ -227,12 +249,17 @@ def _build_node(
         if not cb_text or cb_vis not in keep:
             continue
         cb_norm = index_mod.normalize_text(cb_text)
-        if _restates_standard(cb_text, node.section, std_by_section) or (
-            cb_norm and cb_norm in seen_texts
+        cb_toks = index_mod.token_set(cb_text)
+        if (
+            _restates_standard(cb_text, node.section, std_by_section)
+            or (cb_norm and cb_norm in seen_texts)
+            or (cb_toks and cb_toks in sec_tokens)
         ):
-            continue  # a child bullet that restates a standard fact / exact dup
+            continue  # a child bullet that restates a standard fact / exact dup / token dup
         if cb_norm:
             seen_texts.add(cb_norm)
+        if cb_toks:
+            sec_tokens.add(cb_toks)
         children.append(
             {
                 "id": f"{node.id}#c{i}",
@@ -314,6 +341,8 @@ def node_tree(
 
     seen: set[str] = set()
     seen_texts: set[str] = set()  # zero-duplicates: normalized texts already emitted
+    # zero-duplicates leg 28: content-token sets already rendered, per section
+    seen_tokens: dict[str, set[frozenset[str]]] = {}
     by_section: dict[str, list[dict]] = {}
     roots = sorted(
         (n for nid, n in graph.items() if nid not in child_ids),
@@ -322,7 +351,9 @@ def node_tree(
     for n in roots:
         if drop_report and render.node_page_type(n) in render._REPORT_PAGE_TYPES:
             continue
-        built = _build_node(n, graph, adj, keep, seen, std_by_section, seen_texts)
+        built = _build_node(
+            n, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens
+        )
         if built is not None:
             by_section.setdefault(n.section, []).append(built)
 
