@@ -1052,3 +1052,21 @@ derives/falls back.
   (fail-before ~14×). The acceptance screenshot is re-rendered with the Skills
   filter ON, showing the assessment inside the fitted cluster (no off-screen
   edge).
+## Filter bar — Show all / Hide all master controls ✅ (founder, Nov 17 2026)
+
+- The always-visible filter bar (`_FilterBar` in `lib/screens/person_graph_screen.dart`)
+  gains two master controls alongside **Fit** and the per-type/per-level chips:
+  **Show all** turns every filter on, **Hide all** turns every filter off, each in
+  one tap. They drive the same shared filter state as the chips — `_showAllFilters`
+  clears `_hiddenKinds`/`_hiddenLevels`; `_hideAllFilters` fills them with every
+  present kind/depth — so individual chips keep toggling exactly as before after
+  either control. Fit and the settled graph controls are unchanged.
+- **Empty state (all filters off)** renders clean: `_GraphPainter` already skips
+  any node or edge failing `passes(...)` (and the selected ring is gated on
+  `passes(sel.id)`), and `_fitToVisible` falls back to all sim nodes when none are
+  visible — no crash, no stray edges without nodes.
+- **Tests** (`test/person_graph_screen_test.dart`, group "master filter controls"):
+  Show all selects every chip; Hide all clears every chip and the empty canvas
+  paints without exception; an individual chip still toggles after a master
+  control. No route added (graph screen already registered) → no app_registry/tour
+  change. No backend/inference change (100% LiveKit unaffected).

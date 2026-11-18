@@ -301,17 +301,26 @@ void main() {
   // (a dead hit-test, the NOTE 248 bug, would never select the image node).
   testWidgets('a tap resolves to the image node and Open shows the photo',
       (tester) async {
+    // A generous, deterministic surface so the single image node has an amply
+    // tappable region (the default 600px surface collapses it below the grid
+    // step — see the photo-adjacent-bullet test).
+    tester.view.physicalSize = const Size(800, 1100);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(_reducedMotionApp(_ImageOnlyApi()));
     await tester.pump(); // runs the reduced-motion settle + fit
     await tester.pump();
 
-    final canvas = tester.getRect(find.byType(PersonGraphScreen));
-    // Sweep a 22px grid (finger tolerance ~22px) until a tap lands on the image
-    // node — then the panel shows its "Open" affordance (the only openable node
-    // here). Positions are fixed (reduced motion), so this resolves.
+    // Sweep only the graph canvas itself (the _GraphPainter rect), NOT the whole
+    // screen — the header filter bar holds controls (Fit, Show all, Hide all)
+    // that a blind full-screen sweep would trip, and it holds no graph nodes.
+    // Fixed positions (reduced motion), so this resolves on the image node whose
+    // panel then shows the "Open" affordance (the only openable node here).
+    final canvas = tester.getRect(find.byWidgetPredicate(
+        (w) => w is CustomPaint && '${w.painter.runtimeType}' == '_GraphPainter'));
     var selected = false;
-    for (var y = canvas.top + 60; y < canvas.bottom - 8 && !selected; y += 22) {
-      for (var x = canvas.left + 8; x < canvas.right - 8 && !selected; x += 22) {
+    for (var y = canvas.top + 6; y < canvas.bottom - 6 && !selected; y += 8) {
+      for (var x = canvas.left + 6; x < canvas.right - 6 && !selected; x += 8) {
         await tester.tapAt(Offset(x, y));
         await tester.pump();
         if (find.widgetWithText(TextButton, 'Open').evaluate().isNotEmpty) {
@@ -578,6 +587,61 @@ void main() {
             'b:1', 'emergent.image.p1', // descendants
             'emergent.report.z', // related
           });
+    });
+  });
+
+  group('master filter controls (Show all / Hide all)', () {
+    List<FilterChip> chips(WidgetTester tester) =>
+        tester.widgetList<FilterChip>(find.byType(FilterChip)).toList();
+
+    testWidgets('Show all enables every filter; Hide all clears every filter',
+        (tester) async {
+      await tester.pumpWidget(_reducedMotionApp(_FakeApi()));
+      await tester.pump();
+      await tester.pump();
+
+      // Every type/level chip starts ON (nothing hidden).
+      expect(chips(tester), isNotEmpty);
+      expect(chips(tester).every((c) => c.selected), isTrue);
+
+      // Hide all -> every chip OFF, and the empty canvas paints cleanly.
+      await tester.tap(find.widgetWithText(TextButton, 'Hide all'));
+      await tester.pump();
+      expect(chips(tester).every((c) => !c.selected), isTrue);
+      expect(tester.takeException(), isNull,
+          reason: 'empty state (all filters off) must render without exception');
+
+      // Show all -> every chip ON again.
+      await tester.tap(find.widgetWithText(TextButton, 'Show all'));
+      await tester.pump();
+      expect(chips(tester).every((c) => c.selected), isTrue);
+    });
+
+    testWidgets('an individual chip still toggles after a master control',
+        (tester) async {
+      await tester.pumpWidget(_reducedMotionApp(_FakeApi()));
+      await tester.pump();
+      await tester.pump();
+
+      // After Hide all every chip is OFF.
+      await tester.tap(find.widgetWithText(TextButton, 'Hide all'));
+      await tester.pump();
+      expect(chips(tester).every((c) => !c.selected), isTrue);
+
+      // Tapping one chip ('You') turns just that filter back ON — proof the
+      // per-chip toggle still drives the same shared state the master set.
+      final you = find.widgetWithText(FilterChip, 'You');
+      await tester.ensureVisible(you);
+      await tester.tap(you);
+      await tester.pump();
+      expect(tester.widget<FilterChip>(you).selected, isTrue);
+      expect(chips(tester).where((c) => c.selected).length, 1);
+
+      // Tapping it again hides it — back to the all-off empty state, no crash.
+      await tester.tap(you);
+      await tester.pump();
+      expect(tester.widget<FilterChip>(you).selected, isFalse);
+      expect(tester.takeException(), isNull);
     });
   });
 
