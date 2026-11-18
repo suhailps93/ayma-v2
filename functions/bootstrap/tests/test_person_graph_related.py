@@ -55,8 +55,8 @@ def _nodes():
             "answer": "Rocky is a golden retriever dog", "state": "answered",
             "visibility": "private", "provenance": "stated",
         },
-        "n2": {
-            "prompt": "", "section": "misc", "level": 2, "answer_type": "narrative",
+        "n1": {
+            "prompt": "", "section": "misc", "level": 1, "answer_type": "narrative",
             "answer": "Rocky the golden retriever is friendly", "state": "answered",
             "visibility": "private", "provenance": "stated",
         },
@@ -95,10 +95,14 @@ def _judge(monkeypatch, verdicts: dict[tuple[str, str], str]):
 
 
 def test_level_rule_eligibility():
-    assert pg.eligible_for_related_link(3, 3)
-    assert pg.eligible_for_related_link(4, 3)
-    assert not pg.eligible_for_related_link(2, 3)
-    assert not pg.eligible_for_related_link(3, 2)
+    # Founder Nov 18 (revised): LEVEL 2 AND UP, both ends.
+    assert pg.eligible_for_related_link(2, 2)
+    assert pg.eligible_for_related_link(3, 2)
+    assert pg.eligible_for_related_link(5, 2)
+    # levels 0 and 1 never carry a link, on EITHER end.
+    assert not pg.eligible_for_related_link(1, 2)
+    assert not pg.eligible_for_related_link(2, 1)
+    assert not pg.eligible_for_related_link(1, 1)
     assert not pg.eligible_for_related_link(0, 5)
 
 
@@ -139,12 +143,12 @@ async def test_proposer_links_raises_skips_and_drops_by_level(monkeypatch):
     db = _db(_nodes())
 
     # Candidates: a-b (judge: related -> LINK), a-c (uncertain -> RAISE),
-    # a-d (duplicate -> SKIP), a-n2 (touches level-2 -> DROPPED by the rule).
+    # a-d (duplicate -> SKIP), a-n1 (touches level-1 -> DROPPED by the rule).
     report = _report(
         ("n3a", "n3b", "both about the dog"),
         ("n3a", "n3c", "maybe the dog"),
         ("n3a", "n3d", "same dog fact"),
-        ("n3a", "n2", "friendly dog"),
+        ("n3a", "n1", "friendly dog"),
     )
     monkeypatch.setattr(crosscheck, "candidate_report", lambda db, uid, index: report)
 
@@ -156,7 +160,7 @@ async def test_proposer_links_raises_skips_and_drops_by_level(monkeypatch):
 
     rep = await related.sweep_user(db, UID, dry_run=False)
 
-    assert rep.dropped_by_level == 1  # the a-n2 pair
+    assert rep.dropped_by_level == 1  # the a-n1 pair (level-1 end)
     assert ("n3a", "n3b", "both about the dog") in rep.linked
     assert len(rep.linked) == 1
     assert ("n3a", "n3c", "maybe the dog") in rep.raised

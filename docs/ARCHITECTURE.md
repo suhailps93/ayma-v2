@@ -561,7 +561,7 @@ reroute to work around an empty response.
     Nodes that are the same entity/topic but a DIFFERENT fact are wired together with a mutual `related` link (the dog
     that came up under Family linked to the other dog notes). The session-end proposer (`person_graph_related.sweep_user`,
     ALONGSIDE the dedupe sweep, not changing it) reuses the dedupe candidate finder, keeps only pairs where BOTH ends are
-    level 3+, then the LiveKit judge (never rerouted) links the CONFIDENT `related` ones and RAISES the UNCERTAIN ones in
+    level 2+, then the LiveKit judge (never rerouted) links the CONFIDENT `related` ones and RAISES the UNCERTAIN ones in
     chat (`record_pending_dedupe`) — never a silent link; a same-fact `duplicate` is left to the dedupe path.
     `graph_lookup`/`connected_node_ids` already surface a node's related nodes + one hop, so Ayma doesn't re-ask a covered
     topic. **Privacy (hard):** related traversal is confined to the viewer's visibility set in BOTH render
