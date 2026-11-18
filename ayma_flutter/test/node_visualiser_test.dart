@@ -777,6 +777,102 @@ void main() {
     expect(api.setTextCalls, [('n2', 'Balanced 9-to-5')]);
   });
 
+  // --- Edit manually: the Career questionnaire-field node shape (Leg 26 retest) ---
+  //
+  // The Career "Role of work in life" node is NOT a standard field (it is not in
+  // STANDARD_FIELDS); it is a questionnaire enum whose server render bakes
+  // "`<prompt>: <value>`" into the node text, arriving as a NON-standard node with
+  // `label: 'Role of work in life'` and `text: 'Role of work in life: <value>'`.
+  // The own-label strip must recognise this shape too (node.label), or the saved
+  // value doubles every round.
+
+  StoryNode careerNode(String text) => _node(
+        id: 'career',
+        label: 'Role of work in life',
+        text: text,
+        standard: false,
+      );
+
+  test('editableNodeValue bares the Career questionnaire-field node (non-standard)',
+      () {
+    // First edit: the field prefills the bare value, no "Role of work in life:".
+    expect(
+      editableNodeValue(
+          careerNode('Role of work in life: Balanced 9-to-5 / Priority on Leisure')),
+      'Balanced 9-to-5 / Priority on Leisure',
+    );
+    // Already-doubled stored data is recovered to the bare value.
+    expect(
+      editableNodeValue(careerNode(
+          'Role of work in life: Role of work in life: Balanced 9-to-5')),
+      'Balanced 9-to-5',
+    );
+  });
+
+  test('stripNodeOwnLabel strips a non-standard questionnaire-field own-label',
+      () {
+    final node = careerNode('');
+    // The baked/doubled prefix comes off; a bare value is untouched (idempotent).
+    expect(stripNodeOwnLabel('Role of work in life: Balanced 9-to-5', node),
+        'Balanced 9-to-5');
+    expect(stripNodeOwnLabel('Balanced 9-to-5', node), 'Balanced 9-to-5');
+    expect(
+        stripNodeOwnLabel(
+            stripNodeOwnLabel('Role of work in life: Balanced 9-to-5', node),
+            node),
+        'Balanced 9-to-5');
+    // A truly label-less non-standard node (emergent/bullet: empty label) is
+    // never stripped, even when its value happens to hold a colon.
+    final bullet = _node(id: 'b', text: '', standard: false);
+    expect(stripNodeOwnLabel('Role: lead actor', bullet), 'Role: lead actor');
+  });
+
+  testWidgets(
+      'Edit manually bares + saves the Career node without doubling (re-edit idempotent)',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: careerNode(
+            'Role of work in life: Balanced 9-to-5 / Priority on Leisure'),
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_edit_manually')));
+    await tester.pumpAndSettle();
+    // Prefill is the bare value — no "Role of work in life:" prefix.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'Balanced 9-to-5 / Priority on Leisure');
+    // Saving the unchanged prefill stores the bare value — the server re-applies
+    // the label at render, so the row never doubles.
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+        api.setTextCalls, [('career', 'Balanced 9-to-5 / Priority on Leisure')]);
+  });
+
+  testWidgets(
+      'Edit manually recovers already-doubled stored Career data on save',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: careerNode(
+            'Role of work in life: Role of work in life: Balanced 9-to-5'),
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_edit_manually')));
+    await tester.pumpAndSettle();
+    // Both baked prefixes come off in the prefill.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'Balanced 9-to-5');
+    // And saving stores the bare value — the accumulation is undone, not grown.
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(api.setTextCalls, [('career', 'Balanced 9-to-5')]);
+  });
+
   testWidgets('image node embeds inline; tap opens its context', (tester) async {
     AymaPhoto.debugCacheManager =
         _FakeCacheManager(File('test/fixtures/tiny.png'));

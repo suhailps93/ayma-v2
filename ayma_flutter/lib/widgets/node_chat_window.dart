@@ -41,19 +41,39 @@ bool nodeHasOwnerActions(
         surface == NodeVisualiserSurface.report ||
         surface == NodeVisualiserSurface.graphDetail);
 
-/// [value] with any leading copy of [node]'s own rendered label stripped.
+/// The label [node]'s rendered row prefixes before its value — the single text
+/// that [stripNodeOwnLabel] must recognise — or `''` when the node renders no
+/// label prefix.
 ///
-/// A standard node renders as "`<standardLabel>: <value>`" (see
-/// [NodeVisualiser]); its STORED value is the bare value alone. If a value
-/// itself begins with "`<standardLabel>:`" — existing doubled data, or a paste
-/// of the rendered row — the next render would prepend the label again, doubling
-/// it, and every re-edit would add another copy. This strips every leading
-/// own-label prefix so the stored value stays the bare value. A non-standard
-/// node renders no label prefix, so its value is returned unchanged. Idempotent:
+/// Two node shapes render a "`<label>: <value>`" row and so can double:
+///  - a STANDARD field (Name, Age, Location, …): the client prepends its
+///    [StoryNode.standardLabel] at render (see [NodeVisualiser]), the stored
+///    value is bare;
+///  - a non-standard QUESTIONNAIRE-FIELD node (an enum/bool/number/scale answer,
+///    e.g. Career "Role of work in life"): the server bakes "`<prompt>: <value>`"
+///    into the node text (`person_graph_render._answer_text`), and that prompt
+///    arrives as [StoryNode.label].
+///
+/// For both, the label to strip is that rendered prefix. Truly label-less nodes
+/// — emergent/narrative facts, child bullets ([StoryNode.label] is empty) — return
+/// `''` and are left untouched.
+String nodeOwnLabel(StoryNode node) {
+  if (node.standard) return (node.standardLabel ?? '').trim();
+  return node.label.trim();
+}
+
+/// [value] with any leading copy of [node]'s own rendered label ([nodeOwnLabel])
+/// stripped.
+///
+/// A labelled node renders as "`<label>: <value>`" but its STORED value is the
+/// bare value alone. If a value itself begins with "`<label>:`" — existing
+/// doubled data, or a paste of the rendered row — the next render would prepend
+/// the label again, doubling it, and every re-edit would add another copy. This
+/// strips every leading own-label prefix so the stored value stays the bare
+/// value. A node with no rendered label prefix is returned unchanged. Idempotent:
 /// a value with no own-label prefix is returned as-is.
 String stripNodeOwnLabel(String value, StoryNode node) {
-  if (!node.standard) return value;
-  final label = (node.standardLabel ?? '').trim();
+  final label = nodeOwnLabel(node);
   if (label.isEmpty) return value;
   final lower = label.toLowerCase();
   var v = value.trimLeft();
@@ -67,7 +87,8 @@ String stripNodeOwnLabel(String value, StoryNode node) {
 /// rendered "label: value". Uses the node's value ([StoryNode.text]); for a
 /// standard node with no value it is empty (the label is never put in as the
 /// value), and a non-standard node falls back to its prompt ([StoryNode.label]).
-/// Any leading own-label is stripped (defensive against already-doubled data).
+/// Any leading own-label is stripped (defensive against already-doubled data and
+/// against the server-baked "`<prompt>: <value>`" of a questionnaire-field node).
 String editableNodeValue(StoryNode node) {
   final raw =
       node.text.isNotEmpty ? node.text : (node.standard ? '' : node.label);
