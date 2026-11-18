@@ -706,7 +706,9 @@ def test_open_screen_covers_every_nested_profile_and_settings_screen():
         "ayma", "explore", "messages", "profile", "matches", "story",
         "settings", "appearance_settings", "privacy_settings",
         "profile_details", "photos",
-        "voice_preference", "credits", "accent_color", "notifications",
+        # accent_color is no longer a standalone screen (build 2491): the
+        # accent surface is folded inline into appearance_settings.
+        "voice_preference", "credits", "notifications",
         "notification_settings", "feedback", "terms", "privacy",
         "release_notes",
     ):
@@ -1932,12 +1934,12 @@ def test_ui_action_is_a_command_tool_in_voice_and_text():
 
 def test_describe_names_any_route_and_includes_the_live_capture():
     out = app_control._describe({
-        "screen": "", "route": "/settings/accent-color",
-        "visible": 'Title: Accent colour\n[b1] button "Save"',
+        "screen": "", "route": "/settings/appearance",
+        "visible": 'Title: Accent Color\n[b1] button "Use this color"',
     })
-    assert out.startswith("The user is on Accent colour.")
-    assert "Route: /settings/accent-color" in out
-    assert '[b1] button "Save"' in out and "ui_action" in out
+    assert out.startswith("The user is on Appearance settings.")
+    assert "Route: /settings/appearance" in out
+    assert '[b1] button "Use this color"' in out and "ui_action" in out
 
 
 def test_describe_lists_what_sits_on_settings_like_the_you_tab():

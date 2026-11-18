@@ -20,7 +20,6 @@ import '../services/tab_request.dart';
 import '../screens/biometric_consent_screen.dart';
 import '../screens/biometric_consent_settings_screen.dart';
 import '../screens/biometric_info_screen.dart';
-import '../screens/accent_color_screen.dart';
 import '../screens/appearance_report_screen.dart';
 import '../screens/appearance_settings_screen.dart';
 import '../screens/camera_color_picker_screen.dart';
@@ -433,11 +432,6 @@ final appRouter = GoRouter(
       path: VoicePreferenceScreen.path,
       builder: (context, state) =>
           const NavBarShell(child: VoicePreferenceScreen()),
-    ),
-    GoRoute(
-      path: AccentColorScreen.path,
-      builder: (context, state) =>
-          const NavBarShell(child: AccentColorScreen()),
     ),
     GoRoute(
       path: PlanScreen.path,

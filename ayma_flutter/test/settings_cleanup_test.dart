@@ -119,7 +119,6 @@ void main() {
         for (final stub in const {
           '/profile/plan': 'PLAN SCREEN',
           '/notifications/prefs': 'NOTIF PREFS SCREEN',
-          '/settings/accent-color': 'ACCENT SCREEN',
           '/settings/voice': 'MODELS SCREEN',
           '/settings/connect-agent': 'CONNECT SCREEN',
           '/settings/delete-account': 'DELETE SCREEN',
@@ -189,13 +188,14 @@ void main() {
     }
   });
 
-  testWidgets('the Appearance row opens theme mode and accent colour',
-      (tester) async {
+  testWidgets('the Appearance row opens theme mode and the inline accent '
+      'surface (build 2491: no standalone Accent Color page)', (tester) async {
     final c = ThemeController(initial: ThemeMode.dark);
     await pumpRouted(tester, controller: c);
 
     await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('Match system'), findsOneWidget);
     expect(find.text('Light'), findsOneWidget);
@@ -205,12 +205,19 @@ void main() {
 
     // The theme choice still saves from inside Appearance.
     await tester.tap(find.text('Light'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(c.mode, ThemeMode.light);
 
-    await tester.tap(find.text('Accent Color'));
-    await tester.pumpAndSettle();
-    expect(find.text('ACCENT SCREEN'), findsOneWidget);
+    // The accent picker now lives inline here — not behind a navigating row.
+    // The full custom picker and the preset swatches are on this same page.
+    expect(find.byKey(const Key('hueStrip')), findsOneWidget);
+    expect(find.byKey(const Key('useThisColor')), findsOneWidget);
+    expect(
+        find.byKey(const Key('accentPreset_cherry_fuchsia')), findsOneWidget);
+    expect(find.byKey(const Key('pickFromCamera')), findsOneWidget);
+    // No standalone Accent Color page to navigate to any more.
+    expect(find.text('ACCENT SCREEN'), findsNothing);
   });
 
   testWidgets(
@@ -315,7 +322,8 @@ void main() {
 
     expect(find.textContaining('Ayma’s settings'), findsNothing);
     await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(find.textContaining('Ayma’s settings'), findsNothing);
     router.pop();
     await tester.pumpAndSettle();
@@ -442,17 +450,13 @@ void main() {
   });
 
   testWidgets(
-      'cluster 17 — Appearance: accent icon fgDim, radios shrinkWrap with '
-      'titles at x=60, ListView bottom padding 20 (defects 7, 8, 9)',
-      (tester) async {
+      'cluster 17 — Appearance: radios shrinkWrap with titles at x=60, the '
+      'inline accent picker is present, ListView bottom padding 24 '
+      '(defects 8, 9; build 2491 folds accent inline)', (tester) async {
     await pumpRouted(tester);
     await tester.tap(find.text('Appearance'));
-    await tester.pumpAndSettle();
-
-    final ac = _ac(tester, find.text('Accent Color'));
-
-    // Defect 7 — the Accent Color leading icon is fgDim, not accent.
-    expect(_iconColor(tester, Icons.palette_outlined), ac.fgDim);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     // Defect 8 — the three radio rows shrink the tap target and zero the
     // title gap, so their titles land on the shared x=60 edge.
@@ -469,15 +473,21 @@ void main() {
       'Match system',
       'Light',
       'Dark',
-      'Accent Color',
       'How to use Ayma',
     ]) {
       expect(_titleLeft(tester, title), moreOrLessEquals(60, epsilon: 0.5),
           reason: title);
     }
 
-    // Defect 9 — the Appearance ListView pads its bottom 20.
+    // Build 2491 — the accent surface is folded inline here (no navigating
+    // row to a standalone page); the 'Accent Color' section header sits on
+    // the page gutter and the full picker renders below it.
+    expect(find.text('Accent Color'), findsOneWidget);
+    expect(find.byKey(const Key('hueStrip')), findsOneWidget);
+    expect(find.byKey(const Key('useThisColor')), findsOneWidget);
+
+    // Defect 9 — the Appearance ListView pads its bottom.
     expect(tester.widget<ListView>(find.byType(ListView)).padding,
-        const EdgeInsets.only(bottom: 20));
+        const EdgeInsets.only(bottom: 24));
   });
 }

@@ -71,8 +71,6 @@ String? navPageLabelForPath(String rawPath) {
       return "Ayma's models";
     case '/settings/profile':
       return 'Profile details';
-    case '/settings/accent-color':
-      return 'Accent colour';
     case '/settings/delete-account':
       return 'Delete account';
     case '/settings/biometric-consent':

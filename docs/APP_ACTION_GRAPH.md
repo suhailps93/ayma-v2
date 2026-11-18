@@ -426,7 +426,7 @@ and top-up live on Plan (`/profile/plan`).
 | Plan and credits row | Open Plan | COVERED `open_screen credits` |
 | Appearance row | Open Appearance | COVERED `open_screen appearance_settings` |
 | Privacy row | Open Privacy | COVERED `open_screen privacy_settings` |
-| Accent Color row (in Appearance) | Open accent picker | COVERED `open_screen accent_color`; setting it is `app_action accent_color` |
+| Accent Color section (inline in Appearance) | Pick the accent colour (presets + full custom picker, all on this page) | COVERED `open_screen appearance_settings` opens it; setting it is `app_action accent_color` |
 | Pick from camera (in Appearance) | Sample accent colour live with camera | `UI` (live camera preview + sampling ring; camera permission + frame sampling are local); opens via `open_screen camera_color_picker` |
 | Pause matching switch (in Privacy) | Pause/resume matching | COVERED `app_action pause_matching` / `resume_matching` |
 | Notification preferences row | Open notification prefs | COVERED `open_screen notification_settings` |
@@ -456,13 +456,24 @@ and top-up live on Plan (`/profile/plan`).
 | Voice mode (cascade / realtime) + realtime model pickers | Choose voice mode/model | COVERED `set_voice_mode` / `set_realtime_model` |
 | Save / "Save and reconnect" | Save the stack (reconnects a live call) | COVERED — the save is the `set_model_stack` tools' own completion; the button is `UI` |
 
-## 22. Accent colour (`/accent-color` area) — `accent_color_screen.dart`
+## 22. Accent colour — inline in Appearance (`appearance_settings_screen.dart`)
+
+Build 2491: the standalone Accent Color page (`accent_color_screen.dart`, route
+`/settings/accent-color`) was deleted and the whole accent surface folded inline
+into Appearance. Preset swatches, the full custom picker (hue strip, saturation,
+brightness, live orb preview) and the camera/eyedropper sampling entry all live
+on this one page. Realtime model (Nov 17): every pick is a live preview only;
+"Use this color" is the sole persist; leaving without it reverts to the saved
+accent.
 
 | Control | Does | Ayma |
 |---|---|---|
-| Colour wheel drag | Pick a colour | COVERED `app_action accent_color` (hex) — the drag is `UI`-equivalent via the hex command |
+| Preset swatches | Preview a preset accent live | COVERED `app_action accent_color` (the preset's hex); `UI`-equivalent inline |
+| Colour wheel drag (hue strip) | Pick a colour | COVERED `app_action accent_color` (hex) — the drag is `UI`-equivalent via the hex command |
 | Saturation / Brightness sliders | Tune the colour | COVERED via `app_action accent_color` (resulting hex) |
-| Reset to default | Restore the default accent | COVERED `app_action accent_color` = default |
+| Pick from camera | Sample an accent colour live with the camera | `UI`; opens via `open_screen camera_color_picker` (returns an unsaved pick) |
+| "Use this color" | Save the previewed pick | COVERED — the save is `app_action accent_color`'s own persist; the button is `UI` |
+| Reset to default | Preview the default accent | COVERED `app_action accent_color` = default |
 
 ## 23. Plan (`/profile/plan`) and trial paywall — `plan_screen.dart`, `trial_paywall_screen.dart`
 
