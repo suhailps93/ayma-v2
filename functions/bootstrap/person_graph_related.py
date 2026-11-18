@@ -14,9 +14,9 @@ flag is on), then has the LiveKit judge label each candidate:
   flow (``pg_find_duplicates`` surfaces it), never linked silently;
 * "unrelated"         → dropped.
 
-LEVEL RULE (founder Nov 18): a related link only connects nodes level 3 or
-deeper — a candidate touching a level-0/1/2 node on either end is DROPPED before
-it is written or counted.
+LEVEL RULE (founder Nov 18, revised to level 2 and up): a related link only
+connects nodes level 2 or deeper — a candidate touching a level-0/1 node on
+either end is DROPPED before it is written or counted.
 
 Gated behind ``CONFIG.node_related_propose`` (off by default). It runs at session
 end (``post_turn``) over the session's freshly-ingested graph, and a DRY-RUN mode
@@ -51,7 +51,7 @@ class RelatedReport:
     """What one user's related-link pass found. ``linked`` = ``(a, b, reason)``
     pairs a confident link was (or would be) written for; ``raised`` =
     ``(a, b, reason)`` uncertain pairs recorded for the in-chat raise;
-    ``dropped_by_level`` = candidates discarded by the level-3 rule; ``found`` =
+    ``dropped_by_level`` = candidates discarded by the level rule; ``found`` =
     candidate pairs the finder produced."""
 
     found: int = 0
@@ -76,7 +76,7 @@ def eligible_pairs(
     pairs: list[crosscheck.CandidatePair], level_of: dict[str, int]
 ) -> tuple[list[crosscheck.CandidatePair], int]:
     """Split candidate ``pairs`` into (kept, dropped_count) by the level-3 rule —
-    a pair is kept only when BOTH ends are level 3 or deeper (founder Nov 18)."""
+    a pair is kept only when BOTH ends are level 2 or deeper (founder Nov 18)."""
     kept = [
         p for p in pairs
         if pg.eligible_for_related_link(level_of.get(p.a, 0), level_of.get(p.b, 0))
@@ -122,7 +122,7 @@ async def sweep_user(
 ) -> RelatedReport:
     """Run the related-link proposer for one user. Finds same-topic-but-different
     candidate pairs (reusing the dedupe cross-check finder), drops any touching a
-    level-0/1/2 node, has the LiveKit judge label the rest, then LINKS the
+    level-0/1 node, has the LiveKit judge label the rest, then LINKS the
     confident "related" pairs and RAISES the uncertain ones (never silent). Pairs
     the judge calls a duplicate are left to the dedupe path (never linked). Pairs
     already linked or dismissed are skipped. ``dry_run`` reports without writing.
@@ -149,7 +149,7 @@ async def sweep_user(
         if p.key() not in already and p.key() not in dismissed
     ]
 
-    # LEVEL RULE — both ends must be level 3+.
+    # LEVEL RULE — both ends must be level 2+.
     candidates, dropped = eligible_pairs(candidates, level_of)
 
     out = RelatedReport(

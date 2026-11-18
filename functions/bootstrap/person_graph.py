@@ -601,17 +601,19 @@ def now_iso() -> str:
 # side(s) are overlay nodes (a seed node's links are fixed), and these read
 # helpers DERIVE the missing direction so every surface sees the pair both ways.
 #
-# LEVEL RULE (founder Nov 18): a related link only ever connects nodes DEEPER than
-# level 2 — BOTH ends must be level 3 or deeper. Levels 0/1/2 (You, and the
-# form/structure layers) never carry a related link, as source or target.
+# LEVEL RULE (founder Nov 18, revised to LEVEL 2 AND UP): a related link only ever
+# connects nodes at level 2 or deeper — BOTH ends. Levels 0 and 1 (You, and the
+# top structure layer) never carry a related link, as source or target; You stays
+# level 0.
 
-RELATED_MIN_LEVEL = 3
+RELATED_MIN_LEVEL = 2
 
 
 def eligible_for_related_link(level_a: int, level_b: int) -> bool:
     """True when a related link MAY connect two nodes at these levels — both ends
-    level ``RELATED_MIN_LEVEL`` or deeper (founder Nov 18). A pair touching a
-    level-0/1/2 node on either end is never linked (structure layers need none)."""
+    level ``RELATED_MIN_LEVEL`` or deeper (founder Nov 18: level 2 and up). A pair
+    touching a level-0/1 node on either end is never linked (You + the top
+    structure layer need none)."""
     return int(level_a) >= RELATED_MIN_LEVEL and int(level_b) >= RELATED_MIN_LEVEL
 
 

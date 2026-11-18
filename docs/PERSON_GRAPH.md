@@ -1298,10 +1298,11 @@ changes a node's visibility/text/level.
   DERIVES the missing direction so every surface (render + lookup) sees the pair
   both ways even when the target is a seed node that can't store links.
   Helpers: `pg.related_targets(node)`, `pg.mutual_related(graph)`.
-- **Level rule.** A related link connects ONLY nodes level 3 or deeper — BOTH
-  ends. Levels 0/1/2 (You, and the form/structure layers) never carry a link, as
-  source or target. `pg.eligible_for_related_link(a, b)` + `RELATED_MIN_LEVEL=3`;
-  enforced in the write-time proposer AND the backfill dry-run (`dropped_by_level`).
+- **Level rule** (founder Nov 18, revised to **level 2 and up**). A related link
+  connects ONLY nodes level 2 or deeper — BOTH ends. Levels 0 and 1 (You, and the
+  top structure layer) never carry a link, as source or target; You stays level 0.
+  `pg.eligible_for_related_link(a, b)` + `RELATED_MIN_LEVEL=2`; enforced in the
+  write-time proposer AND the backfill dry-run (`dropped_by_level`).
 - **Write-time proposer** (`person_graph_related.sweep_user`, flag
   `NODE_RELATED_PROPOSE`, off by default). Runs at session end AFTER ingest,
   ALONGSIDE the dedupe sweep — it does NOT change dedupe. It reuses the dedupe

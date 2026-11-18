@@ -368,7 +368,7 @@ class Config:
     """Write-time RELATED-LINK proposer (founder Nov 18). Alongside the dedupe
     check (NOT changing it), the session-end sweep (``person_graph_related``)
     finds nodes that are the same entity/topic but a DIFFERENT fact (not a
-    duplicate) and, for pairs where BOTH ends are level 3+ (the level rule),
+    duplicate) and, for pairs where BOTH ends are level 2+ (the level rule),
     proposes a MUTUAL ``related`` link. The LiveKit judge labels each pair:
     a CONFIDENT "related" is linked with the node; an UNCERTAIN one is RAISED in
     chat (the settled ``record_pending_dedupe`` flow), never linked silently; a
