@@ -92,54 +92,81 @@ pixel_serial() {
   adb devices 2>/dev/null | awk 'NR>1 && $2=="device" && $1 !~ /^emulator-/ {print $1; exit}'
 }
 
+# Plain-language name for a merged branch leaf: fleet/looking-for-icons ->
+# "Looking for icons" (drop a fleet/ or origin/ prefix, _/- -> space, Capitalise).
+humanize_branch() {
+  echo "${1#*fleet/}" | sed 's#^fleet/##; s#.*/##; s/[-_]/ /g; s/\b\(.\)/\u\1/'
+}
+
 # --- "What's different" bullets from git log PREV..NEW ---------------------- #
-# feat/fix/ui/perf/feature/refactor -> one founder-language bullet each (type+
-# scope stripped, scope kept as a readable prefix). `refactor` is user-visible
-# too: the founder's standing order is to DELETE the old screen/report/renderer
-# in the same change that replaces it, and those deletions ship as `refactor:`
-# (e.g. "refactor(story): delete the legacy career-timeline subsystem" — a
-# duplicate block the founder actually saw go away), so they must get their own
-# bullet, not be buried in the "internal fixes" count. Jobs-pass UI-program
-# commits and versionCode bumps are user-visible too -> each gets its own named
-# bullet (they used to fall into the generic "internal" count, repaired by hand).
-# Everything else (chore/docs/test/style/ci/build) -> one grouped "internal
-# fixes" bullet. Merge commits are skipped (their branch commits carry the real
-# change). Prints markdown bullets.
+# A batch is a set of MERGED BRANCHES + a versionCode bump. Every merged branch
+# is NAMED as what it is: a founder-ordered feature is never reduced to "internal
+# fixes / housekeeping" just because its own commit subjects lack a conventional
+# `feat:`/`fix:` prefix (the old bug — batches 2507/2508/2509 mislabelled). The
+# bullet's content is, in order: the merge commit's own ": summary" suffix
+# (the sweep writes one), else the humanised branch name. The versionCode bump
+# is always its own bullet. ONLY when the range merged NO branch (a direct
+# hotfix / bump-only) does it fall back to per-commit feat/fix/jobs parsing, with
+# the genuinely-internal remainder grouped into one "internal fixes" bullet.
+# Prints markdown bullets.
 whats_different() {
-  local range="$1" internal=0 subj scope rest newver note
+  local range="$1" internal=0 subj scope rest newver note branch sum had_merge=0
   # Regexes held in variables (not inline in [[ =~ ]]): the inline unquoted
   # alternation form fails to parse on bash >= 5.2 ("unexpected token )").
+  # re_merge matches every merge subject the pipeline produces — the sweep's
+  # "Merge fleet/X into staging (batch N)[: summary]" and git's default
+  # "Merge (remote-tracking )?branch '?(origin/)?fleet/X'? into staging".
+  local re_merge='^Merge .*(fleet/[A-Za-z0-9._-]+)[^ ]* into staging( \(batch [0-9]+\))?(: (.*))?$'
+  # Matches both bump formats: "... to M (batch M)" and "... to M for batch M (note)".
+  local re_bump='^Bump versionCode [0-9]+ to ([0-9]+)( for batch [0-9]+)?( \((.*)\))?$'
   local re_feat='^(feat|feature|fix|ui|perf|refactor)(\(([^)]+)\))?!?:\ *(.*)$'
   local re_jobs='[Jj]obs [PpWw]'
-  local re_bump='^Bump versionCode [0-9]+ to ([0-9]+)( \((.*)\))?$'
+  # (1) Name every merged branch (the real user-visible content of a batch).
   while IFS= read -r subj; do
     [[ -z "$subj" ]] && continue
-    if [[ "$subj" =~ $re_feat ]]; then
-      scope="${BASH_REMATCH[3]}"; rest="${BASH_REMATCH[4]}"
-      if [[ -n "$scope" ]]; then
-        # capitalise the scope as a plain label
-        printf -- '- **%s:** %s\n' "$(echo "$scope" | sed 's/[-_]/ /g; s/\b\(.\)/\u\1/')" "$rest"
+    if [[ "$subj" =~ $re_merge ]]; then
+      had_merge=1
+      branch="${BASH_REMATCH[1]}"; sum="${BASH_REMATCH[4]}"
+      if [[ -n "$sum" ]]; then
+        # the sweep's "Merge ... (batch N): <summary>" carries plain-language content
+        printf -- '- **%s:** %s\n' "$(humanize_branch "$branch")" "$sum"
       else
-        printf -- '- %s\n' "$(echo "$rest" | sed 's/\b\(.\)/\u\1/')"
+        # a git-default / summary-less merge: name the branch (never "internal")
+        printf -- '- %s\n' "$(humanize_branch "$branch")"
       fi
-    elif [[ "$subj" =~ $re_jobs ]]; then
-      # Jobs-pass UI-program commit (e.g. "Jobs pass cluster 20: ..." /
-      # "Jobs Wave 3 ..." / "cluster 19 (...): Jobs pass — ..."): user-visible.
-      # Keep the subject's own wording; strip a trailing "(fleet/...)" branch ref
-      # and capitalise the first letter only (never title-case the sentence).
-      printf -- '- %s\n' "$(echo "$subj" | sed 's/ *(fleet\/[^)]*)//; s/^\(.\)/\u\1/')"
-    elif [[ "$subj" =~ $re_bump ]]; then
-      # versionCode bump: the installed build advanced — user-visible.
-      newver="${BASH_REMATCH[1]}"; note="${BASH_REMATCH[3]}"
+    fi
+  done < <(git -C "$WT" log --merges --pretty=%s "$range" 2>/dev/null)
+  # (2) versionCode bump — always user-visible, whether or not branches merged.
+  while IFS= read -r subj; do
+    if [[ "$subj" =~ $re_bump ]]; then
+      newver="${BASH_REMATCH[1]}"; note="${BASH_REMATCH[4]}"
       if [[ -n "$note" ]]; then
         printf -- '- **Build:** versionCode %s — %s\n' "$newver" "$note"
       else
         printf -- '- **Build:** versionCode %s\n' "$newver"
       fi
+    fi
+  done < <(git -C "$WT" log --no-merges --pretty=%s "$range" 2>/dev/null)
+  # (3) No branch merged in the range -> fall back to per-commit parsing of the
+  # direct commits (a hotfix straight to staging). The merged-branch bullets
+  # above already carry every branch's content, so this never double-reports.
+  (( had_merge == 1 )) && return 0
+  while IFS= read -r subj; do
+    [[ -z "$subj" ]] && continue
+    [[ "$subj" =~ $re_bump ]] && continue   # bump already emitted above
+    if [[ "$subj" =~ $re_feat ]]; then
+      scope="${BASH_REMATCH[3]}"; rest="${BASH_REMATCH[4]}"
+      if [[ -n "$scope" ]]; then
+        printf -- '- **%s:** %s\n' "$(echo "$scope" | sed 's/[-_]/ /g; s/\b\(.\)/\u\1/')" "$rest"
+      else
+        printf -- '- %s\n' "$(echo "$rest" | sed 's/\b\(.\)/\u\1/')"
+      fi
+    elif [[ "$subj" =~ $re_jobs ]]; then
+      printf -- '- %s\n' "$(echo "$subj" | sed 's/ *(fleet\/[^)]*)//; s/^\(.\)/\u\1/')"
     else
       internal=$((internal + 1))
     fi
-  done < <(git -C "$WT" log --no-merges --pretty=%s "$range")
+  done < <(git -C "$WT" log --no-merges --pretty=%s "$range" 2>/dev/null)
   if (( internal > 0 )); then
     printf -- '- Internal fixes and housekeeping (%d commit%s, no user-visible change)\n' \
       "$internal" "$([[ $internal -eq 1 ]] && echo '' || echo 's')"
