@@ -114,6 +114,45 @@ def test_image_node_links_to_fact_nodes():
     assert any(l.target == _parent() for l in g[nid].links)
 
 
+def test_image_delete_retains_as_ayma_only():
+    # Founder retention rule (Nov 18): deleting an IMAGE node does not erase it —
+    # it moves to ayma_only, node + read + provenance kept, so it leaves the
+    # story/profile/public surfaces yet stays in the owner's Ayma-only view.
+    db = FakeDb()
+    nid = store.add_image_node(
+        db, "u1", _parent(), _URL, "a selfie at the beach",
+        visibility="private", source_kind="chat_upload", source_ref="msg_42",
+    )
+    result = store.retire_image_or_delete(db, "u1", nid)
+    assert result == {"retired": nid, "removed": 0}
+    # The node SURVIVES, now ayma_only, with its read + provenance intact.
+    node = store.load_overlay(db, "u1")[nid]
+    assert node["answer_type"] == "image"
+    assert node["visibility"] == "ayma_only"
+    assert node["image_read"] == "a selfie at the beach"
+    assert node["answer"] == _URL
+    assert node["source_kind"] == "chat_upload" and node["source_ref"] == "msg_42"
+    # It still shows in the OWNER's photo view (findable), carrying ayma_only…
+    owner_rows = store.image_nodes_for_view(db, "u1")
+    assert any(r["id"] == nid and r["visibility"] == "ayma_only" for r in owner_rows)
+    # …but NEVER on a public/shared surface (privacy: ayma_only is not public).
+    assert store.image_nodes_for_view(db, "u1", public_only=True) == []
+    g = store.effective(db, "u1")
+    blob = "\n".join(b for s in render.public_sections(g) for b in s["bullets"])
+    assert "beach" not in blob
+
+
+def test_non_image_node_hard_deletes_as_before():
+    # Retention is scoped to IMAGE nodes: every other node kind still hard-deletes.
+    db = FakeDb()
+    nid = store.add_node(
+        db, "u1", _parent(), "a plain fact", answer="I love hiking",
+    )
+    result = store.retire_image_or_delete(db, "u1", nid)
+    assert result == {"retired": None, "removed": 1}
+    assert nid not in store.load_overlay(db, "u1")  # truly gone, not retained
+
+
 def test_add_image_node_rejects_bad_input():
     db = FakeDb()
     import pytest

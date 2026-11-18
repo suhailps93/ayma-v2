@@ -5838,7 +5838,6 @@ def _photo_nodes_for_view(uid: str) -> list[dict[str, object]]:
                 "is_user": r["is_you"] if r["is_you"] != "unknown" else "",
                 "source_page": r["source_ref"],
                 "visibility": r["visibility"],
-                "deleted": False,
             }
         )
     return out
@@ -5865,14 +5864,17 @@ class PhotoNodeVisibilityRequest(BaseModel):
 async def story_photo_delete(
     req: PhotoNodeRequest, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
-    """Delete a photo from Your Story — removes its graph IMAGE node (keyed by
-    node id, never the rotating URL)."""
+    """Delete a photo from Your Story. Per the founder retention rule (Nov 18),
+    deleting an IMAGE node does not erase it — it moves to ``ayma_only`` (node +
+    read + provenance kept), so it leaves the story / profile / public surfaces
+    yet stays in the owner's Ayma-only Photos view (keyed by node id, never the
+    rotating URL)."""
     import person_graph_store as pg_store
 
-    removed = await asyncio.to_thread(
-        pg_store.delete_nodes, get_db(), uid, [req.node_id]
+    result = await asyncio.to_thread(
+        pg_store.retire_image_or_delete, get_db(), uid, req.node_id
     )
-    return {"ok": True, "removed": removed}
+    return {"ok": True, **result}
 
 
 @app.post("/story/photo/visibility")

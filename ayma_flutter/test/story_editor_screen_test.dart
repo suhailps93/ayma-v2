@@ -761,7 +761,12 @@ void main() {
         AiNotePhoto(url: 'https://example.com/profile.jpg', source: 'profile'),
         AiNotePhoto(url: 'https://example.com/chat.jpg', source: 'chat'),
         AiNotePhoto(url: 'https://example.com/web.jpg', source: 'web'),
-        AiNotePhoto(url: 'https://example.com/deleted.jpg', source: 'chat', deleted: true),
+        // A deleted-but-retained image: moved to Ayma-only, so it must never
+        // appear on the Story surface (founder retention rule Nov 18).
+        AiNotePhoto(
+            url: 'https://example.com/retained.jpg',
+            source: 'chat',
+            visibility: 'ayma_only'),
       ];
 
   testWidgets('the Photos section renders inline, grouped, with no "view all" link',
@@ -772,11 +777,11 @@ void main() {
     await _pumpWithRouter(tester, api);
 
     expect(find.text('A few glimpses into my world.'), findsOneWidget);
-    expect(find.textContaining('3 photos'), findsOneWidget); // deleted excluded
+    expect(find.textContaining('3 photos'), findsOneWidget); // Ayma-only excluded
     expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
     expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
     expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
-    expect(find.textContaining('DELETED BY YOU'), findsNothing);
+    expect(find.textContaining('AYMA-ONLY'), findsNothing); // never on the Story
     expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
   });
 
@@ -913,7 +918,8 @@ void main() {
     expect(find.byType(AymaPhoto), findsWidgets);
   });
 
-  testWidgets("Ayma's Notes shows every group, including deleted", (tester) async {
+  testWidgets("Ayma's Notes shows every group, including the retained Ayma-only "
+      'images', (tester) async {
     final api = _FakeApi()..photos = mixedSourcePhotos();
     silenceImageLoadErrors();
 
@@ -923,7 +929,8 @@ void main() {
     expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
     expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
     expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
-    expect(find.text('DELETED BY YOU (1)'), findsOneWidget);
+    // The owner's Ayma-only Photos view surfaces the retained (deleted) image.
+    expect(find.text('AYMA-ONLY — KEPT, NOT ON YOUR PROFILE (1)'), findsOneWidget);
   });
 
   testWidgets('the web-findings interlude renders counts from the real digest',

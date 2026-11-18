@@ -284,7 +284,22 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
     belongs to (§2.4). `person_graph_store.add_image_node` is the validated
     primitive; renders show the **read**, never the raw URL (public render drops
     an Ayma-only image; Ayma's grounding sees it). Tests cover create / render /
-    visibility / links / bad input. **Follow-up (not done):** the live wiring —
+    visibility / links / bad input.
+    - *Image delete = retention, not erase (founder rule Nov 18 2026).* Deleting
+      an IMAGE node no longer hard-deletes it. Both delete paths — the Your Story
+      Photos sheet (`POST /story/photo/delete`) and the node-chat / visualiser
+      Delete (`POST /profile/graph/node/{id}/delete`) — route through
+      `person_graph_store.retire_image_or_delete`, which **moves an image node to
+      `ayma_only`** (node + `image_read` + provenance kept) instead of deleting
+      it; every OTHER node kind still hard-deletes with its subtree
+      (`delete_node_with_descendants`), unchanged. The retained image leaves the
+      story / profile / public surfaces (`ayma_only` is never public, and the
+      owner Photos strip filters it out) but stays findable in the owner's
+      **Ayma-only Photos view** (the dev-flag-gated "Ayma's Notes" screen, under
+      an `AYMA-ONLY` group). *Before this change the delete was a hard erase —
+      `delete_nodes` removed the overlay node with no copy, and nothing in the
+      graph, subcollections or any history/audit store kept the bytes or storage
+      ref, so a deleted Ayma-only image was unrecoverable.* **Follow-up (not done):** the live wiring —
     binding a sent image's uploaded URL and Ayma minting the node mid-chat — and
     migrating existing chat images; this lands the primitive the way the 5 write
     tools landed before their consumer wiring.

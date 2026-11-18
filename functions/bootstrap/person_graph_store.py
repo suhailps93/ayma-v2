@@ -921,6 +921,24 @@ def delete_nodes(db, uid: str, node_ids: Iterable[str]) -> int:
     return removed
 
 
+def retire_image_or_delete(db, uid: str, node_id: str) -> dict:
+    """Founder retention rule (Nov 18 2026): deleting an IMAGE node does NOT erase
+    it. An image node is **moved to ``ayma_only``** — the node, Ayma's read
+    (``image_read``) and its provenance are kept — so it leaves the story /
+    profile / public surfaces (never rendered or shared there) yet stays in the
+    owner's Ayma-only Photos view. Every OTHER node kind hard-deletes with its
+    subtree, exactly as before (:func:`delete_node_with_descendants`).
+
+    Returns ``{"retired": <id>, "removed": 0}`` for a retired image, else
+    ``{"retired": None, "removed": <count>}`` for a hard-deleted node."""
+    node = effective(db, uid).get(node_id)
+    if node is not None and getattr(node, "answer_type", None) == "image":
+        set_visibility(db, uid, node_id, Visibility.AYMA_ONLY)
+        return {"retired": node_id, "removed": 0}
+    removed = delete_node_with_descendants(db, uid, node_id)
+    return {"retired": None, "removed": removed}
+
+
 # Emergent id prefixes a live writer owns — never editor (Your Story) content,
 # so a section edit must leave them in place.
 _RESERVED_EMERGENT_PREFIXES = (

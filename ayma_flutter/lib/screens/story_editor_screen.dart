@@ -86,10 +86,12 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   DeepDiveReport? _webFindingsReport;
   String? _webFindingsLoadedFor;
 
-  /// Non-deleted photos — the count the cover stats and the mosaic teaser
-  /// both use ("Everything" Ayma actually holds, minus what the user removed).
+  /// The photos the Story surface shows — the count the cover stats and the
+  /// mosaic teaser use. Ayma-only photos (a deleted-but-retained image, or a
+  /// web find kept privately) never render on the Story / profile surfaces —
+  /// they live only in the Ayma-only Photos view (founder retention rule).
   List<AiNotePhoto> get _livePhotos =>
-      _photos.where((p) => !p.deleted).toList();
+      _photos.where((p) => p.visibility != 'ayma_only').toList();
 
   Future<void> _loadPhotos() async {
     if (mounted) setState(() => _photosError = false);
@@ -469,7 +471,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     final rows = _narrativeSections;
     final photos = _livePhotos;
     final photoGroupsForView =
-        photoGroups.where((g) => g.$1 != 'deleted').toList();
+        photoGroups.where((g) => g.$1 != 'ayma_only').toList();
 
     // The merged face/body/physical-profile card belongs in the Story like
     // any other private content. The owner-only full report and provenance
@@ -769,9 +771,10 @@ class _AymaNotesScreenState extends State<AymaNotesScreen>
           style: AymaType.sans(size: 14, color: ac.fgMute).copyWith(height: 1.5),
         ),
         const SizedBox(height: 24),
-        // The only surface that ever shows the "deleted by you" group — every
-        // group, deleted included, so the dev can see (and if they want,
-        // resurrect the context around) anything Ayma still remembers.
+        // The only surface that ever shows the "Ayma-only" group — every group,
+        // the retained Ayma-only images included, so the dev can see (and if
+        // they want, restore the visibility of) anything Ayma still holds. This
+        // is the owner's Ayma-only Photos view (dev-flag gated).
         if (hasPhotos) ...[
           Text('Photos', style: AymaType.serif(size: 19, color: ac.fg)),
           const SizedBox(height: 12),
@@ -981,8 +984,8 @@ class _Stat extends StatelessWidget {
 // .dart`). `photoGroups`/`displayGroup`/`PhotoGallery`/`PhotoDetailSheet`/
 // `PhotoViewer` are shared from `widgets/photo_gallery.dart`. Which groups
 // render is decided by the caller (`_content()`): the Story shows
-// profile/chat/web (never deleted); Ayma's Notes is the only surface that
-// ever shows the deleted group.
+// profile/chat/web (never Ayma-only); Ayma's Notes is the only surface that
+// ever shows the Ayma-only (retained) group.
 
 /// The Photos section's empty / error state — a real, visible signal (never a
 /// silent "0 PHOTOS"). Shows a retry when [onRetry] is given (load failed).

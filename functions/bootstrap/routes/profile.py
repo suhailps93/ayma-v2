@@ -396,13 +396,16 @@ async def profile_graph_delete_node(
     node_id: str, uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """Delete ``node_id`` and its whole subtree (editor-owned emergent nodes
-    only; seed and live-writer nodes are left in place)."""
+    only; seed and live-writer nodes are left in place). An IMAGE node is not
+    erased but **retained as ``ayma_only``** (founder rule Nov 18) — it leaves the
+    story / profile / public surfaces yet stays in the owner's Ayma-only Photos
+    view, with its read + provenance intact."""
     import person_graph_store
 
-    removed = await asyncio.to_thread(
-        person_graph_store.delete_node_with_descendants, get_db(), uid, node_id
+    result = await asyncio.to_thread(
+        person_graph_store.retire_image_or_delete, get_db(), uid, node_id
     )
-    return {"removed": removed}
+    return result
 
 
 @router.get("/profile/proposals")
