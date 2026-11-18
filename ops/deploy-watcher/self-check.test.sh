@@ -132,4 +132,64 @@ else
   echo "SKIP: adb not installed (setsid test above covers the leak)"
 fi
 
+# --- whats_different(): a founder-ordered merged branch is NAMED, never "internal" --- #
+# Regression for the 2507/2508/2509 mislabelling: a branch whose own commit
+# subject lacks a feat:/fix: prefix must still be named by its merged branch,
+# not counted as "internal fixes / housekeeping".
+WREPO="$TMP/wrepo"
+mkdir -p "$WREPO"
+git -C "$WREPO" init -q
+git -C "$WREPO" config user.email t@example.com
+git -C "$WREPO" config user.name tester
+git -C "$WREPO" commit -q --allow-empty -m base
+STAGE="$(git -C "$WREPO" branch --show-current)"
+BASE="$(git -C "$WREPO" rev-parse HEAD)"
+# a founder-ordered feature whose commit subject has NO conventional prefix
+git -C "$WREPO" branch fleet/looking-for-icons
+git -C "$WREPO" checkout -q fleet/looking-for-icons
+git -C "$WREPO" commit -q --allow-empty -m "What-I-am-Looking-For standard fields render fixed icon + label:value"
+git -C "$WREPO" checkout -q "$STAGE"
+git -C "$WREPO" merge -q --no-ff -m "Merge fleet/looking-for-icons into staging (batch 2508)" fleet/looking-for-icons
+git -C "$WREPO" commit -q --allow-empty -m "Bump versionCode 2507 to 2508 for batch 2508"
+NEW="$(git -C "$WREPO" rev-parse HEAD)"
+WT="$WREPO"
+wd_out="$(whats_different "$BASE..$NEW")"
+if echo "$wd_out" | grep -qiE 'Internal fixes'; then
+  echo "FAIL: founder-ordered merge rendered as 'Internal fixes': $wd_out"; fail=1
+elif echo "$wd_out" | grep -qi 'Looking For Icons'; then
+  echo "PASS: founder-ordered merge named as its feature (not internal)"
+else
+  echo "FAIL: founder feature not named at all: $wd_out"; fail=1
+fi
+if echo "$wd_out" | grep -qE 'versionCode 2508'; then
+  echo "PASS: versionCode bump bullet still present"
+else
+  echo "FAIL: versionCode bump bullet missing: $wd_out"; fail=1
+fi
+# a git-default merge subject (manual merge, no ": summary") is still named by branch
+git -C "$WREPO" branch fleet/mid-session-signout
+git -C "$WREPO" checkout -q fleet/mid-session-signout
+git -C "$WREPO" commit -q --allow-empty -m "persist session through transient 401"
+git -C "$WREPO" checkout -q "$STAGE"
+MB="$(git -C "$WREPO" rev-parse HEAD)"
+git -C "$WREPO" merge -q --no-ff -m "Merge remote-tracking branch 'origin/fleet/mid-session-signout' into staging" fleet/mid-session-signout
+MN="$(git -C "$WREPO" rev-parse HEAD)"
+wd_out2="$(whats_different "$MB..$MN")"
+if echo "$wd_out2" | grep -qiE 'Internal fixes'; then
+  echo "FAIL: manual-merge (git-default subject) rendered as internal: $wd_out2"; fail=1
+elif echo "$wd_out2" | grep -qi 'Mid Session Signout'; then
+  echo "PASS: manual-merge named by its branch (not internal)"
+else
+  echo "FAIL: manual-merge branch not named: $wd_out2"; fail=1
+fi
+# a bump-only range with NO merge still falls back cleanly (no spurious feature)
+git -C "$WREPO" commit -q --allow-empty -m "Bump versionCode 2508 to 2509 for batch 2509"
+BO="$(git -C "$WREPO" rev-parse HEAD)"
+wd_out3="$(whats_different "$MN..$BO")"
+if echo "$wd_out3" | grep -qE 'versionCode 2509'; then
+  echo "PASS: bump-only range (no merge) still emits the build bullet"
+else
+  echo "FAIL: bump-only range lost its build bullet: $wd_out3"; fail=1
+fi
+
 exit "$fail"
