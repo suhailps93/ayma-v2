@@ -77,11 +77,24 @@ def fact_block(
     *,
     tag: str = "",
     confidence: str = "",
+    role: str = "",
     editable: bool = True,
 ) -> dict:
+    """``role`` is an optional structural marker the assembler reads to group a
+    block regardless of which section it was authored into — currently only
+    ``"recommendation"`` (a "what to do next" action, as opposed to a finding
+    the report observed). ``report_tree`` collects every recommendation-role
+    node into one final "What to do next" section so a report never prints its
+    findings once as observations and again as the fixes beside them (founder,
+    build 2495: "the report should not show the same node twice"). Omitted
+    (``""``) for an ordinary finding, same as every other absent optional
+    field."""
     return _block(
         block_id, FACT, editable=editable,
         text=str(text or ""), tag=str(tag or ""), confidence=str(confidence or ""),
+        # Omitted from the wire shape unless set (only recommendations set it),
+        # like every other absent optional field.
+        role=(str(role) if role else None),
     )
 
 
@@ -382,8 +395,17 @@ def scored_result_blocks(
             continue
         text = str(r.get("text") or "").strip()
         if text:
+            # A recommendation is a "what to do next" ACTION, not a finding —
+            # tagged ``role="recommendation"`` so the assembler
+            # (``report_tree``) lifts every one into a single final
+            # "What to do next" section instead of leaving it beside the
+            # finding it fixes, which read as the same point printed twice
+            # (founder, build 2495).
             blocks.append(
-                fact_block(f"{id_prefix}:reco:{i}", text, tag=str(r.get("category") or ""))
+                fact_block(
+                    f"{id_prefix}:reco:{i}", text,
+                    tag=str(r.get("category") or ""), role="recommendation",
+                )
             )
     quick = result.get("quick_facts") or {}
     for key, val in (quick.items() if isinstance(quick, dict) else []):

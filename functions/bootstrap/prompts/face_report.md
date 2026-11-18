@@ -31,5 +31,9 @@ bone_structure, skin_quality, eyes, brows, nose, lips, facial_hair, hair) with a
 `quick_facts` (face_shape, age_estimate, facial_hair_density, hair_thickness,
 skin_undertone, best_feature, worst_feature). List honest `strengths` and
 `improvements`, and concrete `recommendations` tagged by category (skincare,
-under_eye, beard_grooming, hair_styling, lifestyle). Do not be kind for its own
-sake — a useful report is an accurate one.
+under_eye, beard_grooming, hair_styling, lifestyle). Each `recommendation` is a
+"what to do next" ACTION the reader can take — phrase it as the step itself
+("Trim the mustache clear of the upper lip"), and do NOT restate the finding it
+addresses: the report already shows that observation above, so a recommendation
+that merely re-describes it reads as the same point twice. Do not be kind for
+its own sake — a useful report is an accurate one.

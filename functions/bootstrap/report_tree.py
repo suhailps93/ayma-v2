@@ -27,6 +27,14 @@ import report_hub
 
 SURFACE_REPORT = "report"
 
+# The one "what to do next" bucket every recommendation-role node is lifted
+# into, rendered as the FINAL section of any report that has one (founder,
+# build 2495: findings first, the actions to take last — never the same point
+# shown twice, once as the observation and again as the fix beside it).
+ROLE_RECOMMENDATION = "recommendation"
+RECO_SECTION_TITLE = "What to do next"
+RECO_SECTION_SLUG = "what_to_do_next"
+
 
 def _slug(heading: str) -> str:
     """A stable page_type slug for a section heading (node-tree section key)."""
@@ -87,6 +95,10 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
         "visibility": "public",
         "subtree_visibility": "public",
         "editable": bool(block.get("editable", False)),
+        # Structural marker the assembler groups on (currently only
+        # "recommendation"); "" for an ordinary finding. See
+        # :func:`_finalize_sections`.
+        "role": str(block.get("role") or ""),
     }
 
     if btype in (rb.TEXT, rb.FACT, rb.SECTION_HEAD):
@@ -212,7 +224,63 @@ def _sections_to_tree(sections: Any) -> list[dict]:
                 "nodes": nodes,
             }
         )
-    return sections_out
+    return _finalize_sections(sections_out)
+
+
+def _finalize_sections(sections: list[dict]) -> list[dict]:
+    """Two report-wide guarantees applied to the built section list, so EVERY
+    report on the unified framework gets them (founder, build 2495 — "a report
+    should not show the same node twice"):
+
+    1. **Recommendations go last.** Every ``role="recommendation"`` node (a
+       "what to do next" action) is lifted out of its authoring section — where
+       it sat right beside the finding it fixes, reading as the same point
+       twice — and collected, in order, into one final "What to do next"
+       section. Findings (and their stats) stay first; the actions to take come
+       last. A report with no recommendation nodes is unchanged.
+    2. **Node-ID dedupe across sections.** A node id is rendered at most once in
+       the whole report: the first occurrence wins, any later section repeating
+       the same id skips it. Guards against a node that appears in two sections
+       printing twice.
+
+    Sections emptied by this lifting/dedupe are dropped so no blank card is
+    rendered."""
+    recos: list[dict] = []
+    for sec in sections:
+        kept: list[dict] = []
+        for n in sec.get("nodes") or []:
+            if n.get("role") == ROLE_RECOMMENDATION:
+                recos.append(n)
+            else:
+                kept.append(n)
+        sec["nodes"] = kept
+    if recos:
+        sections = sections + [
+            {
+                "page_type": RECO_SECTION_SLUG,
+                "title": RECO_SECTION_TITLE,
+                "order": len(sections),
+                "nodes": recos,
+            }
+        ]
+
+    seen: set[str] = set()
+    deduped_sections: list[dict] = []
+    for sec in sections:
+        nodes: list[dict] = []
+        for n in sec.get("nodes") or []:
+            nid = str(n.get("id") or "")
+            if nid and nid in seen:
+                continue
+            if nid:
+                seen.add(nid)
+            nodes.append(n)
+        if not nodes:
+            continue
+        sec["nodes"] = nodes
+        sec["order"] = len(deduped_sections)
+        deduped_sections.append(sec)
+    return deduped_sections
 
 
 def report_node_tree(
