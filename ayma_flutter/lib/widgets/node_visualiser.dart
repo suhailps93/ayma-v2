@@ -354,6 +354,10 @@ class NodeVisualiser extends StatelessWidget {
     final title = (p['title'] as Object?)?.toString().trim() ?? '';
     final body = (p['body'] as Object?)?.toString().trim() ?? '';
     if (title.isEmpty && body.isEmpty) return null;
+    // When the card title merely restates its body (a node that stored the same
+    // statement in both fields — founder build 2493), show it once: keep the
+    // body, drop the duplicate title.
+    final showTitle = title.isNotEmpty && !headerRestatesBody(title, body);
     final ac = context.ac;
     final theme = Theme.of(context);
     return Container(
@@ -369,11 +373,11 @@ class NodeVisualiser extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (title.isNotEmpty)
+          if (showTitle)
             Text(title,
                 style: theme.textTheme.titleSmall
                     ?.copyWith(fontWeight: FontWeight.w700)),
-          if (title.isNotEmpty && body.isNotEmpty) const SizedBox(height: 4),
+          if (showTitle && body.isNotEmpty) const SizedBox(height: 4),
           if (body.isNotEmpty)
             Text(body, style: theme.textTheme.bodyMedium),
         ],

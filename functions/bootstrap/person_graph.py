@@ -462,9 +462,16 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         # on the graph; here it simply homes in `misc` with its answer as text.
         section = o.section or "misc"
         level = o.level or 1
-        prompt = o.prompt or (
-            str(o.answer).strip()[:80] if o.answer is not None else node_id
-        )
+        # A narrative/loose fact is now written with an explicit EMPTY prompt —
+        # its statement lives in the answer only, so it is not duplicated into a
+        # header (founder build 2493). Preserve that empty prompt. Only a node
+        # that is MISSING a prompt entirely (``None`` — a legacy/partial write,
+        # the Nov 17 54-node defect) is given a synthesized one so it still
+        # renders a label rather than blanking.
+        if o.prompt is not None:
+            prompt = o.prompt
+        else:
+            prompt = str(o.answer).strip()[:80] if o.answer is not None else node_id
         base = GraphNode(
             id=node_id,
             section=section,

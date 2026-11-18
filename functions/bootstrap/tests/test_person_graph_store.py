@@ -200,3 +200,74 @@ def test_new_free_form_type_needs_a_definition():
     db = FakeDb()
     with pytest.raises(ValueError):
         store.register_link_type(db, "brand_new", "")
+
+
+# --- narrative nodes store the statement once (founder build 2493) ----------
+
+
+def _find_node(sections: list[dict], node_id: str) -> dict | None:
+    """Depth-first search for ``node_id`` across a node_tree's section trees."""
+    def walk(nodes):
+        for nd in nodes:
+            if nd.get("id") == node_id:
+                return nd
+            hit = walk(nd.get("children") or [])
+            if hit is not None:
+                return hit
+        return None
+
+    for sec in sections:
+        hit = walk(sec.get("nodes") or [])
+        if hit is not None:
+            return hit
+    return None
+
+
+def test_upsert_fact_node_without_label_stores_statement_once():
+    # A narrative fact with no distinct label must NOT duplicate its statement
+    # into the prompt (header) as well as the answer — the node card printed it
+    # twice (founder build 2493). The statement lives in the answer only.
+    db = FakeDb(_profile("u1"))
+    statement = "I love long hikes in the hills."
+    nid = store.upsert_fact_node(
+        db, "u1", "emergent.skill.note.1", statement, section="interests"
+    )
+    n = store.effective(db, "u1")[nid]
+    assert n.answer == statement
+    assert n.prompt == ""  # not restated into the header
+
+    # The tree builds cleanly with the empty prompt: label blank, text once.
+    import person_graph_tree as tree
+
+    sections = tree.node_tree(store.effective(db, "u1"))["sections"]
+    node = _find_node(sections, nid)
+    assert node is not None
+    assert node["label"] == ""
+    assert node["text"] == statement
+
+
+def test_upsert_fact_node_keeps_a_genuinely_distinct_label():
+    # A real, different label (not a restatement) is preserved — only an exact
+    # normalized match collapses.
+    db = FakeDb(_profile("u1"))
+    nid = store.upsert_fact_node(
+        db, "u1", "emergent.assessment.red", "Tends to over-commit.",
+        section="misc", label="Ayma's assessment — Red flags",
+    )
+    assert store.effective(db, "u1")[nid].prompt == "Ayma's assessment — Red flags"
+
+
+def test_story_bullet_writer_stores_statement_once():
+    # The Your Story editor write-back is the "story writer": its bullets are
+    # narrative statements with no separate label, so the prompt is never a
+    # restatement of the answer.
+    db = FakeDb(_profile("u1"))
+    statement = "Grew up by the ocean."
+    ids = store.replace_section_bullets(
+        db, "u1", "family",
+        [{"text": statement, "visibility": "public"}],
+    )
+    assert len(ids) == 1
+    n = store.effective(db, "u1")[ids[0]]
+    assert n.answer == statement
+    assert n.prompt == ""

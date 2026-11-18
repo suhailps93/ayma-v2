@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../models/story_node.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/navigation_history.dart';
@@ -4011,6 +4012,11 @@ class _SelectedQuote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    // When the small-caps header merely restates the quote (an emergent
+    // narrative node that stored its statement in BOTH the prompt and the answer
+    // field — founder build 2493), show the statement once: drop the duplicate
+    // header and keep the italic quote.
+    final showHeader = !headerRestatesBody(title, text);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -4021,14 +4027,16 @@ class _SelectedQuote extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title.toUpperCase(),
-            style: AymaType.mono(
-              size: 9,
-              color: ac.fgMute,
-            ).copyWith(letterSpacing: 1.4),
-          ),
-          const SizedBox(height: 8),
+          if (showHeader) ...[
+            Text(
+              title.toUpperCase(),
+              style: AymaType.mono(
+                size: 9,
+                color: ac.fgMute,
+              ).copyWith(letterSpacing: 1.4),
+            ),
+            const SizedBox(height: 8),
+          ],
           // The FULL item text, always — no line cap, no ellipsis (§ D12:
           // a Projects quote cut mid-sentence). This card sizes to the item
           // and holds no scroll of its own; the header region's generous cap

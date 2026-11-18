@@ -35,6 +35,31 @@ _REGISTRY_COLLECTION = "graph_registry"
 _REGISTRY_DOC = "relationship_types"
 
 
+# --- write helpers ---------------------------------------------------------
+
+
+def _prompt_without_restatement(prompt: str, answer: Any) -> str:
+    """A node's ``prompt`` (its label/header), blanked when it merely restates
+    the ``answer``.
+
+    An emergent narrative/loose fact has no question distinct from its statement,
+    so storing that statement in BOTH the prompt and the answer printed it twice
+    on the node context card (founder build 2493). The statement lives in
+    ``answer`` only; the prompt is kept empty here rather than duplicated. A node
+    with a genuinely different label (a standard field's "Age", an assessment
+    group's "Ayma's assessment — …") keeps its prompt — the two strings don't
+    normalize-equal, so nothing is dropped."""
+    p = (prompt or "").strip()
+    if not p:
+        return ""
+    if isinstance(answer, str):
+        import person_graph_index as _index  # lazy: _index imports this module
+
+        if _index.normalize_text(p) == _index.normalize_text(answer):
+            return ""
+    return p
+
+
 # --- document refs ---------------------------------------------------------
 
 
@@ -484,7 +509,7 @@ def add_node(
 
     prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
     e: dict[str, Any] = {
-        "prompt": label,
+        "prompt": _prompt_without_restatement(label, answer),
         "section": sec,
         "level": int(parent_level) + 1,
         "parent": parent_id,
@@ -580,7 +605,7 @@ def add_loose_node(
         raise ValueError(f"node id {nid!r} already exists")
     prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
     e: dict[str, Any] = {
-        "prompt": (label or fact)[:120],
+        "prompt": _prompt_without_restatement((label or fact)[:120], fact),
         "section": section,
         "level": 1,
         "answer_type": "narrative",
@@ -668,7 +693,7 @@ def upsert_fact_node(
     prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
     overlay = load_overlay(db, uid)
     e: dict[str, Any] = {
-        "prompt": (label or text)[:120],
+        "prompt": _prompt_without_restatement((label or text)[:120], text),
         "section": section,
         "level": int(level),
         "answer_type": answer_type,
@@ -1038,7 +1063,9 @@ def replace_section_bullets(
                 )
                 e["history"] = history
             e["answer"] = text
-            e["prompt"] = text[:120]
+            # A story/editor bullet is a narrative statement with no separate
+            # label, so the prompt is not a restatement of the answer (build 2493).
+            e["prompt"] = _prompt_without_restatement(text[:120], text)
             e["visibility"] = vis
             e["state"] = NodeState.ANSWERED.value
             e["updated_at"] = pg.now_iso()
@@ -1050,7 +1077,7 @@ def replace_section_bullets(
             nid = _free_editor_id(overlay, section)
             overlay[nid] = OverlayNode.model_validate(
                 {
-                    "prompt": text[:120],
+                    "prompt": _prompt_without_restatement(text[:120], text),
                     "section": section,
                     "level": 2,
                     "answer_type": "narrative",
