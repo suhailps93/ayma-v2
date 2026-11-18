@@ -41,6 +41,39 @@ bool nodeHasOwnerActions(
         surface == NodeVisualiserSurface.report ||
         surface == NodeVisualiserSurface.graphDetail);
 
+/// [value] with any leading copy of [node]'s own rendered label stripped.
+///
+/// A standard node renders as "`<standardLabel>: <value>`" (see
+/// [NodeVisualiser]); its STORED value is the bare value alone. If a value
+/// itself begins with "`<standardLabel>:`" — existing doubled data, or a paste
+/// of the rendered row — the next render would prepend the label again, doubling
+/// it, and every re-edit would add another copy. This strips every leading
+/// own-label prefix so the stored value stays the bare value. A non-standard
+/// node renders no label prefix, so its value is returned unchanged. Idempotent:
+/// a value with no own-label prefix is returned as-is.
+String stripNodeOwnLabel(String value, StoryNode node) {
+  if (!node.standard) return value;
+  final label = (node.standardLabel ?? '').trim();
+  if (label.isEmpty) return value;
+  final lower = label.toLowerCase();
+  var v = value.trimLeft();
+  while (v.toLowerCase().startsWith('$lower:')) {
+    v = v.substring(label.length + 1).trimLeft();
+  }
+  return v;
+}
+
+/// The bare, editable value of [node] for the "Edit manually" field — never the
+/// rendered "label: value". Uses the node's value ([StoryNode.text]); for a
+/// standard node with no value it is empty (the label is never put in as the
+/// value), and a non-standard node falls back to its prompt ([StoryNode.label]).
+/// Any leading own-label is stripped (defensive against already-doubled data).
+String editableNodeValue(StoryNode node) {
+  final raw =
+      node.text.isNotEmpty ? node.text : (node.standard ? '' : node.label);
+  return stripNodeOwnLabel(raw, node);
+}
+
 /// Open the REAL partial Ayma chat window for [node] — the half-screen docked
 /// sheet hosting the one shared ChatScreen, with the node attached as the
 /// persistent context card above the composer (text, or for an image node the
@@ -144,7 +177,7 @@ class _NodeActionBubblesState extends State<NodeActionBubbles> {
 
   Future<void> _editManually() async {
     final controller = TextEditingController(
-      text: widget.node.text.isNotEmpty ? widget.node.text : widget.node.label,
+      text: editableNodeValue(widget.node),
     );
     final result = await showDialog<String>(
       context: context,
@@ -168,8 +201,13 @@ class _NodeActionBubblesState extends State<NodeActionBubbles> {
         ],
       ),
     );
-    if (result == null || result.isEmpty) return;
-    final ok = await _run(() => widget.api.graphSetNodeText(widget.node.id, result));
+    if (result == null) return;
+    // Guard against label-doubling: a value entered (or pasted) as its own
+    // "label: value" render is stored as the bare value; the label is re-applied
+    // at render time, never baked into the value.
+    final cleaned = stripNodeOwnLabel(result, widget.node);
+    if (cleaned.isEmpty) return;
+    final ok = await _run(() => widget.api.graphSetNodeText(widget.node.id, cleaned));
     if (ok) widget.onChanged?.call();
   }
 
