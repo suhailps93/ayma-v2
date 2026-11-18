@@ -1339,4 +1339,167 @@ void main() {
     expect(find.byKey(const Key('node_bar_social_energy')), findsOneWidget);
     expect(find.byKey(const Key('node_bar_value_social_energy')), findsOneWidget);
   });
+
+  // --- What I'm Looking For standard-field icons (founder build 2507) -------
+
+  // The partner-age COMBINED range row now renders its fixed pair icon INSTEAD
+  // of the bullet, carrying the row's visibility colour, and KEEPS the
+  // "Partner age preference: 21–56" label+value.
+  testWidgets(
+      'partner-age combined row shows its fixed icon + label:value, '
+      'icon in the visibility colour, no bullet', (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'looking_for',
+      title: 'Looking for',
+      order: 0,
+      nodes: [
+        barNode(
+            id: 'partner_age_min',
+            label: 'Youngest partner age',
+            value: 21,
+            max: 80,
+            vis: NodeVis.aymaOnly),
+        barNode(
+            id: 'partner_age_max',
+            label: 'Oldest partner age',
+            value: 56,
+            vis: NodeVis.aymaOnly),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+          section: section, surface: NodeVisualiserSurface.story),
+    ));
+    // Label + value kept.
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText &&
+            w.text.toPlainText() == 'Partner age preference: 21–56'),
+        findsOneWidget);
+    // The fixed pair icon renders (at the min end's slot), in the visibility
+    // colour, and there is NO bullet on this row.
+    final icon = find.byKey(const Key('node_range_icon_partner_age_min'));
+    expect(icon, findsOneWidget);
+    expect(tester.widget<Icon>(icon).color, nodeVisibilityColor(NodeVis.aymaOnly));
+    expect(find.descendant(
+        of: find.byKey(const Key('node_range_row_partner_age_min')),
+        matching: find.byType(NodeVisibilityBullet)), findsNothing);
+  });
+
+  StoryNode lookingForField({
+    required String id,
+    required String label,
+    required String value,
+    String vis = NodeVis.public,
+  }) =>
+      StoryNode(
+        id: id,
+        section: 'looking_for',
+        label: label,
+        text: value,
+        answerType: 'enum',
+        level: 1,
+        visibility: vis,
+        subtreeVisibility: vis,
+        standard: true,
+        standardLabel: label,
+        editable: true,
+      );
+
+  testWidgets(
+      'relocation_radius renders its fixed icon (not a bullet) + label:value, '
+      'icon in the visibility colour', (tester) async {
+    final node = lookingForField(
+      id: 'relocation_radius',
+      label: 'Relocation / travel radius',
+      value: 'Within about 50 km',
+      vis: NodeVis.private,
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.story),
+    ));
+    final icon = find.byKey(const Key('node_field_icon_relocation_radius'));
+    expect(icon, findsOneWidget);
+    expect(tester.widget<Icon>(icon).color, nodeVisibilityColor(NodeVis.private));
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText &&
+            w.text.toPlainText() ==
+                'Relocation / travel radius: Within about 50 km'),
+        findsOneWidget);
+    // No bullet on the row — the icon replaced it.
+    expect(find.byType(NodeVisibilityBullet), findsNothing);
+  });
+
+  testWidgets(
+      'geographic_flexibility renders its fixed icon + label:value, '
+      'icon in the visibility colour', (tester) async {
+    final node = lookingForField(
+      id: 'geographic_flexibility',
+      label: 'Geographic flexibility',
+      value: 'Would relocate abroad for the right person',
+      vis: NodeVis.aymaOnly,
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.story),
+    ));
+    final icon = find.byKey(const Key('node_field_icon_geographic_flexibility'));
+    expect(icon, findsOneWidget);
+    expect(tester.widget<Icon>(icon).color, nodeVisibilityColor(NodeVis.aymaOnly));
+    expect(
+        find.byWidgetPredicate((w) =>
+            w is RichText &&
+            w.text.toPlainText() ==
+                'Geographic flexibility: Would relocate abroad for the right person'),
+        findsOneWidget);
+  });
+
+  // The three Looking-For fields render in the fixed order (partner age →
+  // relocation radius → geographic flexibility) when supplied in the backend
+  // canonical order, and a conversational bullet stays a PLAIN bullet below.
+  testWidgets('fixed order holds; a conversational bullet stays a plain bullet',
+      (tester) async {
+    final section = GraphTreeSection(
+      pageType: 'looking_for',
+      title: 'Looking for',
+      order: 0,
+      nodes: [
+        barNode(id: 'partner_age_min', label: 'Youngest partner age', value: 21, max: 80),
+        barNode(id: 'partner_age_max', label: 'Oldest partner age', value: 56),
+        lookingForField(
+            id: 'relocation_radius',
+            label: 'Relocation / travel radius',
+            value: 'Within about 50 km'),
+        lookingForField(
+            id: 'geographic_flexibility',
+            label: 'Geographic flexibility',
+            value: 'Would relocate abroad for the right person'),
+        _node(
+            id: 'conv_lf',
+            text: 'Wants a partner who loves to travel',
+            vis: NodeVis.public),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+          section: section, surface: NodeVisualiserSurface.story),
+    ));
+    final partnerY = tester
+        .getTopLeft(find.byKey(const Key('node_range_row_partner_age_min')))
+        .dy;
+    final relocY =
+        tester.getTopLeft(find.byKey(const Key('node_row_relocation_radius'))).dy;
+    final geoY = tester
+        .getTopLeft(find.byKey(const Key('node_row_geographic_flexibility')))
+        .dy;
+    final convY = tester.getTopLeft(find.byKey(const Key('node_row_conv_lf'))).dy;
+    expect(partnerY, lessThan(relocY));
+    expect(relocY, lessThan(geoY));
+    expect(geoY, lessThan(convY));
+    // The conversational bullet keeps its coloured bullet — no field icon.
+    expect(find.byKey(const Key('node_field_icon_conv_lf')), findsNothing);
+    expect(find.descendant(
+        of: find.byKey(const Key('node_row_conv_lf')),
+        matching: find.byType(NodeVisibilityBullet)), findsOneWidget);
+  });
 }
