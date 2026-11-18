@@ -958,13 +958,36 @@ List<Widget> _siblingWidgets(
   required double indentStart,
   required int depth,
 }) {
-  // Partition into consecutive same-type aggregatable runs vs singletons.
   final surface = cfg.surface;
+
+  // EVERY image leaf in this sibling list aggregates into ONE swipeable
+  // carousel — NOT only a consecutive run (Scout NOTE 255: a report's photos
+  // split into a 4-image carousel + three single "large embedded" images
+  // because the appearance photos weren't adjacent to the web-research ones).
+  // The carousel renders at the FIRST image's position; every later image leaf
+  // is pulled into that same carousel instead of rendering on its own.
+  final imageGroup = <StoryNode>[
+    for (final n in visible)
+      if (_aggType(n, surface) == _kImageAggType) n,
+  ];
+
+  // Partition the remaining (non-image) nodes into consecutive same-type
+  // aggregatable runs vs singletons, inserting ONE empty marker group where the
+  // carousel belongs (the first image's slot).
   final groups = <List<StoryNode>>[];
+  var carouselMarked = false;
   for (final n in visible) {
+    if (_aggType(n, surface) == _kImageAggType) {
+      if (!carouselMarked) {
+        groups.add(const <StoryNode>[]); // carousel marker (rendered once)
+        carouselMarked = true;
+      }
+      continue;
+    }
     final t = _aggType(n, surface);
     if (t != null &&
         groups.isNotEmpty &&
+        groups.last.isNotEmpty &&
         _aggType(groups.last.first, surface) == t) {
       groups.last.add(n);
     } else {
@@ -974,18 +997,19 @@ List<Widget> _siblingWidgets(
 
   final out = <Widget>[];
   for (final group in groups) {
-    final t = _aggType(group.first, surface);
-    if (t == _kImageAggType) {
-      // One or more consecutive report image leaves → ONE swipeable carousel
-      // (every report's photos, the appearance look generalized). A single
-      // image still renders fill in the carousel (no dots), matching the old
-      // appearance template.
+    if (group.isEmpty) {
+      // The carousel marker: ALL of this sibling list's image leaves → ONE
+      // swipeable carousel (every report's photos, the appearance look
+      // generalized). A single image still renders as one tile.
       out.add(Padding(
         padding: EdgeInsetsDirectional.only(
             start: indentStart, top: 8, bottom: 8),
-        child: NodePhotoCarousel(images: group),
+        child: NodePhotoCarousel(images: imageGroup),
       ));
-    } else if (group.length > 1 && t != null) {
+      continue;
+    }
+    final t = _aggType(group.first, surface);
+    if (group.length > 1 && t != null) {
       final body = t == NodeVisualType.chipSet
           ? Wrap(
               spacing: 6,

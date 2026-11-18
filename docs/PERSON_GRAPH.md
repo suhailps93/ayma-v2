@@ -352,13 +352,23 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
       Story / public profile / graph detail keep the plain rows. A section whose
       nodes all filter out (private on a shared surface, or empty) renders
       nothing — never an empty titled card.
-    - **Photo carousel aggregation.** `_siblingWidgets` merges consecutive IMAGE
-      leaf nodes on the report surface into ONE `NodePhotoCarousel`
-      (`lib/widgets/node_photo_carousel.dart`) — a swipeable square `PageView` of
-      the shared `NodeImage` `fill` renderer with page dots + tap-to-open
-      gallery, exactly what the appearance template did, now for every report's
-      photos. Your Story keeps inline thumbnails (not aggregated). A `candidate`
-      node (is-me/not-me) is never swept in.
+    - **Photo carousel aggregation.** `_siblingWidgets` merges EVERY IMAGE leaf
+      in a sibling list on the report surface into ONE `NodePhotoCarousel`
+      (`lib/widgets/node_photo_carousel.dart`) — NOT only a consecutive run.
+      Before (Scout NOTE 255), it grouped consecutive leaves only, so a report's
+      photos split into a carousel of the adjacent ones plus the rest rendered as
+      separate single "large embedded" images (e.g. the 3 appearance photos next
+      to 4 web-research candidates). Now all of a section's image leaves
+      aggregate into one carousel at the first image's slot; non-image nodes
+      between them still render in place. The carousel is a horizontal,
+      swipeable `ListView` STRIP of square `NodeImage` `fill` tiles with
+      per-tile captions that SCROLLS through all images; tapping a tile opens
+      the fullscreen DETAIL (`AymaImageViewer.gallery`), a `PageView` that
+      ADVANCES ON SWIPE. The strip's height follows the viewer's text scale and
+      captions cap at two ellipsised lines, so it never overflows. The list is
+      already viewer-filtered, so a private / Ayma-only photo never reaches a
+      surface it may not show. Your Story keeps inline thumbnails (not
+      aggregated). A `candidate` node (is-me/not-me) is never swept in.
     - **Appearance migrated, bespoke layout deleted.** `appearance_report_screen`
       now embeds `GraphTreeView(reportType: 'appearance')`; the bespoke
       `appearance_templated_report.dart` (+ its test) were DELETED. The score
