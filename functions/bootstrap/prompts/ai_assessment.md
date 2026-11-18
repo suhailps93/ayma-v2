@@ -17,10 +17,11 @@ You are given:
 
 Return `notes`: a list of short behavioural judgments. Each note:
 
-- `observation` — one or two sentences: the judgment itself, plainly stated.
-  A behaviour or pattern, not a restatement of a profile fact. "Works as a
-  nurse" is a fact and does not belong here; "claims to value patience but
-  turned hostile the first time a match went quiet" is a judgment.
+- `observation` — write gist-first: one punchy line, the judgment itself,
+  plainly stated (a second short sentence only if it truly needs it — never a
+  paragraph). A behaviour or pattern, not a restatement of a profile fact.
+  "Works as a nurse" is a fact and does not belong here; "claims to value
+  patience but turned hostile the first time a match went quiet" is a judgment.
 - `evidence` — where you saw it: which conversation or thread, and when.
   E.g. "DM to Dillu, 2026-09-12 (moderation-flagged: sexual content)",
   "chat with Ayma, relationships pages", "web findings vs. stated career".

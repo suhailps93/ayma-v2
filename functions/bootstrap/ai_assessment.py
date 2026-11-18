@@ -72,6 +72,7 @@ from prompt import load_prompt_file
 from firebase_admin import firestore
 
 import gemini
+import node_visual
 import token_ledger
 import wiki_query
 
@@ -602,6 +603,14 @@ def _write_graph(
         if not group:
             continue
         present.add(polarity)
+        # Gist-first (less-text-heavy program): a one-line headline for the
+        # group — its title plus the top (highest-severity) observation. The
+        # full grouped prose stays in the node body.
+        top = str(group[0].get("observation") or "").strip()
+        gist = f"{_GROUP_TITLES[polarity]}: {top}" if top else _GROUP_TITLES[polarity]
+        gist = " ".join(gist.split())
+        if len(gist) > 100:
+            gist = gist[:99].rstrip() + "…"
         store.upsert_fact_node(
             db,
             uid,
@@ -613,6 +622,9 @@ def _write_graph(
             level=2,
             label=f"Ayma's assessment — {_GROUP_TITLES[polarity]}",
             answer_type="narrative",
+            gist=gist,
+            # An assessment polarity group renders as a card (headline + detail).
+            visual=node_visual.card(title=_GROUP_TITLES[polarity], body=top),
             source_kind=_GRAPH_SOURCE_KIND,
             source_ref=polarity,
         )
