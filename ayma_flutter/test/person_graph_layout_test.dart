@@ -11,6 +11,34 @@ import 'package:ayma_flutter/screens/person_graph_layout.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('root "You" node is the biggest (founder Nov 18)', () {
+    test('rootNodeRadius is strictly greater than every level radius', () {
+      for (final lvl in const [-1, 0, 1, 2, 3, 4, 7]) {
+        expect(rootNodeRadius, greaterThan(nodeRadiusForLevel(lvl)),
+            reason: 'root must out-size a level-$lvl node');
+      }
+    });
+
+    test('a root SimNode uses rootNodeRadius and out-sizes all others', () {
+      final root = SimNode(id: 'me', level: 0, isRoot: true);
+      expect(root.radius, rootNodeRadius);
+      // Even against a second (non-root) level-0 node, the root is the largest.
+      final others = [
+        SimNode(id: 'dupYou', level: 0), // a stray level-0 node is NOT boosted
+        SimNode(id: 'sec', level: 1),
+        SimNode(id: 'leaf', level: 2),
+        SimNode(id: 'deep', level: 5),
+      ];
+      for (final o in others) {
+        expect(root.radius, greaterThan(o.radius));
+      }
+    });
+
+    test('isRoot defaults false so non-root sizing is unchanged', () {
+      expect(SimNode(id: 'x', level: 2).radius, nodeRadiusForLevel(2));
+    });
+  });
+
   group('fitToViewport', () {
     test('a graph larger than the viewport fits inside with padding', () {
       // Nodes spread far wider/taller than the viewport.

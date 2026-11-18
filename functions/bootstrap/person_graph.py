@@ -590,3 +590,61 @@ def validate_overlay(overlay: dict[str, Any]) -> dict[str, OverlayNode]:
 
 def now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+
+# --- related links (founder Nov 18) ---------------------------------------
+#
+# A RELATED link (``StrictLinkType.RELATED``) wires two nodes that are the same
+# entity/topic but NOT identical and NOT ancestor/descendant — "the dog that came
+# up talking about family" linked to the other dog notes elsewhere. The link is
+# MUTUAL: if A links B, B reads as linked to A. Storage puts the link on whichever
+# side(s) are overlay nodes (a seed node's links are fixed), and these read
+# helpers DERIVE the missing direction so every surface sees the pair both ways.
+#
+# LEVEL RULE (founder Nov 18): a related link only ever connects nodes DEEPER than
+# level 2 — BOTH ends must be level 3 or deeper. Levels 0/1/2 (You, and the
+# form/structure layers) never carry a related link, as source or target.
+
+RELATED_MIN_LEVEL = 3
+
+
+def eligible_for_related_link(level_a: int, level_b: int) -> bool:
+    """True when a related link MAY connect two nodes at these levels — both ends
+    level ``RELATED_MIN_LEVEL`` or deeper (founder Nov 18). A pair touching a
+    level-0/1/2 node on either end is never linked (structure layers need none)."""
+    return int(level_a) >= RELATED_MIN_LEVEL and int(level_b) >= RELATED_MIN_LEVEL
+
+
+def related_targets(node: "GraphNode") -> list[tuple[str, Optional[str]]]:
+    """``[(target_id, reason), ...]`` — this node's own stored RELATED links. The
+    ``reason`` is the link's short ``label`` (why the two are linked), or None."""
+    out: list[tuple[str, Optional[str]]] = []
+    for ln in getattr(node, "links", None) or []:
+        if getattr(ln, "type", "") == StrictLinkType.RELATED.value:
+            tgt = getattr(ln, "target", "")
+            if tgt:
+                out.append((tgt, getattr(ln, "label", None)))
+    return out
+
+
+def mutual_related(
+    graph: dict[str, "GraphNode"],
+) -> dict[str, dict[str, Optional[str]]]:
+    """Symmetric related adjacency over the effective ``graph``, derived BOTH
+    directions (founder Nov 18 mutuality): for every stored RELATED link A→B,
+    both ``out[A][B]`` and ``out[B][A]`` are present so each end reads the other
+    as related even when only one side could store the link (a seed target).
+    The value is the link reason (``label``), kept from whichever direction
+    carried it. Only targets that exist in ``graph`` are included."""
+    out: dict[str, dict[str, Optional[str]]] = {}
+    for nid, n in graph.items():
+        for tgt, reason in related_targets(n):
+            if tgt == nid or tgt not in graph:
+                continue
+            out.setdefault(nid, {})
+            out.setdefault(tgt, {})
+            if out[nid].get(tgt) is None:
+                out[nid][tgt] = reason
+            if out[tgt].get(nid) is None:
+                out[tgt][nid] = reason
+    return out

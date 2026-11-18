@@ -557,6 +557,19 @@ reroute to work around an empty response.
   message through the single graph lookup (`chat_screen` → `graph_node_id` → `main._graph_node_context` →
   `person_graph_store.graph_lookup(node_id=…)`), injected into the `story_context` chain like every other scoped origin.
   Turns save to the one main conversation — no silo.
+  - **Related links (founder Nov 18, `NODE_RELATED_PROPOSE`; `docs/PERSON_GRAPH.md` → "Related links between nodes").**
+    Nodes that are the same entity/topic but a DIFFERENT fact are wired together with a mutual `related` link (the dog
+    that came up under Family linked to the other dog notes). The session-end proposer (`person_graph_related.sweep_user`,
+    ALONGSIDE the dedupe sweep, not changing it) reuses the dedupe candidate finder, keeps only pairs where BOTH ends are
+    level 3+, then the LiveKit judge (never rerouted) links the CONFIDENT `related` ones and RAISES the UNCERTAIN ones in
+    chat (`record_pending_dedupe`) — never a silent link; a same-fact `duplicate` is left to the dedupe path.
+    `graph_lookup`/`connected_node_ids` already surface a node's related nodes + one hop, so Ayma doesn't re-ask a covered
+    topic. **Privacy (hard):** related traversal is confined to the viewer's visibility set in BOTH render
+    (`profile_graph._filter_related_to_visible`) and lookup (`connected_node_ids(allowed_vis=…)`), so a public node that
+    links to a private/Ayma-only node never leaks it (target id OR reason). The person graph draws a related link as a
+    DASHED accent line (distinct from the solid tree edge), a tap lights related nodes, and the node visualiser shows a
+    tappable "Related" chips row. The centre **"You" node is rendered strictly the largest** in every state
+    (`person_graph_layout.rootNodeRadius`, render-only).
   - **Owner actions ride INSIDE the chat as a pinned bubble row** (`NodeActionBubbles` in `node_chat_window.dart`,
     passed to `ChatScreen` as `scopedActions` and rendered above the composer — the reliable tap region, same slot as
     the quick chips): **Make public/private** (with the subtree cascade, `graphNodeSetVisibility`), **Edit manually**

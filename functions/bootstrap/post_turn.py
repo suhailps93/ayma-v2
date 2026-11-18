@@ -207,10 +207,26 @@ async def persist_and_ingest(
             logger.exception("session-end dedupe failed for %s/%s", uid, session_id)
         timings["dedupe"] = _elapsed_ms(step)
 
+    async def _related() -> None:
+        # Related-link proposer (founder Nov 18): after ingest, wire genuinely
+        # related nodes (same entity/topic, different fact) together — confident
+        # links written, uncertain ones raised in chat. Gated behind
+        # ``CONFIG.node_related_propose`` (a no-op when off), fully best-effort —
+        # a failure never affects the session flush, and it NEVER merges/dedupes.
+        step = time.monotonic()
+        try:
+            import person_graph_related
+
+            await person_graph_related.sweep_user(db, uid, dry_run=False)
+        except Exception:  # noqa: BLE001 - related linking is best-effort, never blocks
+            logger.exception("session-end related-link pass failed for %s/%s", uid, session_id)
+        timings["related"] = _elapsed_ms(step)
+
     await asyncio.gather(_ingest(), _summary())
-    # Dedupe runs AFTER ingest so this session's new nodes are already in the
-    # graph (it reads the merged graph, not a mid-ingest one).
+    # Dedupe + related-link passes run AFTER ingest so this session's new nodes are
+    # already in the graph (they read the merged graph, not a mid-ingest one).
     await _dedupe()
+    await _related()
     logger.info(
         "session-flush persisted uid=%s session=%s turns=%d persist_ms=%d "
         "ingest_ms=%d summary_ms=%d dedupe_ms=%d total_ms=%d",

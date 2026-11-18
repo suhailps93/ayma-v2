@@ -1280,3 +1280,82 @@ passed CI while his graph failed.
   pixels (empty-before, rendered-after). No backend/inference change (100% LiveKit
   unaffected). Screenshots: `pg_real_before.png` (streak), `pg_real_after.png`
   (fitted mesh).
+
+## Related links between nodes (founder Nov 18 2026)
+
+Founder's ask: "the graph only shows parent→child; RELATED nodes aren't
+connected — an assessment node and a story node about the same thing, or the same
+entity across sections (the dog that came up talking about family should link to
+the other dog notes elsewhere)."
+
+A related link reuses the existing first-class `StrictLinkType.RELATED` link
+(`links:[{target, type:"related", label}]`, §2.4 / Contract 4) — the `label` is
+the SHORT reason the two are linked. It is a reference, never a copy, and NEVER
+changes a node's visibility/text/level.
+
+- **Mutual.** If A links B, B reads as linked to A. `store.link_related` writes
+  the link on whichever side(s) are overlay nodes; `person_graph.mutual_related`
+  DERIVES the missing direction so every surface (render + lookup) sees the pair
+  both ways even when the target is a seed node that can't store links.
+  Helpers: `pg.related_targets(node)`, `pg.mutual_related(graph)`.
+- **Level rule.** A related link connects ONLY nodes level 3 or deeper — BOTH
+  ends. Levels 0/1/2 (You, and the form/structure layers) never carry a link, as
+  source or target. `pg.eligible_for_related_link(a, b)` + `RELATED_MIN_LEVEL=3`;
+  enforced in the write-time proposer AND the backfill dry-run (`dropped_by_level`).
+- **Write-time proposer** (`person_graph_related.sweep_user`, flag
+  `NODE_RELATED_PROPOSE`, off by default). Runs at session end AFTER ingest,
+  ALONGSIDE the dedupe sweep — it does NOT change dedupe. It reuses the dedupe
+  cross-check's candidate finder, drops level-0/1/2 pairs, then the LiveKit judge
+  (`prompts/related_link_judge.md`, never rerouted off LiveKit) labels each:
+  a CONFIDENT `related` is linked with the node (`store.link_related`); a same-fact
+  `duplicate` is left to the dedupe path (never linked here); an UNCERTAIN one (or
+  any judge failure) is RAISED in chat via the settled `record_pending_dedupe`
+  flow — surfaced by `pg_find_duplicates`, NEVER linked silently; `unrelated` is
+  dropped. Already-linked / dismissed pairs are skipped.
+- **Dedupe-consumable reason data** (founder amendment 2). A confident link
+  stores its reason as the link `label`; `crosscheck.related_link_pairs(graph)`
+  yields `(a, b, reason)` candidate pairs from stored related links so the dedupe
+  path can treat a linked pair as the FIRST place to look for a duplicate. This is
+  DATA SHAPE ONLY — it triggers no merge and does not un-hold the dedupe branch.
+- **Lookup** (`graph_lookup` / `connected_node_ids`) already surfaces a node's
+  related nodes and one hop out (then that node's subtree) so Ayma sees a topic is
+  already covered elsewhere and doesn't ask twice.
+
+### Privacy (HARD rule)
+
+A surface only ever TRAVERSES links between nodes the viewer MAY see. A public
+node linking to a private/Ayma-only node must NOT leak it — not the target id,
+not its reason label — on the public profile or any shared surface.
+
+- **Render:** `profile_graph._filter_related_to_visible` drops any related link
+  whose target is not in THIS payload's visible node set (resolving the `b:<id>`
+  bullet form), applied to both `get_graph` (owner) and `public_graph` (public).
+- **Lookup:** `connected_node_ids(..., allowed_vis=...)` only follows a related
+  edge (and the ancestor/descendant walk) between nodes in the viewer's visibility
+  set; `graph_lookup(public_only=True)` / `include_ayma_only=False` pass it.
+- Tests: `tests/test_related_links_privacy.py` (render drops the cross-visibility
+  link + reason; `graph_lookup(public_only)` never reaches a private related node).
+
+### Render
+
+- **Distinct line.** The person graph draws a related link as a DASHED accent line
+  (`_GraphPainter._paintRelatedEdge`), visually distinct from the solid gradient
+  parent→child tree edges; it dims/lights with the selection like a tree edge.
+- **Tap highlight.** Tapping a node lights its ancestors + descendants + related
+  nodes (`graphHighlightSet` already folds in `relatedAdj`); the rest dims.
+- **Node visualiser.** The detail panel shows a tappable "Related" chips row
+  (`_RelatedRow`, `relatedChipLabel`) — each related note opens in the panel. The
+  chips come from the visibility-filtered flat payload, so a private note never
+  shows on a shared graph.
+
+## Root "You" is the biggest node (founder Nov 18 2026)
+
+The centre "You" node is now rendered STRICTLY larger than every section hub and
+every leaf, in EVERY state (full view, filtered views, tap/highlight). Render-only
+— no data/level/visibility change. `person_graph_layout.rootNodeRadius` (34) is a
+fixed radius strictly above `nodeRadiusForLevel` at every level; the root `SimNode`
+is built with `isRoot: true` so the boost flows through layout, collision and
+hit-testing. It is independent of level/filter/highlight scaling (highlight changes
+colour/halo not radius; filters only hide other nodes). Only the actual root id is
+boosted — a stray level-0 node is not. Tests: `test/person_graph_layout_test.dart`
+("root is the biggest" group). Scout verifies on the founder graph on-device.

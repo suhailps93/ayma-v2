@@ -458,6 +458,30 @@ async def classify_conflict(
     return None
 
 
+def related_link_pairs(graph) -> list[CandidatePair]:
+    """The pairs already wired by a stored RELATED link, as cross-check candidates
+    (founder Nov 18, amendment 2 — "a linked pair is the FIRST place she looks for
+    duplicates"). A confident related link records its reason as the pair's
+    ``reason``; the dedupe path can treat a linked pair as a candidate (if it later
+    turns out to be the SAME fact it follows the settled dedupe rules) WITHOUT this
+    module triggering any merge. Read-only: derives pairs from the effective
+    graph's links, deduped by sorted key. ``graph`` is ``{id: GraphNode}``."""
+    import person_graph as _pg
+
+    seen: set[tuple[str, str]] = set()
+    out: list[CandidatePair] = []
+    for nid, n in graph.items():
+        for tgt, reason in _pg.related_targets(n):
+            if tgt == nid or tgt not in graph:
+                continue
+            key = (nid, tgt) if nid <= tgt else (tgt, nid)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(CandidatePair(key[0], key[1], RELATED, 1.0, reason or "linked as related"))
+    return out
+
+
 def _components(pairs: list[tuple[str, str]]) -> list[list[str]]:
     """Union-find connected components over undirected ``pairs``."""
     parent: dict[str, str] = {}

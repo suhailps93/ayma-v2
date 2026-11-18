@@ -312,12 +312,38 @@ def _augment_with_store_nodes(graph: dict, db, uid: str, *, owner_only: bool) ->
     return graph
 
 
+def _filter_related_to_visible(graph: dict) -> dict:
+    """PRIVACY (founder Nov 18): a surface only ever traverses related links
+    between nodes the viewer MAY see. Drop any related link whose target is not in
+    THIS payload's visible node set, so a public node that links to a
+    private/Ayma-only node never leaks that node — not the target id, not its
+    reason label — on the public profile or any shared surface. A link target is a
+    raw store id; the flat node is ``id`` or ``b:<id>``, so a link survives only
+    when one of those forms is present in the payload."""
+    ids = {n["id"] for n in graph.get("nodes", [])}
+
+    def visible(target: str) -> bool:
+        return target in ids or f"b:{target}" in ids
+
+    for n in graph.get("nodes", []):
+        links = n.get("links")
+        if not links:
+            continue
+        kept = [l for l in links if visible(str(l.get("target", "")))]
+        if kept:
+            n["links"] = kept
+        else:
+            n.pop("links", None)
+    return graph
+
+
 def get_graph(db, uid: str, *, center_label: str = "You") -> dict:
     """The owner's full person-graph: every story bullet AND every other
     store node (reports, photos, skills, assessment, …), all visibilities."""
     sections = profile_bullets.get_bullets(db, uid).get("sections", [])
     g = _graph_from_sections(sections, owner_only=True, center_label=center_label)
-    return _augment_with_store_nodes(g, db, uid, owner_only=True)
+    g = _augment_with_store_nodes(g, db, uid, owner_only=True)
+    return _filter_related_to_visible(g)
 
 
 def public_graph(db, uid: str, *, center_label: str = "") -> dict:
@@ -328,4 +354,5 @@ def public_graph(db, uid: str, *, center_label: str = "") -> dict:
     g = _graph_from_sections(
         sections, owner_only=False, center_label=center_label or "Them"
     )
-    return _augment_with_store_nodes(g, db, uid, owner_only=False)
+    g = _augment_with_store_nodes(g, db, uid, owner_only=False)
+    return _filter_related_to_visible(g)

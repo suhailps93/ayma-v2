@@ -686,4 +686,20 @@ void main() {
       expect(indexedStoryFor('sec:appearance', idx), isNull); // a hub: synthesized
     });
   });
+
+  group('related chips in the node visualiser (founder Nov 18)', () {
+    test('relatedChipLabel prefers the label, falls back to text, truncates', () {
+      const withLabel =
+          GraphNode(id: 'a', kind: 'fact', label: 'The dog Rocky', text: 'body');
+      expect(relatedChipLabel(withLabel), 'The dog Rocky');
+      const noLabel = GraphNode(id: 'b', kind: 'fact', text: 'Rocky again');
+      expect(relatedChipLabel(noLabel), 'Rocky again');
+      const empty = GraphNode(id: 'c', kind: 'fact');
+      expect(relatedChipLabel(empty), 'Related note');
+      final long = GraphNode(
+          id: 'd', kind: 'fact', label: 'x' * 60);
+      expect(relatedChipLabel(long).endsWith('…'), isTrue);
+      expect(relatedChipLabel(long).length, lessThanOrEqualTo(40));
+    });
+  });
 }

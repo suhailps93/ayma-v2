@@ -151,6 +151,14 @@ bool graphFilterPasses(
   return (hk, hl);
 }
 
+/// The short label shown on a "Related" chip for node [n] (founder Nov 18): its
+/// label, else its text, truncated. Pure so the chip text is unit-testable.
+String relatedChipLabel(GraphNode n) {
+  final t = n.label.trim().isNotEmpty ? n.label.trim() : n.text.trim();
+  if (t.isEmpty) return 'Related note';
+  return t.length <= 40 ? t : '${t.substring(0, 39)}…';
+}
+
 /// The indexed StoryNode (Track B's tree) for a flat node id: the raw id, or a
 /// bullet's `b:`-stripped id. Null when the tree holds no such node (a section
 /// hub or the person centre, which the screen synthesizes). Pure for tests.
@@ -294,9 +302,11 @@ class _PersonGraphScreenState extends State<PersonGraphScreen>
                   style: AymaType.serif(size: 18, color: ac.fg)),
               const SizedBox(height: 4),
               Text(
-                'Everything Ayma holds about you, wired together. Node size is '
-                'depth, colour is type. Pinch to zoom, two fingers to pan. Tap '
-                'or drag across a node to inspect it below.',
+                'Everything Ayma holds about you, wired together. You are the '
+                'largest node at the centre; below that, size is depth and '
+                'colour is type. A dashed line marks two notes that are related. '
+                'Pinch to zoom, two fingers to pan. Tap or drag across a node to '
+                'inspect it below.',
                 style: AymaType.sans(size: 13, color: ac.fgDim),
               ),
               const SizedBox(height: 14),
@@ -454,9 +464,17 @@ class _GraphBodyState extends State<_GraphBody>
     _relatedAdj =
         buildRelatedAdjacency(widget.graph.nodes, _byId.keys.toSet());
 
+    // The root "You" node is sized above every other node (founder Nov 18), so it
+    // reads as the clear centre in every state — identified here so its boosted
+    // radius flows through layout, collision and hit-testing.
+    final rootId = _rootId();
     final simNodes = [
       for (final n in widget.graph.nodes)
-        SimNode(id: n.id, level: _levels[n.id] ?? 2),
+        SimNode(
+          id: n.id,
+          level: _levels[n.id] ?? 2,
+          isRoot: n.id == rootId,
+        ),
     ];
     _sim = GraphSim(
       nodes: simNodes,
@@ -823,6 +841,19 @@ class _GraphBodyState extends State<_GraphBody>
     );
   }
 
+  /// The related (cross-linked) nodes of [id], resolved to the flat graph nodes,
+  /// for the visualiser's tappable "Related" row (founder Nov 18). The adjacency
+  /// is already symmetric and built only from nodes present in this (visibility-
+  /// filtered) payload, so a private target never appears on a shared graph.
+  List<GraphNode> _relatedNodesFor(String id) {
+    final out = <GraphNode>[];
+    for (final t in _relatedAdj[id] ?? const <String>{}) {
+      final n = _byId[t];
+      if (n != null) out.add(n);
+    }
+    return out;
+  }
+
   /// A node changed through the chat window — refetch the tree so the detail
   /// re-renders with the edit.
   void _onTreeChanged() => unawaited(_loadTree());
@@ -898,6 +929,7 @@ class _GraphBodyState extends State<_GraphBody>
                     view: _view,
                     byId: _byId,
                     adjacency: _childrenOf,
+                    related: _relatedAdj,
                     ac: ac,
                     selectedId: _selected?.id,
                     highlight: _highlight,
@@ -917,6 +949,9 @@ class _GraphBodyState extends State<_GraphBody>
           color: _selected == null
               ? ac.accent
               : GraphTypeColors.forNode(ac, _selected!),
+          related:
+              _selected == null ? const [] : _relatedNodesFor(_selected!.id),
+          onTapRelated: _select,
           api: widget.api,
           isOwner: _isOwner,
           onOpenFull: _openFull,
@@ -1073,6 +1108,8 @@ class _VisualiserPanel extends StatelessWidget {
     required this.node,
     required this.story,
     required this.color,
+    required this.related,
+    required this.onTapRelated,
     required this.api,
     required this.isOwner,
     required this.onOpenFull,
@@ -1085,6 +1122,11 @@ class _VisualiserPanel extends StatelessWidget {
   /// The recursive node Track B's visualiser renders (self + subtree).
   final StoryNode? story;
   final Color color;
+
+  /// The selected node's RELATED nodes (founder Nov 18), shown as tappable chips
+  /// that open that node in this same panel.
+  final List<GraphNode> related;
+  final void Function(GraphNode) onTapRelated;
   final ApiClient api;
   final bool isOwner;
   final void Function(GraphNode) onOpenFull;
@@ -1160,14 +1202,69 @@ class _VisualiserPanel extends StatelessWidget {
           // change — no heavy reload per node.
           Flexible(
             child: SingleChildScrollView(
-              child: NodeVisualiser(
-                node: story!,
-                surface: NodeVisualiserSurface.graphDetail,
-                api: api,
-                isOwner: isOwner,
-                onChanged: onChanged,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  NodeVisualiser(
+                    node: story!,
+                    surface: NodeVisualiserSurface.graphDetail,
+                    api: api,
+                    isOwner: isOwner,
+                    onChanged: onChanged,
+                  ),
+                  if (related.isNotEmpty) _RelatedRow(related, onTapRelated),
+                ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The tappable "Related" chips under a node's detail (founder Nov 18): each of
+/// the node's related (cross-linked) notes, tapping one opens it in the panel.
+class _RelatedRow extends StatelessWidget {
+  const _RelatedRow(this.related, this.onTap);
+  final List<GraphNode> related;
+  final void Function(GraphNode) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.hub_outlined, size: 14, color: ac.fgMute),
+              const SizedBox(width: 6),
+              Text('Related',
+                  style: AymaType.sans(size: 12, color: ac.fgMute)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final n in related)
+                ActionChip(
+                  avatar: CircleAvatar(
+                      backgroundColor:
+                          GraphTypeColors.forNode(ac, n),
+                      radius: 5),
+                  label: Text(relatedChipLabel(n),
+                      style: AymaType.sans(size: 12, color: ac.fg)),
+                  backgroundColor: ac.bgCard,
+                  side: BorderSide(color: ac.accent.withValues(alpha: 0.4)),
+                  onPressed: () => onTap(n),
+                ),
+            ],
           ),
         ],
       ),
@@ -1186,6 +1283,7 @@ class _GraphPainter extends CustomPainter {
     required this.view,
     required this.byId,
     required this.adjacency,
+    required this.related,
     required this.ac,
     required this.selectedId,
     required this.highlight,
@@ -1197,8 +1295,13 @@ class _GraphPainter extends CustomPainter {
   final ViewTransform view;
   final Map<String, GraphNode> byId;
 
-  /// Directed adjacency (parent -> children) for drawing edges.
+  /// Directed adjacency (parent -> children) for drawing the SOLID tree edges.
   final Map<String, Set<String>> adjacency;
+
+  /// Symmetric RELATED-link adjacency (founder Nov 18) — drawn as DASHED accent
+  /// lines, visually distinct from the solid tree edges, so a cross-link between
+  /// two notes on the same topic reads as a different kind of connection.
+  final Map<String, Set<String>> related;
   final AymaTokens ac;
   final String? selectedId;
   final Set<String> highlight;
@@ -1225,6 +1328,29 @@ class _GraphPainter extends CustomPainter {
           if (a == null || b == null) continue;
           _paintEdge(canvas, from, to, view.toViewport(a.pos),
               view.toViewport(b.pos), lit);
+        }
+      }
+    }
+
+    // Related cross-links, drawn on top of the tree edges as DASHED accent lines
+    // so they are visually distinct (founder Nov 18). Symmetric adjacency — draw
+    // each pair once (from < to). Dim/lit with the selection like tree edges.
+    final drawnRelated = <String>{};
+    for (final pass in const [false, true]) {
+      for (final s in sim.nodes) {
+        final from = s.id;
+        for (final to in related[from] ?? const <String>{}) {
+          if (from.compareTo(to) >= 0) continue; // each undirected pair once
+          final key = '$from|$to';
+          if (!passes(from) || !passes(to)) continue;
+          final lit = graphEdgeLit(selectedId, highlight, from, to);
+          if (lit != pass) continue;
+          if (!drawnRelated.add(key)) continue;
+          final a = posById[from];
+          final b = posById[to];
+          if (a == null || b == null) continue;
+          _paintRelatedEdge(
+              canvas, view.toViewport(a.pos), view.toViewport(b.pos), lit);
         }
       }
     }
@@ -1284,6 +1410,29 @@ class _GraphPainter extends CustomPainter {
       ..moveTo(pa.dx, pa.dy)
       ..quadraticBezierTo(control.dx, control.dy, pb.dx, pb.dy);
     canvas.drawPath(path, paint);
+  }
+
+  /// A RELATED cross-link: a DASHED straight accent line, distinct from the solid
+  /// gradient tree edges. Dims with the rest of the web when something else is
+  /// selected; glows when both endpoints are lit.
+  void _paintRelatedEdge(Canvas canvas, Offset pa, Offset pb, bool lit) {
+    final alpha = lit ? 0.85 : (_dimming ? 0.05 : 0.33);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = lit ? 2.0 : 1.3
+      ..color = ac.accent.withValues(alpha: alpha);
+    final d = pb - pa;
+    final len = d.distance;
+    if (len < 1e-3) return;
+    final dir = d / len;
+    const dash = 7.0;
+    const gap = 5.0;
+    var dist = 0.0;
+    while (dist < len) {
+      final end = math.min(dist + dash, len);
+      canvas.drawLine(pa + dir * dist, pa + dir * end, paint);
+      dist = end + gap;
+    }
   }
 
   void _paintNode(Canvas canvas, SimNode s, bool lit) {
