@@ -9,9 +9,10 @@ import 'dart:ui' show Offset, Rect, Size;
 /// the node positions through [fitToViewport].
 
 /// Rendered radius for a node at [level] (0 = the person, 1 = a section, 2 =
-/// a first-generation leaf, deeper shrinks). Size encodes level — person
-/// largest, sections next, bullets shrinking with depth — and the collision
-/// radius is this plus a small gap so size and spacing stay consistent.
+/// a first-generation leaf, deeper shrinks). Size encodes level — sections
+/// next-largest, bullets shrinking with depth — and the collision radius is this
+/// plus a small gap so size and spacing stay consistent. The ROOT "You" node is
+/// NOT sized from this: it uses [rootNodeRadius] (see [SimNode]).
 double nodeRadiusForLevel(int level) => switch (level) {
       <= 0 => 22,
       1 => 14,
@@ -20,11 +21,23 @@ double nodeRadiusForLevel(int level) => switch (level) {
       _ => 6,
     };
 
+/// The rendered radius of the ROOT "You" node (founder Nov 18): STRICTLY greater
+/// than [nodeRadiusForLevel] at every level, so the centre You is visibly the
+/// largest node in the whole graph — in the full view, every filtered view, and
+/// the tap/highlight state (highlight changes colour/halo, never radius; filters
+/// only hide other nodes). The root boost is independent of level/filter/
+/// highlight scaling exactly because it is a fixed radius above the level ladder,
+/// not a function of level. (See [SimNode.isRoot].)
+const double rootNodeRadius = 34;
+
 /// A node in the force simulation. Position/velocity are mutated in place each
-/// [GraphSim.step]; [radius] is the rendered size (from [nodeRadiusForLevel]).
+/// [GraphSim.step]; [radius] is the rendered size — [rootNodeRadius] for the root
+/// "You" node, else [nodeRadiusForLevel]. Baking the boost into the sim radius
+/// (not just the paint) keeps hit-testing, collision spacing and the fit bounds
+/// consistent with the drawn size.
 class SimNode {
-  SimNode({required this.id, required this.level})
-      : radius = nodeRadiusForLevel(level);
+  SimNode({required this.id, required this.level, bool isRoot = false})
+      : radius = isRoot ? rootNodeRadius : nodeRadiusForLevel(level);
 
   final String id;
   final int level;

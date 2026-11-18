@@ -364,6 +364,19 @@ class Config:
     **Off by default** (``GRAPH_DEDUPE_SWEEP=true``) — additive, reversible:
     flag-off keeps today's write-and-store behaviour exactly. Checked per call."""
 
+    node_related_propose: bool
+    """Write-time RELATED-LINK proposer (founder Nov 18). Alongside the dedupe
+    check (NOT changing it), the session-end sweep (``person_graph_related``)
+    finds nodes that are the same entity/topic but a DIFFERENT fact (not a
+    duplicate) and, for pairs where BOTH ends are level 3+ (the level rule),
+    proposes a MUTUAL ``related`` link. The LiveKit judge labels each pair:
+    a CONFIDENT "related" is linked with the node; an UNCERTAIN one is RAISED in
+    chat (the settled ``record_pending_dedupe`` flow), never linked silently; a
+    same-fact "duplicate" is left to the dedupe path (never linked here). Same
+    LiveKit gateway as the dedupe judge — never rerouted. **Off by default**
+    (``NODE_RELATED_PROPOSE=true``): additive, reversible; flag-off writes exactly
+    as before. Checked per call, so it flips without a restart."""
+
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
     **web image search** — finding photos of a person online to face-verify
@@ -1413,6 +1426,8 @@ def _load() -> Config:
         node_dedupe_prevention=os.getenv("NODE_DEDUPE_PREVENTION", "false").lower()
         == "true",
         node_conflict_raise=os.getenv("NODE_CONFLICT_RAISE", "false").lower()
+        == "true",
+        node_related_propose=os.getenv("NODE_RELATED_PROPOSE", "false").lower()
         == "true",
         graph_embedding_dedupe=os.getenv("GRAPH_EMBEDDING_DEDUPE", "false").lower()
         == "true",

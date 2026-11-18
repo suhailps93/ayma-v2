@@ -1536,31 +1536,56 @@ def find_topic_anchor(
     return best
 
 
-def connected_node_ids(graph: dict[str, pg.GraphNode], anchor_id: str) -> list[str]:
+def connected_node_ids(
+    graph: dict[str, pg.GraphNode],
+    anchor_id: str,
+    *,
+    allowed_vis: set[str] | None = None,
+) -> list[str]:
     """``anchor_id`` plus everything connected to it in the graph: its ancestor
     chain (parent links up), its descendants (child nodes down), and its
     related-linked nodes (``type == related``, both directions). One hop out
     through related links, then that node's own subtree — so a related topic
-    brings its details too."""
+    brings its details too.
+
+    PRIVACY (founder Nov 18): when ``allowed_vis`` is given (a set of visibility
+    strings the viewer MAY see), a related edge is only ever TRAVERSED when BOTH
+    endpoints are visible to the viewer — so a public node that links to a
+    private/Ayma-only node never surfaces it on a shared/public lookup. The
+    ancestor/descendant walk is likewise confined to visible nodes. ``None`` (the
+    owner's own lookup) traverses everything."""
     import person_graph_tree as tree
 
     if anchor_id not in graph:
         return []
+
+    def _vis(nid: str) -> str:
+        v = getattr(graph[nid], "visibility", None)
+        return v.value if hasattr(v, "value") else str(v)
+
+    def _may_see(nid: str) -> bool:
+        return allowed_vis is None or (nid in graph and _vis(nid) in allowed_vis)
+
+    if not _may_see(anchor_id):
+        return []
+
     out: list[str] = []
     seen: set[str] = set()
 
     def add(nid: str) -> None:
-        if nid in graph and nid not in seen:
+        if nid in graph and nid not in seen and _may_see(nid):
             seen.add(nid)
             out.append(nid)
 
-    # related edges, both directions
+    # related edges, both directions — only across pairs the viewer may see.
     related: dict[str, set[str]] = {}
     for nid, n in graph.items():
+        if not _may_see(nid):
+            continue
         for ln in getattr(n, "links", []) or []:
             if getattr(ln, "type", "") == pg.StrictLinkType.RELATED.value:
                 tgt = getattr(ln, "target", "")
-                if tgt:
+                if tgt and _may_see(tgt):
                     related.setdefault(nid, set()).add(tgt)
                     related.setdefault(tgt, set()).add(nid)
 
@@ -1593,6 +1618,7 @@ def graph_lookup(
     node_id: str | None = None,
     intent: str | None = None,
     include_ayma_only: bool = True,
+    public_only: bool = False,
 ) -> dict:
     """The single graph lookup. Pass a ``topic`` (topic search finds the one
     anchor node) or a ``node_id`` directly; returns that node plus everything
@@ -1601,7 +1627,13 @@ def graph_lookup(
         {"anchor": <id|None>, "node_ids": [...], "nodes": [GraphNode, ...]}
 
     ``nodes`` are in section-then-level order. ``include_ayma_only=False`` drops
-    Ayma-only nodes (e.g. the assessment nodes) for a non-grounding consumer."""
+    Ayma-only nodes (e.g. the assessment nodes) for a non-grounding consumer;
+    ``public_only=True`` is a shared/viewer-facing lookup (public nodes only).
+
+    PRIVACY (founder Nov 18): the viewer's visibility set confines the traversal
+    too — related links (and the ancestor/descendant walk) are only followed
+    between nodes the viewer may see, so a shared lookup never reaches a
+    private/Ayma-only node one hop out through a related link."""
     graph = effective(db, uid, intent=intent)
     anchor = (
         graph.get(node_id)
@@ -1610,7 +1642,13 @@ def graph_lookup(
     )
     if anchor is None:
         return {"anchor": None, "node_ids": [], "nodes": []}
-    ids = connected_node_ids(graph, anchor.id)
+    if public_only:
+        allowed_vis: set[str] | None = {Visibility.PUBLIC.value}
+    elif not include_ayma_only:
+        allowed_vis = {Visibility.PUBLIC.value, Visibility.PRIVATE.value}
+    else:
+        allowed_vis = None
+    ids = connected_node_ids(graph, anchor.id, allowed_vis=allowed_vis)
     nodes = [graph[i] for i in ids]
     if not include_ayma_only:
         nodes = [n for n in nodes if n.visibility is not Visibility.AYMA_ONLY]
