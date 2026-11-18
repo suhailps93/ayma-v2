@@ -1184,3 +1184,16 @@ timeline_entry, else gist_row), explicit in the report/web/assessment writers
 visibility, never blocks a write. Params contract documented in
 `docs/PERSON_GRAPH.md § Write-time visual pick`. Tests extended in
 `tests/test_gist_first_writing.py` + `tests/test_matching_skill.py`.
+
+## DONE (build 2502 fix, fleet/partner-age-range-row): standard fields ICON+value; min/max → one range row
+
+RENDER-ONLY, data/inference untouched (LiveKit). In `node_visualiser.dart`:
+(1) STANDARD (predefined) fields now render a fixed per-field `Icons.*` coloured
+by visibility + the bare value, NO word label (About Me "Name: Suhail" → person
+glyph + "Suhail"); no-icon standard fields fall back to value-only; prose bullets
+keep their coloured bullet. (2) A `<base>_min`/`<base>_max` pair renders as ONE
+"Partner age preference 21–56" range row (no bar either end); a lone end → plain
+row; genuine scale traits still bars. The combined partner-age row deliberately
+KEEPS its text label ("Partner age preference", founder-named). See
+`docs/PERSON_GRAPH.md § Standard fields render ICON + value`. Tests in
+`test/node_visualiser_test.dart`; layout matrix green; analyze=0.

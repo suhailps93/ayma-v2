@@ -110,6 +110,30 @@ class NodeVisualiser extends StatelessWidget {
     return depth > _maxIndentSteps ? _maxIndentSteps : depth;
   }
 
+  /// The fixed per-field ICON for a STANDARD (predefined) field, keyed by the
+  /// node's field id — the SAME icon wherever the field appears (Your Story and
+  /// the public profile). A standard field renders ICON + value with NO word
+  /// label (founder build 2502: "Name: Suhail" → a person glyph + "Suhail"),
+  /// the icon carrying the node's visibility colour so privacy reads at a
+  /// glance. A field with no entry here keeps its visibility bullet and shows
+  /// the value alone (no confusing glyph). The registry mirrors
+  /// `person_graph.STANDARD_FIELDS`; extend both together when a new structured
+  /// field is added.
+  static const Map<String, IconData> _standardFieldIcons = {
+    'legal_first_name': Icons.person_outline, // Name
+    'date_of_birth': Icons.cake_outlined, // Age / date of birth
+    'gender_identity': Icons.wc_outlined, // Gender
+    'primary_location': Icons.location_on_outlined, // Location (pin)
+    'target_match_genders': Icons.favorite_border, // Interested in (heart)
+    'ethnic_cultural_origin': Icons.public_outlined, // Ethnic & cultural origin
+  };
+
+  /// This node's standard-field icon, or null when it is not a standard field
+  /// (prose/conversational nodes keep their coloured bullet) or no icon reads
+  /// clearly for it.
+  IconData? get _standardIcon =>
+      node.standard ? _standardFieldIcons[node.id] : null;
+
   bool get _publicOnly => surface == NodeVisualiserSurface.publicProfile;
 
   bool _visible(String vis) => _publicOnly ? vis == NodeVis.public : true;
@@ -170,6 +194,18 @@ class NodeVisualiser extends StatelessWidget {
       );
 
   Widget _row(BuildContext context) {
+    // A STANDARD field shows a fixed per-field ICON coloured by its visibility
+    // (never a `mixed` leaf, so the single-colour icon is safe); every other
+    // node — and a standard field with no fitting icon — keeps the coloured
+    // visibility bullet.
+    final icon =
+        node.subtreeVisibility != NodeVis.mixed ? _standardIcon : null;
+    final Widget leading = icon != null
+        ? Icon(icon,
+            key: Key('node_field_icon_${node.id}'),
+            size: 18,
+            color: nodeVisibilityColor(node.subtreeVisibility))
+        : NodeVisibilityBullet(visibility: node.subtreeVisibility);
     // EdgeInsetsDirectional so the indent follows text direction — it grows
     // from the left in LTR and from the right in RTL.
     return Padding(
@@ -184,8 +220,8 @@ class NodeVisualiser extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: NodeVisibilityBullet(visibility: node.subtreeVisibility),
+                padding: EdgeInsets.only(top: icon != null ? 2 : 6),
+                child: leading,
               ),
               const SizedBox(width: 10),
               Expanded(child: _content(context)),
@@ -251,21 +287,10 @@ class NodeVisualiser extends StatelessWidget {
     // build 2495: "no text should cut off partially"). The gist is written
     // short (build 2493), so a wrapped row stays compact; a genuinely long one
     // still renders in full rather than ending in "…".
-    if (node.standard && (node.standardLabel ?? '').isNotEmpty) {
-      return RichText(
-        text: TextSpan(
-          style: theme.textTheme.bodyLarge,
-          children: [
-            TextSpan(
-              text: '${node.standardLabel}: ',
-              style: theme.textTheme.bodyLarge
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            TextSpan(text: node.displayGist),
-          ],
-        ),
-      );
-    }
+    // A STANDARD (predefined) field renders its VALUE with NO word label — the
+    // per-field icon in [_row] carries the meaning and the visibility colour
+    // (founder build 2502). A conversational/prose node has no standard label
+    // and renders the same value line under its coloured bullet.
     return Text(
       node.displayGist,
       style: theme.textTheme.bodyLarge,
@@ -852,6 +877,131 @@ String _timelineDateOf(StoryNode n) =>
 /// key internal to [_siblingWidgets].
 const String _kImageAggType = '__photo_carousel_agg__';
 
+// --- min/max range pairing (founder build 2502) ---------------------------
+// A `<base>_min` + `<base>_max` pair is the TWO ENDS of ONE quantity's range,
+// NOT two independent scale traits. The write-time backfill picks `bar_meter`
+// for each end because each is numeric — WRONG for a two-ended range. At the
+// section level the renderer detects the pair (by the field ids, with a
+// Youngest/Oldest label fallback) and draws ONE combined range row
+// ("Partner age preference 21–56") with NO bar for either end. A lone end (no
+// partner present) renders as a PLAIN labelled row, also with no bar. This is
+// RENDER only — the two stored nodes stay two nodes.
+
+/// One parsed end of a `<base>_min`/`<base>_max` range.
+class _RangeEnd {
+  const _RangeEnd(this.base, {required this.isMax});
+
+  /// The shared quantity key (`partner_age`, or `label:<quantity>` when matched
+  /// only by a Youngest/Oldest label) — the two ends of one range share it.
+  final String base;
+
+  /// True for the MAX (oldest/highest) end, false for the MIN (youngest/lowest).
+  final bool isMax;
+}
+
+final RegExp _rangeIdRe = RegExp(r'^(.+)_(min|max)$');
+final RegExp _rangeLabelRe = RegExp(
+    r'^(youngest|oldest|lowest|highest|minimum|maximum)\s+(.+)$');
+
+/// Parse a node as one END of a min/max range, or null if it is not one.
+/// The field id (`<base>_min` / `<base>_max`) is the strong signal; a
+/// Youngest/Oldest-style label is the fallback for a node whose id lacks the
+/// suffix. A genuine scale trait (`social_energy`, `cleanliness_index`, …) has
+/// neither and is never treated as a range end — it keeps its bar.
+_RangeEnd? _rangeEndOf(StoryNode n) {
+  final idm = _rangeIdRe.firstMatch(n.id);
+  if (idm != null) {
+    return _RangeEnd(idm.group(1)!, isMax: idm.group(2) == 'max');
+  }
+  final lm = _rangeLabelRe.firstMatch(n.label.trim().toLowerCase());
+  if (lm != null) {
+    const maxWords = {'oldest', 'highest', 'maximum'};
+    return _RangeEnd('label:${lm.group(2)!.trim()}',
+        isMax: maxWords.contains(lm.group(1)));
+  }
+  return null;
+}
+
+/// The numeric value carried by a range-end node — its `bar_meter`/`gauge`
+/// `params.value`, else its stat value, else a number parsed from its gist/text.
+/// Null when no number is present.
+double? _rangeEndValue(StoryNode n) {
+  final v = n.visual?.params['value'];
+  if (v is num) return v.toDouble();
+  if (n.statValue != null) return n.statValue;
+  return double.tryParse(n.displayGist.trim()) ?? double.tryParse(n.text.trim());
+}
+
+String _capitalizeFirst(String s) =>
+    s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
+
+/// The combined row label for a `<base>` range. `partner_age` reads
+/// "Partner age preference" (founder build 2502); any other base derives a
+/// sensible label from the quantity shared by the two ends' labels, falling
+/// back to the base id with underscores as spaces.
+String _rangeCombinedLabel(String base, StoryNode lo, StoryNode hi) {
+  if (base == 'partner_age') return 'Partner age preference';
+  final loQ = _rangeLabelRe.firstMatch(lo.label.trim().toLowerCase())?.group(2);
+  final hiQ = _rangeLabelRe.firstMatch(hi.label.trim().toLowerCase())?.group(2);
+  if (loQ != null && hiQ != null && loQ.trim() == hiQ.trim()) {
+    return _capitalizeFirst(loQ.trim());
+  }
+  if (base.startsWith('label:')) {
+    return _capitalizeFirst(base.substring(6).trim());
+  }
+  return _capitalizeFirst(base.replaceAll('_', ' ').trim());
+}
+
+/// A labelled range/plain row: the visibility bullet + `<label>: <value>`,
+/// inset like a sibling row and tapping through to [target]'s node chat. Used
+/// for both the combined min–max row and a lone end (no bar in either case).
+Widget _rangeRowWidget(
+  BuildContext context,
+  StoryNode target,
+  String label,
+  String value,
+  _NvCfg cfg,
+  double inset,
+) {
+  final theme = Theme.of(context);
+  return Padding(
+    padding: EdgeInsetsDirectional.only(start: inset),
+    child: InkWell(
+      key: Key('node_range_row_${target.id}'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _openNodeChat(context, target, cfg),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: NodeVisibilityBullet(visibility: target.subtreeVisibility),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: theme.textTheme.bodyLarge,
+                  children: [
+                    TextSpan(
+                      text: '$label: ',
+                      style: theme.textTheme.bodyLarge
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    TextSpan(text: value),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 /// The aggregating palette type a LEAF node contributes to a sibling group, or
 /// null if it can't be aggregated (not a chip/timeline/image leaf, or it has
 /// children — those render recursively so their subtree is never dropped).
@@ -958,6 +1108,20 @@ List<Widget> _siblingWidgets(
   required double indentStart,
   required int depth,
 }) {
+  // Detect `<base>_min`/`<base>_max` range pairs among these siblings BEFORE
+  // grouping (founder build 2502). A base with BOTH ends renders as one
+  // combined range row (no bar); a lone end renders as a plain row (no bar).
+  final minByBase = <String, StoryNode>{};
+  final maxByBase = <String, StoryNode>{};
+  final endOf = <String, _RangeEnd>{};
+  for (final n in visible) {
+    final e = _rangeEndOf(n);
+    if (e == null) continue;
+    endOf[n.id] = e;
+    (e.isMax ? maxByBase : minByBase).putIfAbsent(e.base, () => n);
+  }
+  final emittedRangeBases = <String>{};
+
   // Partition into consecutive same-type aggregatable runs vs singletons.
   final surface = cfg.surface;
   final groups = <List<StoryNode>>[];
@@ -973,7 +1137,43 @@ List<Widget> _siblingWidgets(
   }
 
   final out = <Widget>[];
+  // The inset a NON-aggregated sibling row sits at — matches NodeVisualiser's
+  // own-row indent for this depth, so the combined/plain range row lines up.
+  final rowInset = depth.clamp(0, NodeVisualiser._maxIndentSteps) *
+      NodeVisualiser._indentStep;
   for (final group in groups) {
+    // A single range end: combine with its partner (one row) or render plain.
+    if (group.length == 1 && endOf.containsKey(group.first.id)) {
+      final end = endOf[group.first.id]!;
+      final lo = minByBase[end.base];
+      final hi = maxByBase[end.base];
+      if (lo != null && hi != null) {
+        // Paired → ONE combined range row, emitted at the first end reached.
+        if (emittedRangeBases.add(end.base)) {
+          final loV = _rangeEndValue(lo);
+          final hiV = _rangeEndValue(hi);
+          final value = (loV != null && hiV != null)
+              ? '${NodeVisualiser._trimNum(loV)}–${NodeVisualiser._trimNum(hiV)}'
+              : (loV ?? hiV) != null
+                  ? NodeVisualiser._trimNum((loV ?? hiV)!)
+                  : '';
+          out.add(_rangeRowWidget(context, lo,
+              _rangeCombinedLabel(end.base, lo, hi), value, cfg, rowInset));
+        }
+        continue;
+      }
+      // Lone end → plain labelled row, NO bar.
+      final v = _rangeEndValue(group.first);
+      out.add(_rangeRowWidget(
+        context,
+        group.first,
+        group.first.label.isNotEmpty ? group.first.label : group.first.displayGist,
+        v != null ? NodeVisualiser._trimNum(v) : group.first.displayGist,
+        cfg,
+        rowInset,
+      ));
+      continue;
+    }
     final t = _aggType(group.first, surface);
     if (t == _kImageAggType) {
       // One or more consecutive report image leaves → ONE swipeable carousel

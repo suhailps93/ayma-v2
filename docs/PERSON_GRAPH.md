@@ -1425,3 +1425,37 @@ hit-testing. It is independent of level/filter/highlight scaling (highlight chan
 colour/halo not radius; filters only hide other nodes). Only the actual root id is
 boosted — a stray level-0 node is not. Tests: `test/person_graph_layout_test.dart`
 ("root is the biggest" group). Scout verifies on the founder graph on-device.
+
+## Standard fields render ICON + value; min/max pair is ONE range row (build 2502 fix)
+
+Two RENDER-ONLY rules in `node_visualiser.dart` (stored nodes/data unchanged —
+inference untouched, still LiveKit):
+
+- **Standard (predefined) field → ICON + value, NO word label.** A node whose id
+  is in `person_graph.STANDARD_FIELDS` renders a fixed per-field `Icons.*` in
+  place of its bullet, then the bare value — no "Name:"/"Location:" text. The
+  icon is `node_field_icon_<id>`, coloured by the node's visibility
+  (`nodeVisibilityColor(subtreeVisibility)` — green public / yellow private /
+  violet Ayma-only), so privacy still reads at a glance. The icon map (keyed by
+  field id, same icon on Your Story and the public profile):
+  `legal_first_name → person_outline`, `date_of_birth → cake_outlined`,
+  `gender_identity → wc_outlined`, `primary_location → location_on_outlined`,
+  `target_match_genders → favorite_border`, `ethnic_cultural_origin →
+  public_outlined`. A standard field with NO mapped icon keeps its visibility
+  bullet and shows value-only (no confusing glyph). Prose/conversational nodes
+  are unchanged — coloured bullet + gist. Fixed order, values and tap (opens the
+  node in the partial chat) are unchanged. Extend the icon map alongside
+  `STANDARD_FIELDS`.
+- **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
+  write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
+  a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
+  the siblings for a min/max pair (by the field ids, with a Youngest/Oldest label
+  fallback) and, when BOTH ends are present, renders ONE combined row —
+  "Partner age preference: 21–56" (youngest–oldest) — with NO bar for either end,
+  ignoring the stored `bar_meter`. The combined label derives from the shared
+  base (`partner_age → "Partner age preference"`; any other base → the shared
+  quantity from the two labels). A LONE end (no partner) renders as a plain
+  labelled row, also no bar. Genuine single scale traits (`social_energy`,
+  `cleanliness_index`, …) have no `_min`/`_max` and still render as bars.
+  Tests: `test/node_visualiser_test.dart` (standard-field ICON render + min/max
+  range row groups).
