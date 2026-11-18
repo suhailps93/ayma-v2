@@ -9,9 +9,15 @@ Contract (shared with Part 3, the writer side, ``fleet/gist-first-writing``):
   - A STORED ``gist`` (the writer produces one going forward) always wins.
   - When a node has no stored ``gist`` (every existing node today), derive one
     from the node's existing text — generalizably, with NO per-node code:
-      * first sentence of the prose/answer, when it fits the length budget;
-      * otherwise a trimmed summary of that text, cut on a word boundary,
-        trailing punctuation stripped, an ellipsis appended.
+      * the FIRST COMPLETE SENTENCE of the prose/answer, trailing punctuation
+        stripped, returned IN FULL;
+      * when there is no sentence boundary (a single run-on line), the whole
+        line, likewise in full.
+    The derived headline is NEVER chopped mid-word and NEVER ends in an
+    ellipsis — the visible line is always a complete thought that wraps to its
+    full height on the surface (founder, Nov 17: "no text should cut off
+    partially … the visible line itself is never a chopped sentence"). The full
+    prose stays in the node's ``text`` for the tap-in detail.
 
 This is the ONE path for every node; image nodes keep their photo (the renderer
 never gist-ifies an image's visual), so this helper is only ever meaningful for
@@ -21,9 +27,6 @@ text content.
 from __future__ import annotations
 
 import re
-
-# Aim for a short headline. ~80 chars keeps a single line at phone width.
-GIST_MAX = 80
 
 # Whitespace run → one space (prose spanning newlines becomes one line).
 _WS = re.compile(r"\s+")
@@ -40,22 +43,11 @@ def _clean(s: str) -> str:
     return _WS.sub(" ", (s or "").strip())
 
 
-def _trim(s: str) -> str:
-    """Trim ``s`` to the length budget on a word boundary, strip trailing
-    punctuation, and append an ellipsis when it was actually cut."""
-    s = s.strip()
-    if len(s) <= GIST_MAX:
-        return s.rstrip(_TRAIL)
-    cut = s[:GIST_MAX]
-    sp = cut.rfind(" ")
-    if sp > 0:
-        cut = cut[:sp]
-    return cut.rstrip(_TRAIL) + "…"
-
-
 def derive_gist(text: str | None, stored: str | None = None) -> str:
     """The node's gist: the stored headline if the writer produced one, else a
-    generalizable fallback derived from ``text`` (first sentence, else trimmed).
+    generalizable fallback derived from ``text`` — the first complete sentence,
+    returned IN FULL with no length cap and no ellipsis (a long sentence wraps
+    to its full height rather than being chopped mid-word).
 
     Returns ``""`` only when there is neither a stored gist nor any text (e.g. a
     pure image node) — the renderer then falls back to the node's own content.
@@ -66,6 +58,4 @@ def derive_gist(text: str | None, stored: str | None = None) -> str:
     if not s:
         return ""
     first = _SENTENCE_END.split(s, 1)[0].strip()
-    if first and len(first) <= GIST_MAX:
-        return first.rstrip(_TRAIL)
-    return _trim(first or s)
+    return (first or s).rstrip(_TRAIL)

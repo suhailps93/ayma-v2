@@ -26,17 +26,36 @@ def test_fallback_is_the_first_sentence():
     assert g == "I grew up in Lisbon"
 
 
-def test_fallback_trims_a_long_single_sentence_on_a_word_boundary():
+def test_fallback_long_single_sentence_is_returned_in_full_no_ellipsis():
+    # REGRESSION (founder Nov 17, Leg 41 "no text should cut off partially"): a
+    # long single-sentence bullet (no full stop to split on) is returned IN FULL
+    # — never chopped on a word boundary and never ending in an ellipsis. The
+    # inline line wraps to its full height; the gist-first design keeps the full
+    # prose in the node's `text` for the tap-in detail.
     text = (
         "A sprawling run-on description that just keeps going well past any "
         "reasonable headline length without ever reaching a full stop at all"
     )
     g = node_gist.derive_gist(text)
-    assert len(g) <= node_gist.GIST_MAX + 1  # +1 for the ellipsis char
-    assert g.endswith("…")
-    assert g[:-1].strip() == g[:-1]  # no trailing space before the ellipsis
-    assert text.startswith(g[:-1])  # it is a clean prefix of the prose
-    assert " " == text[len(g[:-1])] or text[len(g[:-1])].isalnum() is False
+    assert "…" not in g
+    assert g == text  # the whole line, uncut
+
+
+def test_fallback_long_first_sentence_is_returned_in_full_no_ellipsis():
+    # A long FIRST sentence (with later sentences) is still returned whole — the
+    # length budget no longer chops it — while the trailing sentences remain in
+    # `text` for the tap-in.
+    text = (
+        "My long-term goal is to build a company that lets small research teams "
+        "ship hardware without a factory of their own. I have been at it for "
+        "three years."
+    )
+    g = node_gist.derive_gist(text)
+    assert "…" not in g
+    assert g == (
+        "My long-term goal is to build a company that lets small research teams "
+        "ship hardware without a factory of their own"
+    )
 
 
 def test_fallback_collapses_newlines_and_strips_trailing_punctuation():
@@ -82,6 +101,28 @@ def test_person_graph_tree_node_carries_a_derived_gist_and_keeps_full_prose():
     assert node["text"] == long_text
 
 
+def test_person_graph_tree_long_about_me_bullet_gist_has_no_ellipsis():
+    # REGRESSION (Scout Leg 41): an About-Me free-text bullet that is one long
+    # run-on line must surface a gist that is the whole line, never chopped with
+    # an ellipsis — the exact founder-failing path on the Story surface.
+    long_bullet = (
+        "I was born in Dubai and moved to San Jose for school and I care a lot "
+        "about building things that outlast the people who made them"
+    )
+    overlay = {
+        "emergent.story.identity.7": {
+            "prompt": long_bullet, "section": "identity", "level": 2,
+            "answer_type": "narrative", "answer": long_bullet,
+            "state": "answered", "visibility": "public",
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    ident = next(s for s in t["sections"] if s["page_type"] == "identity")
+    node = next(n for n in ident["nodes"] if n["id"] == "emergent.story.identity.7")
+    assert "…" not in node["gist"]
+    assert node["gist"] == long_bullet
+
+
 # --- surfaced on the report tree -------------------------------------------
 
 
@@ -92,6 +133,22 @@ def test_report_tree_text_node_gets_a_derived_gist():
     node = out[0]["nodes"][0]
     assert node["gist"] == "Strong jawline and symmetric features"
     assert node["text"] == long  # full prose kept
+
+
+def test_report_tree_long_text_block_gist_has_no_ellipsis():
+    # REGRESSION (Scout Leg 41): a report section's prose block that is one long
+    # run-on line surfaces a gist that is the whole line — never an ellipsis cut
+    # (reports are the same affected family as Story).
+    long = (
+        "The two share a rare combination of steady temperament and ambitious "
+        "goals that tends to predict a durable long-term partnership over time"
+    )
+    sections = [{"heading": "Summary", "blocks": [{"type": "text", "text": long}]}]
+    out = report_tree._sections_to_tree(sections)
+    node = out[0]["nodes"][0]
+    assert "…" not in node["gist"]
+    assert node["gist"] == long
+    assert node["text"] == long
 
 
 def test_report_tree_stored_gist_on_a_block_is_preserved():
