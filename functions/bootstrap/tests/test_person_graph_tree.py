@@ -26,13 +26,27 @@ def test_standard_fields_marked_in_canonical_order():
     assert name.standard_field_order == 0
     # a conversational seed node is NOT standard
     assert g["marital_status"].standard is False
-    # the six About Me standard fields are the founder order
-    labels = [
+    # the six About Me standard fields are the founder order (orders 0-5)
+    about_me = [
         pg.standard_label(i)
         for i in sorted(pg.STANDARD_FIELDS, key=lambda x: pg.STANDARD_FIELDS[x]["order"])
+        if pg.STANDARD_FIELDS[i]["order"] < 10
     ]
-    assert labels == ["Name", "Age", "Gender", "Location", "Interested in",
-                      "Ethnic & cultural origin"]
+    assert about_me == ["Name", "Age", "Gender", "Location", "Interested in",
+                        "Ethnic & cultural origin"]
+    # What I'm Looking For standard fields (orders 10+), fixed order: partner age
+    # preference (the min/max pair), relocation/travel radius, geographic
+    # flexibility (founder build 2507).
+    looking_for = [
+        i
+        for i in sorted(pg.STANDARD_FIELDS, key=lambda x: pg.STANDARD_FIELDS[x]["order"])
+        if pg.STANDARD_FIELDS[i]["order"] >= 10
+    ]
+    assert looking_for == ["partner_age_min", "partner_age_max",
+                           "relocation_radius", "geographic_flexibility"]
+    assert pg.standard_label("relocation_radius") == "Relocation / travel radius"
+    assert pg.standard_label("geographic_flexibility") == "Geographic flexibility"
+    assert pg.standard_label("partner_age_min") == "Partner age preference"
 
 
 # --- fixed order: standard children render first ---------------------------

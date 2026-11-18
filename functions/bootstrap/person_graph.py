@@ -111,6 +111,19 @@ STANDARD_FIELDS: dict[str, dict[str, Any]] = {
     "primary_location": {"label": "Location", "order": 3},
     "target_match_genders": {"label": "Interested in", "order": 4},
     "ethnic_cultural_origin": {"label": "Ethnic & cultural origin", "order": 5},
+    # What I'm Looking For (founder build 2507) — the fixed Looking-For order is
+    # partner age preference, then relocation/travel radius, then geographic
+    # flexibility. ``order`` ranks WITHIN the field's own section (section_order
+    # dominates in ``person_graph_tree._order_key``), so these Looking-For ranks
+    # sit in their own 10+ band and never tie-break against the 0-5 About Me set.
+    # The partner-age range is two nodes (min/max) the client combines into one
+    # row; both carry the SAME label and adjacent ranks so the combined row sorts
+    # first in the section. Visibility is unchanged — none are in the public
+    # allow-list, so all default private like any other structured fact.
+    "partner_age_min": {"label": "Partner age preference", "order": 10},
+    "partner_age_max": {"label": "Partner age preference", "order": 11},
+    "relocation_radius": {"label": "Relocation / travel radius", "order": 12},
+    "geographic_flexibility": {"label": "Geographic flexibility", "order": 13},
 }
 
 

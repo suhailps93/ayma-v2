@@ -126,6 +126,32 @@ class NodeVisualiser extends StatelessWidget {
     'primary_location': Icons.location_on_outlined, // Location (pin)
     'target_match_genders': Icons.favorite_border, // Interested in (heart)
     'ethnic_cultural_origin': Icons.public_outlined, // Ethnic & cultural origin
+    // What I'm Looking For (founder build 2507) — each keeps its "label: value"
+    // (see [_labeledStandardFields]); the icon reads clearly and carries the
+    // visibility colour like every other standard-field icon.
+    'relocation_radius': Icons.radar_outlined, // travel / move radius
+    'geographic_flexibility': Icons.flight_takeoff_outlined, // relocate abroad
+  };
+
+  /// Standard fields that render their field LABEL in front of the value
+  /// ("`<label>: <value>`") instead of the icon-plus-bare-value of About Me —
+  /// the What I'm Looking For rows, whose values are ambiguous on their own
+  /// (founder build 2507: "Within about 50 km" needs its label). Keyed on the
+  /// standard field id, so the same rule applies for EVERY user graph. The
+  /// partner-age combined row keeps its label through its own range renderer
+  /// (see [_rangePairIcons]).
+  static const Set<String> _labeledStandardFields = {
+    'relocation_radius',
+    'geographic_flexibility',
+  };
+
+  /// The fixed icon for a `<base>_min`/`<base>_max` COMBINED range row, keyed on
+  /// the pair BASE (the row is synthesized from two nodes, so it has no single
+  /// standard id to key on). The icon carries the row's visibility colour, the
+  /// same treatment as a standard-field icon. A base with no entry keeps the
+  /// visibility bullet.
+  static const Map<String, IconData> _rangePairIcons = {
+    'partner_age': Icons.groups_outlined, // Partner age preference (people/range)
   };
 
   /// This node's standard-field icon, or null when it is not a standard field
@@ -287,10 +313,31 @@ class NodeVisualiser extends StatelessWidget {
     // build 2495: "no text should cut off partially"). The gist is written
     // short (build 2493), so a wrapped row stays compact; a genuinely long one
     // still renders in full rather than ending in "…".
-    // A STANDARD (predefined) field renders its VALUE with NO word label — the
-    // per-field icon in [_row] carries the meaning and the visibility colour
-    // (founder build 2502). A conversational/prose node has no standard label
-    // and renders the same value line under its coloured bullet.
+    // A STANDARD (predefined) field normally renders its VALUE with NO word
+    // label — the per-field icon in [_row] carries the meaning and the
+    // visibility colour (founder build 2502). The What I'm Looking For standard
+    // fields are the exception: their values are ambiguous alone, so they keep
+    // "`<label>: <value>`" in front of the icon (founder build 2507). A
+    // conversational/prose node has no standard label and renders the value line
+    // under its coloured bullet.
+    if (node.standard && _labeledStandardFields.contains(node.id)) {
+      final label = (node.standardLabel ?? node.label).trim();
+      if (label.isNotEmpty) {
+        return RichText(
+          text: TextSpan(
+            style: theme.textTheme.bodyLarge,
+            children: [
+              TextSpan(
+                text: '$label: ',
+                style: theme.textTheme.bodyLarge
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              TextSpan(text: node.displayGist),
+            ],
+          ),
+        );
+      }
+    }
     return Text(
       node.displayGist,
       style: theme.textTheme.bodyLarge,
@@ -961,9 +1008,15 @@ Widget _rangeRowWidget(
   String label,
   String value,
   _NvCfg cfg,
-  double inset,
-) {
+  double inset, {
+  IconData? icon,
+}) {
   final theme = Theme.of(context);
+  // A fixed per-field icon (keyed on the range base) renders INSTEAD of the
+  // visibility bullet, carrying the row's visibility colour — the same
+  // treatment as a standard-field icon (founder build 2507). A `mixed` subtree
+  // has no single colour, so it keeps the bullet.
+  final showIcon = icon != null && target.subtreeVisibility != NodeVis.mixed;
   return Padding(
     padding: EdgeInsetsDirectional.only(start: inset),
     child: InkWell(
@@ -976,8 +1029,14 @@ Widget _rangeRowWidget(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: NodeVisibilityBullet(visibility: target.subtreeVisibility),
+              padding: EdgeInsets.only(top: showIcon ? 2 : 6),
+              child: showIcon
+                  ? Icon(icon,
+                      key: Key('node_range_icon_${target.id}'),
+                      size: 18,
+                      color: nodeVisibilityColor(target.subtreeVisibility))
+                  : NodeVisibilityBullet(
+                      visibility: target.subtreeVisibility),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -1194,7 +1253,8 @@ List<Widget> _siblingWidgets(
                   ? NodeVisualiser._trimNum((loV ?? hiV)!)
                   : '';
           out.add(_rangeRowWidget(context, lo,
-              _rangeCombinedLabel(end.base, lo, hi), value, cfg, rowInset));
+              _rangeCombinedLabel(end.base, lo, hi), value, cfg, rowInset,
+              icon: NodeVisualiser._rangePairIcons[end.base]));
         }
         continue;
       }
@@ -1207,6 +1267,7 @@ List<Widget> _siblingWidgets(
         v != null ? NodeVisualiser._trimNum(v) : group.first.displayGist,
         cfg,
         rowInset,
+        icon: NodeVisualiser._rangePairIcons[end.base],
       ));
       continue;
     }

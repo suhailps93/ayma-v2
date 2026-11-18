@@ -1456,6 +1456,23 @@ inference untouched, still LiveKit):
   are unchanged — coloured bullet + gist. Fixed order, values and tap (opens the
   node in the partial chat) are unchanged. Extend the icon map alongside
   `STANDARD_FIELDS`.
+- **What I'm Looking For standard fields → ICON + "label: value" (build 2507).**
+  The three Looking-For fields keep their label in front of the value because the
+  value alone is ambiguous — so they render icon + `<label>: <value>`, NOT the
+  icon + bare value of About Me. They were added to `person_graph.STANDARD_FIELDS`
+  (so they are standard, labelled and fixed-ordered for EVERY user graph) with a
+  10+ `order` band that ranks them within the `looking_for` section only, and to
+  `_standardFieldIcons` + `_labeledStandardFields` in `node_visualiser.dart`. The
+  map: `relocation_radius → radar_outlined` ("Relocation / travel radius: Within
+  about 50 km"), `geographic_flexibility → flight_takeoff_outlined` ("Geographic
+  flexibility: …"). The partner-age COMBINED range row (below) also gets a fixed
+  icon, keyed on the pair BASE in `_rangePairIcons` (`partner_age →
+  groups_outlined`), rendered INSTEAD of its bullet in the same visibility colour,
+  keeping "Partner age preference: 21–56". Fixed Looking-For order (backend-driven
+  by `STANDARD_FIELDS` order): partner age preference → relocation / travel radius
+  → geographic flexibility, then the conversational bullets (plain, unchanged).
+  Visibility is unchanged — none of these are in `_PUBLIC_ALLOWLIST`, so they
+  default private like any other structured fact (P0).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
@@ -1467,5 +1484,7 @@ inference untouched, still LiveKit):
   quantity from the two labels). A LONE end (no partner) renders as a plain
   labelled row, also no bar. Genuine single scale traits (`social_energy`,
   `cleanliness_index`, …) have no `_min`/`_max` and still render as bars.
+  As of build 2507 the combined/lone range row also carries the base-keyed
+  `_rangePairIcons` icon in place of the bullet (same visibility colour).
   Tests: `test/node_visualiser_test.dart` (standard-field ICON render + min/max
-  range row groups).
+  range row groups + the three Looking-For icon/label:value rows + fixed order).
