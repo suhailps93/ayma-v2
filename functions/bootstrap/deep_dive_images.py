@@ -32,6 +32,7 @@ import deep_dive_public_profiles
 import face_match
 import public_url
 import schema
+import web_photo_filter
 from config import CONFIG
 from token_ledger import FEATURE_DEEPDIVE
 
@@ -294,12 +295,18 @@ async def find_web_images(
     except Exception:  # noqa: BLE001
         logger.exception("deep-dive link-image fallback crashed")
 
-    # Dedupe by image URL, first occurrence wins (CSE before link-derived).
+    # Dedupe by image URL, first occurrence wins (CSE before link-derived), and
+    # drop obvious non-image page URLs (a scholarly entity URL, a plain bio
+    # page) that were captured as a "photo" — they only ever render as a broken
+    # tile downstream (Leg 33). A real but hotlink-blocked image still passes
+    # here; the client's clean error fallback covers that class.
     seen: set[str] = set()
     deduped: list[dict] = []
     for c in candidates:
         u = str(c.get("url") or "").strip()
         if not u or u in seen:
+            continue
+        if not web_photo_filter.is_renderable_image_url(u):
             continue
         seen.add(u)
         deduped.append(c)

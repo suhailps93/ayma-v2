@@ -312,6 +312,35 @@ def test_deep_dive_adapter_carries_summary_facts_links_socials_photos(monkeypatc
     assert report["title"] == "Web search: Jane Doe"
 
 
+def test_deep_dive_adapter_drops_unrenderable_photo_candidates(monkeypatch):
+    # A page URL captured as a "photo" (openalex entity / a plain bio page)
+    # must never become a photo tile — it would only render as a broken image
+    # (Leg 33). The real .jpg image alongside it still renders.
+    digest = dict(_DIGEST)
+    digest["web_images"] = [
+        {"url": "https://img/1.jpg", "source_page": "https://src", "verified": True},
+        {"url": "https://openalex.org/W2741809807", "source_page": "https://openalex.org"},
+        {"url": "https://www.cockcroft.ac.uk/people/jane", "source_page": "https://x"},
+    ]
+    digest["confirmed_photos"] = [
+        {"image_url": "https://img/2.jpg", "source_title": "Some site"},
+        {"image_url": "https://www.tuwien.at/people/jane", "source_title": "TU Wien"},
+    ]
+    doc = dict(_DIVE_DOC)
+    doc["digest"] = digest
+    monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: doc)
+    report, _, _ = ra.deep_dive_blocks(object(), "u1", "name_jane-doe")
+    blocks = _blocks(report)
+
+    assert "photo:https://img/1.jpg" in blocks
+    assert "photo:https://openalex.org/W2741809807" not in blocks
+    assert "photo:https://www.cockcroft.ac.uk/people/jane" not in blocks
+    # Confirmed grid keeps the real image, drops the page URL.
+    assert blocks["confirmed_photos"]["photos"] == [
+        {"url": "https://img/2.jpg", "caption": "Some site"}
+    ]
+
+
 def test_deep_dive_adapter_none_when_no_dive(monkeypatch):
     monkeypatch.setattr(deep_dive, "read_dive", lambda db, uid, rid: None)
     report, created, updated = ra.deep_dive_blocks(object(), "u1", "nope")
