@@ -13,6 +13,27 @@ library;
 /// only) and whether the owner action bubbles appear (owner surfaces only).
 enum NodeVisualiserSurface { story, publicProfile, report, graphDetail }
 
+final RegExp _displayWordRe = RegExp(r"[a-z0-9]+(?:'[a-z]+)?");
+
+/// The canonical, comparison-only form of a display string — lower-cased with
+/// whitespace and punctuation collapsed, matching the backend dedupe normalizer
+/// (`person_graph_index.normalize_text`). Used only to decide whether a node's
+/// header (label/prompt/card title) and its body (text/answer/card body) are the
+/// SAME statement, so a surface that renders both can show it once.
+String normalizeForDisplayMatch(String s) =>
+    _displayWordRe.allMatches(s.toLowerCase()).map((m) => m[0]).join(' ');
+
+/// True when [header] and [body] are the same statement after normalization —
+/// an emergent narrative node that stored its text in both the prompt and the
+/// answer field (founder build 2493: the node context card printed the sentence
+/// twice). A surface rendering both then shows the body once and drops the
+/// duplicate header. Empty strings never match (nothing to collapse).
+bool headerRestatesBody(String header, String body) {
+  final h = normalizeForDisplayMatch(header);
+  if (h.isEmpty) return false;
+  return h == normalizeForDisplayMatch(body);
+}
+
 /// A node's visibility / a parent's subtree colour.
 /// `public` = green, `private` = yellow, `ayma_only` = the AI-only colour,
 /// `mixed` = a subtree holding both public and private (the split bullet).

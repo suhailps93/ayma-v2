@@ -1084,7 +1084,13 @@ class _VisualiserPanel extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  n.label.isEmpty ? n.kind : n.label,
+                  // The detail body (the visualiser below) already shows the
+                  // node's text; when the label merely restates it (a node that
+                  // stored the same statement in both fields — founder build
+                  // 2493), fall back to the kind so the header doesn't echo it.
+                  (n.label.isEmpty || headerRestatesBody(n.label, story!.text))
+                      ? n.kind
+                      : n.label,
                   style: AymaType.sans(size: 12, color: ac.fgDim),
                   overflow: TextOverflow.ellipsis,
                 ),

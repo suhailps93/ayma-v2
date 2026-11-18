@@ -80,6 +80,23 @@ that switches a consumer deletes the path it replaces in the same change.
   - Narrative answers render verbatim; structured answers are prompt-labelled;
     children render as their own bullets with independent visibility. The
     graph's `ayma_only` maps to the story model's `ai_only` at this boundary.
+  - **A narrative node stores its statement ONCE** (founder build 2493): an
+    emergent narrative/loose fact has no question distinct from its statement, so
+    the write paths keep its `prompt` (header/label) EMPTY — the statement lives
+    in `answer` only — rather than duplicating it into both fields (which made a
+    node context card print the sentence twice). `person_graph_store.
+    _prompt_without_restatement` blanks a `prompt` that normalize-equals the
+    `answer` (reuses `person_graph_index.normalize_text`) for every emergent
+    narrative writer (`add_node`, `add_loose_node`, `upsert_fact_node`,
+    `replace_section_bullets`); a genuinely distinct label (a standard field's
+    "Age", an assessment group's "Ayma's assessment — …") is preserved.
+    `merge_node` preserves an explicit empty prompt while still synthesizing one
+    for a prompt that is wholly missing (`None`, the legacy partial-write guard).
+    Any surface that renders a node's header PLUS its body (the Ask Ayma context
+    card, the graph inspector detail, the visualiser node card) additionally
+    collapses to showing it once when the two normalize-equal, so pre-existing
+    duplicated nodes also render clean without a backfill (`story_node.
+    headerRestatesBody`).
 - **Tests:** `tests/test_person_graph_render.py` (7) green. Byte-level parity
   with the live wiki is pinned per account in Phase 4. Additive — old render
   paths stay live until the consumer-switch phase.
