@@ -538,6 +538,77 @@ Map<String, dynamic> buildChatRequestBody({
         'whats_new': BuildAwareness.whatsNew,
     };
 
+/// FirebaseAuthException codes that mean the restored session is GENUINELY
+/// invalid — the persisted credential is dead and the user must sign in again.
+/// Every other code (a network blip `network-request-failed`, a throttled
+/// refresh `too-many-requests`, or any transient `internal-error`/`unknown`)
+/// is a retryable hiccup that must NEVER sign a signed-in user out.
+///
+/// Scout NOTE 252 (build 2498): a transient background ID-token refresh error
+/// was classified as a dead session, so `_backgroundBootstrap` signed the user
+/// out mid-scroll with no user action. Only the codes below may sign out.
+const Set<String> kAuthInvalidTokenCodes = {
+  'user-disabled',
+  'user-not-found',
+  'user-token-expired',
+  'user-token-revoked',
+  'invalid-user-token',
+  'user-mismatch',
+  'invalid-credential',
+  'invalid-custom-token',
+  'custom-token-mismatch',
+};
+
+bool _isAuthInvalidTokenCode(String code) =>
+    kAuthInvalidTokenCodes.contains(code);
+
+/// The Android Auto-Backup keystore decrypt failure that makes the persisted
+/// Firebase credential permanently UNREADABLE ("FirebearStorageCryptoHelper:
+/// Exception while decrypting bytes") — a genuinely broken session that must
+/// re-authenticate. Matched on the crypto-helper signature so an unrelated
+/// transient PlatformException is NOT mistaken for a dead session and does not
+/// sign the user out (Scout NOTE 252).
+bool _isUnreadableCredentialError(Object e) {
+  final s = e.toString().toLowerCase();
+  return s.contains('decrypt') ||
+      s.contains('crypto') ||
+      s.contains('keystore') ||
+      s.contains('firebearstoragecryptohelper');
+}
+
+/// Classifies a failure raised while acquiring the Firebase ID token for a
+/// `/bootstrap`, into the exception bootstrap should throw. Returns an
+/// [AuthSessionException] (which the splash handles by signing out + routing to
+/// sign-in) ONLY for a genuinely dead session — a definitively auth-invalid
+/// token ([kAuthInvalidTokenCodes]) or an unreadable persisted credential. For
+/// everything else — a token-refresh timeout, a network blip
+/// (`network-request-failed`), a throttled refresh (`too-many-requests`), any
+/// transient `internal-error`/`unknown`, or any other unexpected error — it
+/// returns a retryable, connection-class [ApiException] (no statusCode) so the
+/// caller RETRIES instead of signing out.
+///
+/// Scout NOTE 252 (build 2498): the old classifier treated ANY non-network
+/// FirebaseAuthException (and any unexpected error) as a dead session, so a
+/// transient background token-refresh error signed the user out mid-scroll.
+Exception classifyBootstrapTokenError(Object error) {
+  if (error is TimeoutException) {
+    return ApiException('Network timed out preparing the request.');
+  }
+  // `_headers`' own "Not signed in." (null token, statusCode 401) — pass it
+  // through unchanged so the splash's 401 handling sends them to sign-in.
+  if (error is ApiException) return error;
+  if (error is FirebaseAuthException) {
+    if (_isAuthInvalidTokenCode(error.code)) {
+      return AuthSessionException('Auth session rejected: ${error.code}');
+    }
+    return ApiException('Network error: ${error.message ?? error.code}');
+  }
+  if (_isUnreadableCredentialError(error)) {
+    return AuthSessionException('Auth token unreadable: $error');
+  }
+  return ApiException('Network error preparing the request: $error');
+}
+
 /// Thin client for the Ayma Main API. Every call attaches the current Firebase
 /// ID token as a Bearer header (§3.4).
 class ApiClient {
@@ -686,31 +757,11 @@ class ApiClient {
     final Map<String, String> headers;
     try {
       headers = await _headers().timeout(_bootstrapTokenTimeout);
-    } on TimeoutException {
-      // A token refresh that never returns is almost always flaky DNS reaching
-      // Firebase — a network blip the splash retries. The splash's own overall
-      // startup watchdog guarantees this can never spin forever.
-      throw ApiException('Network timed out preparing the request.');
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'network-request-failed') {
-        throw ApiException('Network error: ${e.message ?? e.code}');
-      }
-      // Any other auth error for a supposedly signed-in user (expired /
-      // invalid / revoked token, disabled user) means the restored session is
-      // unusable — not a network blip. The splash signs out and routes to
-      // sign-in rather than retrying forever.
-      throw AuthSessionException('Auth session rejected: ${e.code}');
-    } on ApiException {
-      // `_headers` own "Not signed in." (null token) — pass it through
-      // unchanged so the splash's 401 handling sends them to sign-in.
-      rethrow;
     } catch (e) {
-      // The Android keystore / decrypt failures that follow an Auto Backup
-      // restore onto a wiped keystore ("FirebearStorageCryptoHelper: Exception
-      // while decrypting bytes", PlatformException) surface here: the persisted
-      // credential can't be read, so the session is broken. Sign out and
-      // re-authenticate — never retry, never hang.
-      throw AuthSessionException('Auth token unreadable: $e');
+      // Classify the token-acquisition failure: ONLY a genuinely dead session
+      // signs the user out; every transient error is retryable and preserves
+      // the session (Scout NOTE 252). See [classifyBootstrapTokenError].
+      throw classifyBootstrapTokenError(e);
     }
 
     // A practice-return bootstrap makes the server seed the new room with
