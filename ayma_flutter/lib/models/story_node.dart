@@ -30,6 +30,7 @@ class StoryNode {
     required this.section,
     required this.label,
     required this.text,
+    this.gist = '',
     required this.answerType,
     required this.level,
     required this.visibility,
@@ -65,6 +66,20 @@ class StoryNode {
   /// The node's value / content text. For an image node this is Ayma's read of
   /// the image.
   final String text;
+
+  /// The GIST — a short punchy one-line headline for this node (less-text-heavy
+  /// program, Part 1). Rendered BY DEFAULT in place of the full [text]; the full
+  /// prose shows only on tap-in (the node chat window). The backend derives this
+  /// for every node (stored writer gist if present, else a trimmed fallback of
+  /// [text]), so it is normally non-empty for a text node; [displayGist] falls
+  /// back to [text]/[label] when it isn't.
+  final String gist;
+
+  /// What a collapsed (default) node row shows: the [gist] when the backend
+  /// supplied one, else the full [text], else the [label]. This is the single
+  /// default/fallback render path Part 2's kind-keyed visual renderers wrap.
+  String get displayGist =>
+      gist.isNotEmpty ? gist : (text.isNotEmpty ? text : label);
 
   /// `image` for an image node, `narrative`/`bool`/… otherwise.
   final String answerType;
@@ -165,6 +180,7 @@ class StoryNode {
       section: m['section'] as String? ?? '',
       label: m['label'] as String? ?? '',
       text: m['text'] as String? ?? '',
+      gist: m['gist'] as String? ?? '',
       answerType: m['answer_type'] as String? ?? 'text',
       level: (m['level'] as num?)?.toInt() ?? 1,
       visibility: m['visibility'] as String? ?? NodeVis.private,

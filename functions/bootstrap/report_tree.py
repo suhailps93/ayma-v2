@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import node_gist
 import report_blocks as rb
 import report_hub
 
@@ -77,6 +78,9 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
         "section": section_slug,
         "label": "",
         "text": "",
+        # A stored gist on the block wins over the derived fallback (applied in
+        # :func:`_sections_to_tree`); "" means "derive one from the text".
+        "gist": str(block.get("gist") or ""),
         "answer_type": "text",
         "level": 1,
         "visibility": "public",
@@ -179,6 +183,11 @@ def _sections_to_tree(sections: Any) -> list[dict]:
         for index, block in enumerate(section.get("blocks") or []):
             if isinstance(block, dict):
                 nodes.extend(_block_to_nodes(block, slug, index))
+        # Gist-first (less-text-heavy Part 1): one derived headline per node, the
+        # same generalizable helper the person-graph tree uses. A stored gist (a
+        # future report block that carries one) wins; else the fallback.
+        for n in nodes:
+            n["gist"] = node_gist.derive_gist(n.get("text", ""), stored=n.get("gist"))
         sections_out.append(
             {
                 "page_type": slug,

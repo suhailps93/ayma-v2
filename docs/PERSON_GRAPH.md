@@ -900,3 +900,30 @@ thin **pink streak of edges shooting to one distant point** with every cluster
   `PersonGraphScreen` on founder-shaped data in reduced motion and captures the
   fitted open frame to `pg_layout_fitted.png` (fitted, spread, readable; no far
   streak). No backend/inference change (100% LiveKit unaffected).
+## Gist-first rendering — the `gist` field (less-text-heavy Part 1, Nov 17 2026)
+
+Every node tree now carries a **`gist`** on every node: a short punchy one-line
+headline the Flutter surfaces render BY DEFAULT in place of the full prose,
+which shows only on tap-in. This removes the "walls of text" the founder flagged
+without hiding anything — the full `text` stays on the node for the tap target.
+
+- **Contract (shared with `fleet/gist-first-writing` Part 3 + `fleet/visual-node-renderers` Part 2):**
+  the field name is exactly **`gist`**. Part 3's writer produces it going
+  forward; Part 1 derives a fallback for every existing node.
+- **One shared derivation** — `node_gist.derive_gist(text, stored=None)`
+  (`functions/bootstrap/node_gist.py`), applied at tree-build time to every node,
+  NO per-node code: a stored `gist` wins; else the first sentence of `text` when
+  it fits `GIST_MAX` (80 chars); else `text` trimmed to a word boundary ≤ 80,
+  trailing punctuation stripped, an ellipsis appended. Whitespace/newlines are
+  collapsed; it returns `""` only when there is neither a stored gist nor any
+  text (a pure image node — the renderer then falls back to the node's content).
+- **Surfaced by** `person_graph_tree._build_node` (node + child-bullet dicts) and
+  `report_tree._sections_to_tree` (over `_block_to_nodes`, which also passes a
+  block's own `gist` through when present). The full `text` is never dropped.
+- **Client** — `StoryNode.gist` + `StoryNode.displayGist` (gist → text → label).
+  `NodeVisualiser` renders `displayGist` capped to two lines + ellipsis by
+  default; the tap target is unchanged (the partial node chat with the full
+  prose and the owner controls). Image nodes stay photo-forward. `displayGist` is
+  the universal fallback text Part 2's `visual` field layers kind-keyed renderers
+  on top of.
+- **Tests:** `tests/test_node_gist.py`, `ayma_flutter/test/node_gist_render_test.dart`.

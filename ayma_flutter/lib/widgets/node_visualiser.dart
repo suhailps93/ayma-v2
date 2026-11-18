@@ -203,8 +203,14 @@ class NodeVisualiser extends StatelessWidget {
     if (node.isStat) return _statContent(context);
     if (node.isLink) return _linkContent(context);
     final theme = Theme.of(context);
+    // GIST-FIRST (less-text-heavy Part 1): the collapsed row shows the short
+    // gist line, not the full prose. Tapping the row (see [_openChat]) opens the
+    // node chat window, which carries the full [text]. Capped to two lines with
+    // an ellipsis so a long node can never overflow at any size / text scale.
     if (node.standard && (node.standardLabel ?? '').isNotEmpty) {
       return RichText(
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
         text: TextSpan(
           style: theme.textTheme.bodyLarge,
           children: [
@@ -213,14 +219,16 @@ class NodeVisualiser extends StatelessWidget {
               style: theme.textTheme.bodyLarge
                   ?.copyWith(fontWeight: FontWeight.w600),
             ),
-            TextSpan(text: node.text),
+            TextSpan(text: node.displayGist),
           ],
         ),
       );
     }
     return Text(
-      node.text.isNotEmpty ? node.text : node.label,
+      node.displayGist,
       style: theme.textTheme.bodyLarge,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
     );
   }
 

@@ -830,10 +830,13 @@ void main() {
   testWidgets(
       'the floating action rail stays fixed on screen and does not scroll '
       'away with the body', (tester) async {
-    // Enough long sections to make the body taller than the viewport, so
-    // there is real scrollable overflow to scroll through.
+    // Enough sections to make the body taller than the viewport, so there is
+    // real scrollable overflow to scroll through. Each body now renders as a
+    // compact gist line (gist-first, less-text-heavy Part 1 — a node row is
+    // capped to two lines), so the overflow comes from the NUMBER of sections,
+    // not the length of any one paragraph.
     final pages = [
-      for (var i = 0; i < 12; i++)
+      for (var i = 0; i < 40; i++)
         {
           'page_type': 'misc',
           'title': 'Section $i',
