@@ -506,3 +506,60 @@ def test_resolve_conflict_existing_keeps_old_unchanged():
     overlay = store.load_overlay(db, UID)
     assert overlay["job"]["answer"] == "I work at Google as a product manager"
     assert not overlay["job"].get("history")  # nothing changed
+
+
+# --- the semantic judge batches so a large candidate set never truncates -----
+
+
+def test_judge_chunks_large_batch_so_a_reply_never_truncates(monkeypatch):
+    """NOTE 252 (Daniel fixture, build 2493): _judge put all 68 candidate pairs
+    in ONE generate_json call; the reply truncated (finish_reason=length) and the
+    whole array failed to parse, losing every verdict and silently degrading the
+    sweep to the lexical split. _judge must batch so each reply stays within
+    budget and every pair is still judged, and no single call carries more than
+    _JUDGE_BATCH pairs."""
+    calls = []
+
+    async def _fake(payload, system, **k):
+        chunk = __import__("json").loads(payload)
+        calls.append(len(chunk))
+        return [{"i": it["i"], "verdict": "duplicate"} for it in chunk]
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    items = [{"i": n, "a": f"fact {n}", "b": f"fact {n}, reworded"} for n in range(60)]
+    verdicts = asyncio.run(crosscheck._judge(items, uid="u"))
+    assert verdicts is not None
+    assert set(verdicts) == set(range(60))  # every pair judged across batches
+    assert all(v == "duplicate" for v in verdicts.values())
+    assert len(calls) > 1  # actually chunked, not one oversized call
+    assert max(calls) <= crosscheck._JUDGE_BATCH
+
+
+def test_judge_partial_batch_failure_keeps_the_other_batches(monkeypatch):
+    """A single failing batch is skipped without discarding the verdicts the
+    other batches returned (strictly better than the old all-or-nothing None)."""
+
+    async def _fake(payload, system, **k):
+        chunk = __import__("json").loads(payload)
+        if chunk[0]["i"] == 0:  # fail only the first batch
+            raise RuntimeError("livekit hiccup on first batch")
+        return [{"i": it["i"], "verdict": "related"} for it in chunk]
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    items = [{"i": n, "a": f"x{n}", "b": f"y{n}"} for n in range(2 * crosscheck._JUDGE_BATCH)]
+    verdicts = asyncio.run(crosscheck._judge(items, uid="u"))
+    assert verdicts is not None
+    assert 0 not in verdicts  # first batch lost
+    assert crosscheck._JUDGE_BATCH in verdicts  # second batch kept
+
+
+def test_judge_returns_none_when_every_batch_fails(monkeypatch):
+    """Total failure still returns None so classify_pairs keeps the lexical
+    report unchanged (the preserved best-effort contract)."""
+
+    async def _fake(payload, system, **k):
+        raise RuntimeError("livekit down")
+
+    monkeypatch.setattr(gemini, "generate_json", _fake)
+    items = [{"i": n, "a": f"x{n}", "b": f"y{n}"} for n in range(30)]
+    assert asyncio.run(crosscheck._judge(items, uid="u")) is None
