@@ -127,6 +127,92 @@ def test_report_node_tree_reuses_get_report_and_shapes_sections(monkeypatch):
     assert tree["sections"][1]["nodes"][0]["text"] == "You both love hiking."
 
 
+def test_recommendations_are_lifted_into_one_final_section(monkeypatch):
+    # Founder, build 2495: a report must not print a point twice — once as the
+    # finding and again as the fix beside it. `scored_result_blocks` emits each
+    # recommendation with role="recommendation"; the assembler lifts every one,
+    # in order, into a single final "What to do next" section AFTER the findings
+    # and their stats. The findings (verdict stat, improvements) stay first.
+    def _fake_get_report(db, report_type, report_id, viewer_uid):
+        return {
+            "title": "Appearance",
+            "sections": [
+                {
+                    "heading": "Face",
+                    "blocks": [
+                        rb.stat_block("face", "Above average", 7, editable=False),
+                        rb.fact_block("face:improvement:0",
+                                      "Overgrown mustache over the lip line",
+                                      tag="improvement"),
+                        rb.fact_block("face:reco:0", "Trim the mustache clear of the lip",
+                                      tag="beard_grooming", role="recommendation"),
+                    ],
+                },
+                {
+                    "heading": "Body",
+                    "blocks": [
+                        rb.fact_block("body:improvement:0", "Rounded shoulders",
+                                      tag="improvement"),
+                        rb.fact_block("body:reco:0", "Add two pull sessions a week",
+                                      tag="training", role="recommendation"),
+                    ],
+                },
+            ],
+            "meta": {"owner_uid": "u1", "viewer_can_edit": True},
+        }
+
+    monkeypatch.setattr(report_hub, "get_report", _fake_get_report)
+    tree = report_tree.report_node_tree(None, "appearance", "current", "u1")
+
+    titles = [s["title"] for s in tree["sections"]]
+    # Findings sections first, "What to do next" LAST.
+    assert titles == ["Face", "Body", report_tree.RECO_SECTION_TITLE]
+    assert tree["sections"][-1]["page_type"] == report_tree.RECO_SECTION_SLUG
+    # Order field matches list position so the client renders it last too.
+    assert tree["sections"][-1]["order"] == len(tree["sections"]) - 1
+
+    # No recommendation remains in a findings section: each finding shows once.
+    face_ids = [n["id"] for n in tree["sections"][0]["nodes"]]
+    body_ids = [n["id"] for n in tree["sections"][1]["nodes"]]
+    assert "face:reco:0" not in face_ids and "body:reco:0" not in body_ids
+    assert "face:improvement:0" in face_ids and "body:improvement:0" in body_ids
+
+    # The final section holds every recommendation, in report order, and nothing
+    # else — it never re-prints a finding.
+    reco_ids = [n["id"] for n in tree["sections"][-1]["nodes"]]
+    assert reco_ids == ["face:reco:0", "body:reco:0"]
+    assert all(n["role"] == "recommendation" for n in tree["sections"][-1]["nodes"])
+
+
+def test_a_node_in_two_sections_renders_only_once(monkeypatch):
+    # Assembler node-ID dedupe: the same node id appearing in two sections is
+    # rendered once (first occurrence wins); the later repeat is skipped.
+    def _fake_get_report(db, report_type, report_id, viewer_uid):
+        return {
+            "title": "Dup",
+            "sections": [
+                {"heading": "A", "blocks": [rb.text_block("dup", "Only once.")]},
+                {
+                    "heading": "B",
+                    "blocks": [
+                        rb.text_block("dup", "Only once."),
+                        rb.text_block("b:1", "Kept."),
+                    ],
+                },
+            ],
+            "meta": {"owner_uid": "u1", "viewer_can_edit": False},
+        }
+
+    monkeypatch.setattr(report_hub, "get_report", _fake_get_report)
+    tree = report_tree.report_node_tree(None, "appearance", "current", "u1")
+
+    all_ids = [n["id"] for s in tree["sections"] for n in s["nodes"]]
+    assert all_ids.count("dup") == 1          # rendered once across the report
+    assert tree["sections"][0]["nodes"][0]["id"] == "dup"   # first wins
+    assert "dup" not in [n["id"] for n in tree["sections"][1]["nodes"]]
+    assert "b:1" in [n["id"] for n in tree["sections"][1]["nodes"]]
+
+
 def test_report_node_tree_propagates_permission_error(monkeypatch):
     import pytest
 

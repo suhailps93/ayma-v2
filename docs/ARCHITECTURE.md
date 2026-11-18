@@ -327,6 +327,21 @@ reroute to work around an empty response.
   **Privacy (P0)**: the report tree is already viewer-visibility-filtered by `report_tree.py` (`report_hub.get_report`
   owner/match-scoped checks), so a shared/public report's visuals, scores and counts are built ONLY from viewer-visible
   nodes.
+  **No point shown twice + findings-first ordering (founder build 2495)**: a report must never render the same point
+  twice — the founder's Appearance report listed each finding as a bullet, then restated it as a recommendation bullet
+  right below ("Overgrown mustache…" → "Trim the mustache…"). The assembler (`report_tree._finalize_sections`, applied
+  to every report on the framework) now guarantees it two ways: (1) **recommendations go last** — a recommendation is a
+  "what to do next" ACTION, marked `role="recommendation"` on its block (`report_blocks.fact_block`, set by
+  `scored_result_blocks` for every face/body reco); the assembler lifts every recommendation node out of its authoring
+  section and collects them, in order, into a single trailing **"What to do next"** section, so findings (and their
+  stats) read first and the actions to take read last, never interleaved with the observation each fixes. The
+  face/body prompts (`prompts/face_report.md`, `body_report.md`) now instruct each recommendation to be phrased as the
+  action itself and NOT restate the finding it addresses. (2) **node-ID dedupe across sections** — a node id renders at
+  most once in the whole report (first occurrence wins; a later section repeating the id is skipped), and sections
+  emptied by the lift/dedupe are dropped. Generalizes to any findings+recommendations report. Regressions:
+  `functions/bootstrap/tests/test_report_tree.py` (recommendations lifted to the last section, a node in two sections
+  renders once), `test_report_blocks.py` (reco carries `role`, finding does not),
+  `ayma_flutter/test/appearance_report_no_dup_screenshot_test.dart` (findings-first / actions-last render + PNG).
   **Pre-open summary cards (no raw JSON anywhere)**: every surface pointing AT a report before it opens — the chat card,
   a graph node, a list row — shows a human summary distilled from the SAME tree (`ReportSummary.fromTree` →
   `ReportSummaryCard`, title/date/headline-score/top-finding), degrading to a plain labelled row on failure, never an

@@ -38,5 +38,9 @@ weakest_area, frame_size) — if the legs aren't in frame in any photo, put "not
 visible" for est_height_impression rather than guessing, and base
 frame_size/build/proportions only on what's shown. List honest `strengths` and
 `improvements`, and concrete `recommendations` tagged by category (training,
-nutrition, posture, styling, recovery). Do not be kind for its own sake — a
-useful report is an accurate one.
+nutrition, posture, styling, recovery). Each `recommendation` is a "what to do
+next" ACTION the reader can take — phrase it as the step itself ("Add two
+pull-focused sessions a week to widen the back"), and do NOT restate the finding
+it addresses: the report already shows that observation above, so a
+recommendation that merely re-describes it reads as the same point twice. Do not
+be kind for its own sake — a useful report is an accurate one.

@@ -213,6 +213,11 @@ def test_scored_result_blocks_carries_every_field(monkeypatch):
     assert by_id["face:strength:0"]["text"] == "Strong jawline"
     assert by_id["face:improvement:0"]["text"] == "Trim the beard"
     assert by_id["face:reco:0"]["text"] == "Use SPF daily"
+    # A recommendation is marked role="recommendation" so the assembler can lift
+    # it into the final "What to do next" section; a finding carries no role
+    # (founder, build 2495 — findings first, actions last, never shown twice).
+    assert by_id["face:reco:0"]["role"] == "recommendation"
+    assert "role" not in by_id["face:improvement:0"]
     assert by_id["face:quick:face_shape"]["value"] == "oval"
     assert "face:quick:age_estimate" not in by_id
 
