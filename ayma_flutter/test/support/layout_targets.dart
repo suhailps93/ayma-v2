@@ -1,7 +1,6 @@
 // What the layout matrix pumps: every routed screen and the main overlays.
 // See `test/layout_matrix_test.dart`.
 import 'package:ayma_flutter/routing/app_router.dart';
-import 'package:ayma_flutter/screens/accent_color_screen.dart';
 import 'package:ayma_flutter/screens/privacy_settings_screen.dart';
 import 'package:ayma_flutter/screens/appearance_report_screen.dart';
 import 'package:ayma_flutter/screens/appearance_settings_screen.dart';
@@ -225,12 +224,6 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
     InviteFriendsScreen.path: () =>
         shell(InviteFriendsScreen(api: api, share: (_) async {})),
     VoicePreferenceScreen.path: () => shell(VoicePreferenceScreen(api: api)),
-    AccentColorScreen.path: () =>
-        shell(
-      AccentColorScreen(
-        controller: AccentColorController(profileService: profiles),
-      ),
-    ),
     PlanScreen.path: () => shell(PlanScreen(service: LayoutFakeRc(), api: api)),
     TrialPaywallScreen.path: () => TrialPaywallScreen(
       offer: TrialOffer(

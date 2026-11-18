@@ -507,8 +507,13 @@ def test_settings_layout_matches_the_shipped_ui():
         if p.startswith("/settings"):
             assert p in routes, f"{d['key']} names dead settings path {p}"
 
-    # Where each moved control now lives, per the shipped UI.
-    assert dests["accent_color"]["found_on"] == "appearance_settings"
+    # Where each moved control now lives, per the shipped UI. The standalone
+    # Accent Color page is gone (build 2491): the accent surface is folded
+    # inline into Appearance, so there is no accent_color destination — only
+    # the Appearance destination (which now carries the accent aliases) and
+    # the accent_color setting action, both on appearance_settings.
+    assert "accent_color" not in dests
+    assert "accent color" in dests["appearance_settings"]["aliases"]
     assert dests["delete_account"]["found_on"] == "privacy_settings"
     assert dests["biometric_consent"]["found_on"] == "privacy_settings"
     assert dests["terms"]["found_on"] == "privacy_settings"
@@ -519,6 +524,7 @@ def test_settings_layout_matches_the_shipped_ui():
     acts = {s["key"]: s for s in app_registry.settings()}
     assert acts["pause_matching"]["found_on"] == "privacy_settings"
     assert acts["theme"]["found_on"] == "appearance_settings"
+    assert acts["accent_color"]["found_on"] == "appearance_settings"
 
     acct = {a["key"]: a for a in app_registry.account_actions()}
     # The wipe sits inside Privacy, directly above Delete account; the
