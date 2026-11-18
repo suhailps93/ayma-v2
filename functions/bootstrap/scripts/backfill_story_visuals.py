@@ -245,17 +245,6 @@ def run_taste_refine(uid: str, *, apply: bool, db=None) -> dict:
             "plan": {nid: v for nid, v in to_chip.items()}}
 
 
-# The 3 narrative taste restatements whose first chip still carries its own
-# "<label>: " prefix (Astro call, Nov 18): the leading own-label is stripped so
-# the chip shows the bare item. Same settled rule as the label-strip work —
-# never store a node's own leading label.
-_PREFIX_STRIP_NODES = (
-    "emergent.story.c8d84e17",  # "Music: Billie Eilish" -> "Billie Eilish"
-    "emergent.story.f7518a58",  # "Film: Iron Man"       -> "Iron Man"
-    "emergent.story.0ff2c803",  # "Food: Wingstop"       -> "Wingstop"
-)
-
-
 def _strip_own_label(item: str) -> str:
     """Drop a leading ``"<label>: "`` prefix (everything up to and including the
     FIRST ``": "``). ``"Music: Billie Eilish"`` -> ``"Billie Eilish"``. No ``": "``
@@ -265,12 +254,16 @@ def _strip_own_label(item: str) -> str:
 
 
 def run_strip_taste_prefix(uid: str, *, apply: bool, db=None) -> dict:
-    """Strip the leading own-label from ``visual.params.items[0]`` on the 3
-    narrative taste restatements. Changes ONLY that one array (``items[0]``
-    rewritten, every other item kept); nothing else on the node, and no other
-    node, is touched. Only acts on a node that is a ``chip_set`` whose
-    ``items[0]`` actually carries a ``"<label>: "`` prefix — otherwise it is left
-    and named."""
+    """Strip the leading own-label from ``visual.params.items[0]`` on every taste
+    restatement — any TASTE-category node that is a ``chip_set`` whose
+    ``items[0]`` carries a ``"<label>: "`` prefix (e.g. ``"Music: Bon Iver"`` ->
+    ``"Bon Iver"``). Changes ONLY that one array (``items[0]`` rewritten, every
+    other item kept); nothing else on the node, and no other node, is touched.
+    A taste chip whose ``items[0]`` has no prefix (a canonical ``taste_*`` node)
+    is left and named. Idempotent: a re-run finds no prefix and writes nothing.
+
+    Taste-category scope matches the taste-refine pass (``_is_taste_node``) so the
+    pass is uid-agnostic — it never reaches a non-taste chip."""
     if db is None:
         from google.cloud import firestore as gcf
         db = gcf.Client()
@@ -278,6 +271,8 @@ def run_strip_taste_prefix(uid: str, *, apply: bool, db=None) -> dict:
         _die(f"active project is {getattr(db, 'project', None)!r}, refusing "
              f"(expected {_ALLOWED_PROJECT!r})")
 
+    seed_by_id = _seed_by_id()
+    taste_seed = _taste_ids(seed_by_id)
     ref, data = _load_doc(db, uid)
     nodes = data.get("nodes") or {}
 
@@ -286,18 +281,14 @@ def run_strip_taste_prefix(uid: str, *, apply: bool, db=None) -> dict:
     updates: dict[str, list] = {}
     plan = []
     skipped = []
-    for nid in _PREFIX_STRIP_NODES:
-        entry = nodes.get(nid)
-        if not isinstance(entry, dict):
-            skipped.append((nid, "node missing"))
+    for nid, entry in nodes.items():
+        if not isinstance(entry, dict) or not _is_taste_node(nid, entry, taste_seed):
             continue
         vis = entry.get("visual") or {}
         if vis.get("type") != node_visual.CHIP_SET:
-            skipped.append((nid, f"not chip_set (type={vis.get('type')!r})"))
-            continue
+            continue  # only chip_set taste nodes can carry a prefixed item[0]
         items = list((vis.get("params") or {}).get("items") or [])
         if not items:
-            skipped.append((nid, "no items"))
             continue
         new0 = _strip_own_label(items[0])
         if new0 == items[0]:
