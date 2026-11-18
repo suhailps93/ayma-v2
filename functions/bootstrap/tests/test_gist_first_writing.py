@@ -227,13 +227,15 @@ def test_store_defaults_a_visual_by_section_and_kind_keeping_visibility():
     """Every minted node carries a versioned visual, defaulted by kind/section
     when the writer didn't pick one — and picking it never changes visibility."""
     db = FakeDb()
-    # list-like section -> chip_set; explicit public visibility round-trips.
+    # A plain PROSE fact is a gist_row BULLET even in a "list-like" section —
+    # prose is never shaped into a chip bubble (founder build 2495). Explicit
+    # public visibility still round-trips.
     store.upsert_fact_node(
         db, "u1", "emergent.interest.climbing", "Climbs most weekends.",
         section="interests", visibility=pg.Visibility.PUBLIC,
     )
     n = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.interest.climbing"]
-    assert n.visual["type"] == "chip_set" and n.visual["v"] == 1
+    assert n.visual["type"] == "gist_row" and n.visual["v"] == 1
     assert n.visibility == pg.Visibility.PUBLIC
 
     # image node -> photo_carousel (by kind), regardless of section.
@@ -266,10 +268,12 @@ def test_pg_add_node_visual_explicit_and_fallback():
     n = pg.effective_graph(store.load_overlay(db, "u1"))[nid]
     assert n.visual["type"] == "timeline_entry"
 
-    # No visual named -> per-section default (career -> timeline_entry).
+    # No visual named -> a plain prose write defaults to a gist_row BULLET. A
+    # timeline is genuine structure derived only where a real DATE exists (at
+    # read time), never fabricated from an undated prose write (founder 2495).
     out2 = add(parent_id=career_parent, label="role2", gist="Intern at Beta")
     n2 = pg.effective_graph(store.load_overlay(db, "u1"))[out2.split()[-1]]
-    assert n2.visual["type"] == "timeline_entry"
+    assert n2.visual["type"] == "gist_row"
 
     # An unknown visual type falls back to gist_row (reader default).
     out3 = add(parent_id=career_parent, label="role3", gist="x", visual="bogus_type")

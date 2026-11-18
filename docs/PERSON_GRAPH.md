@@ -807,21 +807,26 @@ visualiser the report node kinds.
   `tests/test_report_tree.py` snapshot cases, `tests/test_share.py`
   `test_tree_is_public_and_unknown_token_404s`, `test/share_report_test.dart`
   (renders through the tree unauthed; a revoked/unknown token shows no body).
-- **Level-indent render rule (`fleet/level-indentation`, Nov 17 2026).** The
-  `NodeVisualiser` indents each row by the node's **actual `level`** in the tree
-  (`(level − 1)` indent steps of 18 dp), not by recursion depth — floored at the
-  render depth so a nested child is always ≥1 step deeper than its parent, and
-  **capped at 5 steps** so deep nesting wraps instead of running off a narrow
-  phone. The indent is `EdgeInsetsDirectional.start`, so it grows from the left
-  in LTR and the right in RTL. This fixes the founder's flat Story (build 2488):
-  the Your Story editor and the live content writers mint `upsert_fact_node`
-  facts at `level: 2` with **no parent**, so they render as flat section roots;
-  indenting by recursion depth alone left every one of them flush with the
-  level-1 standard block. The standard labelled rows (level 1) stay flush; only
-  the conversational children step in. Report nodes are all `level: 1` (flat),
-  so report surfaces are unaffected. Regression: `test/node_visualiser_test.dart`
-  "parentless roots indent by their actual level" + "deep nesting never
-  overflows at 320px / text-scale 2.0".
+- **True-parentage indent render rule (`fleet/story-section-indent-fix`, build
+  2495; supersedes the `fleet/level-indentation` level-floor).** The
+  `NodeVisualiser` indents each row **ONLY by its real depth under a TRUE PARENT**
+  in the render recursion (one 18 dp step per real parent level, **capped at 5
+  steps**, `EdgeInsetsDirectional.start` so it grows from the left in LTR / the
+  right in RTL). A node's stored `StoryNode.level` **no longer drives
+  indentation.** A section member — the Your Story editor and the live content
+  writers mint `upsert_fact_node` facts at `level: 2` with **no parent**, so they
+  are flat section roots — renders **FLUSH at the section base**; a node indents
+  only when it genuinely renders under a parent. The earlier level-floor
+  (`max(level − 1, depth)`) pushed those parentless level-2 facts one step in, so
+  they read as children of the standard item above them ("Interested in") —
+  founder build 2495, "this indentation does not make sense." **`level` still
+  drives node SIZE in the person-graph view (`person_graph_layout.dart`) — a
+  separate surface, unchanged.** The six fixed About Me standard items stay
+  ordered first (backend `_order_key`) and all render flush. Regression:
+  `test/node_visualiser_test.dart` "REGRESSION: parentless level-2 section
+  members render FLUSH at base level…", "six fixed About Me standard items render
+  flush, in fixed order", "nested tree indents children by TRUE parentage", and
+  "deep nesting never overflows at 320px / text-scale 2.0".
 - **P6 (SHIPPED) — the final `LivingReportView` removal.** The last real host,
   Ayma's Notes' `story_ai_notes` body in `story_editor_screen.dart`, now renders
   through `GraphTreeView(surface: report, reportType: 'story_ai_notes')` — the
@@ -1104,11 +1109,19 @@ derives/falls back.
   - `small_table`: `{columns: [string], rows: [[string]]}`
 - **Per-kind default** (`node_visual.default_for(section, answer_type)`), applied
   in the store when a writer didn't pick one, so **no minted node is ever
-  visual-less**:
+  visual-less**. A plain PROSE fact is a BULLET — structure is NEVER fabricated
+  from one prose sentence (founder build 2495: "I would rather have bullet
+  points"; a card/chip around a sentence is the text-heavy problem wearing a
+  bubble):
   - image node (`answer_type == "image"`) → `photo_carousel`
-  - list-like section (interests / values / lifestyle / taste / social_circle) → `chip_set`
-  - dated section (career) → `timeline_entry`
-  - everything else → `gist_row`
+  - **everything else (all prose, every section) → `gist_row`**
+  - A real diagram comes ONLY from an explicit writer pick that carries the
+    structure (discrete `items` → `chip_set`; a numeric value+scale → `bar_meter`
+    / `gauge`; a title+body finding → `card`), or, at READ time only, a
+    `timeline_entry` for a node that ALREADY carries a real date
+    (`person_graph_tree._default_visual` — timeline only WITH a date). The old
+    per-section `chip_set` / `timeline_entry` defaults for undated prose are
+    removed.
 - **Explicit writer picks (unambiguous kind, set deterministically):**
   - face/body report + physical profile → `card` (`title` = verdict, `body` =
     verdict_note) via `skill_memory`
@@ -1180,12 +1193,13 @@ visually with **zero new client code**.
   **`visual`** alongside `gist`. A node with a STORED `visual` (the Part-3 writer
   picked one) passes through untouched — an unknown/newer `type` included. A node
   with none (every existing node — **NO backfill**) gets a READ-TIME default from
-  `node_visual.default_for(section, answer_type)`, enriched generalizably from the
-  node's OWN fields (`person_graph_tree._default_visual`): a `career` node becomes
-  a `timeline_entry` carrying its gist + any `Link.dated`; a list-like section's
-  node a one-item `chip_set`; an image node a `photo_carousel`; everything else
-  `gist_row`. `report_tree` maps a numeric STAT block to `bar_meter` and defaults
-  the rest. No node is ever visual-less.
+  `person_graph_tree._default_visual`: an image node → `photo_carousel`; a node
+  that ALREADY carries a real date (`Link.dated`) → a `timeline_entry` carrying
+  its gist + that date; **everything else (all prose) → `gist_row` — a BULLET,
+  never a chip/card fabricated from one sentence** (founder build 2495).
+  `report_tree` maps a numeric STAT block to `bar_meter` and defaults the rest to
+  `gist_row` (a non-numeric CONFIDENCE word stays `gist_row` → its band pill). No
+  node is ever visual-less.
 - **Client — the palette (`widgets/node_visualiser.dart`).** `StoryNode.visual`
   (`NodeVisual {type, params, v}`, `NodeVisualType` mirrors `node_visual.py`) is
   read by ONE dispatch in `NodeVisualiser._content` on `node.visualType`:

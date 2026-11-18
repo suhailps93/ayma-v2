@@ -43,19 +43,20 @@ PALETTE = frozenset(
     }
 )
 
-# Per-kind default by home section (founder rule). An unlisted section → gist_row.
-#  - list-like facts (interests / values / lifestyle / taste / social circle) → chip_set
-#  - dated items (career / education / life events) → timeline_entry
-# Scores, reports, images and comparisons are unambiguous in their writers, which
-# set the visual explicitly (gauge / bar_meter / card / photo_carousel / small_table).
-_SECTION_DEFAULT = {
-    "interests": CHIP_SET,
-    "values": CHIP_SET,
-    "lifestyle": CHIP_SET,
-    "taste": CHIP_SET,
-    "social_circle": CHIP_SET,
-    "career": TIMELINE_ENTRY,
-}
+# The default visual for a plain TEXT (prose) node is ALWAYS a BULLET
+# (``gist_row``) — regardless of section. We never shape a single prose sentence
+# into a chip, card, timeline or bar; that read a plain interests fact as a grey
+# card/chip bubble (founder build 2495: "I would rather have bullet points").
+#
+# A real diagram comes ONLY from a writer that GENUINELY carries the structure
+# and stores the visual explicitly — never fabricated from prose:
+#  - ``chip_set``        — the node has DISCRETE items (``params.items``)
+#  - ``timeline_entry``  — the node carries a DATE (derived only where a real
+#                          date exists; see ``person_graph_tree._default_visual``)
+#  - ``bar_meter`` / ``gauge`` — a numeric value on a scale
+#  - ``card``            — a structured finding with a title AND a body (a report
+#                          judgment); Ayma NEVER picks ``card`` for a plain fact
+#  - ``photo_carousel``  — an image node (derived from its own image fields)
 
 
 def make(vtype: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -66,14 +67,16 @@ def make(vtype: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def for_section(section: str | None) -> dict[str, Any]:
-    """The deterministic per-section default visual for a text node."""
-    return make(_SECTION_DEFAULT.get(section or "", GIST_ROW))
+    """The default visual for a plain text node: a BULLET (``gist_row``). Prose
+    is never auto-shaped into a chip/card/timeline (founder build 2495); genuine
+    structure comes only from an explicit writer pick that carries it."""
+    return make(GIST_ROW)
 
 
 def default_for(section: str | None, answer_type: str | None = None) -> dict[str, Any]:
     """The deterministic default visual for a newly-minted node: an image node
     renders as a photo_carousel (the renderer derives ``image_refs`` from the
-    node's own image fields); otherwise the per-section default."""
+    node's own image fields); every other (prose) node is a ``gist_row`` bullet."""
     if answer_type == "image":
         return make(PHOTO_CAROUSEL)
     return for_section(section)

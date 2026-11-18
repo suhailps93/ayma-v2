@@ -128,7 +128,9 @@ void main() {
   // store; seed it so opening the overlay never reaches for server history.
   setUp(() => AymaSession.instance.store.seed(const []));
 
-  testWidgets('nested tree indents children by level', (tester) async {
+  // A node that renders UNDER A TRUE PARENT still indents one step per real
+  // parent level (depth under its parent), regardless of stored `level`.
+  testWidgets('nested tree indents children by TRUE parentage', (tester) async {
     final tree = _node(
       id: 'root',
       text: 'Root',
@@ -136,8 +138,10 @@ void main() {
         _node(
           id: 'child',
           text: 'Child',
-          level: 2,
-          children: [_node(id: 'grand', text: 'Grand', level: 3)],
+          // Stale/absent level must not matter: a real child still indents by
+          // its depth under the parent, not by its own `level`.
+          level: 1,
+          children: [_node(id: 'grand', text: 'Grand', level: 1)],
         ),
       ],
     );
@@ -152,21 +156,32 @@ void main() {
     expect(grandX, greaterThan(childX));
   });
 
-  // The founder path (build 2488): his Story bullets are parentless level-2
-  // facts (the Your Story editor / content writers mint `upsert_fact_node`
-  // nodes at level 2 with no parent), so they render as flat SECTION ROOTS.
-  // The old renderer indented by recursion depth only, so every one sat flush
-  // with the level-1 standard block. A section of a level-1, a level-2 and a
-  // level-3 root must now render at three visibly DIFFERENT left insets.
-  testWidgets('parentless roots indent by their actual level', (tester) async {
+  // REGRESSION (founder build 2495, "this indentation does not make sense"):
+  // his About Me free bullets are parentless level-2 facts (the Your Story
+  // editor / content writers mint them at level 2 with NO parent), so they
+  // render as flat SECTION ROOTS. The old renderer floored the indent at
+  // `level-1`, so each one sat one step in and read as a child of the level-1
+  // standard item above it ("Interested in"). A section member must now render
+  // FLUSH at the section base no matter its stored level.
+  testWidgets(
+      'REGRESSION: parentless level-2 section members render FLUSH at base '
+      'level, not indented under the standard item above', (tester) async {
     final section = GraphTreeSection(
       pageType: 'identity',
       title: 'About Me',
       order: 0,
       nodes: [
-        _node(id: 'l1', text: 'Level one', level: 1),
-        _node(id: 'l2', text: 'Level two', level: 2),
-        _node(id: 'l3', text: 'Level three', level: 3),
+        _node(
+          id: 'interested',
+          text: 'Women',
+          standard: true,
+          standardLabel: 'Interested in',
+          level: 1,
+        ),
+        // The founder's circled parentless facts, stored at level 2.
+        _node(id: 'emergent.story.5c5470d1', text: 'Gender identity', level: 2),
+        _node(id: 'emergent.editor.identity.5', text: 'Born in Dubai', level: 2),
+        _node(id: 'emergent.story.b7aba075', text: 'Lives in San Jose', level: 2),
       ],
     );
     await tester.pumpWidget(_host(
@@ -176,12 +191,81 @@ void main() {
       ),
     ));
 
-    final l1X = tester.getTopLeft(find.text('Level one')).dx;
-    final l2X = tester.getTopLeft(find.text('Level two')).dx;
-    final l3X = tester.getTopLeft(find.text('Level three')).dx;
-    // Three distinct, strictly increasing insets — not all flush.
-    expect(l2X, greaterThan(l1X));
-    expect(l3X, greaterThan(l2X));
+    final baseX = tester.getTopLeft(
+      find.byWidgetPredicate(
+        (w) => w is RichText && w.text.toPlainText() == 'Interested in: Women',
+      ),
+    ).dx;
+    for (final t in ['Gender identity', 'Born in Dubai', 'Lives in San Jose']) {
+      expect(tester.getTopLeft(find.text(t)).dx, equals(baseX),
+          reason: '"$t" must sit flush at the section base, not indented');
+    }
+  });
+
+  // All six fixed About Me standard items render at the section base in the
+  // fixed canonical order (Name, Age, Gender, Location, Interested in, Ethnic &
+  // cultural origin) — none indented, none out of order. The backend orders
+  // them; the renderer must keep them flush.
+  testWidgets('six fixed About Me standard items render flush, in fixed order',
+      (tester) async {
+    StoryNode std(String id, String label, String value) => _node(
+          id: id,
+          text: value,
+          standard: true,
+          standardLabel: label,
+          level: 1,
+          vis: NodeVis.public,
+        );
+    final section = GraphTreeSection(
+      pageType: 'identity',
+      title: 'About Me',
+      order: 0,
+      nodes: [
+        std('legal_first_name', 'Name', 'Sam'),
+        std('date_of_birth', 'Age', '33'),
+        std('gender_identity', 'Gender', 'Man'),
+        std('primary_location', 'Location', 'San Jose'),
+        std('target_match_genders', 'Interested in', 'Women'),
+        std('ethnic_cultural_origin', 'Ethnic & cultural origin', 'South Asian'),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: section,
+        surface: NodeVisualiserSurface.story,
+      ),
+    ));
+
+    double fieldX(String label, String value) => tester.getTopLeft(
+          find.byWidgetPredicate((w) =>
+              w is RichText && w.text.toPlainText() == '$label: $value'),
+        ).dx;
+    double fieldY(String label, String value) => tester.getTopLeft(
+          find.byWidgetPredicate((w) =>
+              w is RichText && w.text.toPlainText() == '$label: $value'),
+        ).dy;
+
+    final rows = [
+      ('Name', 'Sam'),
+      ('Age', '33'),
+      ('Gender', 'Man'),
+      ('Location', 'San Jose'),
+      ('Interested in', 'Women'),
+      ('Ethnic & cultural origin', 'South Asian'),
+    ];
+    final baseX = fieldX(rows.first.$1, rows.first.$2);
+    double? prevY;
+    for (final (label, value) in rows) {
+      expect(fieldX(label, value), equals(baseX),
+          reason: '"$label" must render flush at the section base');
+      final y = fieldY(label, value);
+      final prev = prevY;
+      if (prev != null) {
+        expect(y, greaterThan(prev),
+            reason: '"$label" must follow the one before it in fixed order');
+      }
+      prevY = y;
+    }
   });
 
   // Deep nesting (past the indent cap) must never push a row off a narrow phone
@@ -225,6 +309,102 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: 'rtl=$rtl');
     }
+  });
+
+  // REGRESSION (founder build 2495, "no text should cut off partially"): a gist
+  // / bullet line WRAPS to its full length — it is NEVER hard-truncated with an
+  // ellipsis mid-sentence. The row has no maxLines / ellipsis cap on body text.
+  testWidgets('REGRESSION: a long gist renders in FULL, no ellipsis '
+      '(visualiser)', (tester) async {
+    const longGist =
+        'He completed a Master of Science in Color Science under a joint '
+        'program and now leads a research team based in San Jose California';
+    final node = _node(id: 'g1', text: longGist, vis: NodeVis.public);
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.story),
+    ));
+    final text = tester.widget<Text>(find.text(longGist));
+    expect(text.maxLines, isNull);
+    expect(text.overflow, isNot(TextOverflow.ellipsis));
+    // The full sentence is laid out (no "…"): its painted size spans >1 line.
+    expect(find.text(longGist), findsOneWidget);
+  });
+
+  testWidgets('REGRESSION: a long gist renders in FULL, no ellipsis '
+      '(report section)', (tester) async {
+    const longGist =
+        'The pair completed a shared research fellowship in Color Science and '
+        'both now mentor undergraduates, a strong signal of aligned values';
+    final section = GraphTreeSection(
+      pageType: 'summary',
+      title: 'Summary',
+      order: 0,
+      nodes: [_node(id: 'r1', text: longGist, vis: NodeVis.public)],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: section,
+        surface: NodeVisualiserSurface.report,
+        cardStyle: true,
+      ),
+    ));
+    final text = tester.widget<Text>(find.text(longGist));
+    expect(text.maxLines, isNull);
+    expect(text.overflow, isNot(TextOverflow.ellipsis));
+  });
+
+  testWidgets('a long gist never overflows at 320px / text-scale 2.0 even '
+      'without an ellipsis cap', (tester) async {
+    tester.view.physicalSize = const Size(320, 900);
+    tester.view.devicePixelRatio = 1.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    const longGist =
+        'A genuinely long conversational fact that must wrap down the screen '
+        'rather than run off the side or be chopped by an ellipsis at a scale';
+    await tester.pumpWidget(_host(
+      NodeVisualiser(
+        node: _node(id: 'g2', text: longGist, vis: NodeVis.public),
+        surface: NodeVisualiserSurface.story,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  // REGRESSION (founder build 2495): the Confidence row's "High" value lays out
+  // INLINE with its label — not as a right-anchored chip floating over the card
+  // border. It renders cleanly (no overflow) even at a narrow width.
+  testWidgets('REGRESSION: confidence band lays out inline, no overflow',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final node = StoryNode(
+      id: 'conf', section: 'summary', label: 'Confidence', text: 'Confidence',
+      answerType: 'stat', level: 1,
+      visibility: NodeVis.public, subtreeVisibility: NodeVis.public,
+      standard: false, editable: false, statText: 'High',
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: GraphTreeSection(
+          pageType: 'summary', title: 'Summary', order: 0, nodes: [node]),
+        surface: NodeVisualiserSurface.report,
+        cardStyle: true,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('node_band_conf')), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
+    // The band sits to the RIGHT of (after) the label, inline — not overlapping.
+    final labelRight = tester.getBottomRight(find.text('Confidence')).dx;
+    final bandLeft = tester.getTopLeft(find.byKey(const Key('node_band_conf'))).dx;
+    expect(bandLeft, greaterThanOrEqualTo(labelRight));
   });
 
   testWidgets('standard node renders as a labelled field, first', (tester) async {
