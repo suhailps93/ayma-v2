@@ -147,7 +147,8 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     expect(c.phase, VoiceSessionPhase.error);
-    expect(c.errorMessage, contains('Sign in'));
+    // Leg 46: the honest refusal wording is locked EXACTLY (not just "Sign in").
+    expect(c.errorMessage, 'Sign in to Ayma to use voice.');
     // Never connected, never bootstrapped, never mirrored context.
     expect(transport.connectCalls, isEmpty);
     expect(bootstrapCalls, 0);
