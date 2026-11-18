@@ -127,6 +127,14 @@ SECRET_MAP=(
   "GOOGLE_API_KEY=GOOGLE_API_KEY"
   "META_API_KEY=META_API_KEY"
   "CARTESIA_API_KEY=CARTESIA_API_KEY"
+  # Deepgram DIRECT-API key for the fleet/deepgram-voice experiment (branch
+  # only). The secret does NOT exist yet (QUESTION filed in astro.md) — the
+  # collector below simply SKIPS a missing secret with a warning, so the branch
+  # agent runs without it and the Deepgram path surfaces an honest
+  # `deepgram_key_missing` error at call time. Create the secret as
+  # DEEPGRAM_API_KEY in Secret Manager (project ayma-ai) to light it up; no
+  # other change is needed.
+  "DEEPGRAM_API_KEY=DEEPGRAM_API_KEY"
   "SENTRY_DSN=SENTRY_DSN_AGENT"
   "LK_AGENT_FIRESTORE_SA=${TARGET_SA_SECRET}"
 )

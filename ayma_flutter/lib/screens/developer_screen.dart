@@ -420,6 +420,10 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           context.go(MainShellScreen.path);
         },
       ),
+      const SizedBox(height: 36),
+      const Eyebrow('Deepgram voice (experimental)'),
+      const SizedBox(height: 8),
+      DeepgramVoiceExperiment(api: _api),
     ];
   }
 
@@ -671,6 +675,184 @@ class _Spend extends StatelessWidget {
           'the calls behind each conversation — the tokens are not free.',
           style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
         ),
+      ],
+    );
+  }
+}
+
+/// DEV-ONLY toggle for the Deepgram DIRECT voice experiment (branch
+/// fleet/deepgram-voice; founder routing decision 2026-11-18, never merged).
+///
+/// ON → saves a CASCADE voice stack whose STT/TTS are the Deepgram direct legs
+/// (`deepgram-direct/nova-3` + `deepgram-direct/aura-2`) with the picked Aura-2
+/// voice; the Ayma Brain is UNCHANGED (the server keeps the saved unified
+/// brain). OFF → restores the default realtime Gemini Live voice (the standing
+/// LiveKit path). Takes effect on the NEXT voice call.
+///
+/// The Aura-2 voice list and the `deepgram-direct/*` ids all come from the
+/// server catalog (`GET /voice/engines`) — no model names are hardcoded here
+/// (AGENTS.md). If `DEEPGRAM_API_KEY` is not mounted in the branch agent, the
+/// NEXT call surfaces an honest "Deepgram voice isn't set up yet" error
+/// (agent.py `deepgram_key_missing`) instead of a silent fallback.
+class DeepgramVoiceExperiment extends StatefulWidget {
+  const DeepgramVoiceExperiment({super.key, required this.api});
+
+  final ApiClient api;
+
+  /// The branch catalog ids this toggle drives (mirror of
+  /// `voice_catalog.DEEPGRAM_DIRECT_*`). Stable keys, not model names: the
+  /// concrete model strings live only in the server catalog/config.
+  static const sttId = 'deepgram-direct/nova-3';
+  static const ttsId = 'deepgram-direct/aura-2';
+
+  @override
+  State<DeepgramVoiceExperiment> createState() =>
+      _DeepgramVoiceExperimentState();
+}
+
+class _DeepgramVoiceExperimentState extends State<DeepgramVoiceExperiment> {
+  VoiceCatalog? _catalog;
+  String? _loadError;
+  bool _busy = false;
+
+  /// Whether the Deepgram stack is the currently-saved one.
+  bool _on = false;
+
+  /// The selected Aura-2 voice id (a concrete `aura-2-*-en` from the catalog),
+  /// or '' for the server default.
+  String _voiceId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final cat = await widget.api.voiceEngines();
+      if (!mounted) return;
+      final cur = cat.current;
+      setState(() {
+        _catalog = cat;
+        _loadError = null;
+        _on = cur.mode == 'cascade' &&
+            cur.sttId == DeepgramVoiceExperiment.sttId;
+        _voiceId = _on ? cur.voiceId : '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadError = '$e');
+    }
+  }
+
+  List<CatalogVoice> get _auraVoices =>
+      _catalog?.ttsById(DeepgramVoiceExperiment.ttsId)?.voices ?? const [];
+
+  Future<void> _apply(bool on) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final VoiceSelection sel = on
+          ? VoiceSelection(
+              mode: 'cascade',
+              sttId: DeepgramVoiceExperiment.sttId,
+              ttsId: DeepgramVoiceExperiment.ttsId,
+              voiceId: _voiceId,
+            )
+          // OFF → the standing default: Gemini Live realtime (LiveKit path).
+          : VoiceSelection(
+              mode: 'realtime',
+              realtimeModelId:
+                  _catalog?.defaultSelection.realtimeModelId.isNotEmpty == true
+                      ? _catalog!.defaultSelection.realtimeModelId
+                      : 'gemini-live',
+            );
+      await widget.api.saveVoicePreference(sel);
+      if (!mounted) return;
+      setState(() => _on = on);
+      AymaToast.show(
+        context,
+        on
+            ? 'Deepgram voice selected — it starts on your next call. '
+                'If its key isn’t set up you’ll get an honest error.'
+            : 'Back to the default Gemini Live voice on your next call.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      AymaToast.show(context, 'Could not save ($e).',
+          kind: AymaToastKind.error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    if (_loadError != null) {
+      return Text(
+        "Couldn't load the voice catalog ($_loadError).",
+        key: const ValueKey('deepgram-exp-error'),
+        style: AymaType.sans(size: 13, color: ac.errorText),
+      );
+    }
+    if (_catalog == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: AymaWingLoader(size: 32, showLabel: false),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          key: const ValueKey('deepgram-exp-toggle'),
+          contentPadding: EdgeInsets.zero,
+          value: _on,
+          onChanged: _busy ? null : (v) => _apply(v),
+          title: Text('Use Deepgram voice',
+              style: AymaType.sans(size: 15, color: ac.fg)),
+          subtitle: Text(
+            'Routes speech-in (Nova-3) and speech-out (Aura-2) to Deepgram’s '
+            'direct API for this account. Your Ayma Brain is unchanged. '
+            'Off = the default Gemini Live voice. Takes effect next call.',
+            style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+          ),
+        ),
+        if (_on) ...[
+          const SizedBox(height: 8),
+          Text('Aura-2 voice',
+              style: AymaType.sans(size: 13, color: ac.fgMute)),
+          const SizedBox(height: 4),
+          DropdownButton<String>(
+            key: const ValueKey('deepgram-exp-voice'),
+            isExpanded: true,
+            value: _auraVoices.any((v) => v.id == _voiceId)
+                ? _voiceId
+                : (_auraVoices.isNotEmpty ? _auraVoices.first.id : ''),
+            items: [
+              for (final v in _auraVoices)
+                DropdownMenuItem(
+                  value: v.id,
+                  child: Text(
+                    v.description.isEmpty
+                        ? v.label
+                        : '${v.label} — ${v.description}',
+                    overflow: TextOverflow.ellipsis,
+                    style: AymaType.sans(size: 14, color: ac.fg),
+                  ),
+                ),
+            ],
+            onChanged: _busy
+                ? null
+                : (id) {
+                    if (id == null) return;
+                    setState(() => _voiceId = id);
+                    _apply(true);
+                  },
+          ),
+        ],
       ],
     );
   }

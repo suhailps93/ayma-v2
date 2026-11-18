@@ -6101,3 +6101,97 @@ def test_detect_disconnect_command_is_whole_utterance_only():
     assert agent.detect_disconnect_command("disconnect!") is True
     assert agent.detect_disconnect_command("disconnect now") is False
     assert agent.detect_disconnect_command("") is False
+
+
+# --- Deepgram DIRECT voice experiment (branch fleet/deepgram-voice) ---------- #
+
+
+def _install_fake_deepgram(monkeypatch):
+    """Inject a fake ``livekit.plugins.deepgram`` module with STT/STTv2/TTS
+    classes that record their ctor kwargs, so the Deepgram-direct builders can
+    be exercised without the real plugin/network. Returns the record dict."""
+    import sys
+    import types
+
+    captured: dict = {}
+
+    class _FakeSTT:
+        def __init__(self, **kwargs):
+            captured["stt"] = kwargs
+
+    class _FakeSTTv2:
+        def __init__(self, **kwargs):
+            captured["sttv2"] = kwargs
+
+    class _FakeTTS:
+        def __init__(self, **kwargs):
+            captured["tts"] = kwargs
+
+    fake = types.ModuleType("livekit.plugins.deepgram")
+    fake.STT = _FakeSTT
+    fake.STTv2 = _FakeSTTv2
+    fake.TTS = _FakeTTS
+    monkeypatch.setitem(sys.modules, "livekit.plugins.deepgram", fake)
+    return captured
+
+
+def test_deepgram_stt_none_for_non_deepgram_id():
+    # The plain LiveKit Inference deepgram id is NOT the direct leg — untouched.
+    assert agent._build_deepgram_stt("deepgram/nova-3", None) is None
+    assert agent._build_deepgram_stt("assemblyai/universal-streaming", None) is None
+    assert agent._build_deepgram_tts("fishaudio/s2.1-pro", "", None) is None
+
+
+def test_deepgram_direct_stt_raises_honest_error_without_key(monkeypatch):
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    with pytest.raises(agent.DeepgramKeyMissing):
+        agent._build_deepgram_stt("deepgram-direct/nova-3", None)
+
+
+def test_deepgram_direct_tts_raises_honest_error_without_key(monkeypatch):
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    with pytest.raises(agent.DeepgramKeyMissing):
+        agent._build_deepgram_tts("deepgram-direct/aura-2", "aura-2-zeus-en", None)
+
+
+def test_deepgram_direct_stt_builds_nova3_with_tuning(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test-key")
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(agent.CONFIG, deepgram_stt_use_flux=False))
+    captured = _install_fake_deepgram(monkeypatch)
+    agent._build_deepgram_stt("deepgram-direct/nova-3", "en")
+    stt = captured["stt"]
+    assert stt["model"] == agent.CONFIG.deepgram_stt_model
+    assert stt["api_key"] == "dg-test-key"
+    assert stt["interim_results"] is True
+    assert stt["smart_format"] is True
+    assert stt["utterance_end_ms"] == agent.CONFIG.deepgram_utterance_end_ms
+    assert stt["endpointing_ms"] == agent.CONFIG.deepgram_endpointing_ms
+    assert stt["language"] == "en"
+    assert "sttv2" not in captured  # Nova-3, not Flux
+
+
+def test_deepgram_direct_stt_uses_sttv2_for_flux(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test-key")
+    monkeypatch.setattr(
+        agent, "CONFIG",
+        dataclasses.replace(agent.CONFIG, deepgram_stt_use_flux=True))
+    captured = _install_fake_deepgram(monkeypatch)
+    agent._build_deepgram_stt("deepgram-direct/flux-general-en", "en")
+    assert "sttv2" in captured
+    assert captured["sttv2"]["model"] == agent.CONFIG.deepgram_flux_model
+    assert "stt" not in captured  # the Nova path was not taken
+
+
+def test_deepgram_direct_tts_voice_is_the_model_string(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test-key")
+    captured = _install_fake_deepgram(monkeypatch)
+    # For Aura the VOICE is the model string.
+    agent._build_deepgram_tts("deepgram-direct/aura-2", "aura-2-zeus-en", None)
+    assert captured["tts"]["model"] == "aura-2-zeus-en"
+    assert captured["tts"]["api_key"] == "dg-test-key"
+    # Empty voice falls back to the configured default Aura-2 model.
+    captured.clear()
+    agent._build_deepgram_tts("deepgram-direct/aura-2", "", None)
+    assert captured["tts"]["model"] == agent.CONFIG.deepgram_tts_model

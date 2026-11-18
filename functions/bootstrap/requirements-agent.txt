@@ -16,6 +16,14 @@ livekit-plugins-openai==1.8.9
 # falls back to the LiveKit Inference construction. Pinned to the agents stack
 # (1.8.9) like the other plugins — plugin 1.8.10 would force a stack bump.
 livekit-plugins-cartesia==1.8.9
+# Deepgram DIRECT-API STT (Nova-3 / Flux) + TTS (Aura-2) for the cascade —
+# BRANCH EXPERIMENT fleet/deepgram-voice (founder routing decision 2026-11-18,
+# never merged to staging/prod). agent.py builds deepgram.STT/deepgram.TTS via
+# this plugin when a deepgram-direct/* leg is selected AND DEEPGRAM_API_KEY is
+# present (the $1000 direct credits, SEPARATE from LiveKit Inference Deepgram);
+# with no key it raises DeepgramKeyMissing (honest error, no silent fallback).
+# Pinned to the agents stack (1.8.9) like the other plugins.
+livekit-plugins-deepgram==1.8.9
 # Agent-side voice isolation (agent.py _voice_isolation_filter): Krisp VIVA
 # and ai-coustics QUAIL_VF_S, metered through LiveKit Cloud — covered by the
 # Scale plan's included voice-isolation minutes (verified 2026-11-06). These

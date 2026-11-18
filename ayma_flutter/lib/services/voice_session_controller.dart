@@ -254,6 +254,14 @@ class VoiceSessionController extends ChangeNotifier {
   /// "reconnecting" status instead of a silent "Listening…".
   static const _kTtsError = 'tts_error';
 
+  /// The `voice_status` state the agent sends when the Deepgram DIRECT voice
+  /// experiment (branch fleet/deepgram-voice) was selected but the agent has no
+  /// `DEEPGRAM_API_KEY` mounted, so the direct STT/TTS legs cannot be built
+  /// (mirrors `VOICE_STATUS_DEEPGRAM_KEY_MISSING` in agent.py). The agent ends
+  /// the call; the client shows an HONEST error instead of a silent "Listening…"
+  /// or a hidden fallback to the default voice.
+  static const _kDeepgramKeyMissing = 'deepgram_key_missing';
+
   /// Set when the agent signals the open-weights brain is warming from a cold
   /// start (data topic `voice_status`, state `open_weights_warming`). Drives
   /// the honest, open-weights-specific status line and failure copy, instead of
@@ -1205,6 +1213,16 @@ class VoiceSessionController extends ChangeNotifier {
   /// status line says so (not a silent "Listening…") and extend the
   /// no-first-response guard past the cold start so it doesn't fire early.
   void _onVoiceStatus(String state) {
+    if (state == _kDeepgramKeyMissing) {
+      // Honest, specific failure — the Deepgram experiment can't run without
+      // its key. Never a silent "Listening…" or a hidden default-voice swap.
+      debugPrint('[voice] Deepgram DIRECT selected but key missing — failing');
+      _fail(
+        'Deepgram voice isn’t set up yet (its key isn’t mounted). '
+        'Switch back to the default voice in Ayma’s models to talk.',
+      );
+      return;
+    }
     if (state == _kTtsError) {
       if (_voiceTrouble) return;
       _voiceTrouble = true;

@@ -10,7 +10,13 @@ def setup_function(_):
 
 
 def test_catalog_source_is_the_fallback(monkeypatch):
+    import dataclasses
     monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    # Branch fleet/deepgram-voice defaults the Deepgram-direct experiment ON;
+    # this base invariant (the cartesia gate) is checked with it OFF. The
+    # experiment's own append is covered by test_deepgram_direct_legs_present_*.
+    monkeypatch.setattr(vc, "CONFIG",
+                        dataclasses.replace(vc.CONFIG, deepgram_direct_enabled=False))
     vc.clear_cache()
     cat = vc.catalog()
     assert cat["source"] == "fallback"
@@ -403,3 +409,60 @@ def test_safe_tts_voice_cartesia_uuids():
     assert vc.safe_tts_voice("cartesia/sonic-3", skylar) == skylar
     assert vc.safe_tts_voice("cartesia/sonic-3", fish_hannah) == ""
     assert vc.safe_tts_voice("fishaudio/s2.1-pro", skylar) == ""
+
+
+# --- Deepgram DIRECT voice experiment (branch fleet/deepgram-voice) ----------
+import dataclasses  # noqa: E402
+
+
+def test_deepgram_direct_legs_present_when_flag_on(monkeypatch):
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setattr(vc, "CONFIG",
+                        dataclasses.replace(vc.CONFIG, deepgram_direct_enabled=True))
+    vc.clear_cache()
+    cat = vc.catalog()
+    stt = [s["id"] for s in cat["stt"]]
+    tts = [t["id"] for t in cat["tts"]]
+    assert vc.DEEPGRAM_DIRECT_STT in stt
+    assert vc.DEEPGRAM_DIRECT_STT_FLUX in stt
+    assert vc.DEEPGRAM_DIRECT_TTS in tts
+    # The direct legs validate for a save (the /voice/preference gate).
+    assert vc.is_valid_stt(vc.DEEPGRAM_DIRECT_STT)
+    assert vc.is_valid_tts(vc.DEEPGRAM_DIRECT_TTS)
+    # Aura-2 voices come from the catalog; a known verified id is selectable.
+    voices = vc.tts_voice_ids(vc.DEEPGRAM_DIRECT_TTS)
+    assert "aura-2-thalia-en" in voices
+    assert "aura-2-zeus-en" in voices
+    # Shown available (plugin installed) but the KEY is the honest gate.
+    dd = [t for t in cat["tts"] if t["id"] == vc.DEEPGRAM_DIRECT_TTS][0]
+    assert dd["available"] is True
+    assert dd["requires_secret"] == "DEEPGRAM_API_KEY"
+
+
+def test_deepgram_direct_absent_and_default_lists_unchanged_when_flag_off(monkeypatch):
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+    monkeypatch.setattr(vc, "CONFIG",
+                        dataclasses.replace(vc.CONFIG, deepgram_direct_enabled=False))
+    vc.clear_cache()
+    cat = vc.catalog()
+    stt = [s["id"] for s in cat["stt"]]
+    tts = [t["id"] for t in cat["tts"]]
+    # No deepgram-direct ids leak into the default (merge) catalog...
+    assert not any(i.startswith("deepgram-direct/") for i in stt)
+    assert not any(i.startswith("deepgram-direct/") for i in tts)
+    # ...and the served STT list is exactly the committed default (the plain
+    # LiveKit Inference deepgram id is untouched — the default voice path).
+    assert stt == [m for m in vc.CONFIG.voice_cascade_stt_models
+                   if "cartesia" not in m]
+    assert "deepgram/nova-3" in stt
+
+
+def test_safe_tts_voice_drops_cross_provider_id_for_aura(monkeypatch):
+    monkeypatch.setattr(vc, "CONFIG",
+                        dataclasses.replace(vc.CONFIG, deepgram_direct_enabled=True))
+    vc.clear_cache()
+    # A fishaudio default uuid is invalid for Aura → vendor default ('').
+    assert vc.safe_tts_voice(vc.DEEPGRAM_DIRECT_TTS,
+                             "9a9cf47702da476aa4629e2506d4a857") == ""
+    # A real Aura-2 id survives.
+    assert vc.safe_tts_voice(vc.DEEPGRAM_DIRECT_TTS, "aura-2-zeus-en") == "aura-2-zeus-en"

@@ -176,6 +176,23 @@ VOICE_STATUS_OPEN_WEIGHTS_WARMING = "open_weights_warming"
 # shows an honest "the voice hit a snag, reconnecting…" instead of dead air
 # (founder bug, staging 2026-11-03). Payload: {"state": "tts_error"}.
 VOICE_STATUS_TTS_ERROR = "tts_error"
+# The Deepgram DIRECT voice experiment (branch fleet/deepgram-voice) was
+# selected but no DEEPGRAM_API_KEY is mounted in the agent env, so the
+# direct STT/TTS legs cannot be built. Published on session start so the
+# client shows an HONEST "Deepgram voice needs its key" error and ends the
+# call, instead of silently falling back to Gemini Live (which would hide the
+# fact that the experiment isn't actually running) or a dead "Listening…".
+# Payload: {"state": "deepgram_key_missing"}.
+VOICE_STATUS_DEEPGRAM_KEY_MISSING = "deepgram_key_missing"
+
+
+class DeepgramKeyMissing(RuntimeError):
+    """Raised by the Deepgram DIRECT cascade legs when ``DEEPGRAM_API_KEY`` is
+    absent. Distinct from a generic build failure so the main-voice path can
+    tell the honest "the experiment can't run without its key" case apart from
+    an ordinary cascade fallback and surface it to the client rather than
+    silently switching to Gemini Live (founder requirement, branch
+    fleet/deepgram-voice: never a silent 'Listening…')."""
 
 # Reused verbatim as the substance of Ayma's own spoken goodbye when credits
 # run out mid-call (see `_end_call_out_of_credits`) — the same sentence the
@@ -573,6 +590,129 @@ def _build_cartesia_tts(tts_id: str, voice: str, language: str | None):
     return cartesia.TTS(**kwargs)
 
 
+def _filtered_kwargs(ctor, kwargs: dict[str, object]) -> dict[str, object]:
+    """Drop any kwarg the plugin constructor on THIS installed version does not
+    accept, so a param that moved/renamed between livekit-plugins-deepgram
+    releases can never raise ``TypeError`` and take the leg down. Keyword-only
+    and positional-or-keyword params are kept; **kwargs makes it pass through
+    everything."""
+    import inspect
+
+    try:
+        sig = inspect.signature(ctor)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return dict(kwargs)
+    allowed = {
+        name for name, p in sig.parameters.items()
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
+    dropped = [k for k in kwargs if k not in allowed]
+    if dropped:
+        logger.warning(
+            "deepgram plugin ctor does not accept %s on this version — "
+            "dropping (using plugin defaults for those)", dropped,
+        )
+    return {k: v for k, v in kwargs.items() if k in allowed}
+
+
+def _build_deepgram_stt(stt_id: str, language: str | None):
+    """The Deepgram DIRECT-API STT leg for a ``deepgram-direct/*`` ``stt_id``
+    (branch experiment fleet/deepgram-voice), or ``None`` when the id is not a
+    Deepgram-direct one (the caller then keeps its Inference construction).
+
+    Nova-3 streaming by default (``deepgram.STT``) with interim results,
+    smart formatting, and ``utterance_end_ms`` endpointing tuned for natural
+    turn-taking + barge-in. ``CONFIG.deepgram_stt_use_flux`` switches to Flux
+    (``deepgram.STTv2`` + ``CONFIG.deepgram_flux_model``). Model ids come from
+    ``config.py``; tuning from ``CONFIG.deepgram_*``.
+
+    Raises :class:`DeepgramKeyMissing` when ``DEEPGRAM_API_KEY`` is absent (the
+    honest-error contract — NOT a silent Inference fallback), and ``RuntimeError``
+    when the plugin or the requested Flux class is unavailable."""
+    if _provider_of(stt_id) != "deepgram-direct":
+        return None
+    key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    if not key:
+        raise DeepgramKeyMissing(
+            "Deepgram DIRECT STT selected but DEEPGRAM_API_KEY is unset — the "
+            "founder must mount the Deepgram direct-API key into the branch "
+            "agent env (see docs/DEEPGRAM_VOICE.md). Refusing to silently fall "
+            "back to LiveKit Inference."
+        )
+    try:
+        from livekit.plugins import deepgram
+    except ImportError as exc:
+        raise RuntimeError(
+            "livekit-plugins-deepgram is required for the Deepgram DIRECT STT leg"
+        ) from exc
+    if CONFIG.deepgram_stt_use_flux:
+        stt_v2 = getattr(deepgram, "STTv2", None)
+        if stt_v2 is None:
+            raise RuntimeError(
+                "Deepgram Flux requested but deepgram.STTv2 is missing from the "
+                "installed livekit-plugins-deepgram — upgrade the plugin or set "
+                "DEEPGRAM_STT_USE_FLUX=false (Nova-3)"
+            )
+        flux_kwargs: dict[str, object] = {
+            "model": CONFIG.deepgram_flux_model,
+            "api_key": key,
+        }
+        if language:
+            flux_kwargs["language_hint"] = language
+        return stt_v2(**_filtered_kwargs(stt_v2, flux_kwargs))
+    kwargs: dict[str, object] = {
+        "model": CONFIG.deepgram_stt_model,
+        "api_key": key,
+        "interim_results": True,
+        "smart_format": True,
+        "punctuate": True,
+        # Low endpointing + utterance_end_ms gives fast, natural turn-ends while
+        # the interim/utterance-end pair keeps barge-in responsive.
+        "endpointing_ms": CONFIG.deepgram_endpointing_ms,
+        "utterance_end_ms": CONFIG.deepgram_utterance_end_ms,
+        "no_delay": True,
+        "filler_words": True,
+    }
+    if language:
+        kwargs["language"] = language
+    return deepgram.STT(**_filtered_kwargs(deepgram.STT, kwargs))
+
+
+def _build_deepgram_tts(tts_id: str, voice: str, language: str | None):
+    """The Deepgram DIRECT-API TTS leg for a ``deepgram-direct/*`` ``tts_id``
+    (Aura-2), or ``None`` when the id is not a Deepgram-direct one.
+
+    For Aura the VOICE IS the model string, so the selected ``voice`` (a concrete
+    ``aura-2-*-en`` id from the catalog) becomes ``deepgram.TTS(model=...)``;
+    empty falls back to ``CONFIG.deepgram_tts_model``. Same honest-error / plugin
+    contract as :func:`_build_deepgram_stt`."""
+    if _provider_of(tts_id) != "deepgram-direct":
+        return None
+    key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    if not key:
+        raise DeepgramKeyMissing(
+            "Deepgram DIRECT TTS selected but DEEPGRAM_API_KEY is unset — the "
+            "founder must mount the Deepgram direct-API key into the branch "
+            "agent env (see docs/DEEPGRAM_VOICE.md). Refusing to silently fall "
+            "back to LiveKit Inference."
+        )
+    try:
+        from livekit.plugins import deepgram
+    except ImportError as exc:
+        raise RuntimeError(
+            "livekit-plugins-deepgram is required for the Deepgram DIRECT TTS leg"
+        ) from exc
+    model = (voice or "").strip() or CONFIG.deepgram_tts_model
+    return deepgram.TTS(**_filtered_kwargs(
+        deepgram.TTS, {"model": model, "api_key": key}
+    ))
+
+
 def build_cascade_session(
     brain_id: str,
     stt_id: str,
@@ -616,8 +756,11 @@ def build_cascade_session(
             # full BCP-47 region tag.
             stt_language = lang.split("-")[0]
             stt_kwargs["language"] = stt_language
+    deepgram_stt = _build_deepgram_stt(stt_id, stt_language)
     cartesia_stt = _build_cartesia_stt(stt_id, stt_language)
-    if cartesia_stt is not None:
+    if deepgram_stt is not None:
+        stt = deepgram_stt
+    elif cartesia_stt is not None:
         stt = cartesia_stt
     else:
         stt = inference.STT(**stt_kwargs)
@@ -636,8 +779,11 @@ def build_cascade_session(
             "and leave the call silent)",
             requested_tts_voice, tts_id,
         )
+    deepgram_tts = _build_deepgram_tts(tts_id, chosen_tts_voice, stt_language)
     cartesia_tts = _build_cartesia_tts(tts_id, chosen_tts_voice, stt_language)
-    if cartesia_tts is not None:
+    if deepgram_tts is not None:
+        tts = deepgram_tts
+    elif cartesia_tts is not None:
         tts = cartesia_tts
     else:
         if chosen_tts_voice:
@@ -3381,6 +3527,31 @@ async def _run_session(ctx: JobContext, keepalive: CallKeepAlive) -> None:
             session = build_cascade_session(
                 brain_id, stt_id, tts_id, seed.tts_voice, seed.voice_language
             )
+        except DeepgramKeyMissing as exc:
+            # The Deepgram DIRECT voice experiment was selected but the key is
+            # not mounted. Do NOT silently fall back to Gemini Live — that would
+            # hide that the experiment isn't running and leave a confusing
+            # "it works but isn't Deepgram" call. Surface an honest error and
+            # end (founder requirement, branch fleet/deepgram-voice).
+            logger.warning(
+                "Deepgram DIRECT voice selected but DEEPGRAM_API_KEY is unset "
+                "(uid=%s session=%s) — surfacing honest error, NOT falling back",
+                seed.uid, seed.session_id or "?",
+            )
+            await _publish_voice_status(ctx, VOICE_STATUS_DEEPGRAM_KEY_MISSING)
+            # End the call honestly (same clean-end as end_call_goodbye): flush
+            # memory, drop the room, shut the job down. flush.run is also a
+            # shutdown callback (idempotent), so flushing here is safe.
+            try:
+                await flush.run()
+            except Exception:  # noqa: BLE001 - the call must still end
+                logger.exception("deepgram-key-missing flush failed")
+            try:
+                await ctx.delete_room()
+            except Exception:  # noqa: BLE001 - shutdown below still drops the agent
+                logger.exception("deepgram-key-missing room delete failed")
+            ctx.shutdown(reason="deepgram_key_missing")
+            return
         except Exception as exc:  # noqa: BLE001 - never take the main voice down
             logger.warning(
                 "cascade voice unavailable (%s: %s) — falling back to Gemini Live",

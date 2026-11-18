@@ -1257,6 +1257,54 @@ class Config:
     down. ``CARTESIA_TTS_MODEL`` overrides (staging-first; production
     defaults unchanged)."""
 
+    deepgram_direct_enabled: bool
+    """BRANCH EXPERIMENT (fleet/deepgram-voice, founder routing decision
+    2026-11-18): exposes the Deepgram DIRECT-API cascade legs
+    (``deepgram-direct/*`` STT/TTS) as selectable options and lets the agent
+    build them via ``livekit-plugins-deepgram`` against the $1000 Deepgram
+    direct credits — SEPARATE from the LiveKit Inference Deepgram pool, and
+    DELIBERATELY off the "all inference through LiveKit" default path (never
+    merged to staging/prod). The plain ``deepgram/*`` Inference ids are
+    untouched. ``DEEPGRAM_DIRECT_ENABLED`` (default true on this branch so the
+    dev toggle has something to select; a merge would default it false).
+    Selecting a ``deepgram-direct/*`` leg with no ``DEEPGRAM_API_KEY`` in the
+    agent env raises an HONEST error (``agent.py`` publishes
+    ``deepgram_key_missing``), never a silent fallback."""
+
+    deepgram_stt_model: str
+    """Deepgram DIRECT Nova STT model string passed to ``deepgram.STT``
+    (``DEEPGRAM_STT_MODEL``, default ``nova-3``). The catalog id stays
+    ``deepgram-direct/nova-3``; the agent builds the plugin with THIS model."""
+
+    deepgram_flux_model: str
+    """Deepgram DIRECT Flux STT model string for ``deepgram.STTv2``
+    (``DEEPGRAM_FLUX_MODEL``, default ``flux-general-en``). Used only when
+    ``deepgram_stt_use_flux`` is on. Flux availability on this account is
+    UNVERIFIED until the key is mounted; the agent falls to an honest error if
+    the installed plugin has no ``STTv2``."""
+
+    deepgram_stt_use_flux: bool
+    """When true, the Deepgram DIRECT STT leg uses Flux (``deepgram.STTv2`` +
+    ``deepgram_flux_model``) instead of Nova-3. ``DEEPGRAM_STT_USE_FLUX``
+    (default false — Nova-3 is the verified-documented default; Flux needs the
+    key + account access to confirm)."""
+
+    deepgram_utterance_end_ms: int
+    """Deepgram Nova STT ``utterance_end_ms`` (silence after a word that ends an
+    utterance) for natural turn-taking + barge-in. ``DEEPGRAM_UTTERANCE_END_MS``
+    (default 1000)."""
+
+    deepgram_endpointing_ms: int
+    """Deepgram Nova STT ``endpointing`` silence (ms) before a final transcript
+    is emitted. ``DEEPGRAM_ENDPOINTING_MS`` (default 25, Deepgram's streaming
+    default)."""
+
+    deepgram_tts_model: str
+    """Default Deepgram DIRECT Aura-2 TTS voice model string
+    (``DEEPGRAM_TTS_MODEL``, default ``aura-2-thalia-en``). For Aura the VOICE
+    is the model string, so the per-user voice pick IS a concrete
+    ``aura-2-*-en`` id; this is the fallback when none is picked."""
+
     voice_cascade_llm_models: tuple[str, ...]
     """FALLBACK brain (LLM) model ids for CASCADE mode when the live LiveKit
     inference catalog can't be fetched. LiveKit Inference ``provider/model``
@@ -1715,6 +1763,24 @@ def _load() -> Config:
         # Cartesia TTS plugin model (addendum pin): the Sonic flagship,
         # passed to cartesia.TTS — NOT the catalog id (cartesia/sonic-3).
         cartesia_tts_model=os.getenv("CARTESIA_TTS_MODEL", "sonic-3.6"),
+        # Deepgram DIRECT-API cascade legs (branch experiment fleet/deepgram-voice;
+        # founder routing decision 2026-11-18, never merged). deepgram.STT Nova-3 +
+        # deepgram.TTS Aura-2 on the $1000 direct credits, behind a dev toggle; the
+        # plain deepgram/* Inference ids are untouched. Default ENABLED on this
+        # branch so the toggle has options; a merge would flip it off.
+        deepgram_direct_enabled=os.getenv(
+            "DEEPGRAM_DIRECT_ENABLED", "true"
+        ).strip().lower() == "true",
+        deepgram_stt_model=os.getenv("DEEPGRAM_STT_MODEL", "nova-3"),
+        deepgram_flux_model=os.getenv("DEEPGRAM_FLUX_MODEL", "flux-general-en"),
+        deepgram_stt_use_flux=os.getenv(
+            "DEEPGRAM_STT_USE_FLUX", "false"
+        ).strip().lower() == "true",
+        deepgram_utterance_end_ms=int(
+            os.getenv("DEEPGRAM_UTTERANCE_END_MS", "1000")
+        ),
+        deepgram_endpointing_ms=int(os.getenv("DEEPGRAM_ENDPOINTING_MS", "25")),
+        deepgram_tts_model=os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en"),
         voice_cascade_llm_models=_csv(
             "VOICE_CASCADE_LLM_MODELS",
             "google/gemini-3.8-flash,google/gemini-3.7-flash,"

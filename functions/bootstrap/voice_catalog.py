@@ -89,6 +89,18 @@ BRAIN_META = "meta-muse-spark"
 # never a production default. Stable id persisted on the profile — never renamed.
 BRAIN_OPEN_WEIGHTS = "open-weights-llama-3.1-8b"
 
+# Deepgram DIRECT-API cascade legs (branch experiment fleet/deepgram-voice;
+# founder routing decision 2026-11-18, never merged). A SEPARATE provider
+# segment from the LiveKit Inference ``deepgram/*`` ids so the two never
+# collide: ``deepgram-direct/*`` rides ``livekit-plugins-deepgram`` against the
+# $1000 Deepgram direct credits, while ``deepgram/nova-3`` keeps routing through
+# LiveKit Inference untouched. The agent (``agent.py``) builds these legs and
+# raises an HONEST error when ``DEEPGRAM_API_KEY`` is absent.
+DEEPGRAM_DIRECT_PROVIDER = "deepgram-direct"
+DEEPGRAM_DIRECT_STT = "deepgram-direct/nova-3"
+DEEPGRAM_DIRECT_STT_FLUX = "deepgram-direct/flux-general-en"
+DEEPGRAM_DIRECT_TTS = "deepgram-direct/aura-2"
+
 # Cascade brain ROUTES (how the agent builds the LLM leg).
 ROUTE_META = "meta"
 ROUTE_INFERENCE = "inference"
@@ -250,6 +262,36 @@ _TTS_FALLBACK_VOICES: dict[str, list[Voice]] = {
     "elevenlabs": [
         Voice(id="", label="Default voice", description="the vendor default voice"),
     ],
+    # Deepgram DIRECT Aura-2 voices (branch experiment fleet/deepgram-voice).
+    # For Aura the VOICE IS the model string, so each id here is a concrete
+    # Aura-2 model the agent passes straight to deepgram.TTS(model=...). Names
+    # verified against developers.deepgram.com/docs/tts-models (2026-11-18) —
+    # NOT invented. "" (default) resolves to CONFIG.deepgram_tts_model.
+    DEEPGRAM_DIRECT_PROVIDER: [
+        Voice(id="", label="Default (Thalia)", description="the branch default Aura-2 voice"),
+        Voice(id="aura-2-thalia-en", label="Thalia",
+              description="upbeat and self-assured", gender="feminine"),
+        Voice(id="aura-2-andromeda-en", label="Andromeda",
+              description="relaxed and expressive", gender="feminine"),
+        Voice(id="aura-2-helena-en", label="Helena",
+              description="warm and friendly, raspy", gender="feminine"),
+        Voice(id="aura-2-athena-en", label="Athena",
+              description="calm and professional", gender="feminine"),
+        Voice(id="aura-2-asteria-en", label="Asteria",
+              description="clear and knowledgeable, energetic", gender="feminine"),
+        Voice(id="aura-2-apollo-en", label="Apollo",
+              description="confident and relaxed", gender="masculine"),
+        Voice(id="aura-2-arcas-en", label="Arcas",
+              description="smooth, natural, clear", gender="masculine"),
+        Voice(id="aura-2-aries-en", label="Aries",
+              description="warm and energetic", gender="masculine"),
+        Voice(id="aura-2-mars-en", label="Mars",
+              description="smooth, patient baritone", gender="masculine"),
+        Voice(id="aura-2-zeus-en", label="Zeus",
+              description="deep and smooth", gender="masculine"),
+        Voice(id="aura-2-draco-en", label="Draco",
+              description="warm, trustworthy, British", gender="masculine"),
+    ],
 }
 
 
@@ -277,6 +319,21 @@ def cartesia_enabled() -> bool:
 def _is_cartesia_model(model_id: str) -> bool:
     mid = (model_id or "").strip()
     return _provider_of(mid) == "cartesia" or mid == "cartesia"
+
+
+def deepgram_direct_enabled() -> bool:
+    """Whether the Deepgram DIRECT-API legs appear in served selection lists
+    (branch experiment fleet/deepgram-voice). Unlike Cartesia, this is a FLAG
+    gate (``CONFIG.deepgram_direct_enabled``), not a key gate: the options are
+    shown so the dev toggle can select them, and selecting one WITHOUT
+    ``DEEPGRAM_API_KEY`` in the agent env fails HONESTLY at call time
+    (``agent.py`` publishes ``deepgram_key_missing``) rather than silently.
+    Default on for this branch; a merge would flip the flag off."""
+    return bool(CONFIG.deepgram_direct_enabled)
+
+
+def _is_deepgram_direct_model(model_id: str) -> bool:
+    return _provider_of((model_id or "").strip()) == DEEPGRAM_DIRECT_PROVIDER
 
 
 def _env_voices(provider: str) -> list[Voice] | None:
@@ -338,6 +395,15 @@ def _sources() -> dict[str, object]:
     src = _raw_sources()
     src["stt"] = _with_configured(src["stt"], CONFIG.meta_cascade_stt_model)  # type: ignore[arg-type]
     src["tts"] = _with_configured(src["tts"], CONFIG.meta_cascade_tts_model)  # type: ignore[arg-type]
+    # Deepgram DIRECT legs (branch experiment): append only when the flag is on
+    # so the default lists stay byte-identical when the flag is off. Flux is
+    # added as a second STT option; Nova-3 is the verified default.
+    if deepgram_direct_enabled():
+        for stt_id in (DEEPGRAM_DIRECT_STT, DEEPGRAM_DIRECT_STT_FLUX):
+            if stt_id not in src["stt"]:  # type: ignore[operator]
+                src["stt"].append(stt_id)  # type: ignore[union-attr]
+        if DEEPGRAM_DIRECT_TTS not in src["tts"]:  # type: ignore[operator]
+            src["tts"].append(DEEPGRAM_DIRECT_TTS)  # type: ignore[union-attr]
     if not cartesia_enabled():
         for key in ("llm", "stt", "tts", "realtime"):
             src[key] = [m for m in src[key] if not _is_cartesia_model(m)]  # type: ignore[union-attr]
@@ -369,6 +435,12 @@ def _availability(provider: str) -> tuple[bool, str]:
     withheld upstream in :func:`_sources` (see :func:`cartesia_enabled`)."""
     if not provider or provider in CONFIG.voice_credited_providers:
         return True, ""
+    # Deepgram DIRECT legs (branch experiment) ride livekit-plugins-deepgram on
+    # the direct $1000 credits, not LiveKit Inference credits — shown enabled
+    # (the plugin is installed). The honest guard is the KEY: without
+    # DEEPGRAM_API_KEY the agent surfaces deepgram_key_missing at call time.
+    if provider == DEEPGRAM_DIRECT_PROVIDER:
+        return True, "DEEPGRAM_API_KEY"
     return False, "LiveKit credits"
 
 
