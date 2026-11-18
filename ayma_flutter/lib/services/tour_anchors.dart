@@ -42,9 +42,6 @@ class TourAnchors {
   /// The "My person graph" row inside the Profile tab.
   static const profileGraphRow = 'profile_graph_row';
 
-  /// The "Career & education" row inside the Profile tab.
-  static const profileCareerRow = 'profile_career_row';
-
   /// The "Appearance" row inside the Profile tab.
   static const profileAppearanceRow = 'profile_appearance_row';
 

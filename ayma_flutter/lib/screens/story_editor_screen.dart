@@ -30,8 +30,10 @@ import '../util/cold_start_retry.dart';
 /// alongside content the graph doesn't (yet) represent as nodes: cover stats,
 /// the photo gallery, the merged Appearance card, and "Beyond our
 /// conversations" (web findings).
-/// Career now lives in the graph Career section, surfaced on its own
-/// dedicated Career view (CareerViewScreen) — not here.
+/// Career is a normal graph Career section, rendered here through the shared
+/// [GraphTreeView] like every other section (founder Nov 17: "why do we have a
+/// separate career and education — this should be just part of the story"). The
+/// standalone Career view was deleted; there is no dedicated Career surface.
 ///
 /// **Single surface now** (`story_private` — everything, colour-neutral;
 /// visibility is an interactive toolbar state, not a permanent badge). The two

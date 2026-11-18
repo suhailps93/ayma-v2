@@ -24,12 +24,14 @@ Ayma is an AI matchmaker/dating app. An AI persona ("Ayma") interviews users by 
 profile wiki, and scores matches. Users see **credits**, never dollars.
 
 The person graph (`docs/PERSON_GRAPH.md`) is the one data model behind every profile surface, rendered by the
-shared Node-Visualiser. Career/education has a **dedicated Career view** (`CareerViewScreen`, `/profile/career`,
-Profile-tab "Career & education" row): an editable list over the graph Career section + all its children (seed
-nodes, the injected LinkedIn link node, any emergent `page_type:"career"` children), timeline-style with a date
-only where a node already carries one (`Link.dated`). No career date schema exists — never add dated start/end
-fields or migrate nodes; the deleted wiki-timeline subsystem stays deleted. Editing reuses the generic
-`/profile/graph/node/*` paths.
+shared Node-Visualiser. Career/education is **just a normal section inside Your Story** — it renders through the
+same `GraphTreeView(surface: story)` as every other section, with the same bullets, tap-opens-the-node-chat and
+actions (founder Nov 17 "why do we have a separate career and education — this should be just part of the story";
+the standalone `CareerViewScreen` / `/profile/career` from build 2488 was deleted in build 2491). The Career
+section nodes are unchanged — the career seed nodes, the injected LinkedIn link node, and any emergent
+`page_type:"career"` children — and still carry a read-only `dated` where a `Link.dated` exists. No career date
+schema exists; the deleted wiki-timeline subsystem stays deleted. Editing reuses the generic
+`/profile/graph/node/*` paths. "open my career" resolves to the My story destination.
 
 | Piece | Where | Notes |
 |---|---|---|

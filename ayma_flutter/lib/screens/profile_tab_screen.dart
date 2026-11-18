@@ -15,7 +15,6 @@ import '../widgets/completeness_ring.dart';
 import '../widgets/staggered.dart';
 import 'complete_profile_screen.dart';
 import 'my_public_profile_screen.dart';
-import 'career_view_screen.dart';
 import 'person_graph_screen.dart';
 import 'story_editor_screen.dart';
 import 'profile_settings_screen.dart';
@@ -111,14 +110,6 @@ class ProfileTabScreen extends StatelessWidget {
             label: 'My person graph',
             hint: 'You and your story sections as a map you can tap through',
             onTap: () => context.push(PersonGraphScreen.path),
-          ),
-          _Item(
-            anchorId: TourAnchors.profileCareerRow,
-            icon: Icons.work_outline,
-            label: 'Career & education',
-            hint: 'Your work and education as a timeline — edit any entry, '
-                'or add your LinkedIn',
-            onTap: () => context.push(CareerViewScreen.path),
           ),
           _Item(
             anchorId: TourAnchors.profileDetailsRow,

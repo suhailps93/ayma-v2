@@ -794,41 +794,36 @@ renderer** instead of a bespoke raw `AymaPhoto`:
   "show the Nth picture" lands), plus the unchanged
   `test/photo_carousel_command_test.dart` and
   `test/profile_photo_fullscreen_test.dart`.
-## Dedicated Career view (Nov 17 2026, "B-widened" — no schema change)
+## Career is part of Your Story — no dedicated view (build 2491, Nov 17 2026)
 
-The founder's settled answer to the A/B/C career-timeline question: a **dedicated
-Career view** that is a *presentation* over the existing graph Career section,
-**not** a new data model. Option A (dated start/end fields on a node, node
-migration, or resurrecting the deleted wiki-timeline subsystem) is **rejected** —
-there is no career date schema and none is added.
+Build 2488 shipped a standalone **Career view** (`CareerViewScreen`,
+`/profile/career`) — a dedicated list/timeline over the graph Career section.
+The founder rejected the separate surface ("why do we have a separate career and
+education — this should be just part of the story"), so build 2491 **deleted the
+screen, its route, its Profile-tab row, its feature-tour entry, and its
+`app_registry.json` destination**. Career is now a **normal section inside Your
+Story** (`GraphTreeView(surface: story)`), rendered by the shared
+Node-Visualiser exactly like every other section — same bullets, same
+tap-opens-the-node-chat, same actions.
 
-- **Screen**: `CareerViewScreen` (`/profile/career`,
-  `ayma_flutter/lib/screens/career_view_screen.dart`), reachable from the "Career
-  & education" row on the Profile tab and via Ayma (`career` destination in
-  `app_registry.json`, aliases "career / my work history / my timeline /
-  education / …"). It loads the owner story tree (`GET /profile/graph/tree?
-  surface=story`) and renders **only** the `career` section's nodes — the career
-  seed nodes (`career_role_narrative`, `career_integration_vector`,
-  `career_trajectory_narrative`, `work_schedule_pattern`, `education_level`), the
-  injected LinkedIn link node (`career.linkedin`), and any **emergent** career
-  children (`page_type: "career"`) the graph has grown — as an editable list.
-- **Dates only where already present**: `person_graph_tree._node_dated` surfaces
-  a read-only `dated` field on **every** tree node, populated from the first
-  `Link.dated` on the node (`Link.dated` / `HistoryEntry.date` are the only
-  date-ish fields in the model) and `""` otherwise. The Career view renders a
-  timeline-style date beside an entry **only** when `dated` is non-empty;
-  undated entries list with no date. No date is invented, no node migrated.
-- **Editing reuses the generic paths**: each entry is a real `NodeVisualiser`, so
-  a tap opens the same partial node chat directly (the owner actions ride inside
-  it as the `NodeActionBubbles` row) and drives the same
-  `/profile/graph/node/{id}/{visibility,text,add-child,delete}` endpoints as the
-  generic Node-Visualiser — no duplicate edit path. Per-node visibility is
-  respected: a public-tree viewer (the public-profile surface) only ever sees
-  public career nodes; this view is owner-only.
+- **No schema change, data untouched**: the Career section nodes are exactly as
+  before — the career seed nodes (`career_role_narrative`,
+  `career_integration_vector`, `career_trajectory_narrative`,
+  `work_schedule_pattern`, `education_level`), the injected LinkedIn link node
+  (`career.linkedin`), and any **emergent** `page_type: "career"` children. They
+  already render in Your Story because Career is a graph section. The read-only
+  `dated` on each tree node (`person_graph_tree._node_dated`, first `Link.dated`
+  else `""`) is still surfaced for whatever consumes it; no date schema was ever
+  added and the deleted wiki-timeline subsystem stays deleted.
+- **Navigation**: "open my career" / "my work history" / "education" aliases now
+  resolve to the **`story`** (My story) destination in `app_registry.json`; there
+  is no `career` destination and no `/profile/career` route.
 - Tests: `tests/test_person_graph_tree.py::
-  test_node_dated_surfaced_from_link_dated_only_where_present` (backend) and
-  `ayma_flutter/test/career_view_test.dart` (lists seed + LinkedIn + emergent,
-  dates only where present, edit persists through the node-edit path).
+  test_node_dated_surfaced_from_link_dated_only_where_present` (backend, the
+  `dated` surfacing is unchanged) and the Story-surface rendering of the Career
+  section in `ayma_flutter/test/story_editor_screen_test.dart` ("Story: the
+  narrative renders through the Node-Visualiser"); `app_registry_test.dart`
+  asserts no standalone career route remains.
 
 ## Live graph layout + highlight fix (person-graph-sections, Nov 17 2026)
 
