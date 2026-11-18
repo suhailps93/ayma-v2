@@ -23,9 +23,12 @@ import '../widgets/graph_tree_view.dart';
 import 'report_run_flows.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
-/// (photos, Face and Body scores, positive findings), one Share button, the
-/// private "What to do next" list, then the full report without its
-/// recommendations (structured attributes plus an honest face analysis and an honest physique analysis).
+/// (photos, Face and Body scores, positive findings), one Share button, then
+/// the full report (structured attributes, an honest face analysis, an honest
+/// physique analysis, and — as its OWN final "What to do next" section — the
+/// recommendations). The recommendations appear ONCE, at the bottom, lifted
+/// there by the shared assembler (`report_tree`); there is no second private
+/// copy under the card (Scout NOTE 255 Leg 43).
 /// Re-opened from an `[appearance:<id>]` chat marker, the chat report card,
 /// or the Skills screen's "View my report" link.
 ///
@@ -365,9 +368,10 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 'Remove-from-card (X) control, '
                 'Face ${c.faceScore}${c.faceVerdict.isEmpty ? '' : ' ${c.faceVerdict.toLowerCase()}'}, '
                 'Body ${c.bodyScore}${c.bodyVerdict.isEmpty ? '' : ' ${c.bodyVerdict.toLowerCase()}'}'
-                '${c.standOuts.isEmpty ? '' : ', stands out: ${c.standOuts.join('; ')}'}). '
+                '${c.standOutsToShow(dedupe: true).isEmpty ? '' : ', stands out: ${c.standOutsToShow(dedupe: true).join('; ')}'}). '
                 'Below it a Share button (WhatsApp, Instagram, Save image, More…), '
-                'then the private "What to do next" list, then the full report.',
+                'then the full report, whose own final "What to do next" section '
+                'holds the recommendations.',
     );
   }
 
@@ -384,6 +388,10 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     accent: accent,
     photos: _shownImages(),
     onRemovePhoto: onRemove,
+    // The live in-app card (onRemove wired) dedups its STANDS OUT chips against
+    // the findings the full report shows below; the exported share image
+    // (onRemove null) keeps them — shared alone it is the whole summary.
+    dedupeStandOuts: onRemove != null,
   );
 
   @override
@@ -490,7 +498,6 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
                 ),
               ),
             ),
-            if (card.nextSteps.isNotEmpty) _NextSteps(steps: card.nextSteps),
           ],
           // The full report body renders through the ONE shared report
           // framework ([GraphTreeView] on the report surface, unified visual
@@ -521,7 +528,7 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
   /// [_openShare] below, unchanged: the CURRENT run's rendered card image
   /// with its caption through the system share sheet. (The card is built
   /// from the live on-screen run, never a cached older one, and the
-  /// private "What to do next" section is never part of it.)
+  /// recommendations are never part of it — the card never shows them.)
   void _openShareSheet(AppearanceCardData card, Color accent, String uid) {
     showAymaShareSheet(
       context,
@@ -592,68 +599,6 @@ class _UpdatingBanner extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// The recommendations, privately, under the card. Never on the card.
-class _NextSteps extends StatelessWidget {
-  const _NextSteps({required this.steps});
-
-  final List<(String, String)> steps;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            header: true,
-            child: Text(
-              'What to do next',
-              style: AymaType.serif(size: 28, color: ac.fg),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Only you see this. It is never part of the shared card.',
-            style: AymaType.sans(size: 12.5, color: ac.fgMute),
-          ),
-          const SizedBox(height: 12),
-          for (final (category, text) in steps)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: ac.bgElev,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: ac.lineSoft),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    category.toUpperCase(),
-                    style: AymaType.mono(size: 9.5, color: ac.fgMute),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    text,
-                    style: AymaType.sans(
-                      size: 13.5,
-                      height: 1.35,
-                      color: ac.fg,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
       ),
     );
   }

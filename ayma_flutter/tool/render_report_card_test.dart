@@ -55,7 +55,6 @@ void main() {
         'Expressive dark eyes',
         'Thick, textured, naturally curly hair that frames the face',
       ],
-      nextSteps: [],
     );
     // No network here: google_fonts' own fetches of Instrument Serif and
     // JetBrains Mono fail asynchronously. Those errors are swallowed by this

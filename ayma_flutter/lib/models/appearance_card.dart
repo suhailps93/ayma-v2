@@ -15,8 +15,9 @@ class CardPhoto {
 /// What the shareable Appearance report card shows, read off the caller's own
 /// Appearance [LivingReport] (`report_adapters.appearance_blocks`): the
 /// analysed photos, the Face and Body scores with their verdicts, and the
-/// positive findings only. Also carries the recommendations for the private
-/// "What to do next" list under the card, which is never drawn on the card.
+/// positive findings only. The recommendations ("what to do next") live ONLY
+/// in the full report's own final "What to do next" section (the unified node
+/// tree, lifted there by `report_tree`) — never a second copy under the card.
 ///
 /// [pool] is the full ordered set of analysed photos (more than the card can
 /// show); [hidden] is the ids the user has removed from the card. [visible]
@@ -36,7 +37,7 @@ class AppearanceCardData {
     required this.bodyScore,
     required this.bodyVerdict,
     required this.standOuts,
-    required this.nextSteps,
+    this.findingTexts = const {},
   });
 
   static const maxPhotos = 4;
@@ -75,7 +76,7 @@ class AppearanceCardData {
     bodyScore: bodyScore,
     bodyVerdict: bodyVerdict,
     standOuts: standOuts,
-    nextSteps: nextSteps,
+    findingTexts: findingTexts,
   );
 
   final String faceScore;
@@ -86,8 +87,26 @@ class AppearanceCardData {
   /// Up to [maxStandOuts] strengths, alternating Face and Body.
   final List<String> standOuts;
 
-  /// `(category label, text)` recommendations, Face then Body. Private.
-  final List<(String, String)> nextSteps;
+  /// Normalised texts of the strength FINDINGS the full report already shows
+  /// (every Face/Body strength). The on-screen card dedups its STANDS OUT chips
+  /// against these so a chip never restates a finding rendered in the report
+  /// below (Scout NOTE 255 Leg 43). The shared image has no findings list
+  /// beside it, so its export keeps the chips — see [standOutsToShow].
+  final Set<String> findingTexts;
+
+  static String _norm(String s) => s.trim().toLowerCase();
+
+  /// The STANDS OUT chips to draw. On the shareable image ([dedupe] false) that
+  /// is every [standOuts] entry — the card is the whole summary when shared
+  /// alone. On the in-app card ([dedupe] true) a chip that merely restates a
+  /// strength finding already shown in the full report below is dropped, so the
+  /// same point never reads twice (Scout NOTE 255 Leg 43).
+  List<String> standOutsToShow({required bool dedupe}) => dedupe
+      ? [
+          for (final s in standOuts)
+            if (!findingTexts.contains(_norm(s))) s,
+        ]
+      : standOuts;
 
   /// Strength text that must never reach a shared image even if a model put
   /// it in a strength: body fat, weight, the worst feature.
@@ -171,14 +190,16 @@ class AppearanceCardData {
       }
     }
 
-    final nextSteps = [
-      for (final prefix in const ['face', 'body'])
-        for (final b in blocks)
-          if (isRecommendation(b) &&
-              b.blockId.startsWith('$prefix:') &&
-              b.text.trim().isNotEmpty)
-            (_category(b.tag), b.text.trim()),
-    ];
+    // Every strength finding the full report shows, normalised — the on-screen
+    // card dedups its STANDS OUT chips against this (Scout NOTE 255 Leg 43).
+    final findingTexts = {
+      for (final b in blocks)
+        if (b.type == kBlockFact &&
+            b.tag == 'strength' &&
+            RegExp(r'^(face|body):strength:').hasMatch(b.blockId) &&
+            b.text.trim().isNotEmpty)
+          _norm(b.text),
+    };
 
     // The owner's hidden ids come from the report meta; keep only ids still
     // in the pool so a stale one (a photo since deleted or re-analysed out)
@@ -197,13 +218,9 @@ class AppearanceCardData {
       bodyScore: bodyScore,
       bodyVerdict: _verdict(body!),
       standOuts: standOuts,
-      nextSteps: nextSteps,
+      findingTexts: findingTexts,
     );
   }
-
-  /// A face/body recommendation fact: shown only in "What to do next".
-  static bool isRecommendation(ReportBlock b) =>
-      b.type == kBlockFact && RegExp(r'^(face|body):reco:').hasMatch(b.blockId);
 
   /// "6.3" for a 0-10 score; a whole number drops the ".0".
   static String? _score(Object? v) {
@@ -217,20 +234,5 @@ class AppearanceCardData {
   static String _verdict(ReportBlock b) {
     final v = b.basis.trim().isNotEmpty ? b.basis.trim() : b.label.trim();
     return v.toLowerCase() == 'score' ? '' : v;
-  }
-
-  static const _categoryLabels = {
-    'beard_grooming': 'Grooming',
-    'hair_styling': 'Hair',
-    'under_eye': 'Under-eye',
-  };
-
-  static String _category(String tag) {
-    final t = tag.trim();
-    if (t.isEmpty) return 'Next step';
-    final known = _categoryLabels[t];
-    if (known != null) return known;
-    final words = t.replaceAll('_', ' ');
-    return words[0].toUpperCase() + words.substring(1);
   }
 }

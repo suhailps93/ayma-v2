@@ -195,6 +195,69 @@ Map<String, dynamic> _report({
   'meta': {'owner_uid': 'u1', 'viewer_can_edit': true},
 };
 
+/// One node in the report node tree (`GET /report/appearance/{uid}/tree`),
+/// the shape the real `GraphTreeView` body renders.
+Map<String, dynamic> _node(
+  String id,
+  String text, {
+  String answerType = 'text',
+  double? statValue,
+}) => {
+  'id': id,
+  'section': 'sec',
+  'text': text,
+  'gist': text,
+  'label': '',
+  'answer_type': answerType,
+  'visibility': 'public',
+  'subtree_visibility': 'public',
+  'editable': true,
+  if (statValue != null) 'stat_value': statValue,
+};
+
+/// The appearance report as the NODE TREE the body fetches — recommendations
+/// already lifted into one final "What to do next" section (as
+/// `report_tree._finalize_sections` does). Served for the `/tree` endpoint so
+/// the screen test exercises the real body, not the block card data.
+Map<String, dynamic> _tree() => {
+  'surface': 'report',
+  'title': 'Appearance',
+  'sections': [
+    {
+      'page_type': 'attributes',
+      'title': 'Attributes',
+      'order': 0,
+      'nodes': [_node('attr:eye_color', 'Brown')],
+    },
+    {
+      'page_type': 'face',
+      'title': 'Face',
+      'order': 1,
+      'nodes': [
+        _node('face', 'Above average', answerType: 'stat', statValue: 6.3),
+        _node('face:strength:0', 'Full eyebrows'),
+        _node('face:improvement:0', 'Under-eye shadows'),
+      ],
+    },
+    {
+      'page_type': 'body',
+      'title': 'Body',
+      'order': 2,
+      'nodes': [_node('body:strength:0', 'Broad shoulders')],
+    },
+    {
+      'page_type': 'what_to_do_next',
+      'title': 'What to do next',
+      'order': 3,
+      'nodes': [
+        _node('face:reco:0', 'Trim the beard along the jaw.'),
+        _node('body:reco:0', 'Progressive resistance training.'),
+      ],
+    },
+  ],
+  'meta': {'owner_uid': 'u1', 'viewer_can_edit': true},
+};
+
 LivingReport _living(Map<String, dynamic> m) => LivingReport.fromMap(m);
 
 AppearanceCardData _data({
@@ -214,7 +277,7 @@ AppearanceCardData _data({
     bodyScore: d.bodyScore,
     bodyVerdict: d.bodyVerdict,
     standOuts: standOuts,
-    nextSteps: d.nextSteps,
+    findingTexts: d.findingTexts,
   );
 }
 
@@ -268,10 +331,14 @@ class _Profile extends ProfileService {
       ProfileData.fromMap({'first_name': 'Suhail', 'name': 'Suhail P'});
 }
 
+/// Serves the block report for `GET /report/appearance/{uid}` (the card data)
+/// and the node tree for `GET /report/appearance/{uid}/tree` (the body), so a
+/// screen test exercises BOTH — the dup Scout caught only shows when the real
+/// tree renders alongside the card.
 ApiClient _api(Map<String, dynamic> report) => ApiClient(
   httpClient: MockClient(
     (req) async => http.Response(
-      jsonEncode(report),
+      jsonEncode(req.url.path.endsWith('/tree') ? _tree() : report),
       200,
       headers: const {'content-type': 'application/json; charset=utf-8'},
     ),
@@ -361,11 +428,35 @@ void main() {
       }
     });
 
-    test('next steps are the recommendations, kept off the card', () {
-      expect(_data().nextSteps, [
-        ('Grooming', 'Trim the beard along the jaw.'),
-        ('Training', 'Progressive resistance training.'),
-      ]);
+    test('finding texts cover every strength shown in the full report', () {
+      // The on-screen card dedups STANDS OUT against these; every standout is a
+      // strength the full report renders below, so all are covered.
+      final d = _data();
+      for (final s in d.standOuts) {
+        expect(d.findingTexts, contains(s.toLowerCase()));
+      }
+    });
+
+    test('standOutsToShow drops chips that restate a shown finding (in-app), '
+        'keeps all for the share image', () {
+      final d = AppearanceCardData(
+        pool: const [],
+        hidden: const {},
+        faceScore: '6',
+        faceVerdict: '',
+        bodyScore: '5',
+        bodyVerdict: '',
+        standOuts: const ['Strong jawline', 'A one-off chip'],
+        findingTexts: const {'strong jawline'},
+      );
+      // In-app: the chip that restates a shown finding is dropped; the other
+      // (not a shown finding) survives.
+      expect(d.standOutsToShow(dedupe: true), ['A one-off chip']);
+      // Share image: no findings list beside it, so it keeps every chip.
+      expect(
+        d.standOutsToShow(dedupe: false),
+        ['Strong jawline', 'A one-off chip'],
+      );
     });
 
     test('no card when a score is missing', () {
@@ -500,7 +591,8 @@ void main() {
   });
 
   group('screen', () {
-    testWidgets('card, Share, private next steps, then the full report', (
+    testWidgets('card, Share, then the full report — recommendations appear '
+        'ONCE, in the report\'s own final "What to do next" section', (
       tester,
     ) async {
       final img = await _decoded(tester);
@@ -537,25 +629,26 @@ void main() {
         find.bySemanticsLabel(RegExp('^Your Appearance report card')),
         findsOneWidget,
       );
-      await tester.scrollUntilVisible(
-        find.text('GROOMING'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.text('What to do next'), findsOneWidget);
-      expect(
-        find.text('Only you see this. It is never part of the shared card.'),
-        findsOneWidget,
-      );
-      expect(find.text('GROOMING'), findsOneWidget);
-      // The full report is still below (attributes).
+      // The full report body (the node tree) is below — its Attributes.
       await tester.scrollUntilVisible(
         find.text('Brown'),
         300,
         scrollable: find.byType(Scrollable).first,
       );
       expect(find.text('Brown'), findsOneWidget);
-      // Recommendations live only in "What to do next", not the full report.
+      // "What to do next" appears exactly ONCE — the report's own final
+      // section (the lifted recommendations), never a second mid-report copy
+      // (Scout NOTE 255 Leg 43). The old private-list heading + note are gone.
+      expect(
+        find.text('What to do next', skipOffstage: false),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Only you see this. It is never part of the shared card.',
+            skipOffstage: false),
+        findsNothing,
+      );
+      // Each recommendation shows once, at the bottom, as an action.
       expect(
         find.text('Trim the beard along the jaw.', skipOffstage: false),
         findsOneWidget,
@@ -564,6 +657,9 @@ void main() {
         find.text('Progressive resistance training.', skipOffstage: false),
         findsOneWidget,
       );
+      // STANDS OUT chips are deduped off the in-app card — every standout
+      // restates a strength the report shows below, so none remain on screen.
+      expect(find.text('STANDS OUT', skipOffstage: false), findsNothing);
       // The old AppBar link-share action is gone.
       expect(find.byTooltip('Share'), findsNothing);
 
@@ -615,7 +711,8 @@ void main() {
       expect(find.text('Brown'), findsOneWidget);
       expect(find.byType(AppearanceReportCard), findsNothing);
       expect(find.byKey(const ValueKey('reportCardShare')), findsNothing);
-      expect(find.text('What to do next'), findsNothing);
+      // The full report (node tree) still renders — including its own "What to
+      // do next" section; there is no card-gated private copy any more.
     });
   });
 
@@ -779,7 +876,7 @@ void main() {
             );
           }
           return http.Response(
-            jsonEncode(rep),
+            jsonEncode(req.url.path.endsWith('/tree') ? _tree() : rep),
             200,
             headers: const {'content-type': 'application/json; charset=utf-8'},
           );

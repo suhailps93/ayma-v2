@@ -27,6 +27,7 @@ class AppearanceReportCard extends StatelessWidget {
     required this.accent,
     required this.photos,
     this.onRemovePhoto,
+    this.dedupeStandOuts = false,
   });
 
   static const width = 360.0;
@@ -48,6 +49,13 @@ class AppearanceReportCard extends StatelessWidget {
   /// shared picture — it carries no interactive controls), so the X buttons
   /// only ever appear on the live in-app card.
   final void Function(int index)? onRemovePhoto;
+
+  /// Drop a STANDS OUT chip that merely restates a strength finding already
+  /// shown in the full report below (the in-app card). The exported share
+  /// image leaves this false — shared alone it carries no findings list, so the
+  /// chips ARE its summary (Scout NOTE 255 Leg 43). See
+  /// [AppearanceCardData.standOutsToShow].
+  final bool dedupeStandOuts;
 
   static const _paper = ReportCardColors.paper;
   static const _ink = ReportCardColors.ink;
@@ -92,6 +100,7 @@ class AppearanceReportCard extends StatelessWidget {
       color: _mute,
     ).copyWith(letterSpacing: 1.3);
     final serif = AymaType.serif(color: _ink);
+    final standOuts = data.standOutsToShow(dedupe: dedupeStandOuts);
     final verdicts = [
       if (data.faceVerdict.isNotEmpty)
         'Face: ${data.faceVerdict.toLowerCase()}',
@@ -201,7 +210,7 @@ class AppearanceReportCard extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            if (data.standOuts.isNotEmpty)
+                            if (standOuts.isNotEmpty)
                               Text(
                                 'STANDS OUT',
                                 style: mono.copyWith(color: ink),
@@ -222,7 +231,7 @@ class AppearanceReportCard extends StatelessWidget {
                         Wrap(
                           spacing: 7,
                           runSpacing: 7,
-                          children: [for (final s in data.standOuts) _chip(s)],
+                          children: [for (final s in standOuts) _chip(s)],
                         ),
                       ],
                     ),
@@ -492,10 +501,11 @@ class AppearanceReportCard extends StatelessWidget {
           ),
         ],
       ),
+      // The chip body WRAPS to as many lines as it needs within the chip's
+      // width — never a one-line ellipsis that chopped a finding off mid-word
+      // (founder "no text should cut off partially"; Scout NOTE 255 Leg 43).
       child: Text(
         text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
         style: AymaType.sans(size: 12, color: _ink),
       ),
     ),

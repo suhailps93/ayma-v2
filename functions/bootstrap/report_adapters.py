@@ -232,6 +232,44 @@ def _attribute_blocks(record: dict | None) -> list[dict]:
     return blocks
 
 
+def _attribute_field_keys(record: dict | None) -> set[str]:
+    """The ``physical_attributes`` field names that actually produced an
+    ``attr:<field>`` block (known, non-"unknown" value) — the exact set
+    :func:`_attribute_blocks` emits. Used to keep a stat that lives in the
+    Attributes section from being re-printed as a Face/Body quick fact."""
+    if not isinstance(record, dict):
+        return set()
+    return {
+        field
+        for field, rec in record.items()
+        if isinstance(rec, dict) and _known(rec.get("value"))
+    }
+
+
+def _drop_colliding_quick_facts(
+    axis_blocks: list[dict], attr_field_keys: set[str]
+) -> list[dict]:
+    """Drop a Face/Body axis's ``<prefix>:quick:<key>`` block whose ``<key>``
+    is ALSO a ``physical_attributes`` field already shown in the Attributes
+    section, so a stat with one name/value appears ONCE — in Attributes, its
+    structured home — not again as a quick fact (Scout NOTE 255 Leg 43:
+    ``build`` showed in BOTH Attributes and Body, because the same stat is
+    emitted as two separate nodes with different ids — ``attr:build`` and
+    ``body:quick:build`` — which the assembler's node-ID dedupe can't catch).
+    The Attributes section renders first, so it is the kept home. A non-quick
+    block (score, note, finding, photo) is never touched."""
+    if not attr_field_keys:
+        return axis_blocks
+    marker = ":quick:"
+    out: list[dict] = []
+    for b in axis_blocks:
+        bid = str(b.get("block_id") or "")
+        if marker in bid and bid.split(marker, 1)[1] in attr_field_keys:
+            continue
+        out.append(b)
+    return out
+
+
 def appearance_blocks(db, uid: str, report_id: str = "current"):
     """Adapter for the caller's own persistent Appearance report
     (``appearance.get_report``). Always self-owned."""
@@ -247,17 +285,20 @@ def appearance_blocks(db, uid: str, report_id: str = "current"):
     attr_blocks = attr_blocks + _source_photo_blocks(
         "attr", attrs.get("source_photos") if isinstance(attrs, dict) else None
     )
+    # A stat shown in Attributes (e.g. "Build") must not reappear as a Face/Body
+    # quick fact — pick one home and show it once (Scout NOTE 255 Leg 43).
+    attr_field_keys = _attribute_field_keys(record)
 
     face = data.get("face") or {}
     body = data.get("body") or {}
     cat = data.get("category_status") or {}
-    face_blocks = _axis_blocks(
-        "face", face, str(cat.get("face") or "")
+    face_blocks = _drop_colliding_quick_facts(
+        _axis_blocks("face", face, str(cat.get("face") or "")), attr_field_keys
     ) + _source_photo_blocks(
         "face", face.get("source_photos") if isinstance(face, dict) else None
     )
-    body_blocks = _axis_blocks(
-        "body", body, str(cat.get("body") or "")
+    body_blocks = _drop_colliding_quick_facts(
+        _axis_blocks("body", body, str(cat.get("body") or "")), attr_field_keys
     ) + _source_photo_blocks(
         "body", body.get("source_photos") if isinstance(body, dict) else None
     )
