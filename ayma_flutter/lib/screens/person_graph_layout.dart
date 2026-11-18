@@ -104,10 +104,27 @@ class GraphSim {
     int seed = 7,
   }) : nodes = nodes {
     _index = {for (var i = 0; i < nodes.length; i++) nodes[i].id: i};
+    final degree = List<int>.filled(nodes.length, 0);
     for (final (a, b) in edges) {
       final ia = _index[a];
       final ib = _index[b];
-      if (ia != null && ib != null && ia != ib) _edges.add((ia, ib));
+      if (ia != null && ib != null && ia != ib) {
+        _edges.add((ia, ib));
+        degree[ia]++;
+        degree[ib]++;
+      }
+    }
+    // Edgeless nodes (cross-surface facts that never linked to a section) have
+    // no spring pulling them toward the graph; under only weak gravity against
+    // full cluster repulsion they drift out to a far equilibrium ring (~680px
+    // at founder scale) that dominates the fit bounds and crushes the real
+    // cluster into a corner (founder build 2491: "pink streak to one distant
+    // point"). Anchor each to the centre with a bounded virtual spring — a
+    // layout-only pull, never a drawn edge — so every node settles inside the
+    // cluster instead of floating to the rim.
+    final centerIdx = centerId == null ? null : _index[centerId];
+    for (var i = 0; i < nodes.length; i++) {
+      if (degree[i] == 0 && i != centerIdx) _orphans.add(i);
     }
     _seed(seed);
   }
@@ -116,6 +133,11 @@ class GraphSim {
   final String? centerId;
   late final Map<String, int> _index;
   final List<(int, int)> _edges = [];
+  final List<int> _orphans = [];
+  // Rest radius an edgeless node is anchored at — mid-cluster, so orphans
+  // nestle among the real leaves rather than pile on the centre or float out.
+  static const double _orphanAnchorRest = 170.0;
+  static const double _orphanAnchorK = 0.045;
 
   double alpha = 1.0;
   static const double alphaMin = 0.02;
@@ -218,11 +240,16 @@ class GraphSim {
     }
 
     // Any node the centre never reached (disconnected): golden-angle spiral so
-    // it still starts somewhere reproducible rather than at the origin.
+    // it still starts somewhere reproducible rather than at the origin. Edgeless
+    // orphans seed on a tight ring near their anchor rest radius (not the wide
+    // spiral) so the fit stays framed on the cluster from the very first frame.
+    final orphanSet = _orphans.toSet();
     for (var i = 0; i < nodes.length; i++) {
       if (depth.containsKey(i)) continue;
       final ang = i * 2.399963; // golden angle
-      final rad = 120 + 13 * math.sqrt(i + 1) + rnd.nextDouble() * 8;
+      final rad = orphanSet.contains(i)
+          ? _orphanAnchorRest + rnd.nextDouble() * 20
+          : 120 + 13 * math.sqrt(i + 1) + rnd.nextDouble() * 8;
       nodes[i].x = math.cos(ang) * rad;
       nodes[i].y = math.sin(ang) * rad;
     }
@@ -306,7 +333,31 @@ class GraphSim {
       node.vy -= node.y * _gravity * a;
     }
 
-    // Integrate with friction; pin the centre node at the origin.
+    // Bounded anchor spring for edgeless nodes: pull each toward the centre to a
+    // rest radius inside the cluster so it can't settle on the far repulsion
+    // ring. Same spring form as an edge, so an orphan behaves like a real leaf.
+    if (_orphans.isNotEmpty) {
+      for (final idx in _orphans) {
+        final node = nodes[idx];
+        var dx = node.x;
+        var dy = node.y;
+        var dist = math.sqrt(dx * dx + dy * dy);
+        if (dist < 1e-4) {
+          dx = 0.01;
+          dy = 0.0;
+          dist = 0.01;
+        }
+        final rest = _orphanAnchorRest + node.radius;
+        final f = _orphanAnchorK * (dist - rest) * a / dist;
+        node.vx -= dx * f;
+        node.vy -= dy * f;
+      }
+    }
+
+    // Integrate with friction; pin the centre node at the origin. A non-finite
+    // position (should not arise once forces are guarded, but a single NaN would
+    // poison graphBounds and blank the whole graph) is reset to the origin so
+    // one bad node can never crush the fit.
     for (final node in nodes) {
       if (node.id == centerId) {
         node.vx = 0;
@@ -319,6 +370,12 @@ class GraphSim {
       node.vy *= _velocityDecay;
       node.x += node.vx;
       node.y += node.vy;
+      if (!node.x.isFinite || !node.y.isFinite) {
+        node.x = 0;
+        node.y = 0;
+        node.vx = 0;
+        node.vy = 0;
+      }
     }
 
     _resolveCollisions();
