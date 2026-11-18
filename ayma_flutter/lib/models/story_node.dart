@@ -23,6 +23,58 @@ class NodeVis {
   static const mixed = 'mixed';
 }
 
+/// The fixed, versioned VISUAL palette (less-text-heavy Part 2). A node's
+/// [NodeVisual.type] is one of these; the [NodeVisualiser] has exactly one thin
+/// renderer per entry and dispatches on it. An unknown/absent type (a newer
+/// server, a bad pick) renders as [gistRow] — the universal fallback — so a new
+/// node of a known shape renders visually with ZERO new client code.
+///
+/// Mirrors `functions/bootstrap/node_visual.py` (PALETTE v1).
+class NodeVisualType {
+  static const gistRow = 'gist_row';
+  static const chipSet = 'chip_set';
+  static const timelineEntry = 'timeline_entry';
+  static const barMeter = 'bar_meter';
+  static const gauge = 'gauge';
+  static const card = 'card';
+  static const photoCarousel = 'photo_carousel';
+  static const smallTable = 'small_table';
+}
+
+/// A node's write-time (or read-time default) visual descriptor:
+/// `{type, params, v}` — the single thing the client palette reads to decide HOW
+/// to draw a node. The UI is a thin renderer: it NEVER re-picks a visual, it only
+/// reads this. See `docs/PERSON_GRAPH.md § Write-time visual pick` for the params
+/// shape of each type.
+class NodeVisual {
+  const NodeVisual({required this.type, this.params = const {}, this.v = 1});
+
+  /// One of [NodeVisualType]; any other string is treated as [NodeVisualType.gistRow].
+  final String type;
+
+  /// The type's parameters (items / date+title / value+min+max+label / … ) —
+  /// read from EXACTLY the documented shape; a renderer with insufficient params
+  /// falls back to the gist row.
+  final Map<String, dynamic> params;
+
+  /// Palette version (forward-compatibility marker).
+  final int v;
+
+  static NodeVisual? fromMap(dynamic m) {
+    if (m is! Map) return null;
+    final type = m['type'] as String?;
+    if (type == null || type.isEmpty) return null;
+    final rawParams = m['params'];
+    return NodeVisual(
+      type: type,
+      params: rawParams is Map
+          ? rawParams.map((k, v) => MapEntry(k.toString(), v))
+          : const {},
+      v: (m['v'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
 /// One node of the person graph, with its children.
 class StoryNode {
   const StoryNode({
@@ -53,6 +105,7 @@ class StoryNode {
     this.linkPlatform = '',
     this.candidateId = '',
     this.dated = '',
+    this.visual,
     this.children = const [],
   });
 
@@ -145,6 +198,16 @@ class StoryNode {
   /// omits it where empty — no date is ever invented (founder Nov 17).
   final String dated;
 
+  /// The write-time (or read-time default) VISUAL descriptor for this node — how
+  /// the [NodeVisualiser] palette draws it (chip / timeline / bar / card / …).
+  /// Null only for a locally-minted node ([StoryNode.image]); the backend tree
+  /// always supplies one, and a null / unknown type renders as the gist row.
+  final NodeVisual? visual;
+
+  /// The palette type to render this node as — the stored/derived [visual] type,
+  /// or [NodeVisualType.gistRow] when there is none.
+  String get visualType => visual?.type ?? NodeVisualType.gistRow;
+
   final List<StoryNode> children;
 
   /// A minimal image node wrapping an already-curated photo URL — the profile
@@ -204,6 +267,7 @@ class StoryNode {
       linkPlatform: m['link_platform'] as String? ?? '',
       candidateId: m['candidate_id'] as String? ?? '',
       dated: m['dated'] as String? ?? '',
+      visual: NodeVisual.fromMap(m['visual']),
       children: ((m['children'] as List?) ?? const [])
           .whereType<Map>()
           .map((e) => StoryNode.fromMap(e.cast<String, dynamic>()))

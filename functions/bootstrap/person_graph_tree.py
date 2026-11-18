@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Optional
 
 import node_gist
+import node_visual
 import person_graph_index as index_mod
 import person_graph_render as render
 import question_tree
@@ -161,6 +162,46 @@ def _node_dated(node: GraphNode) -> str:
     return ""
 
 
+def _default_visual(
+    section: str | None, answer_type: str | None, gist_val: str, dated: str
+) -> dict:
+    """The READ-TIME default visual for a node that carries no stored ``visual``
+    (every existing node — there is NO backfill). Derived generalizably from the
+    per-section palette default (``node_visual.default_for``), then enriched from
+    the node's OWN fields so an existing node renders visual-first with zero new
+    code: a list-like section's node becomes a one-item chip (sibling chips merge
+    into a set in the renderer), a dated-section node a timeline entry carrying
+    its gist + any date it already has. An image default stays a photo_carousel
+    (the renderer derives the photo from the node's own image fields). Anything
+    without enough to render visually degrades to ``gist_row``."""
+    vt = node_visual.default_for(section, answer_type or "text")
+    t = vt.get("type")
+    if t == node_visual.CHIP_SET and not vt.get("params", {}).get("items"):
+        return (
+            node_visual.chip_set([gist_val])
+            if gist_val
+            else node_visual.make(node_visual.GIST_ROW)
+        )
+    if t == node_visual.TIMELINE_ENTRY and not vt.get("params", {}).get("title"):
+        return (
+            node_visual.timeline_entry(gist_val, dated or None)
+            if gist_val
+            else node_visual.make(node_visual.GIST_ROW)
+        )
+    return vt
+
+
+def _node_visual(node: GraphNode, gist_val: str) -> dict:
+    """The visual descriptor surfaced for a node: the STORED write-time visual
+    when the writer picked one, else the read-time default. A stored visual with
+    an unknown/newer ``type`` is passed through untouched — the client falls back
+    to ``gist_row`` for a type its palette doesn't know."""
+    stored = getattr(node, "visual", None)
+    if isinstance(stored, dict) and stored.get("type"):
+        return stored
+    return _default_visual(node.section, node.answer_type, gist_val, _node_dated(node))
+
+
 def _image_fields(node: GraphNode) -> dict:
     """Contract 1 image-node fields (image-only), read defensively."""
     if node.answer_type != "image":
@@ -241,6 +282,9 @@ def _build_node(
                 "label": "",
                 "text": cb_text,
                 "gist": node_gist.derive_gist(cb_text),
+                "visual": _default_visual(
+                    node.section, "text", node_gist.derive_gist(cb_text), ""
+                ),
                 "answer_type": "text",
                 "level": node.level + 1,
                 "visibility": cb_vis,
@@ -256,6 +300,9 @@ def _build_node(
     if not own_kept and not children:
         return None
 
+    gist_val = node_gist.derive_gist(
+        text if own_kept else "", stored=getattr(node, "gist", None)
+    )
     out = {
         "id": node.id,
         "section": node.section,
@@ -263,9 +310,11 @@ def _build_node(
         "text": text if own_kept else "",  # a suppressed line shows nothing, children remain
         # Gist-first (less-text-heavy Part 1): the short headline rendered by
         # default; the stored writer gist wins, else a derived fallback.
-        "gist": node_gist.derive_gist(
-            text if own_kept else "", stored=getattr(node, "gist", None)
-        ),
+        "gist": gist_val,
+        # Write-time VISUAL pick (less-text-heavy Part 2): how the client's thin
+        # palette renderer draws this node (chip / timeline / bar / card / …).
+        # The stored pick wins; else a read-time default derived from the node.
+        "visual": _node_visual(node, gist_val),
         "answer_type": node.answer_type or "text",
         "level": node.level,
         "visibility": own_vis,
