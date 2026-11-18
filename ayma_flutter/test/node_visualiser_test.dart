@@ -353,6 +353,58 @@ void main() {
     expect(text.overflow, isNot(TextOverflow.ellipsis));
   });
 
+  // REGRESSION (Scout Leg 41, founder "no text should cut off partially"): the
+  // EXACT failing path — a long About-Me free-text section member. Its gist (the
+  // backend now hands the whole line, never an ellipsis cut) renders IN FULL,
+  // uncapped, and lays out across MORE than two lines rather than clipping.
+  testWidgets('REGRESSION: a long About-Me section-member bullet renders in '
+      'FULL, no ellipsis, spanning >2 lines (story)', (tester) async {
+    tester.view.physicalSize = const Size(360, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const longBullet =
+        'I was born in Dubai and moved to San Jose for school and I care a lot '
+        'about building things that outlast the people who made them and I want '
+        'a partner who feels the same way about leaving something behind';
+    final section = GraphTreeSection(
+      pageType: 'identity',
+      title: 'About Me',
+      order: 0,
+      nodes: [
+        _node(
+          id: 'emergent.story.identity.7',
+          text: longBullet,
+          level: 2,
+          vis: NodeVis.public,
+        ),
+      ],
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: section,
+        surface: NodeVisualiserSurface.story,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final finder = find.text(longBullet);
+    expect(finder, findsOneWidget);
+    final text = tester.widget<Text>(finder);
+    expect(text.maxLines, isNull);
+    expect(text.overflow, isNot(TextOverflow.ellipsis));
+    // The whole line is laid out — its painted height exceeds two lines of body
+    // text (so it wrapped in full rather than clipping at a two-line cap).
+    final style = DefaultTextStyle.of(tester.element(finder)).style.merge(
+          Theme.of(tester.element(finder)).textTheme.bodyLarge,
+        );
+    final twoLines = (style.fontSize ?? 16) *
+        (style.height ?? 1.2) *
+        2; // two-line height ceiling
+    expect(tester.getSize(finder).height, greaterThan(twoLines),
+        reason: 'the bullet must wrap past two lines, not clip');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a long gist never overflows at 320px / text-scale 2.0 even '
       'without an ellipsis cap', (tester) async {
     tester.view.physicalSize = const Size(320, 900);
