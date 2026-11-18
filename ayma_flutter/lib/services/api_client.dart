@@ -2362,7 +2362,6 @@ class ApiClient {
             isUser: e['is_user'] as String? ?? '',
             sourcePage: e['source_page'] as String? ?? '',
             visibility: e['visibility'] as String? ?? 'private',
-            deleted: e['deleted'] as bool? ?? false,
           ),
         )
         .where((p) => p.url.isNotEmpty)
@@ -5978,7 +5977,6 @@ class AiNotePhoto {
     this.isUser = '',
     this.sourcePage = '',
     this.visibility = 'private',
-    this.deleted = false,
   });
 
   /// The graph image node's id (content-hash keyed) — addresses this exact
@@ -6006,10 +6004,6 @@ class AiNotePhoto {
   /// For a `web` photo: the page it was found on.
   final String sourcePage;
 
-  /// The user deleted this photo — it stays known to Ayma (AI notes tab
-  /// only) rather than disappearing outright.
-  final bool deleted;
-
   bool get isProfile => source == 'profile';
 
   AiNotePhoto copyWith({String? context, String? isUser, String? visibility}) =>
@@ -6021,7 +6015,6 @@ class AiNotePhoto {
     isUser: isUser ?? this.isUser,
     sourcePage: sourcePage,
     visibility: visibility ?? this.visibility,
-    deleted: deleted,
   );
 }
 

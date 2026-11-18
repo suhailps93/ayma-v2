@@ -1,5 +1,6 @@
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
+import 'package:ayma_flutter/widgets/node_visibility.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -87,9 +88,9 @@ void main() {
     expect(find.text('Ayma thinks this is you'), findsOneWidget);
   });
 
-  // --- Jobs pass (cluster 16): detail-sheet source label color (defect 12) ---
-  testWidgets('PhotoDetailSheet web/deleted source label reads in '
-      'errorTextCard, not raw error', (tester) async {
+  // --- Ayma-only (retained) photo: label + AI-only colour (retention rule) ---
+  testWidgets('PhotoDetailSheet Ayma-only photo reads as kept-by-Ayma in the '
+      'AI-only colour', (tester) async {
     const photo = AiNotePhoto(
       id: 'p1',
       url: 'https://example.invalid/photo.png',
@@ -111,12 +112,13 @@ void main() {
     ));
     await tester.pump();
 
-    final labelFinder = find.text('AI only — Ayma found this online');
+    final labelFinder =
+        find.text('Ayma-only — kept by Ayma, not on your profile');
     expect(labelFinder, findsOneWidget);
-    final ctx = tester.element(labelFinder);
     final style = tester.widget<Text>(labelFinder).style!;
-    expect(style.color, ctx.ac.errorTextCard);
-    expect(style.color, isNot(ctx.ac.error)); // the card-safe token, not raw
+    // An Ayma-only photo takes the AI-only visibility colour, overriding its
+    // source colour (never the raw error red).
+    expect(style.color, nodeVisibilityColor('ayma_only'));
   });
 
   // --- NOTE 250 item 2 + 4: delete confirms, verdict + Make-private read the node ---

@@ -6,6 +6,7 @@ import 'ask_ayma_action.dart';
 import 'ayma_photo.dart';
 import 'ayma_toast.dart';
 import 'ayma_wing_loader.dart';
+import 'node_visibility.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
 /// (see `story_editor_screen.dart`) and by the appearance report screen's
@@ -13,10 +14,11 @@ import 'ayma_wing_loader.dart';
 /// `story_photos_screen.dart` (a dedicated "view all photos" screen) — kept
 /// here so the grid/detail/zoom rendering isn't duplicated.
 
-/// One thumbnail's border colour, by where it came from.
+/// One thumbnail's border colour, by where it came from — an Ayma-only
+/// (retained / AI-only) photo takes the AI-only colour, overriding its source.
 Color photoEdgeColor(BuildContext context, AiNotePhoto p) {
   final ac = context.ac;
-  if (p.deleted) return ac.error;
+  if (p.visibility == 'ayma_only') return nodeVisibilityColor('ayma_only');
   return switch (p.source) {
     'profile' => ac.fg,
     'chat' => ac.fgMute,
@@ -24,15 +26,18 @@ Color photoEdgeColor(BuildContext context, AiNotePhoto p) {
   };
 }
 
-/// A photo's *display* group: a deleted photo always shows under "deleted",
-/// regardless of where it actually came from.
-String displayGroup(AiNotePhoto p) => p.deleted ? 'deleted' : p.source;
+/// A photo's *display* group: an Ayma-only photo (a deleted-but-retained image,
+/// or a web find Ayma kept privately) always shows under the "ayma_only" group
+/// — never on the user's profile/story surfaces — regardless of its source
+/// (founder retention rule Nov 18 2026).
+String displayGroup(AiNotePhoto p) =>
+    p.visibility == 'ayma_only' ? 'ayma_only' : p.source;
 
 const photoGroups = [
   ('profile', 'PROFILE PHOTOS'),
   ('chat', 'FROM CHAT & SKILLS'),
   ('web', 'FOUND ON THE INTERNET'),
-  ('deleted', 'DELETED BY YOU'),
+  ('ayma_only', 'AYMA-ONLY — KEPT, NOT ON YOUR PROFILE'),
 ];
 
 /// A wrap of square thumbnails, edge-coloured by source; tapping one opens
@@ -179,7 +184,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
     // must read "Public", never a stale "Private — shared in chat" (item 4).
     final label = switch (_visibility) {
       'public' => 'Public — on your profile',
-      'ayma_only' => 'AI only — Ayma found this online',
+      'ayma_only' => 'Ayma-only — kept by Ayma, not on your profile',
       _ => 'Private — only you and Ayma',
     };
     // The verdict matches the node state: is_you unknown with a real read means
