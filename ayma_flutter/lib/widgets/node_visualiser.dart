@@ -669,6 +669,9 @@ class NodeVisualiser extends StatelessWidget {
                 key: Key('node_candidate_${node.id}'),
                 url: node.imageUrl,
                 displayWidth: 400,
+                // An unrenderable candidate shows a clean source fallback,
+                // never a broken-image glyph (Leg 33).
+                error: nodeImageSourceFallback(context, node),
               ),
             ),
           ),
@@ -1314,6 +1317,69 @@ List<Widget> _siblingWidgets(
 
 
 /// The ONE renderer for a person-graph IMAGE node's photo (2o — no parallel
+/// The first http(s) source URL carried by an image node — its origin page
+/// ([StoryNode.sourceRef]), an explicit link, or a URL-shaped caption. Used by
+/// [nodeImageSourceFallback] to offer a "View source" chip instead of a dead
+/// tile when a web-research photo can't be loaded.
+String? _nodeImageSourceUrl(StoryNode node) {
+  for (final candidate in [node.sourceRef, node.linkUrl, node.imageRead]) {
+    final u = candidate.trim();
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+  }
+  return null;
+}
+
+/// The clean fallback painted when a web-research photo tile can't decode — a
+/// host that blocks hotlinking / 403s a client, a URL that isn't really an
+/// image, or any load failure (Leg 33). NEVER the broken-image glyph: a neutral
+/// tile, and — when the node knows where the photo came from — a tappable
+/// "View source" chip so an unhotlinkable but real source is still reachable.
+Widget nodeImageSourceFallback(BuildContext context, StoryNode node) {
+  final scheme = Theme.of(context).colorScheme;
+  final src = _nodeImageSourceUrl(node);
+  final Widget inner = src == null
+      ? Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.photo_outlined, size: 22, color: scheme.outline),
+            const SizedBox(height: 4),
+            Text('No preview',
+                style: TextStyle(fontSize: 11, color: scheme.outline)),
+          ],
+        )
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.public, size: 22, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 4),
+            Text('View source',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                    decoration: TextDecoration.underline)),
+          ],
+        );
+  final tile = Container(
+    color: scheme.surfaceContainerHighest,
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(8),
+    child: inner,
+  );
+  if (src == null) return tile;
+  return InkWell(
+    key: Key('node_image_source_link_${node.id}'),
+    onTap: () async {
+      final uri = Uri.tryParse(src);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    },
+    child: tile,
+  );
+}
+
 /// image renderers). The inline [NodeVisualiser] uses it bounded (a 240px
 /// square with Ayma's read caption below, tap handled by the enclosing node
 /// row); the profile photo carousel (2o P4) uses it [fill] — a full-bleed
@@ -1349,12 +1415,16 @@ class NodeImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A failed photo NEVER shows the broken-image glyph: fall back to a clean
+    // neutral tile / "View source" chip (Leg 33). A caller-supplied [error]
+    // (the carousel's seed gradient) still wins when given.
+    final fallback = error ?? nodeImageSourceFallback(context, node);
     if (fill) {
       final photo = AymaPhoto(
         key: Key('node_image_${node.id}'),
         url: node.imageUrl,
         displayWidth: displayWidth,
-        error: error,
+        error: fallback,
       );
       return onTap == null
           ? photo
@@ -1370,7 +1440,7 @@ class NodeImage extends StatelessWidget {
             key: Key('node_image_${node.id}'),
             url: node.imageUrl,
             displayWidth: displayWidth,
-            error: error,
+            error: fallback,
           ),
         ),
       ),

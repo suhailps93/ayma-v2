@@ -69,6 +69,7 @@ import public_profile
 import report_blocks as rb
 import reverse_image_search
 import story
+import web_photo_filter
 
 
 # --- Appearance --------------------------------------------------------
@@ -458,6 +459,9 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
         for s in clean_socials
     ]
 
+    # Only renderable image URLs become photo tiles — an obvious non-image page
+    # URL captured as a "photo" (a scholarly entity URL, a plain bio page) would
+    # otherwise render as a broken tile in the report carousel (Leg 33).
     photo_blocks = [
         rb.photo_block(
             f"photo:{im.get('url')}", str(im.get("url") or ""),
@@ -466,20 +470,19 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
         )
         for im in (digest.get("web_images") or [])
         if isinstance(im, dict) and im.get("url")
+        and web_photo_filter.is_renderable_image_url(str(im.get("url")))
     ]
 
     confirmed = digest.get("confirmed_photos") or []
+    confirmed_photos = [
+        {"url": c.get("image_url"), "caption": c.get("source_title", "")}
+        for c in confirmed
+        if isinstance(c, dict) and c.get("image_url")
+        and web_photo_filter.is_renderable_image_url(str(c.get("image_url")))
+    ]
     confirmed_blocks = (
-        [
-            rb.photo_grid_block(
-                "confirmed_photos",
-                [
-                    {"url": c.get("image_url"), "caption": c.get("source_title", "")}
-                    for c in confirmed if isinstance(c, dict) and c.get("image_url")
-                ],
-            )
-        ]
-        if confirmed else []
+        [rb.photo_grid_block("confirmed_photos", confirmed_photos)]
+        if confirmed_photos else []
     )
 
     sections = [rb.make_section("Summary", summary_blocks)] if summary_blocks else []
@@ -505,6 +508,7 @@ def deep_dive_blocks(db, owner_uid: str, report_id: str, *, viewer_uid: str | No
             )
             for c in reverse_image_search.list_candidates(db, owner_uid)
             if c.get("candidate_id") and c.get("image_url")
+            and web_photo_filter.is_renderable_image_url(str(c.get("image_url")))
         ]
         if candidate_blocks:
             sections.append(rb.make_section("Photos to confirm", candidate_blocks))
