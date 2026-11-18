@@ -245,6 +245,101 @@ def run_taste_refine(uid: str, *, apply: bool, db=None) -> dict:
             "plan": {nid: v for nid, v in to_chip.items()}}
 
 
+# The 3 narrative taste restatements whose first chip still carries its own
+# "<label>: " prefix (Astro call, Nov 18): the leading own-label is stripped so
+# the chip shows the bare item. Same settled rule as the label-strip work —
+# never store a node's own leading label.
+_PREFIX_STRIP_NODES = (
+    "emergent.story.c8d84e17",  # "Music: Billie Eilish" -> "Billie Eilish"
+    "emergent.story.f7518a58",  # "Film: Iron Man"       -> "Iron Man"
+    "emergent.story.0ff2c803",  # "Food: Wingstop"       -> "Wingstop"
+)
+
+
+def _strip_own_label(item: str) -> str:
+    """Drop a leading ``"<label>: "`` prefix (everything up to and including the
+    FIRST ``": "``). ``"Music: Billie Eilish"`` -> ``"Billie Eilish"``. No ``": "``
+    present -> returned unchanged."""
+    head, sep, tail = item.partition(": ")
+    return tail if sep else item
+
+
+def run_strip_taste_prefix(uid: str, *, apply: bool, db=None) -> dict:
+    """Strip the leading own-label from ``visual.params.items[0]`` on the 3
+    narrative taste restatements. Changes ONLY that one array (``items[0]``
+    rewritten, every other item kept); nothing else on the node, and no other
+    node, is touched. Only acts on a node that is a ``chip_set`` whose
+    ``items[0]`` actually carries a ``"<label>: "`` prefix — otherwise it is left
+    and named."""
+    if db is None:
+        from google.cloud import firestore as gcf
+        db = gcf.Client()
+    if getattr(db, "project", "") != _ALLOWED_PROJECT:
+        _die(f"active project is {getattr(db, 'project', None)!r}, refusing "
+             f"(expected {_ALLOWED_PROJECT!r})")
+
+    ref, data = _load_doc(db, uid)
+    nodes = data.get("nodes") or {}
+
+    from google.cloud.firestore_v1.field_path import FieldPath
+
+    updates: dict[str, list] = {}
+    plan = []
+    skipped = []
+    for nid in _PREFIX_STRIP_NODES:
+        entry = nodes.get(nid)
+        if not isinstance(entry, dict):
+            skipped.append((nid, "node missing"))
+            continue
+        vis = entry.get("visual") or {}
+        if vis.get("type") != node_visual.CHIP_SET:
+            skipped.append((nid, f"not chip_set (type={vis.get('type')!r})"))
+            continue
+        items = list((vis.get("params") or {}).get("items") or [])
+        if not items:
+            skipped.append((nid, "no items"))
+            continue
+        new0 = _strip_own_label(items[0])
+        if new0 == items[0]:
+            skipped.append((nid, f"items[0] has no '<label>: ' prefix ({items[0]!r})"))
+            continue
+        new_items = [new0] + items[1:]
+        updates[nid] = new_items
+        plan.append((nid, items[0], new0, new_items))
+
+    print(f"project={db.project}  uid={uid}  (strip taste chip prefix)")
+    print(f"--- to strip: {len(plan)} ---")
+    for nid, old0, new0, new_items in plan:
+        print(f"  {nid}")
+        print(f"      items[0]: {old0!r} -> {new0!r}")
+        print(f"      items (after): {new_items}")
+    if skipped:
+        print(f"--- skipped: {len(skipped)} ---")
+        for nid, why in skipped:
+            print(f"  {nid}: {why}")
+
+    if not apply:
+        print("\nDRY-RUN: no writes. Only `visual.params.items[0]` would change on "
+              "the listed node(s); answers, other items and all other fields untouched.")
+        return {"to_strip": len(plan), "skipped": len(skipped)}
+
+    if not updates:
+        print("\nNothing to strip; no write issued.")
+        return {"to_strip": 0, "skipped": len(skipped)}
+
+    # Rewrite ONLY the nested items array per node (one atomic update); leaves
+    # visual.type/v, every other item, and the doc `updated_at` untouched.
+    field_updates = {
+        FieldPath("nodes", nid, "visual", "params", "items").to_api_repr(): new_items
+        for nid, new_items in updates.items()
+    }
+    ref.update(field_updates)
+    print(f"\nAPPLIED: stripped items[0] prefix on {len(field_updates)} node(s) "
+          f"(only `visual.params.items` touched).")
+    return {"stripped": len(updates), "skipped": len(skipped),
+            "plan": {nid: it for nid, it in updates.items()}}
+
+
 def _load_doc(db, uid: str):
     ref = (
         db.collection("users").document(uid)
@@ -338,13 +433,17 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--taste-refine", action="store_true",
                     help="only upgrade comma-list taste nodes gist_row->chip_set")
+    ap.add_argument("--strip-taste-prefix", action="store_true",
+                    help="strip the leading '<label>: ' from items[0] of the 3 taste restatements")
     args = ap.parse_args()
     if args.project and args.project != _ALLOWED_PROJECT:
         _die(f"--project must be {_ALLOWED_PROJECT!r} (got {args.project!r})")
     if args.apply and args.dry_run:
         _die("pass only one of --dry-run / --apply")
     apply = args.apply and not args.dry_run
-    if args.taste_refine:
+    if args.strip_taste_prefix:
+        run_strip_taste_prefix(args.uid, apply=apply)
+    elif args.taste_refine:
         run_taste_refine(args.uid, apply=apply)
     else:
         run(args.uid, apply=apply)
