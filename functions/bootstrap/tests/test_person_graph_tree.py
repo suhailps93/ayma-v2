@@ -163,6 +163,58 @@ def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
         assert len(norms) == len(set(norms)), f"section {s['page_type']} repeats a fact"
 
 
+def test_unmerged_graph_collapses_two_distinct_restatement_nodes_in_a_section():
+    """NOTE 252 leg 28 (build 2490 FAIL): on an UNMERGED graph, two DISTINCT
+    emergent nodes restate the same fact in one section — neither is a standard
+    row, and their normalized text DIFFERS by a stopword/punctuation ("Ethnic &
+    cultural origin: South Asian" vs "ethnic and cultural origin south asian"), so
+    the exact-norm dedup misses them and BOTH rendered twice in Your Story. The
+    render must collapse them to one (content-token-set dedup) WITHOUT merging the
+    stored data, while a genuinely distinct fact in the same section survives."""
+    overlay = {
+        "emergent.editor.identity.A": {
+            "prompt": "Ethnic & cultural origin: South Asian",
+            "section": "identity", "level": 2, "answer_type": "narrative",
+            "answer": "Ethnic & cultural origin: South Asian",
+            "state": "answered", "visibility": "public",
+        },
+        "emergent.story.identity.B": {
+            "prompt": "ethnic and cultural origin south asian",
+            "section": "identity", "level": 2, "answer_type": "narrative",
+            "answer": "ethnic and cultural origin south asian",
+            "state": "answered", "visibility": "public",
+        },
+        # a genuinely DISTINCT fact in the same section must NOT be over-suppressed
+        "emergent.story.identity.C": {
+            "prompt": "Grew up in Chennai",
+            "section": "identity", "level": 2, "answer_type": "narrative",
+            "answer": "Grew up in Chennai",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    g = _graph(overlay)
+    # no standard node carries this value — the layer-3 data merge did NOT run here
+    assert g["ethnic_cultural_origin"].answer in (None, "", [])
+    t = tree.node_tree(g, surface="story")
+    ident = next(s for s in t["sections"] if s["page_type"] == "identity")
+
+    def _all_texts(nodes):
+        for n in nodes:
+            if n.get("text"):
+                yield n["text"]
+            yield from _all_texts(n.get("children", []))
+
+    texts = list(_all_texts(ident["nodes"]))
+    # the fact renders exactly once (content-token sets are unique in the section)
+    import person_graph_index as index_mod
+    tok_sets = [index_mod.token_set(x) for x in texts if index_mod.token_set(x)]
+    assert len(tok_sets) == len(set(tok_sets)), f"section repeats a fact: {texts}"
+    # exactly one of the two restatements survives; the distinct fact survives
+    surviving = {n["id"] for n in ident["nodes"] if n["text"]}
+    assert len(surviving & {"emergent.editor.identity.A", "emergent.story.identity.B"}) == 1
+    assert "emergent.story.identity.C" in surviving
+
+
 def test_public_surface_keeps_fact_when_standard_row_is_private():
     """Privacy: suppression is surface-aware. ``ethnic_cultural_origin`` defaults
     PRIVATE, so it does not render on the public profile; a PUBLIC bullet that
