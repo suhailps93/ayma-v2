@@ -54,8 +54,14 @@ class _FakeApi extends ApiClient {
 
   final List<(String, String)> visibilitySet = [];
   final List<(String, String)> addChildCalls = [];
+  final List<(String, String)> setTextCalls = [];
   final List<String> deleted = [];
   int deleteCountToReturn = 0;
+
+  @override
+  Future<void> graphSetNodeText(String nodeId, String text) async {
+    setTextCalls.add((nodeId, text));
+  }
 
   @override
   Future<int> graphNodeSetVisibility(String nodeId, String visibility) async {
@@ -664,6 +670,111 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
     expect(api.addChildCalls, [('p', 'A new detail')]);
+  });
+
+  // --- Edit manually: value-only prefill + label-doubling guard (Leg 26) ---
+
+  test('editableNodeValue is the bare value, never the rendered "label: value"',
+      () {
+    // A standard node renders "Role of work in life: Balanced…"; its editable
+    // value is the bare value only.
+    final node = _node(
+      id: 's',
+      standard: true,
+      standardLabel: 'Role of work in life',
+      text: 'Balanced 9-to-5 / Priority on Leisure',
+    );
+    expect(editableNodeValue(node), 'Balanced 9-to-5 / Priority on Leisure');
+
+    // Already-doubled stored data ("label: value") → the leading own-label is
+    // stripped so the field shows the bare value.
+    final doubled = _node(
+      id: 's',
+      standard: true,
+      standardLabel: 'Role of work in life',
+      text: 'Role of work in life: Balanced 9-to-5 / Priority on Leisure',
+    );
+    expect(
+        editableNodeValue(doubled), 'Balanced 9-to-5 / Priority on Leisure');
+
+    // Accumulated prefixes (every prior re-edit added one) all come off.
+    final tripled = _node(
+      id: 's',
+      standard: true,
+      standardLabel: 'Role of work in life',
+      text: 'Role of work in life: Role of work in life: Balanced 9-to-5',
+    );
+    expect(editableNodeValue(tripled), 'Balanced 9-to-5');
+  });
+
+  test('stripNodeOwnLabel is idempotent and leaves non-standard nodes alone',
+      () {
+    final std = _node(id: 's', standard: true, standardLabel: 'Eyes');
+    // Idempotent: a bare value is returned unchanged.
+    expect(stripNodeOwnLabel('Brown', std), 'Brown');
+    expect(stripNodeOwnLabel('Eyes: Brown', std), 'Brown');
+    expect(stripNodeOwnLabel(stripNodeOwnLabel('Eyes: Brown', std), std),
+        'Brown');
+    // A non-standard node renders no label prefix → never stripped.
+    final emergent = _node(id: 'e', text: 'Role: lead actor', standard: false);
+    expect(stripNodeOwnLabel('Role: lead actor', emergent), 'Role: lead actor');
+  });
+
+  testWidgets(
+      'Edit manually prefills the VALUE only and saves it without doubling',
+      (tester) async {
+    final api = _FakeApi();
+    var changed = 0;
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(
+          id: 'n1',
+          standard: true,
+          standardLabel: 'Role of work in life',
+          text: 'Balanced 9-to-5 / Priority on Leisure',
+          vis: NodeVis.private,
+        ),
+        api: api,
+        onChanged: () => changed++,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_edit_manually')));
+    await tester.pumpAndSettle();
+    // The field holds the bare value — no "Role of work in life:" prefix.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'Balanced 9-to-5 / Priority on Leisure');
+    // Saving the UNCHANGED prefill stores the bare value, not the render.
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(api.setTextCalls, [('n1', 'Balanced 9-to-5 / Priority on Leisure')]);
+    expect(changed, 1);
+  });
+
+  testWidgets(
+      'Edit manually guard strips a leading own-label on save (no doubling)',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(
+          id: 'n2',
+          standard: true,
+          standardLabel: 'Role of work in life',
+          text: 'Balanced 9-to-5',
+          vis: NodeVis.private,
+        ),
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_edit_manually')));
+    await tester.pumpAndSettle();
+    // User (or a paste) enters the rendered "label: value" form.
+    await tester.enterText(
+        find.byType(TextField), 'Role of work in life: Balanced 9-to-5');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    // Stored as the bare value — the leading own-label is stripped.
+    expect(api.setTextCalls, [('n2', 'Balanced 9-to-5')]);
   });
 
   testWidgets('image node embeds inline; tap opens its context', (tester) async {
