@@ -81,7 +81,21 @@ class _AppearanceSettingsScreenState extends State<AppearanceSettingsScreen> {
     // Every exit path (back arrow, Android back, swipe, nav away) disposes this
     // State. Revert the live preview to the saved baseline WITHOUT persisting;
     // a committed pick already equals the baseline, so this is a no-op then.
-    _accent.cancelPreview(_savedColor);
+    //
+    // `cancelPreview` fires `notifyListeners`, which drives the app-wide theme
+    // `AnimatedBuilder`s to rebuild. dispose() runs inside the framework's
+    // finalizeTree phase with the tree LOCKED, so notifying here throws
+    // "markNeedsBuild called when widget tree was locked"; that thrown error
+    // aborts the notification mid-dispatch, leaving the theme stuck on the
+    // unsaved preview (founder bug: revert-on-leave stayed on the previewed
+    // colour, worse on the 2nd/3rd leave). Defer the revert one frame, to when
+    // the tree is unlocked, so it repaints cleanly every time. Capture the
+    // controller + baseline first — the callback must not touch disposed State.
+    final accent = _accent;
+    final saved = _savedColor;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      accent.cancelPreview(saved);
+    });
     super.dispose();
   }
 

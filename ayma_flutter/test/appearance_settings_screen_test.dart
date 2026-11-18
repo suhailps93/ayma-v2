@@ -221,6 +221,108 @@ void main() {
     expect(await accentPref(), isNull);
   });
 
+  // Real push/pop navigation host: a stub Settings screen that pushes the
+  // Appearance page, so popping disposes it exactly like the back arrow /
+  // Android back does on device (the finalizeTree-locked path the
+  // `pumpWidget`-replacement `leave()` above cannot exercise).
+  Widget pushHost({required AccentColorController accent}) {
+    final t = ThemeController(initial: ThemeMode.dark);
+    final router = GoRouter(
+      initialLocation: '/settings',
+      routes: [
+        GoRoute(
+          path: '/settings',
+          builder: (ctx, __) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                key: const Key('goAppearance'),
+                onPressed: () => ctx.push(AppearanceSettingsScreen.path),
+                child: const Text('appearance'),
+              ),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: AppearanceSettingsScreen.path,
+          builder: (_, __) => AppearanceSettingsScreen(
+            controller: t,
+            accentController: accent,
+          ),
+        ),
+      ],
+    );
+    return AnimatedBuilder(
+      animation: accent,
+      builder: (context, _) => MaterialApp.router(
+        theme: AymaTheme.lightWithAccent(accent.color),
+        darkTheme: AymaTheme.darkWithAccent(accent.color),
+        routerConfig: router,
+      ),
+    );
+  }
+
+  // Open Appearance, preview [preset], then pop back — the exact
+  // pick-then-leave-without-saving gesture. Fixed pumps (not pumpAndSettle):
+  // the live-preview orb animates forever and would never settle.
+  Future<void> previewThenPop(WidgetTester tester, String preset) async {
+    await tester.tap(find.byKey(const Key('goAppearance')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(Key('accentPreset_$preset')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    await tester.pump();
+    // Revert is deferred one frame (post dispose, tree unlocked); let it run.
+    await tester.pump(const Duration(seconds: 1));
+  }
+
+  testWidgets(
+      'leaving via a real pop reverts the live theme to the saved colour',
+      (tester) async {
+    final profiles = _FakeProfiles();
+    final accent = AccentColorController(profileService: profiles);
+    final saved = accent.color;
+    await tester.pumpWidget(pushHost(accent: accent));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    await previewThenPop(tester, 'green');
+
+    // Back on Settings: the in-memory accent is the saved colour again, no
+    // locked-tree exception thrown during dispose, and nothing persisted.
+    expect(tester.takeException(), isNull);
+    expect(accent.color, saved);
+    expect(profiles.serverWrites, isEmpty);
+    expect(await accentPref(), isNull);
+  });
+
+  testWidgets(
+      'leave twice without saving still reverts on the SECOND leave '
+      '(founder revert-on-leave bug)', (tester) async {
+    final profiles = _FakeProfiles();
+    final accent = AccentColorController(profileService: profiles);
+    final saved = accent.color;
+    await tester.pumpWidget(pushHost(accent: accent));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // First leave without saving — reverts.
+    await previewThenPop(tester, 'green');
+    expect(accent.color, saved, reason: 'first leave reverts');
+
+    // Second leave without saving — must ALSO revert (the reported defect:
+    // the theme stayed on the unsaved preview after the second leave).
+    await previewThenPop(tester, 'ocean_blue');
+    expect(tester.takeException(), isNull);
+    expect(accent.color, saved,
+        reason: 'second leave must revert to the saved colour, not the preview');
+
+    // The stored accent stayed the saved colour throughout — no write ever.
+    expect(profiles.serverWrites, isEmpty);
+    expect(await accentPref(), isNull);
+  });
+
   testWidgets('committing then leaving keeps the committed colour',
       (tester) async {
     final profiles = _FakeProfiles();
