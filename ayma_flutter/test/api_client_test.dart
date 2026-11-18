@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
@@ -1730,5 +1731,57 @@ void main() {
     );
 
     expect(() => client.emailExists('a@b.com'), throwsA(isA<ApiException>()));
+  });
+
+  // Scout NOTE 252 (build 2498): a transient background ID-token refresh error
+  // must NOT sign the user out. classifyBootstrapTokenError is the single point
+  // that decides sign-out (AuthSessionException) vs retry (ApiException).
+  group('classifyBootstrapTokenError (mid-session sign-out regression)', () {
+    test('a transient token-refresh code is retryable, NOT a sign-out', () {
+      for (final code in [
+        'too-many-requests',
+        'network-request-failed',
+        'internal-error',
+        'unknown',
+      ]) {
+        final result =
+            classifyBootstrapTokenError(FirebaseAuthException(code: code));
+        expect(result, isA<ApiException>(), reason: code);
+        expect((result as ApiException).statusCode, isNull,
+            reason: '$code must be a retryable connection-class error');
+        expect(result, isNot(isA<AuthSessionException>()), reason: code);
+      }
+    });
+
+    test('an unexpected non-auth error is retryable, NOT a sign-out', () {
+      final result = classifyBootstrapTokenError(Exception('boom'));
+      expect(result, isA<ApiException>());
+      expect((result as ApiException).statusCode, isNull);
+      expect(result, isNot(isA<AuthSessionException>()));
+    });
+
+    test('a genuinely auth-invalid token code signs the user out', () {
+      for (final code in kAuthInvalidTokenCodes) {
+        expect(
+          classifyBootstrapTokenError(FirebaseAuthException(code: code)),
+          isA<AuthSessionException>(),
+          reason: code,
+        );
+      }
+    });
+
+    test('an unreadable persisted credential (keystore decrypt) signs out', () {
+      final result = classifyBootstrapTokenError(
+        Exception('FirebearStorageCryptoHelper: Exception while decrypting '
+            'bytes'),
+      );
+      expect(result, isA<AuthSessionException>());
+    });
+
+    test('the null-token "Not signed in." 401 passes through unchanged', () {
+      final notSignedIn = ApiException('Not signed in.', statusCode: 401);
+      final result = classifyBootstrapTokenError(notSignedIn);
+      expect(identical(result, notSignedIn), isTrue);
+    });
   });
 }

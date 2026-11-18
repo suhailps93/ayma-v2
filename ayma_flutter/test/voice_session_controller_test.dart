@@ -130,6 +130,49 @@ void main() {
     await c.stop();
   });
 
+  // Scout NOTE 252 (build 2498): voice must NOT go live without a valid auth
+  // session — a signed-out connect would 401 its /bootstrap and /voice/context
+  // and leave a live-but-dead "Listening…" session.
+  test('start() REFUSES to go live when signed out (no connect, honest error)',
+      () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      isSignedIn: () => false,
+    );
+
+    await c.start();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(c.phase, VoiceSessionPhase.error);
+    expect(c.errorMessage, contains('Sign in'));
+    // Never connected, never bootstrapped, never mirrored context.
+    expect(transport.connectCalls, isEmpty);
+    expect(bootstrapCalls, 0);
+    expect(voiceContextCalls, isEmpty);
+    expect(c.isListening, isFalse);
+  });
+
+  test('a signed-in session connects and goes live as normal', () async {
+    final transport = FakeVoiceTransport();
+    final c = VoiceSessionController(
+      transcriptStore: TranscriptStore(),
+      apiClient: _api(),
+      transportFactory: () => transport,
+      isSignedIn: () => true,
+    );
+
+    await _startLive(c, transport);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(c.phase, VoiceSessionPhase.live);
+    expect(transport.connectCalls, isNotEmpty);
+
+    await c.stop();
+  });
+
   test('a screen-context change while live re-posts (debounced)', () async {
     AppContext.instance.set(screen: 'ayma');
     final transport = FakeVoiceTransport();

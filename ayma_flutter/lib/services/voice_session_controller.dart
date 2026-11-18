@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/widgets.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -58,7 +59,10 @@ class VoiceSessionController extends ChangeNotifier {
     Duration? userIdleTimeout,
     ErrorReporter? errorReporter,
     MicYieldService? micYieldService,
+    bool Function()? isSignedIn,
   })  : _store = transcriptStore,
+        _isSignedInRaw =
+            isSignedIn ?? (() => FirebaseAuth.instance.currentUser != null),
         _reporter = errorReporter ?? ErrorReporter.instance,
         _micYieldService = micYieldService ?? MicYieldService.instance,
         _idleGuardTimeout = idleGuardTimeout ?? const Duration(minutes: 4),
@@ -126,6 +130,24 @@ class VoiceSessionController extends ChangeNotifier {
   /// Lazy so merely constructing the controller (e.g. in a widget build) never
   /// touches `FirebaseAuth.instance` — same pattern as `ChatScreen._api`.
   late final ApiClient _api = _apiClient ?? ApiClient();
+
+  /// Whether a real Firebase auth session is currently present. Only invoked at
+  /// runtime (connect + context mirror), never at construction, so the "never
+  /// touch FirebaseAuth.instance while constructing" invariant above holds.
+  final bool Function() _isSignedInRaw;
+
+  /// Voice must never go live (or keep mirroring) without a valid auth session:
+  /// a signed-out `/bootstrap` or `/voice/context` 401s and leaves a live-but-
+  /// dead "Listening…" session (Scout NOTE 252). Returns `true` when auth can't
+  /// be read at all (no Firebase in a unit test) so test-only drives are
+  /// unaffected — the authed API call still enforces auth server-side.
+  bool _isSignedIn() {
+    try {
+      return _isSignedInRaw();
+    } catch (_) {
+      return true;
+    }
+  }
   final VoiceTransport Function() _transportFactory;
 
   /// Requests whatever a call needs up front (Android's POST_NOTIFICATIONS,
@@ -875,6 +897,15 @@ class VoiceSessionController extends ChangeNotifier {
         final w = await _api.welcomeToken();
         url = w.url;
         token = w.token;
+      } else if (!_isSignedIn()) {
+        // Voice must NOT go live without a valid auth session: a signed-out
+        // connect would 401 its `/bootstrap` and `/voice/context` calls and
+        // leave a live-but-dead "Listening…" session (Scout NOTE 252 — voice
+        // connected while signed out and its context call 401'd). Refuse with
+        // an honest error instead of connecting; the pre-sign-in `welcome`
+        // greeting above is the one intentional no-account path.
+        _fail('Sign in to Ayma to use voice.');
+        return;
       } else if (isPractice) {
         debugPrint('[voice] start(): calling /practice/voice/start');
         final sess = await _api.practiceVoiceStart(practiceOtherUid!);
@@ -1813,8 +1844,11 @@ class VoiceSessionController extends ChangeNotifier {
   void _startScreenAwareness() {
     // The practice persona is not Ayma — it has no app tools and no business
     // seeing what the user is looking at, so a practice call never mirrors the
-    // screen or watches for navigation commands.
-    if (isPractice) return;
+    // screen or watches for navigation commands. The pre-sign-in welcome
+    // greeting has no account, so it must never mirror to the authed
+    // `/voice/context` either (Scout NOTE 252: that mirror 401'd while signed
+    // out) — and its agent has no app tools to drive from a command watch.
+    if (isPractice || welcome) return;
     if (_mirroring) return;
     _mirroring = true;
     _commands.start();
@@ -1848,6 +1882,11 @@ class VoiceSessionController extends ChangeNotifier {
   }
 
   void _pushContext() {
+    // Never mirror to the authed `POST /voice/context` without a signed-in
+    // session — it 401s (Scout NOTE 252). Guards the gap between a mid-call
+    // sign-out and teardown's async `stop()`, where a heartbeat could still
+    // fire against a session that is already gone.
+    if (!_isSignedIn()) return;
     _api.setVoiceContext(AppContext.instance.current.value.toJson()).catchError(
         (e) => debugPrint('[voice] setVoiceContext failed: $e'));
   }
