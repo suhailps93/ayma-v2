@@ -324,6 +324,69 @@ def test_node_dated_surfaced_from_link_dated_only_where_present():
     assert all("dated" in n for n in career["nodes"])
 
 
+def test_career_dated_entries_render_as_an_editable_timeline_date_ordered():
+    """Build 2502: the Career section renders its DATED children as a timeline
+    view — each a ``timeline_entry`` visual, ordered by date MOST RECENT FIRST
+    (the CV / LinkedIn convention), each editable through the usual node path
+    (``editable`` True on the owner story surface, so the tap opens the node
+    chat with its controls). Seeded out of date order to prove the ordering."""
+    overlay = {
+        "emergent.story.career.old": {
+            "prompt": "Intern at Acme", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Intern at Acme",
+            "state": "answered", "visibility": "public",
+            "links": [{"target": "x", "type": "same_topic", "dated": "2016-06"}],
+        },
+        "emergent.story.career.new": {
+            "prompt": "Founder at Ayma", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Founder at Ayma",
+            "state": "answered", "visibility": "public",
+            "links": [{"target": "x", "type": "same_topic", "dated": "2024-01"}],
+        },
+        "emergent.story.career.mid": {
+            "prompt": "Senior engineer at Globex", "section": "career", "level": 2,
+            "answer_type": "narrative", "answer": "Senior engineer at Globex",
+            "state": "answered", "visibility": "public",
+            "links": [{"target": "x", "type": "same_topic", "dated": "2020-03"}],
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    career = next(s for s in t["sections"] if s["page_type"] == "career")
+    dated = [n for n in career["nodes"] if n["dated"]]
+    # every dated career child is a timeline entry, editable, and date-ordered
+    # most recent first (2024 → 2020 → 2016)
+    assert [n["dated"] for n in dated] == ["2024-01", "2020-03", "2016-06"]
+    assert all(n["visual"]["type"] == "timeline_entry" for n in dated)
+    assert all(n["editable"] is True for n in dated)
+
+
+def test_career_without_dates_renders_bullets_not_a_fabricated_timeline():
+    """Build 2502: a Career section with NO dated children (the founder's graph
+    today — only prose + his LinkedIn URL) renders plain ``gist_row`` bullets,
+    never a timeline fabricated from undated prose. The timeline populates ONLY
+    once dated role/company nodes exist."""
+    overlay = {
+        "emergent.story.career.0": {
+            "prompt": "I did my BTech in Mahatma Gandhi University",
+            "section": "career", "level": 2, "answer_type": "narrative",
+            "answer": "I did my BTech in Mahatma Gandhi University.",
+            "state": "answered", "visibility": "public",
+        },
+        "emergent.story.career.1": {
+            "prompt": "Works as an autonomous system integration engineer",
+            "section": "career", "level": 2, "answer_type": "narrative",
+            "answer": "Works as an autonomous system integration engineer.",
+            "state": "answered", "visibility": "public",
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    career = next(s for s in t["sections"] if s["page_type"] == "career")
+    assert career["nodes"], "undated career section still renders its prose"
+    assert all(n["dated"] == "" for n in career["nodes"])
+    assert all(n["visual"]["type"] == "gist_row" for n in career["nodes"])
+    assert not any(n["visual"]["type"] == "timeline_entry" for n in career["nodes"])
+
+
 def test_ayma_only_shown_in_story_when_flag_on_hidden_when_off():
     overlay = {
         "emergent.editor.goals.0": {

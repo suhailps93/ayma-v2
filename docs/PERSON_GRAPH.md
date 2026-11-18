@@ -927,6 +927,56 @@ tap-opens-the-node-chat, same actions.
   narrative renders through the Node-Visualiser"); `app_registry_test.dart`
   asserts no standalone career route remains.
 
+## Career renders the editable timeline view over dated nodes (build 2502, Nov 18 2026)
+
+Founder (build 2502, Career screenshot): "why is Career just a LinkedIn link —
+where is the timeline pulled from LinkedIn, and it should be editable by users."
+Settled spec: the LinkedIn link stays the **source link**; the Career section
+renders the career graph nodes **as a timeline** where they carry dates,
+**editable** through the usual node path. The deleted wiki-backed timeline
+subsystem stays deleted; no new schema.
+
+- **The timeline view is the generic palette, not a parallel widget.** A career
+  node that carries a date (the read-only `dated` = first `Link.dated`, surfaced
+  by `person_graph_tree._node_dated`) already defaults to a `timeline_entry`
+  visual (`_default_visual`), and the shared `NodeVisualiser` renders consecutive
+  dated siblings as ONE timeline rail (`_timelineRowWidget` /
+  `_siblingWidgets`), each row tapping into the same node chat with the owner
+  controls (Make public/private, Edit manually, Delete). The injected
+  `career.linkedin` `link` node is not aggregatable, so it renders as the source
+  link on top; the dated entries form the timeline below it.
+- **Date ordering (the one build-2502 change).** `person_graph_tree
+  ._order_timeline_siblings` orders a sibling list's **dated** entries by date,
+  **most recent first** (the CV / LinkedIn convention), leaving every non-dated
+  sibling in place. Applied to each section's roots in `node_tree` and to a
+  node's `children` in `_build_node`. With fewer than two dated siblings it is a
+  **no-op**, so an undated graph renders exactly as before and the Career
+  timeline orders itself the moment dated role/company nodes exist. No backfill,
+  no schema change, no invented date.
+- **What is MISSING / the import still needed.** No career node carries a date
+  today, so no timeline renders yet — the Career section shows the `career.linkedin`
+  source link + the existing prose facts as `gist_row` bullets. Confirmed against
+  the founder's live `ayma-staging` graph (`graph/main`, uid
+  `iWhWjiWhEpU7iyu9B9vy7GlT0PD2`): 5 career nodes, all `answer_type=narrative` /
+  `gist_row` (BTech, prior products, earlier background, autonomous-systems role
+  ×2), and **zero of the 221 nodes carry a `dated` link**. There is **no LinkedIn
+  import path** that creates dated role/company/period nodes: the only LinkedIn
+  mechanism is the user-given `PF_LINKEDIN_URL` (`career_timeline`) surfaced as
+  the link node + handed to `deep_dive`'s Gemini `url_context` as a research
+  **source** (which writes prose, not dated nodes). **TODO (founder decision):** a
+  LinkedIn→dated-node import (OAuth / user-supplied work history → dated career
+  nodes) is what populates the timeline; it does not exist and is a policy call
+  (the codebase deliberately only stores the user-given URL, never scrapes).
+- Tests: `tests/test_person_graph_tree.py::
+  test_career_dated_entries_render_as_an_editable_timeline_date_ordered` and
+  `::test_career_without_dates_renders_bullets_not_a_fabricated_timeline`
+  (backend ordering + no-fabrication); `tests/test_graph_tree_route.py::
+  test_career_section_renders_linkedin_source_link_plus_prose_no_timeline`
+  (end-to-end LinkedIn source link + prose, no timeline); and
+  `ayma_flutter/test/node_visualiser_test.dart` — "Career: dated children render
+  as an editable timeline…" + "Career: with NO dated children renders the
+  LinkedIn source link + prose bullets…".
+
 ## Live graph layout + highlight fix (person-graph-sections, Nov 17 2026)
 
 Two founder-reported defects on the `/profile/graph` live force-directed view

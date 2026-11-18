@@ -1007,4 +1007,135 @@ void main() {
     await tester.tap(find.byKey(const Key('node_candidate_notme_cand1')));
     expect(verdicts, [true, false]);
   });
+
+  // --- build 2502: the Career TIMELINE view over dated career nodes ---------
+
+  // Mirrors the backend Career payload: the LinkedIn SOURCE link on top, then
+  // the dated role/company children — each a `timeline_entry` visual (the
+  // backend orders them most-recent-first). The founder's ask: Career is a
+  // timeline pulled over the graph, editable, with LinkedIn kept as the source.
+  GraphTreeSection careerSection({required bool dated}) => GraphTreeSection(
+        pageType: 'career',
+        title: 'Work & ambition',
+        order: 40,
+        nodes: [
+          // The public LinkedIn source link (answer_type `link`, not a timeline
+          // entry) — injected on top by the backend, never the whole section.
+          StoryNode.fromMap(const {
+            'id': 'career.linkedin',
+            'section': 'career',
+            'label': 'LinkedIn',
+            'text': 'LinkedIn',
+            'answer_type': 'link',
+            'link_url': 'https://www.linkedin.com/in/founder',
+            'link_platform': 'linkedin',
+            'level': 1,
+            'visibility': 'public',
+            'editable': false,
+          }),
+          if (dated) ...[
+            StoryNode.fromMap(const {
+              'id': 'career.new',
+              'section': 'career',
+              'gist': 'Founder at Ayma',
+              'answer_type': 'narrative',
+              'level': 2,
+              'visibility': 'public',
+              'editable': true,
+              'dated': '2024-01',
+              'visual': {
+                'type': 'timeline_entry',
+                'params': {'date': '2024-01', 'title': 'Founder at Ayma'},
+                'v': 1,
+              },
+            }),
+            StoryNode.fromMap(const {
+              'id': 'career.old',
+              'section': 'career',
+              'gist': 'Intern at Acme',
+              'answer_type': 'narrative',
+              'level': 2,
+              'visibility': 'public',
+              'editable': true,
+              'dated': '2016-06',
+              'visual': {
+                'type': 'timeline_entry',
+                'params': {'date': '2016-06', 'title': 'Intern at Acme'},
+                'v': 1,
+              },
+            }),
+          ] else
+            // undated prose fact — a plain gist_row bullet, never a timeline
+            StoryNode.fromMap(const {
+              'id': 'career.prose',
+              'section': 'career',
+              'gist': 'I did my BTech at Mahatma Gandhi University',
+              'answer_type': 'narrative',
+              'level': 2,
+              'visibility': 'public',
+              'editable': true,
+              'dated': '',
+              'visual': {'type': 'gist_row', 'params': {}, 'v': 1},
+            }),
+        ],
+      );
+
+  testWidgets(
+      'Career: dated children render as an editable timeline, LinkedIn kept as '
+      'the source link, tap opens the node with owner controls', (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: careerSection(dated: true),
+        surface: NodeVisualiserSurface.story,
+        api: api,
+      ),
+    ));
+
+    // The LinkedIn source link renders (the section is NOT just the link).
+    expect(find.text('LinkedIn'), findsOneWidget);
+    // Each dated career node renders as a timeline entry on the rail.
+    expect(find.byKey(const Key('node_timeline_career.new')), findsOneWidget);
+    expect(find.byKey(const Key('node_timeline_career.old')), findsOneWidget);
+    expect(find.text('Founder at Ayma'), findsOneWidget);
+    expect(find.text('Intern at Acme'), findsOneWidget);
+    // Most-recent-first (the backend order is preserved by the renderer): the
+    // 2024 entry sits above the 2016 one.
+    final newY =
+        tester.getTopLeft(find.byKey(const Key('node_timeline_career.new'))).dy;
+    final oldY =
+        tester.getTopLeft(find.byKey(const Key('node_timeline_career.old'))).dy;
+    expect(newY, lessThan(oldY));
+
+    // Tapping a timeline entry opens the SAME node chat with owner edit
+    // controls — the entries are editable through the usual node path.
+    await tester.tap(find.byKey(const Key('node_timeline_career.new')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatScreen), findsOneWidget);
+    final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+    expect(chat.askAymaContext?.nodeId, 'career.new');
+    expect(find.byKey(const Key('bubble_visibility')), findsOneWidget);
+    expect(find.byKey(const Key('bubble_delete')), findsOneWidget);
+  });
+
+  testWidgets(
+      'Career: with NO dated children renders the LinkedIn source link + prose '
+      'bullets, no empty or broken timeline', (tester) async {
+    await tester.pumpWidget(_host(
+      NodeVisualiserSection(
+        section: careerSection(dated: false),
+        surface: NodeVisualiserSurface.story,
+        api: _FakeApi(),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // The LinkedIn source link + the prose bullet both render.
+    expect(find.text('LinkedIn'), findsOneWidget);
+    expect(find.text('I did my BTech at Mahatma Gandhi University'),
+        findsOneWidget);
+    // No timeline rail is fabricated from undated prose (renders cleanly).
+    expect(find.byKey(const Key('node_timeline_career.prose')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

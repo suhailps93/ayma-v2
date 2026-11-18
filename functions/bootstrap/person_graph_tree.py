@@ -171,6 +171,30 @@ def _node_dated(node: GraphNode) -> str:
     return ""
 
 
+def _order_timeline_siblings(nodes: list[dict]) -> list[dict]:
+    """Order the DATED timeline entries in a sibling list by date, most recent
+    first (the CV / LinkedIn convention — the founder's Career section reads as
+    a timeline), leaving every non-dated sibling in its existing position.
+
+    A built node carries a date (``dated``) only where the node already does
+    (``Link.dated``); nothing is invented. With fewer than two dated siblings
+    this is a no-op, so an undated graph renders byte-for-byte as before and the
+    Career timeline orders itself the MOMENT dated role/company nodes exist — no
+    backfill, no parallel widget, no schema change."""
+    slots = [i for i, n in enumerate(nodes) if (n.get("dated") or "").strip()]
+    if len(slots) < 2:
+        return nodes
+    ordered = sorted(
+        (nodes[i] for i in slots),
+        key=lambda n: (n.get("dated") or ""),
+        reverse=True,
+    )
+    out = list(nodes)
+    for slot, built in zip(slots, ordered):
+        out[slot] = built
+    return out
+
+
 def _default_visual(
     section: str | None, answer_type: str | None, gist_val: str, dated: str
 ) -> dict:
@@ -321,6 +345,9 @@ def _build_node(
     if not own_kept and not children:
         return None
 
+    # A dated child set (a nested career timeline) renders date-ordered.
+    children = _order_timeline_siblings(children)
+
     gist_val = node_gist.derive_gist(
         text if own_kept else "", stored=getattr(node, "gist", None)
     )
@@ -409,7 +436,7 @@ def node_tree(
 
     sections = []
     for pt in question_tree.ordered_page_types():
-        nodes = by_section.get(pt, [])
+        nodes = _order_timeline_siblings(by_section.get(pt, []))
         if surface == SURFACE_PUBLIC and not nodes:
             continue
         sections.append(
@@ -429,7 +456,7 @@ def node_tree(
                         "page_type": pt,
                         "title": render._grounding_label(pt),
                         "order": 900,
-                        "nodes": nodes,
+                        "nodes": _order_timeline_siblings(nodes),
                     }
                 )
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
