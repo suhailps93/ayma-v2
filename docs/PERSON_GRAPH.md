@@ -629,6 +629,58 @@ standard value. Three layers, all surgical, closing the loop:
   `tests/test_merge_duplicate_fact_nodes.py` (dry-run report, apply merge, child
   preservation, visibility-conflict keep-standard, staging-project guard).
 
+### Data-level dedupe sweep — merge duplicate nodes on the server (founder Nov 17 2026)
+
+The founder's live graph showed TWO "Social Circle" nodes carrying the SAME fact
+in different words (one private, one Ayma-only). The render-level zero-dup work
+above only *hides* dupes on screen; this REMOVES them from the DATA. All
+server-side, behind `GRAPH_DEDUPE_SWEEP` (default off; additive/reversible —
+flag-off writes and stores exactly as before).
+
+- **Layer 1 — write-time SEMANTIC fold** (`person_graph_store._dedupe_collapse_id`
+  → `_semantic_fold_id` → `fold_into_node`). Extends the existing
+  `NODE_DEDUPE_PREVENTION` hook (one call site per free-minting path): after the
+  exact-match reuse, when `GRAPH_DEDUPE_SWEEP` **and** `GRAPH_EMBEDDING_DEDUPE`
+  are on, a NEW fact that is near-identical (Gemini-embedding cosine ≥ **0.92**)
+  to an existing EMERGENT node in the same section is FOLDED into it instead of
+  minting a second: the surviving text is **enriched** if the new wording adds
+  detail (old answer retired to history), the existing node **id** is kept, and
+  **both sources** are kept. Lower-confidence near-dupes are not folded here —
+  they fall to Layer 2's never-silent raise. Compares against the vectors the
+  sweep/nightly refresh already stored; a not-yet-embedded node just isn't a fold
+  candidate this pass. Best-effort — never blocks a write.
+- **Layer 2 — post-processing sweep** (`person_graph_dedupe_sweep.sweep_user`).
+  Runs when a conversation **session ends** (`post_turn.persist_and_ingest`, after
+  ingest, concurrent + best-effort) and on a **nightly backstop**
+  (`POST /cron/graph-dedupe` → `run_sweep`). Per section it finds near-dup pairs
+  (embedding-NN when `GRAPH_EMBEDDING_DEDUPE` on, else lexical — reusing
+  `crosscheck.candidate_report`), has the **LiveKit judge**
+  (`crosscheck.classify_pairs`) label every non-exact candidate, then:
+  - **merges** the clear duplicates (exact text, or judge verdict "duplicate").
+    Merge rules: the **FULLER text survives**; where one is a **STANDARD** node
+    the standard node survives (build-2490 rule); the survivor keeps **BOTH
+    sources** (`merge_nodes` retires the dup's answer + its source into history);
+    **merged visibility = the MORE PRIVATE of the two** — a merge **NEVER** widens
+    visibility (HARD rule: private > ayma_only > public; `apply_merge` only ever
+    *tightens* the survivor's visibility).
+  - **raises** every UNCERTAIN pair (lexically near but not judge-confirmed, merely
+    related, or disagreeing) via `store.record_pending_dedupe` — the sweep never
+    guesses and never merges an uncertain pair silently. Pairs where **both** nodes
+    are curated seeds are skipped (the question tree is not a dup source).
+  Recorded raises surface in chat through `pg_find_duplicates` ("NEEDS YOUR CALL")
+  and clear on any `pg_resolve_duplicate` (`clear_pending_dedupe`), reusing the
+  settled conflicts-in-chat resolution — never a new popup.
+- **Staging runner** (project-pinned `ayma-staging`, dry-run default, `--apply`):
+  `GRAPH_DEDUPE_SWEEP=true GRAPH_EMBEDDING_DEDUPE=true PYTHONPATH=. python3 tools/dedupe_sweep_run.py <uid> --project=ayma-staging [--apply]`.
+  Reports pairs FOUND / MERGED / RAISED.
+- Embeddings are the founder-approved **direct-Google** exception (embeddings
+  only; the judge stays on **LiveKit** per `AGENTS.md`). Model string from
+  `config.py` only.
+- Tests: `tests/test_graph_dedupe_sweep.py` (paraphrase detection + merge, fuller
+  survives, both sources kept, more-private-wins, standard survives, uncertain
+  raises-not-merges, a parametrized privacy proof over every visibility pair, and
+  the Layer-1 write-time fold).
+
 ## Live image-node ingestion on every source path (2l, Nov 17 2026)
 
 "Images are nodes" now fires on **all four ingest paths**, not just chat — every

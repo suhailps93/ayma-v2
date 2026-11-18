@@ -129,15 +129,36 @@ def _entry(overlay: dict[str, dict], node_id: str) -> dict:
     return dict(e) if isinstance(e, dict) else {}
 
 
+# Cosine a NEW node must hit to be FOLDED into an existing same-section node at
+# write time (Layer 1). Deliberately HIGH (near-identical) — a lower-confidence
+# "maybe the same fact" is left to the Layer-2 sweep, which routes uncertainty to
+# the never-silent in-chat raise instead of a silent write-time fold.
+_FOLD_THRESHOLD = 0.92
+
+
 def _dedupe_collapse_id(
-    db, uid: str, text: str, *, section: str | None = None
+    db,
+    uid: str,
+    text: str,
+    *,
+    section: str | None = None,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
+    gist: str | None = None,
 ) -> Optional[str]:
     """Write-time prevention (node-dedupe, founder Nov 17). When
     ``CONFIG.node_dedupe_prevention`` is on and ``text`` is an EXACT normalized
     match for an existing node's content, return that node's id so the caller
-    reuses it instead of minting a duplicate. Exact-only = high precision, no
-    silent fuzzy merge — near/semantic duplicates route to the user-confirmed
-    cross-check resolution, never a silent write.
+    reuses it instead of minting a duplicate.
+
+    When ``CONFIG.graph_dedupe_sweep`` (data-level dedupe) is ALSO on, this
+    extends to a SEMANTIC fold (Layer 1): a new fact that is the SAME as an
+    existing same-section node (Gemini-embedding cosine ≥ ``_FOLD_THRESHOLD``) is
+    FOLDED into it — the surviving text is enriched if the new wording adds
+    detail, the existing node id is kept, and BOTH sources are kept — instead of
+    minting a second node. Lower-confidence near-duplicates are NOT folded here;
+    they route to the Layer-2 sweep's never-silent in-chat raise.
 
     Flag-off (the default) returns ``None`` so every creation path behaves
     exactly as before; best-effort — any failure returns ``None`` and never
@@ -151,9 +172,79 @@ def _dedupe_collapse_id(
         import person_graph_index as _index
 
         idx = _index.build_index(db, uid)
-        return _index.find_exact_match(idx, text, section=section)
+        hit = _index.find_exact_match(idx, text, section=section)
+        if hit is not None:
+            return hit
     except Exception:  # noqa: BLE001 - prevention is best-effort, never blocks
         return None
+    return _semantic_fold_id(
+        db, uid, text, section=section,
+        source_kind=source_kind, source_ref=source_ref,
+        source_message_id=source_message_id, gist=gist,
+    )
+
+
+def _semantic_fold_id(
+    db,
+    uid: str,
+    text: str,
+    *,
+    section: str | None,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
+    gist: str | None = None,
+) -> Optional[str]:
+    """Layer-1 SEMANTIC fold (founder Nov 17). Embed the incoming ``text`` and,
+    if it is near-identical (cosine ≥ ``_FOLD_THRESHOLD``) to an existing EMERGENT
+    node in the same section, fold it in with :func:`fold_into_node` and return
+    that node's id; else ``None``. Gated on both ``graph_dedupe_sweep`` and
+    ``graph_embedding_dedupe`` (embeddings are the founder-approved direct-Google
+    exception). Compares against the node vectors already stored by the sweep /
+    nightly refresh — a node not yet embedded simply isn't a fold candidate this
+    time (the sweep catches it later). Best-effort; any failure returns ``None``
+    so a write never blocks."""
+    from config import CONFIG
+
+    if not (
+        getattr(CONFIG, "graph_dedupe_sweep", False)
+        and getattr(CONFIG, "graph_embedding_dedupe", False)
+    ):
+        return None
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        import graph_embeddings
+
+        vecs = graph_embeddings.embed_texts([text], uid=uid)
+        if not vecs:
+            return None
+        stored = graph_embeddings.load_vectors(db, uid)
+        if not stored:
+            return None
+        graph = effective(db, uid)
+        q = vecs[0]
+        best_id: Optional[str] = None
+        best = 0.0
+        for nid, vec in stored.items():
+            node = graph.get(nid)
+            if node is None or not getattr(node, "emergent", False):
+                continue  # fold only into emergent nodes (seeds are standard)
+            if section is not None and node.section != section:
+                continue
+            score = graph_embeddings._cosine(q, vec)
+            if score > best:
+                best_id, best = nid, score
+        if best_id is not None and best >= _FOLD_THRESHOLD:
+            return fold_into_node(
+                db, uid, best_id, text,
+                source_kind=source_kind, source_ref=source_ref,
+                source_message_id=source_message_id, gist=gist,
+            )
+    except Exception:  # noqa: BLE001 - the fold is best-effort, never blocks
+        return None
+    return None
 
 
 def _standard_restatement_id(
@@ -379,7 +470,11 @@ def add_node(
         hit = _standard_restatement_id(db, uid, str(answer), section=sec)
         if hit is not None:
             return hit  # restates a standard fact — reuse it, never mint a duplicate
-        hit = _dedupe_collapse_id(db, uid, str(answer), section=sec)
+        hit = _dedupe_collapse_id(
+            db, uid, str(answer), section=sec,
+            source_kind=source_kind, source_ref=source_ref,
+            source_message_id=source_message_id, gist=gist,
+        )
         if hit is not None:
             return hit
 
@@ -472,7 +567,11 @@ def add_loose_node(
         hit = _standard_restatement_id(db, uid, fact, section=section)
         if hit is not None:
             return hit
-        hit = _dedupe_collapse_id(db, uid, fact, section=section)
+        hit = _dedupe_collapse_id(
+            db, uid, fact, section=section,
+            source_kind=source_kind, source_ref=source_ref,
+            source_message_id=source_message_id, gist=gist,
+        )
         if hit is not None:
             return hit
     overlay = load_overlay(db, uid)
@@ -1520,6 +1619,74 @@ def link_related(
     return added
 
 
+def fold_into_node(
+    db,
+    uid: str,
+    survivor_id: str,
+    new_text: str,
+    *,
+    source_kind: str = "",
+    source_ref: str = "",
+    source_message_id: str = "",
+    gist: str | None = None,
+    provenance: Provenance | str = Provenance.STATED,
+) -> str:
+    """Layer-1 write-time fold (founder Nov 17): a NEW fact is the SAME as the
+    overlay node ``survivor_id``, so fold it in instead of minting a second node.
+
+    * ENRICH: when ``new_text`` adds detail (strictly longer than the survivor's
+      current answer) it becomes the live answer and the old one retires to the
+      survivor's Ayma-only ``history`` (carrying the survivor's own source).
+    * KEEP BOTH SOURCES: the new wording's source is always recorded (on the live
+      node when it enriched, else as a history entry) so neither source is lost.
+    * KEEP the survivor's id and visibility — a fold NEVER widens visibility.
+
+    ``survivor_id`` must be an overlay (emergent) node; a non-overlay id is left
+    untouched and returned as-is. Returns ``survivor_id``."""
+    new_text = (new_text or "").strip()
+    overlay = load_overlay(db, uid)
+    e = overlay.get(survivor_id)
+    if not isinstance(e, dict):
+        return survivor_id  # not an overlay node — nothing to enrich safely
+    e = dict(e)
+    prov = provenance.value if isinstance(provenance, Provenance) else str(provenance)
+    prev = e.get("answer")
+    history = list(e.get("history") or [])
+    enriches = bool(new_text) and len(new_text) > len(str(prev or ""))
+    if enriches:
+        if prev not in (None, ""):
+            old = {
+                "answer": prev,
+                "date": pg.now_iso(),
+                "provenance": e.get("provenance") or Provenance.STATED.value,
+            }
+            if e.get("source_kind"):
+                old["source_kind"] = e["source_kind"]
+            if e.get("source_ref"):
+                old["source_ref"] = e["source_ref"]
+            history.append(old)
+        e["answer"] = new_text
+        e["state"] = NodeState.ANSWERED.value
+        e["provenance"] = prov
+        e.update(_source_fields(source_kind, source_ref, source_message_id))
+        g = (gist or "").strip()
+        if g:
+            e["gist"] = g
+    elif new_text and new_text != str(prev or ""):
+        folded = {"answer": new_text, "date": pg.now_iso(), "provenance": prov}
+        if source_kind:
+            folded["source_kind"] = source_kind
+        if source_ref:
+            folded["source_ref"] = source_ref
+        history.append(folded)
+    if history:
+        e["history"] = history
+    e["updated_at"] = pg.now_iso()
+    overlay[survivor_id] = OverlayNode.model_validate(e).model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return survivor_id
+
+
 def merge_nodes(db, uid: str, survivor_id: str, dup_id: str) -> dict:
     """Fold the duplicate node ``dup_id`` into ``survivor_id`` and remove it —
     the user-confirmed "merge" resolution. NEVER silent, NEVER automatic.
@@ -1555,13 +1722,18 @@ def merge_nodes(db, uid: str, survivor_id: str, dup_id: str) -> dict:
         dup_answer = dup.get("answer")
         if dup_answer not in (None, "") and dup_answer != surv.get("answer"):
             history = list(surv.get("history") or [])
-            history.append(
-                {
-                    "answer": dup_answer,
-                    "date": pg.now_iso(),
-                    "provenance": dup.get("provenance") or Provenance.STATED.value,
-                }
-            )
+            entry = {
+                "answer": dup_answer,
+                "date": pg.now_iso(),
+                "provenance": dup.get("provenance") or Provenance.STATED.value,
+            }
+            # Keep BOTH sources: the duplicate's own source rides into history so
+            # the merge never loses where the folded fact came from (founder Nov 17).
+            if dup.get("source_kind"):
+                entry["source_kind"] = dup["source_kind"]
+            if dup.get("source_ref"):
+                entry["source_ref"] = dup["source_ref"]
+            history.append(entry)
             surv["history"] = history
 
         # 2) rehome the duplicate's own child bullets onto the survivor.
@@ -1661,6 +1833,55 @@ def dedupe_dismissed(db, uid: str) -> set[tuple[str, str]]:
         if len(parts) == 2:
             out.add((parts[0], parts[1]))
     return out
+
+
+def record_pending_dedupe(db, uid: str, a: str, b: str, reason: str = "") -> None:
+    """Record a near-duplicate pair the Layer-2 sweep is UNSURE about (or whose
+    contents disagree) so it is raised in chat for the user to decide — the sweep
+    never merges an uncertain pair silently (founder Nov 17). Stored on the
+    ``dedupe`` sibling doc as a list of ``{a, b, reason}`` keyed by the sorted
+    pair, de-duplicated and never re-added once the user has dismissed it."""
+    lo, hi = sorted((str(a), str(b)))
+    key = f"{lo}|{hi}"
+    if (lo, hi) in dedupe_dismissed(db, uid):
+        return  # the user already decided "keep both" for this pair
+    snap = _dedupe_ref(db, uid).get()
+    data = snap.to_dict() if snap and snap.exists else None
+    pending = list((data or {}).get("dedupe_pending") or [])
+    if any(p.get("key") == key for p in pending if isinstance(p, dict)):
+        return
+    pending.append({"key": key, "a": lo, "b": hi, "reason": reason})
+    _dedupe_ref(db, uid).set({"dedupe_pending": pending}, merge=True)
+
+
+def pending_dedupe(db, uid: str) -> list[dict]:
+    """The near-duplicate pairs the sweep RAISED for the user to decide, minus any
+    the user has since dismissed ("keep both"). Each is ``{a, b, reason}``."""
+    snap = _dedupe_ref(db, uid).get()
+    data = snap.to_dict() if snap and snap.exists else None
+    dismissed = dedupe_dismissed(db, uid)
+    out: list[dict] = []
+    for p in (data or {}).get("dedupe_pending") or []:
+        if not isinstance(p, dict):
+            continue
+        a, b = p.get("a"), p.get("b")
+        if a and b and (a, b) not in dismissed:
+            out.append({"a": a, "b": b, "reason": p.get("reason", "")})
+    return out
+
+
+def clear_pending_dedupe(db, uid: str, a: str, b: str) -> None:
+    """Drop a raised pair once it has been resolved (merged, linked or dismissed)
+    so chat stops surfacing it. Safe to call for a pair that was never pending."""
+    lo, hi = sorted((str(a), str(b)))
+    key = f"{lo}|{hi}"
+    snap = _dedupe_ref(db, uid).get()
+    data = snap.to_dict() if snap and snap.exists else None
+    pending = [
+        p for p in (data or {}).get("dedupe_pending") or []
+        if isinstance(p, dict) and p.get("key") != key
+    ]
+    _dedupe_ref(db, uid).set({"dedupe_pending": pending}, merge=True)
 
 
 # --- relationship-type registry (design §2.4) ------------------------------

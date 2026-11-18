@@ -171,6 +171,12 @@ class HistoryEntry(BaseModel):
     answer: Any
     date: str
     provenance: Provenance = Provenance.STATED
+    # Where the retired answer came from (founder Nov 17: a merge KEEPS BOTH
+    # sources). When a duplicate is folded into a survivor, the duplicate's
+    # answer retires here carrying its own source so neither node's provenance is
+    # lost. Optional — older history entries have none.
+    source_kind: Optional[str] = None
+    source_ref: Optional[str] = None
 
 
 class ChildBullet(BaseModel):

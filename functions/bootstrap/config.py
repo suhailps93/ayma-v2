@@ -348,6 +348,22 @@ class Config:
     metered in the token ledger. **Off by default** (``GRAPH_EMBEDDING_DEDUPE=
     true``) — gate on staging; flag-off keeps the lexical candidate path."""
 
+    graph_dedupe_sweep: bool
+    """DATA-LEVEL dedupe sweep (founder Nov 17: "merge duplicate nodes on the
+    server"). The Layer-2 post-processing pass (``person_graph_dedupe_sweep``)
+    that runs when a conversation session ENDS and on a nightly backstop
+    (``POST /cron/graph-dedupe``): per section, it finds near-duplicate pairs
+    (embedding NN when ``graph_embedding_dedupe`` is on, else lexical), has the
+    LiveKit judge label each, and MERGES the clear duplicates — fuller text
+    survives, both sources are kept, the survivor takes the MORE PRIVATE
+    visibility (a merge never widens visibility), and a STANDARD node always
+    survives. Pairs the judge is unsure about or that disagree are never merged:
+    they are RECORDED and raised in chat for the user to decide. Also enables the
+    Layer-1 write-time SEMANTIC fold inside ``NODE_DEDUPE_PREVENTION`` (folding a
+    new node into an existing same-fact node instead of minting a second).
+    **Off by default** (``GRAPH_DEDUPE_SWEEP=true``) — additive, reversible:
+    flag-off keeps today's write-and-store behaviour exactly. Checked per call."""
+
     image_search_api_key: str
     """Google Programmable Search (Custom Search JSON API) key for the deep-dive
     **web image search** — finding photos of a person online to face-verify
@@ -1399,6 +1415,8 @@ def _load() -> Config:
         node_conflict_raise=os.getenv("NODE_CONFLICT_RAISE", "false").lower()
         == "true",
         graph_embedding_dedupe=os.getenv("GRAPH_EMBEDDING_DEDUPE", "false").lower()
+        == "true",
+        graph_dedupe_sweep=os.getenv("GRAPH_DEDUPE_SWEEP", "false").lower()
         == "true",
         graph_show_ai_only=os.getenv("GRAPH_SHOW_AI_ONLY", "true").lower()
         == "true",

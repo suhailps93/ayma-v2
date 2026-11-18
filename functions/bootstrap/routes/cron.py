@@ -71,6 +71,19 @@ async def cron_match(user_limit: int | None = None) -> dict:
     return await matching_cron.run(get_db(), user_limit)
 
 
+@router.post("/cron/graph-dedupe", dependencies=[Depends(require_cron)])
+async def cron_graph_dedupe(user_limit: int | None = None) -> dict:
+    """Nightly DATA-LEVEL dedupe backstop (founder Nov 17). For each user, merge
+    duplicate graph nodes created in different words (fuller/standard text
+    survives, both sources kept, more-private visibility wins — a merge never
+    widens visibility) and record uncertain pairs for the in-chat raise. Gated
+    behind ``GRAPH_DEDUPE_SWEEP``; a no-op when the flag is off. Daily Cloud
+    Scheduler job with the ``X-Cron-Secret`` header."""
+    import person_graph_dedupe_sweep
+
+    return await person_graph_dedupe_sweep.run_sweep(get_db(), user_limit)
+
+
 @router.post("/cron/ingest-backfill", dependencies=[Depends(require_cron)])
 async def cron_ingest_backfill(user_limit: int = 200) -> dict:
     """Nightly safety net (§15): re-ingest conversations that were skipped
