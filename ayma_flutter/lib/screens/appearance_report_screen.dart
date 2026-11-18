@@ -18,7 +18,8 @@ import '../widgets/appearance_report_card.dart';
 import '../widgets/ayma_back_button.dart';
 import '../widgets/ayma_toast.dart';
 import '../widgets/ayma_wing_loader.dart';
-import '../widgets/appearance_templated_report.dart';
+import '../models/story_node.dart';
+import '../widgets/graph_tree_view.dart';
 import 'report_run_flows.dart';
 
 /// The caller's unified Appearance report: the shareable report card on top
@@ -28,11 +29,14 @@ import 'report_run_flows.dart';
 /// Re-opened from an `[appearance:<id>]` chat marker, the chat report card,
 /// or the Skills screen's "View my report" link.
 ///
-/// The full report body renders through [AppearanceTemplatedReport] — a
-/// designed, templated page (score header, carousel-style analysed photos,
-/// attribute fields) built ENTIRELY from the appearance node tree
-/// `GET /report/appearance/{uid}/tree` (same nodes, same source of truth as the
-/// generic bullet tree it replaced for this one report; build 2488, founder).
+/// The full report body renders through the ONE shared report framework
+/// ([GraphTreeView] on the report surface — unified visual report framework,
+/// founder Nov 17), assembled ENTIRELY from the appearance node tree's own
+/// palette VISUALS (`GET /report/appearance/{uid}/tree`): the face/physique
+/// score gauges, the analysed-photo carousel, the attribute fields and the
+/// finding cards. It is NOT a bespoke appearance layout any more — it is the
+/// SAME general assembler deep-dive / match / shared reports use, so a new
+/// report kind of known node shapes renders with zero new code.
 /// `report_hub.resolve_owner` treats "appearance"'s `{report_id}` as the
 /// subject's own uid (there is only ever one current Appearance report per
 /// user) — [reportId] (an older, possibly-stale marker id from before that
@@ -78,10 +82,13 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
     with ScreenContextReasserter<AppearanceReportScreen> {
   AppearanceCardData? _card;
 
-  /// The templated appearance body; reloaded when a re-run lands so both it and
-  /// the shareable card refresh together (the card reloads via its onLoaded).
-  final GlobalKey<AppearanceTemplatedReportState> _bodyKey =
-      GlobalKey<AppearanceTemplatedReportState>();
+  /// The appearance report body, rendered through the ONE shared report
+  /// framework ([GraphTreeView], unified visual report framework, founder Nov
+  /// 17) — the same assembler deep-dive / match / shared reports use. Reloaded
+  /// when a re-run lands so both it and the shareable card refresh together (the
+  /// card reloads via its onLoaded).
+  final GlobalKey<GraphTreeViewState> _bodyKey =
+      GlobalKey<GraphTreeViewState>();
   bool _wasRunning = false;
 
   /// The version stamp (the report's `created_at`) of the exact run
@@ -485,14 +492,19 @@ class _AppearanceReportScreenState extends State<AppearanceReportScreen>
             ),
             if (card.nextSteps.isNotEmpty) _NextSteps(steps: card.nextSteps),
           ],
-          // The full report body renders through the TEMPLATED appearance page
-          // (build 2488) — a designed layout built from the same appearance
-          // node tree the generic bullet tree used, replacing it for this one
-          // report. The shareable card above keeps its own block-model fetch
-          // (_loadCard) — fired whenever this tree (re)loads, so the two stay in
-          // step on a re-run.
-          AppearanceTemplatedReport(
+          // The full report body renders through the ONE shared report
+          // framework ([GraphTreeView] on the report surface, unified visual
+          // report framework, founder Nov 17) — assembled entirely from the
+          // appearance node tree's own palette VISUALS (the face/physique score
+          // gauges, the photo carousel, the attribute fields, the finding
+          // cards), NOT a bespoke appearance layout. The SAME assembler every
+          // other report uses. The shareable card above keeps its own
+          // block-model fetch (_loadCard), fired whenever this tree (re)loads,
+          // so the two stay in step on a re-run.
+          GraphTreeView(
             key: _bodyKey,
+            surface: NodeVisualiserSurface.report,
+            reportType: 'appearance',
             reportId: uid,
             api: widget.apiClient,
             emptyMessage: 'No appearance report yet.',

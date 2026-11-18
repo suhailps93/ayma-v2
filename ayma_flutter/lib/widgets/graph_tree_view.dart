@@ -200,6 +200,11 @@ class GraphTreeViewState extends State<GraphTreeView>
       );
     }
 
+    // On a REPORT surface every section renders as a designed card (the one
+    // visual report framework, founder Nov 17) — scores, photos, findings and
+    // facts all assembled from the nodes' own palette visuals. Your Story /
+    // public profile / graph detail keep the plain heading + rows.
+    final cardStyle = widget.surface == NodeVisualiserSurface.report;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -216,6 +221,7 @@ class GraphTreeViewState extends State<GraphTreeView>
             onChanged: _load,
             onImageTap: widget.onImageTap,
             onCandidateVerdict: widget.onCandidateVerdict,
+            cardStyle: cardStyle,
           ),
       ],
     );

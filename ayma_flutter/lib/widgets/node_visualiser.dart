@@ -33,6 +33,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import 'ayma_photo.dart';
 import 'node_chat_window.dart';
+import 'node_photo_carousel.dart';
 import 'node_visibility.dart';
 import 'score_bar.dart';
 
@@ -626,6 +627,7 @@ class NodeVisualiserSection extends StatelessWidget {
     this.isOwner = true,
     this.onImageTap,
     this.onCandidateVerdict,
+    this.cardStyle = false,
   });
 
   final GraphTreeSection section;
@@ -635,6 +637,13 @@ class NodeVisualiserSection extends StatelessWidget {
   final bool isOwner;
   final void Function(StoryNode node)? onImageTap;
   final void Function(StoryNode node, bool isMe)? onCandidateVerdict;
+
+  /// Render as a DESIGNED report section card — a soft elevated rounded panel
+  /// with a serif heading — instead of the plain Your-Story heading + rows. The
+  /// report framework host ([GraphTreeView] on the report surface) passes this,
+  /// so every report's sections share the same visual-first card look. Your
+  /// Story / public-profile / graph-detail leave it false (unchanged).
+  final bool cardStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -646,34 +655,70 @@ class NodeVisualiserSection extends StatelessWidget {
     final visible = section.nodes
         .where((n) => _hasVisibleContentFor(n, publicOnly))
         .toList(growable: false);
+    // A section whose every node filtered out (all private on a shared surface,
+    // or all empty) renders nothing — never an empty titled card.
+    if (visible.isEmpty) return const SizedBox.shrink();
+
+    final cfg = _NvCfg(
+      surface: surface,
+      api: api,
+      isOwner: isOwner,
+      onChanged: onChanged,
+      onImageTap: onImageTap,
+      onCandidateVerdict: onCandidateVerdict,
+    );
+    final body = _siblingWidgets(
+      context,
+      visible,
+      cfg,
+      indentStart: 0,
+      depth: 0,
+    );
+
+    if (cardStyle) {
+      final ac = context.ac;
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: ac.bgElev,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: ac.lineSoft),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (section.title.isNotEmpty)
+              Semantics(
+                header: true,
+                child: Text(section.title,
+                    style: AymaType.serif(size: 22, color: ac.fg)),
+              ),
+            if (section.title.isNotEmpty) const SizedBox(height: 8),
+            ...body,
+          ],
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 4),
-          child: Text(
-            section.title,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+        if (section.title.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            child: Text(
+              section.title,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
           ),
-        ),
-        ..._siblingWidgets(
-          context,
-          visible,
-          _NvCfg(
-            surface: surface,
-            api: api,
-            isOwner: isOwner,
-            onChanged: onChanged,
-            onImageTap: onImageTap,
-            onCandidateVerdict: onCandidateVerdict,
-          ),
-          indentStart: 0,
-          depth: 0,
-        ),
+        ...body,
       ],
     );
   }
@@ -781,11 +826,24 @@ String _timelineTitleOf(StoryNode n) {
 String _timelineDateOf(StoryNode n) =>
     (n.visual?.params['date'] as Object?)?.toString().trim() ?? '';
 
+/// The pseudo aggregate-type for consecutive report image leaves → ONE
+/// swipeable [NodePhotoCarousel]. Not a real [NodeVisualType]: it's a grouping
+/// key internal to [_siblingWidgets].
+const String _kImageAggType = '__photo_carousel_agg__';
+
 /// The aggregating palette type a LEAF node contributes to a sibling group, or
-/// null if it can't be aggregated (not a chip/timeline leaf, or it has children
-/// — those render recursively so their subtree is never dropped).
-String? _aggType(StoryNode n) {
+/// null if it can't be aggregated (not a chip/timeline/image leaf, or it has
+/// children — those render recursively so their subtree is never dropped).
+///
+/// Image leaves aggregate ONLY on the report surface (the appearance / research
+/// photo carousel, generalized): on Your Story / the public profile each image
+/// stays an inline thumbnail, unchanged. A CANDIDATE (answer_type `candidate`,
+/// with its is-me/not-me verdict) is NOT an image leaf and never sweeps in.
+String? _aggType(StoryNode n, NodeVisualiserSurface surface) {
   if (n.children.isNotEmpty) return null;
+  if (n.isImage && surface == NodeVisualiserSurface.report) {
+    return _kImageAggType;
+  }
   final t = n.visualType;
   if (t == NodeVisualType.chipSet && _chipItemsOf(n).isNotEmpty) return t;
   if (t == NodeVisualType.timelineEntry && _timelineTitleOf(n).isNotEmpty) {
@@ -880,10 +938,13 @@ List<Widget> _siblingWidgets(
   required int depth,
 }) {
   // Partition into consecutive same-type aggregatable runs vs singletons.
+  final surface = cfg.surface;
   final groups = <List<StoryNode>>[];
   for (final n in visible) {
-    final t = _aggType(n);
-    if (t != null && groups.isNotEmpty && _aggType(groups.last.first) == t) {
+    final t = _aggType(n, surface);
+    if (t != null &&
+        groups.isNotEmpty &&
+        _aggType(groups.last.first, surface) == t) {
       groups.last.add(n);
     } else {
       groups.add([n]);
@@ -892,8 +953,18 @@ List<Widget> _siblingWidgets(
 
   final out = <Widget>[];
   for (final group in groups) {
-    final t = _aggType(group.first);
-    if (group.length > 1 && t != null) {
+    final t = _aggType(group.first, surface);
+    if (t == _kImageAggType) {
+      // One or more consecutive report image leaves → ONE swipeable carousel
+      // (every report's photos, the appearance look generalized). A single
+      // image still renders fill in the carousel (no dots), matching the old
+      // appearance template.
+      out.add(Padding(
+        padding: EdgeInsetsDirectional.only(
+            start: indentStart, top: 8, bottom: 8),
+        child: NodePhotoCarousel(images: group),
+      ));
+    } else if (group.length > 1 && t != null) {
       final body = t == NodeVisualType.chipSet
           ? Wrap(
               spacing: 6,
