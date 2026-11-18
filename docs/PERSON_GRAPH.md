@@ -862,3 +862,41 @@ Two founder-reported defects on the `/profile/graph` live force-directed view
   evidence: `test/goldens/person_graph_all_chips.png`,
   `test/goldens/person_graph_tapped.png`. No backend/inference change (100%
   LiveKit unaffected).
+
+## Live graph layout — outlier + Fit crush fix (person-graph-layout-fix, build 2491)
+
+After the Part-A sections fix, the founder still saw (build 2490, screenshot) a
+thin **pink streak of edges shooting to one distant point** with every cluster
+**crushed into a corner blob** — "is this a distance issue, why so far."
+
+- **Root cause (reproduced on ~195-node founder-shaped data, not guessed):** an
+  **edgeless node** — a cross-surface emergent fact (story / publicProfile /
+  report / graphDetail) that never linked to a section — has **no spring** pulling
+  it toward the graph. Under only the weak `_gravity` (0.0035) against full
+  cluster repulsion it drifts out to the gravity/repulsion **equilibrium ring
+  (~680px** at founder scale) while the connected tree stays at ~350px. That lone
+  far node dominates `graphBounds`, so `fitToViewport` zooms far out (scale
+  ~0.28) and the dense, readable cluster is squeezed into a corner; during the
+  open animation the per-tick fit even follows the orphan outward (scale
+  0.53→0.28). The "pink streak" is the fit framing an orphan whose rim position
+  has nothing pulling it back.
+- **Fix (force cause, not a post-hoc clamp):** in `GraphSim` every degree-0 node
+  (except the centre) is given a **bounded virtual anchor spring** to the centre
+  (`_orphanAnchorRest` 170px, `_orphanAnchorK` 0.045) — a layout-only pull, never
+  a drawn edge — so an orphan settles **inside** the cluster like a real leaf
+  (measured 143–280px, well within the ~350px median) instead of on the far ring.
+  Orphans also **seed** on a tight ring near that rest radius (not the wide
+  golden-angle spiral) so the fit stays framed on the cluster from the first
+  frame. Integration now resets any non-finite position to the origin so a single
+  stray NaN can never poison `graphBounds` and blank the whole graph. With no
+  outlier, `fitToViewport` of all nodes frames the true, tight, spread cluster.
+- **Tests:** `test/person_graph_outlier_fit_test.dart` — on a founder-shaped
+  fixture (12 weighted sections of cross-surface facts + 5 edgeless orphans) the
+  settled layout has **max distance ≤ 2.2× median** and **every orphan ≤ 1.2×
+  median** (fail-before: orphans sat at ~580 over median ~325; pass-after: inside
+  the cluster), and `fitToViewport` puts every node on-screen **and** the cluster
+  fills ≥60% of the viewport width centred (not crushed to a corner).
+  `test/person_graph_fit_screenshot_test.dart` — pumps the real
+  `PersonGraphScreen` on founder-shaped data in reduced motion and captures the
+  fitted open frame to `pg_layout_fitted.png` (fitted, spread, readable; no far
+  streak). No backend/inference change (100% LiveKit unaffected).
