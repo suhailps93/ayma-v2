@@ -293,10 +293,18 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
       `ayma_only`** (node + `image_read` + provenance kept) instead of deleting
       it; every OTHER node kind still hard-deletes with its subtree
       (`delete_node_with_descendants`), unchanged. The retained image leaves the
-      story / profile / public surfaces (`ayma_only` is never public, and the
-      owner Photos strip filters it out) but stays findable in the owner's
+      story / profile / public surfaces but stays findable in the owner's
       **Ayma-only Photos view** (the dev-flag-gated "Ayma's Notes" screen, under
-      an `AYMA-ONLY` group). *Before this change the delete was a hard erase —
+      an `AYMA-ONLY` group). The retained image is kept off every body surface at
+      TWO layers: the owner Photos **strip** drops `ayma_only` (client
+      `_livePhotos`), AND `person_graph_tree.node_tree` drops an `ayma_only`
+      IMAGE node from the **story / public body render** even when the dev flag
+      keeps `ayma_only` TEXT inferences visible there (`hide_ayma_only_images`,
+      Scout NOTE 256) — a photo_carousel image node otherwise leaked into the
+      Your Story body because the dev flag (`graph_show_ai_only`, kept ON) put
+      every `ayma_only` node, images included, on the owner story surface.
+      (Privacy P0: `ayma_only` is never on the story body, public or a shared
+      surface.) *Before the retention change the delete was a hard erase —
       `delete_nodes` removed the overlay node with no copy, and nothing in the
       graph, subcollections or any history/audit store kept the bytes or storage
       ref, so a deleted Ayma-only image was unrecoverable.* **Follow-up (not done):** the live wiring —

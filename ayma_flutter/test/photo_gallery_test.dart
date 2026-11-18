@@ -47,6 +47,91 @@ void main() {
     expect(cached.memCacheWidth!, lessThanOrEqualTo(92 * 4));
   });
 
+  testWidgets(
+      'PhotoGallery renders ALL images as ONE horizontal swipeable strip, '
+      'never a static Wrap grid (Scout NOTE 256)', (tester) async {
+    // Daniel fixture: 7 images in one section.
+    final photos = [
+      for (var i = 0; i < 7; i++)
+        AiNotePhoto(
+          id: 'p$i',
+          url: 'https://example.invalid/photo$i.png',
+          source: 'profile',
+        ),
+    ];
+
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: PhotoGallery(photos: photos, onOpen: (_) {}),
+      ),
+    ));
+    await tester.pump();
+
+    // The old non-swipeable grid (Wrap) is gone.
+    expect(find.byType(Wrap), findsNothing);
+    // One swipeable strip: a horizontally-scrolling ListView carrying every
+    // image tile, so a DRAG scrolls through all of them.
+    expect(find.byKey(const Key('photo_gallery_strip')), findsOneWidget);
+    final lv = tester.widget<ListView>(find.byType(ListView));
+    expect(lv.scrollDirection, Axis.horizontal);
+    expect(
+        tester.widget<Scrollable>(find.byType(Scrollable)).axisDirection,
+        AxisDirection.right);
+    // All seven tiles belong to the one strip.
+    expect(find.byType(InkWell), findsNWidgets(7));
+  });
+
+  testWidgets('tapping a strip tile opens the owner photo-detail sheet',
+      (tester) async {
+    AiNotePhoto? opened;
+    final photos = [
+      const AiNotePhoto(
+          id: 'p0', url: 'https://example.invalid/a.png', source: 'chat'),
+      const AiNotePhoto(
+          id: 'p1', url: 'https://example.invalid/b.png', source: 'chat'),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(body: PhotoGallery(photos: photos, onOpen: (p) => opened = p)),
+    ));
+    await tester.pump();
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pump();
+    expect(opened?.id, 'p0');
+  });
+
+  testWidgets(
+      'PhotoDetailSheet image opens the fullscreen gallery (PageView) across '
+      'the group when gallery urls are supplied (Scout NOTE 256)',
+      (tester) async {
+    const photo = AiNotePhoto(
+        id: 'p1', url: 'https://example.invalid/p1.png', source: 'profile');
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Scaffold(
+        body: PhotoDetailSheet(
+          photo: photo,
+          onHide: () async {},
+          onPublish: () async {},
+          onMakePrivate: () async {},
+          onChat: () {},
+          galleryUrls: const [
+            'https://example.invalid/p0.png',
+            'https://example.invalid/p1.png',
+            'https://example.invalid/p2.png',
+          ],
+          galleryIndex: 1,
+        ),
+      ),
+    ));
+    await tester.pump();
+    // Tap the big image → the fullscreen gallery (a swipeable PageView) opens.
+    await tester.tap(find.byType(AspectRatio));
+    await tester.pumpAndSettle();
+    expect(find.byType(PageView), findsOneWidget);
+  });
+
   testWidgets('PhotoDetailSheet and PhotoViewer render the visible is-user note',
       (tester) async {
     const photo = AiNotePhoto(
@@ -149,12 +234,16 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('photo_delete')));
     await tester.tap(find.byKey(const Key('photo_delete')));
     await tester.pumpAndSettle();
-    // A confirmation dialog appears; nothing deleted yet.
-    expect(find.text('Delete this photo? This removes it everywhere.'),
+    // A confirmation dialog appears; nothing deleted yet. The copy is truthful
+    // to retention (Scout NOTE 256): removes from story/profile, Ayma keeps a
+    // copy — NOT the old "removes it everywhere".
+    expect(
+        find.text('This removes it from your story and profile. Ayma keeps '
+            'its own copy in your Photos.'),
         findsOneWidget);
     expect(hidden, isFalse);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
     await tester.pumpAndSettle();
     expect(hidden, isTrue);
   });

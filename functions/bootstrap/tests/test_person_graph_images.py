@@ -142,6 +142,48 @@ def test_image_delete_retains_as_ayma_only():
     assert "beach" not in blob
 
 
+def test_retained_ayma_only_image_never_on_story_or_public_body():
+    # Scout NOTE 256 (Privacy P0): a deleted-but-retained image moves to
+    # ayma_only. Even with the dev flag ON (include_ayma_only=True, which keeps
+    # ayma_only TEXT inferences visible on the owner's story body), the retained
+    # IMAGE must NOT appear in the story / public node-tree body — it belongs only
+    # in the owner's Ayma-only Photos view.
+    import person_graph_tree as tree
+
+    db = FakeDb()
+    kept = store.add_image_node(
+        db, "u1", _parent(), _URL, "a public selfie", visibility="public",
+    )
+    retired = store.add_image_node(
+        db, "u1", _parent(), _URL + "?x=2", "a deleted beach photo",
+        visibility="private",
+    )
+    store.retire_image_or_delete(db, "u1", retired)  # -> ayma_only
+    g = store.effective(db, "u1")
+
+    def _image_ids(surface):
+        t = tree.node_tree(g, surface=surface, include_ayma_only=True)
+        ids = []
+        stack = [n for s in t["sections"] for n in s["nodes"]]
+        while stack:
+            n = stack.pop()
+            if n.get("answer_type") == "image":
+                ids.append(n["id"])
+            stack.extend(n.get("children", []))
+        return ids
+
+    # Story body (dev flag ON): the retained ayma_only image is GONE; the public
+    # image still renders.
+    story_ids = _image_ids("story")
+    assert retired not in story_ids
+    assert kept in story_ids
+    # Public profile: neither ayma_only nor private, only the public image.
+    assert _image_ids("publicProfile") == [kept]
+    # The retained image is still findable in the owner's Ayma-only Photos view.
+    owner_rows = store.image_nodes_for_view(db, "u1")
+    assert any(r["id"] == retired and r["visibility"] == "ayma_only" for r in owner_rows)
+
+
 def test_non_image_node_hard_deletes_as_before():
     # Retention is scoped to IMAGE nodes: every other node kind still hard-deletes.
     db = FakeDb()

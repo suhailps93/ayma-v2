@@ -58,6 +58,7 @@ class _FakeApi extends ApiClient {
   final List<(String, String)> setTextCalls = [];
   final List<String> deleted = [];
   int deleteCountToReturn = 0;
+  int deleteCountCalls = 0;
 
   @override
   Future<void> graphSetNodeText(String nodeId, String text) async {
@@ -82,7 +83,10 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<int> graphDeleteCount(String nodeId) async => deleteCountToReturn;
+  Future<int> graphDeleteCount(String nodeId) async {
+    deleteCountCalls++;
+    return deleteCountToReturn;
+  }
 
   @override
   Future<int> graphDeleteNode(String nodeId) async {
@@ -685,6 +689,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.deleted, ['p']);
     expect(changed, 1);
+  });
+
+  testWidgets(
+      'bubble: deleting an IMAGE node confirms with the TRUTHFUL retention copy '
+      '(Ayma keeps a copy), not "removes everywhere" (Scout NOTE 256)',
+      (tester) async {
+    final api = _FakeApi();
+    await tester.pumpWidget(_host(
+      NodeActionBubbles(
+        node: _node(
+          id: 'img1',
+          answerType: 'image',
+          imageUrl: 'https://example.invalid/p.png',
+          imageRead: 'a beach selfie',
+          vis: NodeVis.private,
+        ),
+        api: api,
+      ),
+    ));
+    await tester.tap(find.byKey(const Key('bubble_delete')));
+    await tester.pumpAndSettle();
+    // Truthful to retention: removes from story/profile, Ayma keeps its copy.
+    expect(find.text('Remove this photo?'), findsOneWidget);
+    expect(
+        find.text('This removes it from your story and profile. Ayma keeps '
+            'its own copy in your Photos.'),
+        findsOneWidget);
+    // The image-delete count endpoint is never hit for an image (it's a leaf,
+    // and the copy is retention-specific, not a children count).
+    expect(api.deleteCountCalls, 0);
+    expect(find.widgetWithText(FilledButton, 'Remove'), findsOneWidget);
   });
 
   testWidgets('bubble: add a line wires add-child to this node', (tester) async {

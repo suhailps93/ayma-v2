@@ -119,6 +119,14 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   // --- photos ---------------------------------------------------------
 
   Future<void> _openPhotoDetail(AiNotePhoto p) async {
+    // The sibling strip (its display group) so the detail sheet's image opens
+    // the fullscreen gallery that advances on swipe (Scout NOTE 256). Same group
+    // the strip renders — an ayma_only photo's siblings are the other ayma_only
+    // photos; a story photo's are the other profile/chat/web photos.
+    final group = displayGroup(p);
+    final siblings =
+        _photos.where((x) => displayGroup(x) == group).toList(growable: false);
+    final idx = siblings.indexWhere((x) => x.id == p.id);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -128,6 +136,8 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
         onPublish: () => _publishPhoto(p),
         onMakePrivate: () => _makePhotoPrivate(p),
         onChat: () => _openChatForPhoto(p),
+        galleryUrls: [for (final x in siblings) x.url],
+        galleryIndex: idx < 0 ? 0 : idx,
       ),
     );
   }

@@ -6,6 +6,7 @@ import 'ask_ayma_action.dart';
 import 'ayma_photo.dart';
 import 'ayma_toast.dart';
 import 'ayma_wing_loader.dart';
+import 'image_viewer.dart';
 import 'node_visibility.dart';
 
 /// Shared photo-gallery pieces used by Your Story's inline Photos section
@@ -40,23 +41,37 @@ const photoGroups = [
   ('ayma_only', 'AYMA-ONLY — KEPT, NOT ON YOUR PROFILE'),
 ];
 
-/// A wrap of square thumbnails, edge-coloured by source; tapping one opens
-/// the photo detail sheet.
+/// ONE horizontal, swipeable strip of square thumbnails, edge-coloured by
+/// source — a DRAG scrolls through ALL of the group's photos (Scout NOTE 256:
+/// the old `Wrap` was a static multi-row grid, never swipeable). Tapping a tile
+/// opens the owner photo-detail sheet (delete / make public-private / chat),
+/// whose big image in turn opens the fullscreen gallery that advances on swipe.
 class PhotoGallery extends StatelessWidget {
   const PhotoGallery({super.key, required this.photos, required this.onOpen});
 
   final List<AiNotePhoto> photos;
   final void Function(AiNotePhoto) onOpen;
 
+  /// The square thumbnail edge (logical px); the strip's height is this plus the
+  /// 2px padding + 2px border on each side.
+  static const double _tile = 92;
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final p in photos)
-          InkWell(
+    const stripHeight = _tile + 8; // tile + padding(2)·2 + border(2)·2
+    return SizedBox(
+      key: const Key('photo_gallery_strip'),
+      height: stripHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        physics: const ClampingScrollPhysics(),
+        itemCount: photos.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final p = photos[i];
+          return InkWell(
             onTap: () => onOpen(p),
             child: Container(
               padding: const EdgeInsets.all(2),
@@ -67,8 +82,8 @@ class PhotoGallery extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
-                  width: 92,
-                  height: 92,
+                  width: _tile,
+                  height: _tile,
                   child: AymaPhoto(
                     url: p.url,
                     displayWidth: 92,
@@ -80,8 +95,9 @@ class PhotoGallery extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-      ],
+          );
+        },
+      ),
     );
   }
 }
@@ -96,6 +112,8 @@ class PhotoDetailSheet extends StatefulWidget {
     required this.onPublish,
     required this.onMakePrivate,
     required this.onChat,
+    this.galleryUrls,
+    this.galleryIndex = 0,
   });
 
   final AiNotePhoto photo;
@@ -106,6 +124,15 @@ class PhotoDetailSheet extends StatefulWidget {
   /// image NODE, like [onPublish].
   final Future<void> Function() onMakePrivate;
   final VoidCallback onChat;
+
+  /// The sibling strip's photo URLs (primary order) so tapping the big image
+  /// opens the fullscreen gallery — a [PageView] across the whole group that
+  /// ADVANCES ON SWIPE (Scout NOTE 256). Null falls back to the single-photo
+  /// zoom viewer.
+  final List<String>? galleryUrls;
+
+  /// Where [galleryUrls] opens (this photo's slot in the group).
+  final int galleryIndex;
 
   @override
   State<PhotoDetailSheet> createState() => _PhotoDetailSheetState();
@@ -149,13 +176,19 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
   }
 
   /// Delete must ALWAYS confirm first — a photo image node must never be
-  /// removed by a single tap (NOTE 250 item 2, founder order Nov 15).
+  /// removed by a single tap (NOTE 250 item 2, founder order Nov 15). The copy
+  /// is TRUTHFUL to the retention behaviour (Scout NOTE 256): deleting a photo
+  /// removes it from the story/profile but Ayma keeps its own copy (ayma_only)
+  /// in the owner's Photos — it is NOT a permanent erase.
   Future<void> _confirmDelete() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete photo'),
-        content: const Text('Delete this photo? This removes it everywhere.'),
+        title: const Text('Remove this photo?'),
+        content: const Text(
+          'This removes it from your story and profile. Ayma keeps its own '
+          'copy in your Photos.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -166,7 +199,7 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
+            child: const Text('Remove'),
           ),
         ],
       ),
@@ -208,10 +241,22 @@ class _PhotoDetailSheetState extends State<PhotoDetailSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             GestureDetector(
-              onTap: () => showDialog<void>(
-                context: context,
-                builder: (_) => PhotoViewer(url: p.url, isUser: p.isUser),
-              ),
+              onTap: () {
+                final urls = widget.galleryUrls;
+                if (urls != null && urls.length > 1) {
+                  // Fullscreen gallery across the whole strip — swipe-advances.
+                  AymaImageViewer.openGallery(
+                    context,
+                    urls: urls,
+                    initialIndex: widget.galleryIndex,
+                  );
+                } else {
+                  showDialog<void>(
+                    context: context,
+                    builder: (_) => PhotoViewer(url: p.url, isUser: p.isUser),
+                  );
+                }
+              },
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: AspectRatio(

@@ -249,6 +249,7 @@ def _build_node(
     std_by_section: dict[str, list[tuple[str, frozenset[str]]]],
     seen_texts: set[str],
     seen_tokens: dict[str, set[frozenset[str]]],
+    hide_ayma_only_images: bool,
 ) -> Optional[dict]:
     """Render one node + its descendants, filtered to ``keep``. Returns None when
     neither the node nor any descendant survives the visibility filter.
@@ -257,7 +258,13 @@ def _build_node(
     zero-duplicates guarantee: a non-standard node whose text restates a rendering
     standard fact, whose normalized text already appeared earlier in the walk, or
     whose content-token set already rendered in the same section, has its OWN line
-    suppressed (its distinct children, if any, still render)."""
+    suppressed (its distinct children, if any, still render).
+
+    ``hide_ayma_only_images`` drops a RETAINED Ayma-only IMAGE node from the
+    story / public body even when the dev flag keeps ayma_only nodes (text
+    inferences) visible there — a deleted-but-retained photo belongs ONLY in the
+    owner's Ayma-only Photos view, never on the story body or any shared surface
+    (Scout NOTE 256; founder retention rule, Privacy P0)."""
     if node.id in seen:
         return None
     seen.add(node.id)
@@ -271,6 +278,12 @@ def _build_node(
 
     own_renderable = bool(text) or is_image
     own_kept = own_vis in keep and own_renderable
+    # Privacy P0 (Scout NOTE 256): a retained Ayma-only IMAGE never renders on the
+    # story / public body, even with the dev flag on (which keeps ayma_only text
+    # inferences visible) — a deleted-but-retained photo lives only in the owner's
+    # Ayma-only Photos view. Non-image ayma_only nodes still follow ``keep``.
+    if is_image and own_vis == "ayma_only" and hide_ayma_only_images:
+        own_kept = False
     # Zero-duplicates: never suppress a standard labelled row (it is the keeper);
     # suppress a non-standard node that restates a standard fact rendering in the
     # same section, whose text was already emitted (exact duplicate), or whose
@@ -297,7 +310,8 @@ def _build_node(
     children: list[dict] = []
     for c in child_nodes:
         built = _build_node(
-            c, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens
+            c, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens,
+            hide_ayma_only_images,
         )
         if built is not None:
             children.append(built)
@@ -412,6 +426,10 @@ def node_tree(
     own report surface), matching the existing story render."""
     keep = _keep_set(surface, include_ayma_only=include_ayma_only)
     drop_report = surface in (SURFACE_STORY, SURFACE_PUBLIC)
+    # A retained Ayma-only IMAGE is kept out of the story/public body regardless
+    # of the dev flag (Scout NOTE 256, Privacy P0) — it lives only in the owner's
+    # Ayma-only Photos view. Non-story owner surfaces (graphDetail) still show it.
+    hide_ayma_only_images = surface in (SURFACE_STORY, SURFACE_PUBLIC)
     adj = _children_of(graph)
     child_ids = {c for cs in adj.values() for c in cs}
     std_by_section = _standard_facts_by_section(graph, keep)
@@ -429,7 +447,8 @@ def node_tree(
         if drop_report and render.node_page_type(n) in render._REPORT_PAGE_TYPES:
             continue
         built = _build_node(
-            n, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens
+            n, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens,
+            hide_ayma_only_images,
         )
         if built is not None:
             by_section.setdefault(n.section, []).append(built)
