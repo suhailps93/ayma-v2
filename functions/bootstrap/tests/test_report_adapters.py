@@ -98,6 +98,41 @@ def test_appearance_adapter_carries_face_axis_fields(monkeypatch):
     assert "face:quick:age_estimate" not in blocks
 
 
+def test_appearance_adapter_shows_a_stat_once_build_only_in_attributes(monkeypatch):
+    # Scout NOTE 255 Leg 43: "Build" showed in BOTH the Attributes section
+    # (physical_attributes field `build`) AND the Body section (body_report
+    # quick_fact `build`) — the SAME stat emitted as two nodes with different
+    # ids (`attr:build` / `body:quick:build`), which the assembler's node-ID
+    # dedupe can't catch. The adapter now drops the colliding quick fact so a
+    # stat appears once, in its structured home (Attributes, which renders
+    # first). A non-colliding quick fact (`frame_size`) is untouched.
+    doc = dict(_APPEARANCE_DOC)
+    doc["attributes"] = {
+        "record": {
+            "build": {"value": "athletic", "source": "photo", "confidence": "high"},
+            "eye_color": {"value": "brown", "source": "stated", "confidence": "high"},
+        },
+        "source_photos": [],
+    }
+    doc["body"] = {
+        "usable": True,
+        "overall_score": 6.0,
+        "verdict": "Athletic",
+        "verdict_note": "Good proportions.",
+        "strengths": ["Broad shoulders"],
+        "improvements": [],
+        "recommendations": [],
+        "quick_facts": {"build": "athletic", "frame_size": "medium"},
+        "source_photos": [],
+    }
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert blocks["attr:build"]["value"] == "athletic"      # kept in Attributes
+    assert "body:quick:build" not in blocks                 # dropped from Body
+    assert blocks["body:quick:frame_size"]["value"] == "medium"  # non-collision stays
+
+
 def test_appearance_adapter_attributes_section_includes_every_source_photo(monkeypatch):
     """§ regression fix: the Attributes section used to show a row of photo
     thumbnails under "ATTRIBUTES" — "which photos were actually used" for
