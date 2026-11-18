@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import node_gist
 import person_graph_index as index_mod
 import person_graph_render as render
 import question_tree
@@ -239,6 +240,7 @@ def _build_node(
                 "section": node.section,
                 "label": "",
                 "text": cb_text,
+                "gist": node_gist.derive_gist(cb_text),
                 "answer_type": "text",
                 "level": node.level + 1,
                 "visibility": cb_vis,
@@ -259,6 +261,11 @@ def _build_node(
         "section": node.section,
         "label": node.standard_field_label or (node.prompt if node.emergent else node.prompt),
         "text": text if own_kept else "",  # a suppressed line shows nothing, children remain
+        # Gist-first (less-text-heavy Part 1): the short headline rendered by
+        # default; the stored writer gist wins, else a derived fallback.
+        "gist": node_gist.derive_gist(
+            text if own_kept else "", stored=getattr(node, "gist", None)
+        ),
         "answer_type": node.answer_type or "text",
         "level": node.level,
         "visibility": own_vis,

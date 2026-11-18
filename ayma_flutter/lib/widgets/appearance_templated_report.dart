@@ -29,6 +29,7 @@ import '../services/api_client.dart';
 import '../theme.dart';
 import '../util/cold_start_retry.dart';
 import 'image_viewer.dart';
+import 'node_chat_window.dart';
 import 'node_visualiser.dart';
 import 'score_bar.dart';
 
@@ -179,6 +180,7 @@ class AppearanceTemplatedReportState extends State<AppearanceTemplatedReport>
           _AppearanceSection(
             key: Key('appearance_section_${section.pageType}'),
             section: section,
+            api: _api,
           ),
       ],
     );
@@ -188,9 +190,10 @@ class AppearanceTemplatedReportState extends State<AppearanceTemplatedReport>
 /// One fixed designed section of the appearance report, built entirely from its
 /// appearance node-tree section's nodes.
 class _AppearanceSection extends StatelessWidget {
-  const _AppearanceSection({super.key, required this.section});
+  const _AppearanceSection({super.key, required this.section, this.api});
 
   final GraphTreeSection section;
+  final ApiClient? api;
 
   @override
   Widget build(BuildContext context) {
@@ -264,14 +267,7 @@ class _AppearanceSection extends StatelessWidget {
           ],
           if (findings.isNotEmpty) ...[
             const SizedBox(height: 14),
-            for (final t in findings)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  t.text,
-                  style: AymaType.sans(size: 14.5, height: 1.4, color: ac.fg),
-                ),
-              ),
+            for (final t in findings) _FindingRow(node: t, api: api),
           ],
         ],
       ),
@@ -383,11 +379,51 @@ class _FieldRow extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              node.text,
+              // GIST-FIRST: the short headline by default; full value via tap.
+              node.displayGist,
               style: AymaType.sans(size: 14.5, height: 1.35, color: ac.fg),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A narrative finding (a strength / note paragraph) rendered GIST-FIRST
+/// (less-text-heavy Part 1): the short gist line by default, tap-in opens the
+/// node chat window with the full prose — the same default/tap contract the
+/// bullet-tree [NodeVisualiser] uses, so a report's walls of text collapse to
+/// scannable headlines on every surface.
+class _FindingRow extends StatelessWidget {
+  const _FindingRow({required this.node, this.api});
+
+  final StoryNode node;
+  final ApiClient? api;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    return InkWell(
+      key: Key('appearance_finding_${node.id}'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showNodeChat(
+        context,
+        node: node,
+        surface: NodeVisualiserSurface.report,
+        api: api,
+        isOwner: false,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+        child: Text(
+          node.displayGist,
+          style: AymaType.sans(size: 14.5, height: 1.4, color: ac.fg),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
     );
   }
