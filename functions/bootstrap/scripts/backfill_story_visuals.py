@@ -151,6 +151,100 @@ def pick_visual(nid: str, entry: dict, seed_by_id: dict[str, dict]) -> tuple[dic
     return node_visual.make(node_visual.GIST_ROW), "gist_row"
 
 
+def _taste_ids(seed_by_id: dict[str, dict]) -> set[str]:
+    """Seed node ids in the TASTE category (``page_type``/``section`` == taste)."""
+    return {
+        nid for nid, n in seed_by_id.items()
+        if n.get("page_type") == "taste" or n.get("section") == "taste"
+    }
+
+
+def _is_taste_node(nid: str, entry: dict, taste_seed: set[str]) -> bool:
+    return nid in taste_seed or entry.get("section") == "taste" or nid.startswith("taste_")
+
+
+def _comma_items(answer) -> list[str]:
+    """A stored value split into its comma-separated items, each trimmed, empties
+    dropped. Non-string answers yield no items."""
+    if not isinstance(answer, str):
+        return []
+    return [p.strip() for p in answer.split(",") if p.strip()]
+
+
+def run_taste_refine(uid: str, *, apply: bool, db=None) -> dict:
+    """Refine ONLY taste-category nodes (Astro's call, Nov 18): a taste node whose
+    stored value is a GENUINE comma-separated LIST (>=2 items) is upgraded from a
+    bullet to a ``chip_set`` carrying the split items. A taste node whose value is
+    prose (no comma / a single item) is LEFT ``gist_row`` and named. The node's
+    ``answer`` stays the full "A, B, C" string — only ``visual.params.items``
+    carries the split. Never touches a node that already has a non-gist visual,
+    never writes ``card``."""
+    if db is None:
+        from google.cloud import firestore as gcf
+        db = gcf.Client()
+    if getattr(db, "project", "") != _ALLOWED_PROJECT:
+        _die(f"active project is {getattr(db, 'project', None)!r}, refusing "
+             f"(expected {_ALLOWED_PROJECT!r})")
+
+    seed_by_id = _seed_by_id()
+    taste_seed = _taste_ids(seed_by_id)
+    ref, data = _load_doc(db, uid)
+    nodes = data.get("nodes") or {}
+
+    from google.cloud.firestore_v1.field_path import FieldPath
+
+    to_chip: dict[str, dict] = {}
+    kept_prose: list[tuple[str, str]] = []
+    skipped_nongist: list[tuple[str, str]] = []
+    for nid, entry in nodes.items():
+        if not isinstance(entry, dict) or not _is_taste_node(nid, entry, taste_seed):
+            continue
+        cur = (entry.get("visual") or {}).get("type")
+        if cur != node_visual.GIST_ROW:
+            # Only flip bullets; a node that already carries a real visual
+            # (chip/card/photo/...) is left exactly as it is.
+            skipped_nongist.append((nid, str(cur)))
+            continue
+        items = _comma_items(entry.get("answer"))
+        if len(items) >= 2:
+            to_chip[nid] = node_visual.chip_set(items)
+        else:
+            kept_prose.append((nid, repr(entry.get("answer"))))
+
+    print(f"project={db.project}  uid={uid}  (taste refine)")
+    print(f"taste-category nodes examined: "
+          f"{sum(1 for nid,e in nodes.items() if isinstance(e,dict) and _is_taste_node(nid,e,taste_seed))}")
+    print(f"--- to chip_set: {len(to_chip)} ---")
+    for nid, vis in to_chip.items():
+        print(f"  {nid}  items={vis['params']['items']}")
+    print(f"--- left gist_row (prose / <2 items): {len(kept_prose)} ---")
+    for nid, ans in kept_prose:
+        print(f"  {nid}  answer={ans}")
+    if skipped_nongist:
+        print(f"--- taste nodes already non-gist (untouched): {len(skipped_nongist)} ---")
+        for nid, vt in skipped_nongist:
+            print(f"  {nid}  visual={vt}")
+
+    if not apply:
+        print("\nDRY-RUN: no writes. Only the `visual` field would flip gist_row->chip_set "
+              "on the qualifying taste nodes; answers and all other fields untouched.")
+        return {"to_chip": len(to_chip), "kept_prose": len(kept_prose)}
+
+    if not to_chip:
+        print("\nNothing to refine; no write issued.")
+        return {"to_chip": 0, "kept_prose": len(kept_prose)}
+
+    updates = {
+        FieldPath("nodes", nid, "visual").to_api_repr(): vis
+        for nid, vis in to_chip.items()
+    }
+    ref.update(updates)
+    print(f"\nAPPLIED: flipped {len(updates)} taste node(s) gist_row->chip_set "
+          f"(only the `visual` field touched).")
+    return {"chipped": len(to_chip), "kept_prose": len(kept_prose),
+            "plan": {nid: v for nid, v in to_chip.items()}}
+
+
 def _load_doc(db, uid: str):
     ref = (
         db.collection("users").document(uid)
@@ -242,13 +336,18 @@ def main() -> None:
     ap.add_argument("--project", default="")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--taste-refine", action="store_true",
+                    help="only upgrade comma-list taste nodes gist_row->chip_set")
     args = ap.parse_args()
     if args.project and args.project != _ALLOWED_PROJECT:
         _die(f"--project must be {_ALLOWED_PROJECT!r} (got {args.project!r})")
     if args.apply and args.dry_run:
         _die("pass only one of --dry-run / --apply")
     apply = args.apply and not args.dry_run
-    run(args.uid, apply=apply)
+    if args.taste_refine:
+        run_taste_refine(args.uid, apply=apply)
+    else:
+        run(args.uid, apply=apply)
 
 
 if __name__ == "__main__":
