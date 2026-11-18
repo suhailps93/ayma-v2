@@ -8,6 +8,7 @@ and the flag gate (off → lexical path, no embedding).
 """
 
 import dataclasses
+import hashlib
 
 import config
 from config import CONFIG
@@ -154,3 +155,116 @@ def test_candidate_report_routes_by_flag(monkeypatch):
     )
     rep_off = crosscheck.candidate_report(db, "u1", index)
     assert all("semantic" not in p.reason for p in rep_off.ambiguous_pairs)
+
+
+def test_vectors_persist_across_shards_and_roundtrip(monkeypatch):
+    """A real graph has hundreds of 3072-dim vectors — far past Firestore's 1 MiB
+    per-document limit. Vectors must shard across sibling docs and round-trip
+    exactly (NOTE 255 add.3: the single-doc store 400'd at 5.1 MB, so vectors
+    never persisted). Here many nodes force several shards."""
+    monkeypatch.setattr(
+        config, "CONFIG", dataclasses.replace(CONFIG, graph_embedding_dedupe=True)
+    )
+
+    def _per_text(texts):
+        # a deterministic distinct 8-float vector per text
+        out = []
+        for t in texts:
+            seed = int(hashlib.sha1(t.encode()).hexdigest()[:8], 16)
+            out.append([float((seed >> k) & 0xFF) for k in range(0, 64, 8)])
+        return out
+
+    monkeypatch.setattr(emb, "_embed_backend", _per_text)
+    overlay = {
+        f"emergent.n{i}": {"prompt": f"Q{i}", "section": "misc", "level": 1,
+                           "answer": f"distinct fact number {i} about the person"}
+        for i in range(emb._SHARD_SIZE * 2 + 5)  # force >2 shards
+    }
+    db = FakeDb(overlay)
+    n = emb.refresh_vectors(db, "u1")
+    assert n >= emb._SHARD_SIZE * 2 + 5
+    vecs = emb.load_vectors(db, "u1")
+    for i in range(emb._SHARD_SIZE * 2 + 5):
+        assert f"emergent.n{i}" in vecs
+    # more than one shard document was actually written.
+    assert emb._shard_ref(db, "u1", 1).get().exists
+    assert emb._shard_ref(db, "u1", 2).get().exists
+
+
+def test_embed_backend_embeds_one_text_per_call(monkeypatch):
+    """gemini-embedding-2 on Vertex returns ONE embedding per call regardless of
+    how many contents are passed (NOTE 255 add.3). _embed_backend must loop so N
+    texts yield N vectors — the old batch call returned 1, failing refresh's
+    len-check so vectors never populated."""
+    calls = []
+
+    class _Emb:
+        def __init__(self, v):
+            self.values = v
+
+    class _Resp:
+        def __init__(self, v):
+            self.embeddings = [_Emb(v)]
+
+    class _Models:
+        def embed_content(self, model, contents):
+            calls.append(contents)
+            return _Resp([float(len(calls)), 0.0])
+
+    class _Client:
+        def __init__(self, **kw):
+            self.models = _Models()
+
+    import google.genai as genai_mod
+    monkeypatch.setattr(genai_mod, "Client", _Client)
+    out = emb._embed_backend(["x", "y", "z"])
+    assert out is not None and len(out) == 3
+    assert calls == ["x", "y", "z"]  # one call per text, each a single string
+
+
+# --- the union: lexical AND embedding candidates, never one replacing the other ---
+
+_UNION_OVERLAY = {
+    # a LEXICAL near-dup pair (high token overlap) whose vectors are orthogonal,
+    # so only the lexical pass can find it.
+    "emergent.l1": {"prompt": "Music", "section": "taste", "level": 1,
+                    "answer": "Billie Eilish Bruno Mars Russ"},
+    "emergent.l2": {"prompt": "Music", "section": "taste", "level": 1,
+                    "answer": "Music Billie Eilish Bruno Mars Russ"},
+    # a SEMANTIC-only pair (near-zero token overlap) whose vectors are near, so
+    # only the embedding pass can find it.
+    "emergent.s1": {"prompt": "Circle", "section": "social_circle", "level": 1,
+                    "answer": "attentive listener shows up quietly"},
+    "emergent.s2": {"prompt": "Circle", "section": "social_circle", "level": 1,
+                    "answer": "friends value his careful listening habit"},
+}
+
+_UNION_FAKE = {
+    "Billie Eilish Bruno Mars Russ": [1.0, 0.0, 0.0, 0.0],
+    "Music Billie Eilish Bruno Mars Russ": [0.0, 1.0, 0.0, 0.0],  # orthogonal to l1
+    "attentive listener shows up quietly": [0.0, 0.0, 1.0, 0.0],
+    "friends value his careful listening habit": [0.0, 0.0, 0.99, 0.1],  # near s1
+}
+
+
+def test_candidate_report_unions_lexical_and_semantic(monkeypatch):
+    """Flag ON must surface BOTH a lexical near-dup (embeddings rank it far) AND a
+    semantic paraphrase (lexical misses it). The old code REPLACED lexical with
+    embeddings, silently dropping the lexical duplicate (NOTE 255 add.3)."""
+    monkeypatch.setattr(
+        config, "CONFIG", dataclasses.replace(CONFIG, graph_embedding_dedupe=True)
+    )
+    monkeypatch.setattr(
+        emb, "_embed_backend",
+        lambda texts: [_UNION_FAKE.get(t, [0.0, 0.0, 0.0, 0.0]) for t in texts],
+    )
+    db = FakeDb(_UNION_OVERLAY)
+    index = index_mod.build_index(db, "u1")
+    rep = crosscheck.candidate_report(db, "u1", index)
+    all_keys = {p.key() for p in rep.duplicate_pairs} | {p.key() for p in rep.related_pairs}
+    lex_key = tuple(sorted(("emergent.l1", "emergent.l2")))
+    sem_key = tuple(sorted(("emergent.s1", "emergent.s2")))
+    assert lex_key in all_keys, "lexical near-dup lost when embeddings on"
+    assert sem_key in all_keys, "semantic paraphrase not added by the union"
+    # the semantic pair is handed to the judge (ambiguous), the lexical one too.
+    assert sem_key in {p.key() for p in rep.ambiguous_pairs}

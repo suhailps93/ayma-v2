@@ -119,18 +119,20 @@ def test_merge_takes_more_private_visibility(monkeypatch):
 
 
 def test_standard_node_survives_over_emergent(monkeypatch):
-    """When one of the pair is a STANDARD node, it survives (build-2490 rule)."""
+    """When one of the pair is a STANDARD node and the other adds NO fact beyond
+    it, the standard node survives and the restatement folds in (build-2490)."""
     _on(monkeypatch)
     _judge_all_duplicate(monkeypatch)
     nodes = {
-        # a standard identity seed node...
-        "ethnic_cultural_origin": {"answer": "South Asian", "state": "answered",
-                                   "visibility": "private"},
-        # ...and a LONGER emergent restatement in the same section.
+        # a standard identity seed node carrying the fuller value...
+        "ethnic_cultural_origin": {"answer": "South Asian, from India",
+                                   "state": "answered", "visibility": "private"},
+        # ...and an emergent restatement whose content is a SUBSET of it (no
+        # extra fact), so folding it in loses nothing.
         "emergent.x": {
             "prompt": "Origin", "section": "identity", "level": 2,
             "answer_type": "narrative",
-            "answer": "Ethnic and cultural origin is South Asian, from India",
+            "answer": "South Asian",
             "state": "answered", "visibility": "public", "provenance": "imported",
         },
     }
@@ -141,6 +143,92 @@ def test_standard_node_survives_over_emergent(monkeypatch):
         assert survivor == "ethnic_cultural_origin"
         assert removed == "emergent.x"
         assert "emergent.x" not in store.load_overlay(db, UID)
+
+
+def test_richer_bullet_not_folded_into_standard_field(monkeypatch):
+    """NOTE 255 add.3: a bullet that carries EXTRA facts beyond a standard field's
+    short value must NEVER be folded into that standard field — folding would drop
+    the extra facts. The founder's primary_location pair: "San Jose, United States"
+    (standard) vs a bullet that also states the languages he speaks. The judge
+    calls them duplicates, but the sweep RAISES the pair instead of merging, so no
+    fact is lost and both nodes still render."""
+    _on(monkeypatch)
+    _judge_all_duplicate(monkeypatch)
+    nodes = {
+        "primary_location": {"answer": "San Jose, United States",
+                             "state": "answered", "visibility": "public"},
+        "emergent.loc": {
+            "prompt": "Location", "section": "identity", "level": 1,
+            "answer_type": "narrative",
+            "answer": "He currently lives in San Jose, California and speaks "
+                      "Malayalam and English.",
+            "state": "answered", "visibility": "public", "provenance": "imported",
+        },
+    }
+    db = _db(nodes)
+    rep = asyncio.run(sweep.sweep_user(db, UID, dry_run=False))
+    # not merged — the richer bullet is preserved, not absorbed into the field.
+    assert rep.merged == []
+    overlay = store.load_overlay(db, UID)
+    assert "emergent.loc" in overlay  # the extra facts still live on their node
+    # the languages fact is still rendered content, not lost to history.
+    assert "Malayalam" in overlay["emergent.loc"]["answer"]
+    # the pair is raised for the user to decide (never silently dropped).
+    assert ("primary_location", "emergent.loc") in {
+        (p["a"], p["b"]) for p in store.pending_dedupe(db, UID)
+    } or ("emergent.loc", "primary_location") in {
+        (p["a"], p["b"]) for p in store.pending_dedupe(db, UID)
+    }
+
+
+def test_seed_narrative_duplicate_is_raised_not_dropped(monkeypatch):
+    """NOTE 255 add.3: two SEED NARRATIVE nodes stating the same fact (the
+    "coffee" career pair) are a real duplicate the finder must surface. Neither
+    seed can be deleted, so the sweep RAISES the pair for the user instead of
+    silently dropping it (the old ``_has_emergent`` gate dropped every
+    seed-vs-seed pair before it was ever judged)."""
+    _on(monkeypatch)
+    _judge_all_duplicate(monkeypatch)
+    nodes = {
+        "career_role_narrative": {
+            "answer": "Starts the day with coffee and sketching, then heads to "
+                      "the studio by 10 for product flows and user research.",
+            "state": "answered", "visibility": "private",
+        },
+        "career_trajectory_narrative": {
+            "answer": "Days start with coffee and sketching, heading to the "
+                      "studio by 10 to work on product flows and user research.",
+            "state": "answered", "visibility": "private",
+        },
+    }
+    db = _db(nodes)
+    rep = asyncio.run(sweep.sweep_user(db, UID, dry_run=False))
+    assert rep.merged == []  # two seeds — nothing deletable, nothing merged
+    raised = {frozenset((p[0], p[1])) for p in rep.raised}
+    assert frozenset(("career_role_narrative", "career_trajectory_narrative")) in raised
+    # both seed nodes still present (a seed is never deleted).
+    overlay = store.load_overlay(db, UID)
+    assert "career_role_narrative" in overlay and "career_trajectory_narrative" in overlay
+
+
+def test_two_structured_seed_fields_are_not_a_dedupe_pair(monkeypatch):
+    """Two FIXED structured template fields (enums) are distinct questions, never
+    duplicates of each other — they must not be merged or raised even if the judge
+    is told to call every pair a duplicate."""
+    _on(monkeypatch)
+    _judge_all_duplicate(monkeypatch)
+    # identical answers in the same section, so they WOULD be an EXACT lexical
+    # candidate — proving they are excluded by the structured-field rule, not just
+    # by low similarity.
+    nodes = {
+        "education_level": {"answer": "Graduate degree", "state": "answered",
+                            "visibility": "private"},
+        "work_schedule_pattern": {"answer": "Graduate degree", "state": "answered",
+                                  "visibility": "private"},
+    }
+    db = _db(nodes)
+    rep = asyncio.run(sweep.sweep_user(db, UID, dry_run=False))
+    assert rep.merged == [] and rep.raised == []
 
 
 # --- uncertain / disagreeing pairs are RAISED, never merged ----------------
