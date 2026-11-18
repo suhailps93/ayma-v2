@@ -163,3 +163,47 @@ def test_public_tree_shows_only_public_nodes(monkeypatch):
     blob = " ".join(texts)
     assert "Founder" in blob  # the public node is present
     assert "Lisbon" not in blob and "ultramarathons" not in blob  # private excluded
+
+
+def test_career_section_renders_linkedin_source_link_plus_prose_no_timeline(monkeypatch):
+    """Build 2502 end-to-end: the founder's Career today — his LinkedIn URL plus
+    PROSE career facts, no dated role/company nodes. The Career section renders
+    the ``career.linkedin`` SOURCE link (not the whole section) followed by its
+    prose as ``gist_row`` bullets, and NO ``timeline_entry`` is fabricated. The
+    timeline populates only once dated nodes exist."""
+    import schema
+
+    db = FakeDb()
+    # his LinkedIn URL on the profile doc → the injected source-link node
+    schema.profile_doc(db, _ME).set(
+        {schema.PF_LINKEDIN_URL: "https://www.linkedin.com/in/founder"}, merge=True
+    )
+    # prose career facts, none dated
+    store.upsert_fact_node(
+        db, _ME, "emergent.career.0", "I did my BTech in Mahatma Gandhi University.",
+        section="career", visibility="public", provenance="stated", label="",
+    )
+    store.upsert_fact_node(
+        db, _ME, "emergent.career.1",
+        "Works as an autonomous system integration engineer.",
+        section="career", visibility="public", provenance="stated", label="",
+    )
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    r = client.get("/profile/graph/tree?surface=story", headers=_auth(monkeypatch))
+    assert r.status_code == 200, r.text
+    career = next(
+        s for s in r.json()["sections"] if s.get("page_type") == "career"
+    )
+    nodes = career["nodes"]
+    # the LinkedIn SOURCE link sits on top of the section (not the whole section)
+    assert nodes[0]["id"] == "career.linkedin"
+    assert nodes[0]["answer_type"] == "link"
+    assert "linkedin.com/in/founder" in nodes[0].get("link_url", "")
+    # the prose facts render as bullets, never a fabricated timeline
+    prose = [n for n in nodes if n["id"] != "career.linkedin"]
+    assert prose, "the prose career facts still render"
+    assert all(n.get("dated", "") == "" for n in prose)
+    assert not any(
+        (n.get("visual") or {}).get("type") == "timeline_entry" for n in nodes
+    )
