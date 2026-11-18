@@ -40,6 +40,7 @@ import match_deterministic
 import token_ledger
 from llm_provider import get_user_brain_provider
 import matching_schema
+import node_visual
 import question_tree
 from wiki_query import read_wiki_context
 
@@ -628,6 +629,8 @@ async def score_pair(
         "dimensions": dims,
         "omitted_dimensions": omitted_keys,
         "gist": str(result.get("gist", "")).strip(),
+        # A match score renders as a gauge (0-100).
+        "visual": node_visual.gauge(score, 0, 100, "Match"),
         "user_explanation": {
             uid_a: str(ue.get("A", "")).strip(),
             uid_b: str(ue.get("B", "")).strip(),

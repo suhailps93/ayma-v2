@@ -220,6 +220,82 @@ def test_deep_dive_digest_schema_requires_a_gist():
     assert "gist" in props and props["gist"]["type"] == "string"
 
 
+# --- write-time VISUAL pick -------------------------------------------------
+
+
+def test_store_defaults_a_visual_by_section_and_kind_keeping_visibility():
+    """Every minted node carries a versioned visual, defaulted by kind/section
+    when the writer didn't pick one — and picking it never changes visibility."""
+    db = FakeDb()
+    # list-like section -> chip_set; explicit public visibility round-trips.
+    store.upsert_fact_node(
+        db, "u1", "emergent.interest.climbing", "Climbs most weekends.",
+        section="interests", visibility=pg.Visibility.PUBLIC,
+    )
+    n = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.interest.climbing"]
+    assert n.visual["type"] == "chip_set" and n.visual["v"] == 1
+    assert n.visibility == pg.Visibility.PUBLIC
+
+    # image node -> photo_carousel (by kind), regardless of section.
+    store.add_node(
+        db, "u1", "primary_location", "a photo",
+        answer="https://img/1.jpg", answer_type="image",
+    )
+    img = [
+        v for v in pg.effective_graph(store.load_overlay(db, "u1")).values()
+        if v.answer_type == "image"
+    ][0]
+    assert img.visual["type"] == "photo_carousel"
+
+    # a plain fact in an unlisted section -> gist_row (universal fallback).
+    nid = store.add_loose_node(db, "u1", "Left-handed")
+    row = pg.effective_graph(store.load_overlay(db, "u1"))[nid]
+    assert row.visual["type"] == "gist_row"
+
+
+def test_pg_add_node_visual_explicit_and_fallback():
+    db = FakeDb()
+    add = person_graph_tools._bind_add_node(db, "u1")
+    career_parent = "career_role_narrative"  # a real node in the career section
+    # Ayma names a visual type.
+    out = add(
+        parent_id=career_parent, label="role", gist="Staff engineer at Acme",
+        answer="Since 2021.", visual="timeline_entry",
+    )
+    nid = out.split()[-1]
+    n = pg.effective_graph(store.load_overlay(db, "u1"))[nid]
+    assert n.visual["type"] == "timeline_entry"
+
+    # No visual named -> per-section default (career -> timeline_entry).
+    out2 = add(parent_id=career_parent, label="role2", gist="Intern at Beta")
+    n2 = pg.effective_graph(store.load_overlay(db, "u1"))[out2.split()[-1]]
+    assert n2.visual["type"] == "timeline_entry"
+
+    # An unknown visual type falls back to gist_row (reader default).
+    out3 = add(parent_id=career_parent, label="role3", gist="x", visual="bogus_type")
+    n3 = pg.effective_graph(store.load_overlay(db, "u1"))[out3.split()[-1]]
+    assert n3.visual["type"] == "gist_row"
+
+
+def test_report_and_web_nodes_get_a_card_visual(monkeypatch):
+    _reads_on(monkeypatch)
+    db = FakeDb()
+    skill_memory.save_face_analysis(db, "u1", {
+        "usable": True, "overall_score": 7.0, "verdict": "Above average",
+        "verdict_note": "Even features.",
+    })
+    face = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.face_analysis"]
+    assert face.visual["type"] == "card"
+    assert face.visual["params"]["title"] == "Above average"
+
+    skill_memory.save_web_findings(db, "u1", {
+        "name": "Dana", "gist": "Designer in Lisbon", "summary": "Short.",
+    })
+    web = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.web_findings"]
+    assert web.visual["type"] == "card"
+    assert web.visual["params"]["body"] == "Short."
+
+
 def test_match_report_schema_requires_a_gist():
     import matching_skill
 

@@ -72,6 +72,7 @@ from prompt import load_prompt_file
 from firebase_admin import firestore
 
 import gemini
+import node_visual
 import token_ledger
 import wiki_query
 
@@ -622,6 +623,8 @@ def _write_graph(
             label=f"Ayma's assessment — {_GROUP_TITLES[polarity]}",
             answer_type="narrative",
             gist=gist,
+            # An assessment polarity group renders as a card (headline + detail).
+            visual=node_visual.card(title=_GROUP_TITLES[polarity], body=top),
             source_kind=_GRAPH_SOURCE_KIND,
             source_ref=polarity,
         )

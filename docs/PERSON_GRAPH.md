@@ -909,3 +909,53 @@ default and derive a fallback for OLD, gist-less nodes; this part makes the
 - **Tests:** `tests/test_gist_first_writing.py` (mock inference only) covers a
   conversation-extracted node, a report node, and a web-research node, plus the
   visibility-round-trips invariant and the digest/match writer-contract schemas.
+
+## Write-time visual pick — the `visual` field (less-text-heavy program, Part 2 contract, Nov 17 2026)
+
+Sibling of `gist`: every node written going forward also carries a **`visual`**
+descriptor telling Part 2's renderers HOW to draw it, instead of defaulting
+everything to a text row. "The visual lives on the node", picked
+**deterministically at write time** so a bad pick is rare. Picking a visual
+**never changes visibility** and **never blocks a write** — where the params'
+data isn't readily available, only `{type, v}` is stored and the renderer
+derives/falls back.
+
+- **Shape.** `visual = {"type": <palette type>, "params": {...}, "v": 1}` on
+  `OverlayNode`/`GraphNode`, merged in `merge_node`; stored as `e["visual"]` by
+  the store mint paths alongside `gist`. Built via `node_visual.py` (the single
+  source of the palette + builders). Same optional-write shape as `gist`.
+- **PALETTE v1** (fixed, versioned — exact `type` strings): `gist_row`
+  (universal fallback, renders `node.gist`), `chip_set`, `timeline_entry`,
+  `bar_meter`, `gauge`, `card`, `photo_carousel`, `small_table`. Unknown/absent
+  `type` → the reader falls back to `gist_row`.
+- **`params` contract** (minimal, forward-compatible — what Part 2 reads):
+  - `gist_row`: `{}` (renders `node.gist`)
+  - `chip_set`: `{items: [string]}`
+  - `timeline_entry`: `{date: string|null, title: string}`
+  - `bar_meter` / `gauge`: `{value: number, min: number, max: number, label: string}`
+  - `card`: `{title: string, body: string}` (`body` = the brief detail)
+  - `photo_carousel`: `{image_refs: [...]}` (reuse the node's image ref fields;
+    may be `{}` — the renderer derives refs from the image node's own fields)
+  - `small_table`: `{columns: [string], rows: [[string]]}`
+- **Per-kind default** (`node_visual.default_for(section, answer_type)`), applied
+  in the store when a writer didn't pick one, so **no minted node is ever
+  visual-less**:
+  - image node (`answer_type == "image"`) → `photo_carousel`
+  - list-like section (interests / values / lifestyle / taste / social_circle) → `chip_set`
+  - dated section (career) → `timeline_entry`
+  - everything else → `gist_row`
+- **Explicit writer picks (unambiguous kind, set deterministically):**
+  - face/body report + physical profile → `card` (`title` = verdict, `body` =
+    verdict_note) via `skill_memory`
+  - deep-dive web findings → `card` (`title` = gist, `body` = summary)
+  - Ayma's assessment polarity node → `card` (`title` = group, `body` = top note)
+  - match report → `gauge` (`value` = score, `min` 0 / `max` 100) in the
+    `matches/{key}` doc payload
+  - `pg_add_node` may also let Ayma name a `visual` type (palette enum); an
+    unknown/absent one falls back to the per-section default.
+- **Forward note (founder):** the write path is the same optional-param shape as
+  `gist`, so `visual` dropped in with no new write mechanics — and any further
+  sibling field does too.
+- **Tests:** `tests/test_gist_first_writing.py` asserts the defaulted and
+  explicit `visual.type` + params per path (and visibility round-trips);
+  `tests/test_matching_skill.py` asserts the match gauge.

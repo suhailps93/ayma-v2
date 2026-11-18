@@ -171,6 +171,9 @@ def test_score_pair_returns_confidence_gates_and_per_dim_source(monkeypatch):
     assert isinstance(out["confidence_note"], str) and out["confidence_note"]
     assert out["gate_failures"] == []
     assert out["method"]
+    # Gist-first / visual: the match report carries a gauge visual of the score.
+    assert out["visual"]["type"] == "gauge"
+    assert out["visual"]["params"]["max"] == 100 and out["visual"]["v"] == 1
     assert len(out["dimensions"]) == len(matching_skill._DIM_KEYS)
     for d in out["dimensions"]:
         assert d["source"] in ("structured", "llm")

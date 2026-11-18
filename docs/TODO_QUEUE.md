@@ -985,6 +985,15 @@ face/body/physical reports + `ai_assessment` (reports/notes), `matching_skill`
 (match report). Prompts updated in files only (`deep_dive.md`, `face_report.md`,
 `body_report.md`, `ai_assessment.md`, `matching_skill.md`); inference stays 100%
 on LiveKit; models from `config.py`. Tests: `tests/test_gist_first_writing.py`.
-See `docs/PERSON_GRAPH.md § Gist-first writing`. Follow-up (founder, queued): add
-a sibling `visual` field picked/stored at write time — the gist write is designed
-so adding it is trivial.
+See `docs/PERSON_GRAPH.md § Gist-first writing`.
+
+Write-time **`visual`** pick added (same branch): every creation path that
+writes `gist` also stores a sibling `visual = {type, params, v: 1}`
+(`node_visual.py` palette v1: gist_row/chip_set/timeline_entry/bar_meter/gauge/
+card/photo_carousel/small_table). Picked deterministically — per-kind default in
+the store (image→photo_carousel, list-like section→chip_set, career→
+timeline_entry, else gist_row), explicit in the report/web/assessment writers
+(card), match report (gauge); `pg_add_node` may also name a type. Never changes
+visibility, never blocks a write. Params contract documented in
+`docs/PERSON_GRAPH.md § Write-time visual pick`. Tests extended in
+`tests/test_gist_first_writing.py` + `tests/test_matching_skill.py`.

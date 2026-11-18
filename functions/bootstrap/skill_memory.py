@@ -28,6 +28,8 @@ import logging
 import re
 from datetime import datetime, timezone
 
+import node_visual
+
 from firebase_admin import firestore
 
 logger = logging.getLogger("ayma.skillmemory")
@@ -75,12 +77,14 @@ def _skill_node_id(page_type: str) -> str:
 
 
 def _graph_upsert_skill(
-    db, uid: str, page_type: str, ai_body: str, gist: str = ""
+    db, uid: str, page_type: str, ai_body: str, gist: str = "",
+    visual: dict | None = None,
 ) -> None:
     """Upsert the compiled skill page as its graph node (idempotent by id). An
     earlier user promotion to public is preserved; ``interactions`` stays
     ayma_only always. ``gist`` is the node's short one-line headline (gist-first
-    writing); the long compiled body stays in the node answer."""
+    writing) and ``visual`` its write-time render pick; the long compiled body
+    stays in the node answer."""
     import person_graph_store as store
 
     nid = _skill_node_id(page_type)
@@ -96,6 +100,7 @@ def _graph_upsert_skill(
         provenance="inferred",
         label=page_type.replace("_", " "),
         gist=(gist or None),
+        visual=visual,
         source_kind="skill_memory", source_ref=page_type,
     )
 
@@ -113,13 +118,16 @@ def _page_ref_by_id(db, uid: str, page_id: str):
     )
 
 
-def _upsert(db, uid: str, page_type: str, ai_body: str, gist: str = "") -> None:
+def _upsert(
+    db, uid: str, page_type: str, ai_body: str, gist: str = "",
+    visual: dict | None = None,
+) -> None:
     ai_body = (ai_body or "").strip()
     if not uid or not ai_body:
         return
     if _graph_reads_on():
         try:
-            _graph_upsert_skill(db, uid, page_type, ai_body, gist=gist)
+            _graph_upsert_skill(db, uid, page_type, ai_body, gist=gist, visual=visual)
         except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
             logger.exception("skill_memory: %s graph save failed for %s", page_type, uid)
         return
@@ -284,10 +292,13 @@ def _report_gist(report: dict, *, noun: str) -> str:
 
 def save_web_findings(db, uid: str, digest: dict) -> None:
     """Compile a deep-dive digest into the ``web-findings`` ``private`` page."""
+    gist = _web_findings_gist(digest or {})
     _upsert(
         db, uid, "web_findings",
         _web_findings_md(digest or {}),
-        gist=_web_findings_gist(digest or {}),
+        gist=gist,
+        # A web-research finding renders as a card (headline + brief detail).
+        visual=node_visual.card(title=gist, body=str((digest or {}).get("summary", "")).strip()),
     )
 
 
@@ -295,10 +306,13 @@ def save_face_analysis(db, uid: str, report: dict) -> None:
     """Compile a face report into the ``face-analysis`` ``private`` page."""
     if not (report or {}).get("usable", True):
         return
+    gist = _report_gist(report or {}, noun="Face")
     _upsert(
         db, uid, "face_analysis",
         _report_md(report or {}, kind="Facial-analysis", noun="face"),
-        gist=_report_gist(report or {}, noun="Face"),
+        gist=gist,
+        visual=node_visual.card(title=str((report or {}).get("verdict", "")).strip(),
+                                body=str((report or {}).get("verdict_note", "")).strip()),
     )
 
 
@@ -306,10 +320,13 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
     """Compile a body report into the ``body-analysis`` ``private`` page."""
     if not (report or {}).get("usable", True):
         return
+    gist = _report_gist(report or {}, noun="Physique")
     _upsert(
         db, uid, "body_analysis",
         _report_md(report or {}, kind="Physique-analysis", noun="physique"),
-        gist=_report_gist(report or {}, noun="Physique"),
+        gist=gist,
+        visual=node_visual.card(title=str((report or {}).get("verdict", "")).strip(),
+                                body=str((report or {}).get("verdict_note", "")).strip()),
     )
 
 
@@ -321,7 +338,10 @@ def save_physical_profile(db, uid: str, body_md: str) -> None:
     source-tagged markdown block."""
     first_line = next((ln.strip() for ln in (body_md or "").splitlines() if ln.strip()), "")
     gist = _clip_gist(first_line) if first_line else "Physical attributes"
-    _upsert(db, uid, "physical_profile", body_md or "", gist=gist)
+    _upsert(
+        db, uid, "physical_profile", body_md or "", gist=gist,
+        visual=node_visual.card(title=gist, body=""),
+    )
 
 
 # --- interactions log ------------------------------------------------------

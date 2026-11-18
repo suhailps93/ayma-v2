@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Callable
 
+import node_visual
 import person_graph_store as store
 from person_graph import NodeState, Provenance, Visibility
 
@@ -190,6 +191,17 @@ _ADD_NODE = {
                     "— keep it to a line or two, never a long paragraph"
                 ),
             },
+            "visual": {
+                "type": "string",
+                "enum": sorted(node_visual.PALETTE),
+                "description": (
+                    "how this node should render (optional): 'chip_set' for a "
+                    "list of short items, 'timeline_entry' for a dated item, "
+                    "'gauge'/'bar_meter' for a score, 'card' for a finding, "
+                    "'photo_carousel' for images, 'small_table' for a "
+                    "comparison, else 'gist_row'. Omit to let the default pick."
+                ),
+            },
             "section": {
                 "type": "string",
                 "description": "override the home section (defaults to the parent's)",
@@ -206,6 +218,7 @@ def _bind_add_node(db, uid: str) -> Callable[..., str]:
         label: str,
         gist: str = "",
         answer: str = "",
+        visual: str = "",
         section: str = "",
     ) -> str:
         try:
@@ -219,6 +232,9 @@ def _bind_add_node(db, uid: str) -> Callable[..., str]:
                 answer_type=("narrative" if answer else None),
                 provenance=Provenance.STATED,
                 gist=(gist or None),
+                # Ayma may name a visual type; an unknown/absent one falls back
+                # to the per-section default inside the store (never blocks).
+                visual=(node_visual.make(visual) if visual else None),
                 # The pg_add_node binder gets only (db, uid), no session — stamp
                 # the agent-tool source so the node is never sourceless.
                 source_kind="chat",

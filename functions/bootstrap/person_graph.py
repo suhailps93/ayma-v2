@@ -267,6 +267,12 @@ class OverlayNode(BaseModel):
     # detail — never a multi-sentence third-person essay. Readers render ``gist``
     # by default and fall back to ``answer`` for older, gist-less nodes.
     gist: Optional[str] = None
+    # Write-time VISUAL pick (sibling of ``gist``): how Part 2's renderers should
+    # draw this node — ``{"type": <palette>, "params": {...}, "v": 1}`` (see
+    # ``node_visual`` + docs/PERSON_GRAPH.md). Picked deterministically at write
+    # time; absent/unknown → the reader falls back to a text row. Never affects
+    # visibility.
+    visual: Optional[dict] = None
 
 
 class GraphNode(BaseModel):
@@ -317,6 +323,8 @@ class GraphNode(BaseModel):
     # Gist-first writing (Part 3): short one-line headline for this node (see
     # OverlayNode.gist). None on older nodes written before gist-first.
     gist: Optional[str] = None
+    # Write-time visual descriptor (see OverlayNode.visual). None on older nodes.
+    visual: Optional[dict] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -502,6 +510,8 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.source_created_at = o.source_created_at
     if o.gist is not None:
         base.gist = o.gist
+    if o.visual is not None:
+        base.visual = o.visual
     # Contract 2: mark the known structured (standard) fields from the registry.
     if is_standard(base.id):
         base.standard = True
