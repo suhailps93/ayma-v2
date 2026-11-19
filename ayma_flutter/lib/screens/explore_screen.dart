@@ -737,7 +737,13 @@ class _Card extends StatelessWidget {
     final ac = context.ac;
     final score = card.score;
     return GestureDetector(
-      onTap: () => context.push('/profile/user/${card.uid}'),
+      // Seed the profile screen with the card's already-prefetched photo + name
+      // so it opens on a real header skeleton, not a flat-dark loader (NOTE 267
+      // Obs a).
+      onTap: () => context.push(
+        '/profile/user/${card.uid}',
+        extra: {'photoUrl': card.gridPhotoUrl, 'name': card.name},
+      ),
       onLongPress: card.isSelf ? null : () => _sheet(context),
       child: Container(
         clipBehavior: Clip.antiAlias,

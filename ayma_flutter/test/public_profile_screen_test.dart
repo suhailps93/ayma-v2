@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -190,14 +191,36 @@ ApiClient _api(
   );
 }
 
-Widget _app(ApiClient api, {List<String>? pushed, ThemeData? theme}) {
+/// An ApiClient whose profile GET is gated on [gate]: it stays pending (the
+/// loading state) until the test completes the gate, so the NOTE 267 Obs a
+/// seed-header behaviour is observable, and completing it later lets the
+/// request's timeout timer clear cleanly (no pending-timer teardown failure).
+ApiClient _gatedApi(Completer<http.Response> gate) => ApiClient(
+      auth: MockFirebaseAuth(signedIn: true),
+      httpClient: MockClient((req) async {
+        if (req.url.path == '/explore/profile/her') return gate.future;
+        return http.Response('no', 404);
+      }),
+    );
+
+Widget _app(
+  ApiClient api, {
+  List<String>? pushed,
+  ThemeData? theme,
+  String? seedPhotoUrl,
+  String? seedName,
+}) {
   final router = GoRouter(
     initialLocation: '/profile/user/her',
     routes: [
       GoRoute(
         path: '/profile/user/:uid',
-        builder: (_, s) =>
-            PublicProfileScreen(uid: s.pathParameters['uid']!, api: api),
+        builder: (_, s) => PublicProfileScreen(
+          uid: s.pathParameters['uid']!,
+          api: api,
+          seedPhotoUrl: seedPhotoUrl,
+          seedName: seedName,
+        ),
       ),
       GoRoute(
         path: '/dm/:threadId',
@@ -1033,5 +1056,52 @@ void main() {
     final blockedCtx = tester.element(blockedFinder);
     expect(tester.widget<Text>(blockedFinder).style!.color,
         blockedCtx.ac.errorText);
+  });
+
+  // --- NOTE 267 Obs a: other-member loading state is seeded, not flat-dark ----
+
+  testWidgets(
+      'a seeded profile opens on a header skeleton with the cached photo + name, '
+      'not the flat "Loading this profile…" wall', (tester) async {
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    final gate = Completer<http.Response>();
+    await tester.pumpWidget(_app(
+      _gatedApi(gate),
+      seedPhotoUrl: 'https://x/seed_thumb.jpg',
+      seedName: 'Dana',
+    ));
+    await tester.pump(); // initState; profile GET still pending (gated)
+
+    // The seed photo paints immediately (already cached from the Explore card)…
+    final seeded = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .where((w) => w.url == 'https://x/seed_thumb.jpg');
+    expect(seeded, isNotEmpty,
+        reason: 'the loading state shows the seeded hero photo');
+    expect(find.text('Dana'), findsWidgets);
+    // …instead of the flat labelled loader.
+    expect(find.text('Loading this profile…'), findsNothing);
+
+    // Let the gated request resolve (404 → terminal error state, no photos) so
+    // its timeout timer clears; then settle before the test ends.
+    gate.complete(http.Response('no', 404));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+      'without a seed the loading state is the plain labelled loader (no hero)',
+      (tester) async {
+    final gate = Completer<http.Response>();
+    await tester.pumpWidget(_app(_gatedApi(gate)));
+    await tester.pump();
+
+    expect(find.text('Loading this profile…'), findsOneWidget,
+        reason: 'no seed -> the existing flat loader, unchanged');
+
+    gate.complete(http.Response('no', 404));
+    await tester.pumpAndSettle();
   });
 }

@@ -45,12 +45,23 @@ class PublicProfileScreen extends StatefulWidget {
     required this.uid,
     this.api,
     this.dateSims,
+    this.seedPhotoUrl,
+    this.seedName,
   });
 
   static const path = '/profile/user/:uid';
 
   final String uid;
   final ApiClient? api;
+
+  /// Optional handoff from the navigation source (e.g. an Explore card, which
+  /// already has — and has prefetched — this member's primary photo): the photo
+  /// URL and name to paint a real header skeleton while the profile GET is in
+  /// flight, instead of a flat-dark "Loading this profile…" screen (NOTE 267
+  /// Obs a). Generalizable — any caller may pass it; absent, the plain loader
+  /// shows as before. Never per-person special-casing.
+  final String? seedPhotoUrl;
+  final String? seedName;
 
   /// Injectable for tests; defaults to a live [DateSimService]. Used to reopen
   /// a past completed sim with this person instead of starting fresh.
@@ -389,10 +400,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
                   : (p.name.isEmpty ? 'Profile' : p.name);
           Widget content;
           if (snap.connectionState != ConnectionState.done) {
-            // GET /explore/profile/{uid} still in flight.
-            content = const Center(
-              child: AymaWingLoader(lines: AymaLoaderLines.publicProfile),
-            );
+            // GET /explore/profile/{uid} still in flight. When the caller handed
+            // us the member's primary photo (Explore card — already prefetched),
+            // paint a real header skeleton with that photo so the surface never
+            // flashes flat-dark while the tree loads (NOTE 267 Obs a). Otherwise
+            // fall back to the plain loader.
+            final seed = widget.seedPhotoUrl;
+            content = (seed != null && seed.isNotEmpty)
+                ? _LoadingHeader(photoUrl: seed, name: widget.seedName)
+                : const Center(
+                    child: AymaWingLoader(lines: AymaLoaderLines.publicProfile),
+                  );
           } else if (snap.hasError || p == null) {
             content = _Message(
               text: "Couldn't load this profile.",
@@ -556,6 +574,77 @@ class _TitleBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Header skeleton shown while another member's profile GET is in flight, when
+/// the navigation source seeded their primary photo (NOTE 267 Obs a). Mirrors
+/// the real [ProfilePhotoHeader] hero — the same square photo under a bottom
+/// scrim with the name — plus a small spinner, so the surface shows the member
+/// immediately (the seed thumb is already cached from the Explore card, so it
+/// paints at once) and the swap to the loaded header is seamless. If the photo
+/// can't load, [AymaPhoto]'s own neutral tile shows instead of a flat-dark wall.
+class _LoadingHeader extends StatelessWidget {
+  const _LoadingHeader({required this.photoUrl, this.name});
+
+  final String photoUrl;
+  final String? name;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AspectRatio(
+          aspectRatio: 1,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AymaPhoto(url: photoUrl, displayWidth: 400),
+              // Same bottom scrim as the real hero so the name stays legible.
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: [0.45, 1.0],
+                        colors: [Colors.transparent, Colors.black],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              // Still clearly loading — the same wing loader, small, top-right.
+              const Positioned(
+                top: 16,
+                right: 16,
+                child: AymaWingLoader(size: 18, showLabel: false),
+              ),
+              if (name != null && name!.isNotEmpty)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: IgnorePointer(
+                    child: Text(
+                      name!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
