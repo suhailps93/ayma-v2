@@ -139,6 +139,7 @@ def _grounding(ctx: practice_core.PersonaContext) -> dict:
         "age": ctx.age,
         "gender": ctx.gender,
         "location": ctx.location,
+        "headline": ctx.headline,
         "pages": [
             {"title": str(p.get("title") or ""), "body": str(p.get("body") or "")}
             for p in (ctx.pages or [])
@@ -161,6 +162,7 @@ def _ctx_from_doc(uid: str, data: dict) -> practice_core.PersonaContext | None:
         age=g.get("age"),
         gender=str(g.get("gender") or ""),
         location=str(g.get("location") or ""),
+        headline=str(g.get("headline") or ""),
         pages=[
             {"title": str(p.get("title") or ""), "body": str(p.get("body") or "")}
             for p in (g.get("pages") or [])
@@ -180,6 +182,7 @@ def compute_source_hash(ctx: practice_core.PersonaContext) -> str:
         "age": ctx.age,
         "gender": ctx.gender,
         "location": ctx.location,
+        "headline": ctx.headline,
         "photo_count": int(ctx.photo_count or 0),
         "pages": sorted(
             (str(p.get("title") or ""), str(p.get("body") or ""))

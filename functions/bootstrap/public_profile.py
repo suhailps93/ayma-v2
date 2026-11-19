@@ -460,6 +460,11 @@ def build(db, caller_uid: str, other_uid: str) -> dict | None:
         "age": _age(prof.get("birthdate")),
         "gender": str(prof.get("gender") or ""),
         "location": str(prof.get("location") or ""),
+        # The public profile tagline shown under the name (and indexed by
+        # Explore). Viewer-visible; it is where seed personas and most users
+        # carry their occupation, so the practice persona surfaces it to ground
+        # what the match does (founder NOTE 259).
+        "headline": str(prof.get("headline") or ""),
         # Real presence only — see `_is_online`'s docstring.
         "online": _is_online(db, other_uid),
         "photos": photos,

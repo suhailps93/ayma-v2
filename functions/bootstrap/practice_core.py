@@ -137,6 +137,16 @@ class PersonaContext:
     # pronouns (:func:`pronouns_for_gender`), and is surfaced in the persona
     # prompt so the simulated match stays consistent about who they are.
     gender: str = ""
+    # The match's public profile tagline (``profile/main.headline`` — the one
+    # line shown under their name on the profile card and indexed by Explore).
+    # It is where the demo/seed personas and most real users carry their
+    # occupation ("Ceramic artist & art teacher …"), yet it never reached the
+    # persona prompt — so a match whose occupation lives only in the headline
+    # (no career wiki page / graph node) had no job grounding and the model
+    # improvised one (founder NOTE 259: a ceramic artist answered "tech /
+    # marketing"). Viewer-visible, so no privacy concern; surfaced in
+    # :meth:`to_prompt_block` so the simulated match knows what they do.
+    headline: str = ""
     pages: list[dict] = field(default_factory=list)  # [{title, body}]
     # Texting-STYLE exemplars: a capped sample of the user's OWN recent short
     # sent DM messages, used ONLY by :func:`build_self_persona_context` so the
@@ -162,6 +172,11 @@ class PersonaContext:
             lines.append(f"Gender: {self.gender}")
         if self.location:
             lines.append(f"Lives in (city only): {self.location}")
+        if self.headline.strip():
+            lines.append(
+                "Profile tagline (what they do / how they describe themselves — "
+                f"stay consistent with this): {self.headline.strip()}"
+            )
         if self.photo_count:
             lines.append(f"Profile photos: {self.photo_count}")
         for p in self.pages:
@@ -250,6 +265,7 @@ def build_persona_context(
         age=view.get("age"),
         gender=str(view.get("gender") or ""),
         location=str(view.get("location") or ""),
+        headline=str(view.get("headline") or ""),
         pages=pages,
         photo_count=len(photos),
         photo_url=(str(photos[0]) if photos else None),
@@ -445,6 +461,7 @@ def build_self_persona_context(db, uid: str) -> PersonaContext | None:
         age=_age(prof.get("birthdate")),
         gender=str(prof.get("gender") or ""),
         location=str(prof.get("location") or ""),
+        headline=str(prof.get("headline") or ""),
         pages=pages,
         style_exemplars=_gather_self_style_exemplars(db, uid),
         photo_count=len(photos),

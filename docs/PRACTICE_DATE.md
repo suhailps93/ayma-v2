@@ -45,10 +45,23 @@ exclusion is enforced **at query level**, so the forbidden data is never
   from the public bodies that remain.
 - `practice_date.build_persona_context` then **whitelists** only the public
   display `name`, age (computed, never the birthdate), coarse city (never
-  coordinates), public wiki pages, a photo count, and the primary public photo
-  URL (`photo_url`, for the voice-call avatar — photos are public). It reads
-  nothing else about the target — no raw `profile/main` doc, no matches/likes,
-  no contact fields, no other users.
+  coordinates), the public profile `headline` (the tagline shown under the name
+  and indexed by Explore — this is where seed personas and most users carry
+  their occupation), public wiki pages, a photo count, and the primary public
+  photo URL (`photo_url`, for the voice-call avatar — photos are public). It
+  reads nothing else about the target — no raw `profile/main` doc, no
+  matches/likes, no contact fields, no other users.
+
+**The public headline carries the occupation (founder NOTE 259).** A match
+whose job lives only in their `headline` (no public wiki page, no career graph
+node) previously had **no occupation in the persona prompt** — the prompt held
+only name/age/gender/city/photos and tells the model to "improvise small talk"
+for anything else, so the model invented a job (a ceramic artist answered
+"tech/marketing"). `public_profile.build` now returns `headline` and
+`PersonaContext.to_prompt_block` renders it as the match's tagline, so the
+simulated match stays consistent about what they do. The headline is
+viewer-visible (already on the profile card), so this is grounding, not a
+privacy change.
 
 **Display name is public; stored identity fields are protected.** The display
 `name` is the name the member chose to show, so it is public and usable in full
