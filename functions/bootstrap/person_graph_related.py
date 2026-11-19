@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import re
+
 import person_graph as pg
 import person_graph_crosscheck as crosscheck
 import person_graph_index as index_mod
@@ -42,8 +44,30 @@ logger = logging.getLogger("ayma.graph_related")
 
 _JUDGE_PROMPT_PATH = Path(__file__).parent / "prompts" / "related_link_judge.md"
 
+# A node whose entire content is a bare number (a slider seed's raw value, e.g.
+# "4" or "4.5") carries no relational meaning: two such nodes "match" only on the
+# digit (via embedding cosine between near-identical one-token texts), producing
+# noise candidates — e.g. social_energy(4) ↔ capital_vs_experiential(5). These
+# are never real relations, so they are dropped from the candidate set before the
+# judge, and so are neither linked nor raised.
+_BARE_NUMERIC_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+
+
+def _is_bare_numeric(text: str | None) -> bool:
+    return bool(_BARE_NUMERIC_RE.match((text or "").strip()))
+
 # Hard cap on pairs sent to the judge in one run — a bounded, cheap LiveKit spend.
 _JUDGE_CAP = 200
+
+# Pairs judged per LiveKit call. A single call over a large candidate set
+# overflows the JSON completion budget and the reply TRUNCATES
+# (finish_reason=length) — the whole array then fails to parse and EVERY verdict
+# is lost, silently degrading the sweep (the dedupe judge hit the same bug at ~63
+# pairs with a hardcoded max_tokens=1024; fixed by batching in
+# ``person_graph_crosscheck``). Batch so a reply never exceeds its budget; each
+# item carries its own GLOBAL ``i``, so verdicts merge back positionally across
+# batches with no remapping, and one failing batch skips only its own pairs.
+_JUDGE_BATCH = 24
 
 
 @dataclass
@@ -58,6 +82,7 @@ class RelatedReport:
     linked: list[tuple[str, str, str]] = field(default_factory=list)
     raised: list[tuple[str, str, str]] = field(default_factory=list)
     dropped_by_level: int = 0
+    dropped_numeric: int = 0
     dry_run: bool = True
     node_count: int = 0
 
@@ -67,6 +92,7 @@ class RelatedReport:
             "linked": len(self.linked),
             "raised": len(self.raised),
             "dropped_by_level": self.dropped_by_level,
+            "dropped_numeric": self.dropped_numeric,
             "dry_run": self.dry_run,
             "nodes": self.node_count,
         }
@@ -86,35 +112,44 @@ def eligible_pairs(
 
 async def _judge(items: list[dict], *, uid: str | None) -> Optional[dict]:
     """Ask the LiveKit gateway to label each pair related/duplicate/unrelated/
-    uncertain. Returns ``{i: verdict}`` or ``None`` on failure."""
+    uncertain. Returns ``{global_index: verdict}`` or ``None`` on total failure.
+    Pairs are judged in bounded batches so a large candidate set never truncates
+    the reply (the old single call with max_tokens=1024 lost every verdict past
+    ~40 pairs); each item keeps its GLOBAL ``i`` so verdicts merge positionally,
+    and a single failing batch is skipped without discarding the others."""
     import gemini
     from prompt import load_prompt_file
 
-    try:
-        result = await gemini.generate_json(
-            json.dumps(items, ensure_ascii=False),
-            load_prompt_file(_JUDGE_PROMPT_PATH),
-            uid=uid,
-            feature="graph_related",
-            enforce_cap=False,
-            temperature=0.0,
-            max_tokens=1024,
-        )
-    except Exception:  # noqa: BLE001 - best-effort; a judge failure never blocks
-        logger.warning("graph_related: judge failed", exc_info=True)
-        return None
-
-    rows = result if isinstance(result, list) else (result or {}).get("pairs")
-    if not isinstance(rows, list):
-        return None
+    system = load_prompt_file(_JUDGE_PROMPT_PATH)
     out: dict = {}
-    for row in rows:
-        if isinstance(row, dict) and "i" in row:
-            try:
-                out[int(row["i"])] = str(row.get("verdict", "")).strip().lower()
-            except (TypeError, ValueError):
-                continue
-    return out
+    for start in range(0, len(items), _JUDGE_BATCH):
+        chunk = items[start : start + _JUDGE_BATCH]
+        try:
+            # ~48 tokens per verdict object leaves ample headroom over the actual
+            # ~12-18, so this batch's reply never hits finish_reason=length.
+            result = await gemini.generate_json(
+                json.dumps(chunk, ensure_ascii=False),
+                system,
+                uid=uid,
+                feature="graph_related",
+                enforce_cap=False,
+                temperature=0.0,
+                max_tokens=256 + len(chunk) * 48,
+            )
+        except Exception:  # noqa: BLE001 - best-effort; a bad batch never blocks
+            logger.warning("graph_related: judge batch failed", exc_info=True)
+            continue
+        rows = result if isinstance(result, list) else (result or {}).get("pairs")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and "i" in row:
+                try:
+                    out[int(row["i"])] = str(row.get("verdict", "")).strip().lower()
+                except (TypeError, ValueError):
+                    continue
+    # keyed by the global index the caller assigned each pair.
+    return out or None
 
 
 async def sweep_user(
@@ -149,12 +184,23 @@ async def sweep_user(
         if p.key() not in already and p.key() not in dismissed
     ]
 
+    # Drop bare-numeric-seed pairs (a slider value matching another on the digit)
+    # — noise, never a real relation. Done before the level rule and the judge.
+    text_of = {e.node_id: e.text for e in index}
+    kept_numeric = [
+        p for p in candidates
+        if not (_is_bare_numeric(text_of.get(p.a)) or _is_bare_numeric(text_of.get(p.b)))
+    ]
+    dropped_numeric = len(candidates) - len(kept_numeric)
+    candidates = kept_numeric
+
     # LEVEL RULE — both ends must be level 2+.
     candidates, dropped = eligible_pairs(candidates, level_of)
 
     out = RelatedReport(
-        found=len(candidates) + dropped,
+        found=len(candidates) + dropped + dropped_numeric,
         dropped_by_level=dropped,
+        dropped_numeric=dropped_numeric,
         dry_run=dry_run,
         node_count=report.node_count,
     )
