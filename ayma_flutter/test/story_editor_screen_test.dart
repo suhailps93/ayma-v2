@@ -7,6 +7,8 @@ import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
 import 'package:ayma_flutter/services/dev_panel_session.dart';
+import 'package:ayma_flutter/services/main_photo_cache.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
@@ -181,10 +183,16 @@ class _FakeApi extends ApiClient {
 
   Object? failStoryGet;
 
+  /// When set, [storyGet] awaits this before returning — lets a test hold the
+  /// story body in its loading skeleton to observe the cover hero painted in it
+  /// (NOTE 272 Leg 3: the cached thumb must show at 2s, not shimmer).
+  Completer<void>? gateStoryGet;
+
   @override
   Future<StoryData> storyGet() async {
     calls.add('get');
     if (failStoryGet != null) throw failStoryGet!;
+    if (gateStoryGet != null) await gateStoryGet!.future;
     return data;
   }
 
@@ -435,6 +443,10 @@ void main() {
     AymaSession.instance.store.seed(const []);
     isAymaSheetOpen = false;
     isAymaSheetScoped = false;
+    // Main-photo cache is a process singleton — clear it (and the backing
+    // prefs) so a seeded thumb never leaks across tests (NOTE 272 Leg 3).
+    MainPhotoCache.instance.reset();
+    SharedPreferences.setMockInitialValues({});
   });
   testWidgets(
       'the Story screen has neither the Public view nor the Ayma\'s notes tab',
@@ -538,6 +550,77 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('storyCoverLoadingHero')), findsNothing);
+  });
+
+  testWidgets(
+      'NOTE 272 Leg 3: the last-known cached thumb paints the hero in the '
+      'loading skeleton (~2s), not shimmer, then the fresh full hero replaces it',
+      (tester) async {
+    // A previous session saved this user's primary thumb.
+    SharedPreferences.setMockInitialValues(
+        {'ayma_main_photo_thumb_u1': 'https://cdn/cached__thumb_400.jpg'});
+    await MainPhotoCache.instance.load('u1');
+
+    final storyGate = Completer<void>();
+    final profileGate = Completer<void>();
+    final api = _FakeApi()
+      ..gateStoryGet = storyGate // hold the story body in its skeleton
+      ..gatePublicProfile = profileGate // hold the fresh hero GET
+      ..mainPhotos = const ['https://cdn/main-starred.jpg']
+      ..mainThumbs = const ['https://cdn/main-starred__thumb_400.jpg'];
+    await _pumpWithRouter(tester, api);
+
+    // Story body still loading (storyGet pending) — yet the hero already shows
+    // the cached thumb, painted from the on-disk image cache, not shimmer and
+    // not the reserved blank frame.
+    final thumbHero =
+        tester.widget<AymaPhoto>(find.byKey(const Key('storyCoverThumbHero')));
+    expect(thumbHero.url, 'https://cdn/cached__thumb_400.jpg');
+    expect(thumbHero.displayWidth, 400,
+        reason: 'the thumb decodes at its native 400 (plain cache path)');
+    expect(find.byKey(const Key('storyCoverLoadingHero')), findsNothing,
+        reason: 'a cached thumb shows the photo, not a reserved blank');
+
+    // Release both: the fresh full hero replaces the cached thumb (fading over
+    // the fresh thumb), and the fresh thumb is persisted for the next cold open.
+    profileGate.complete();
+    storyGate.complete();
+    await tester.pumpAndSettle();
+    final hero = tester.widget<AymaPhoto>(find.byWidgetPredicate(
+        (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'));
+    expect(hero.placeholderUrl, 'https://cdn/main-starred__thumb_400.jpg');
+    expect(find.byKey(const Key('storyCoverThumbHero')), findsNothing);
+    expect(MainPhotoCache.instance.thumbFor('u1'),
+        'https://cdn/main-starred__thumb_400.jpg',
+        reason: 'the fresh thumb is cached for the next cold open');
+  });
+
+  testWidgets(
+      'NOTE 272 Leg 3: no cached thumb → the skeleton keeps the reserved frame '
+      '(no stale/blank flash), then the fresh hero lands',
+      (tester) async {
+    // No seed in prefs (setUp cleared it).
+    final storyGate = Completer<void>();
+    final profileGate = Completer<void>();
+    final api = _FakeApi()
+      ..gateStoryGet = storyGate
+      ..gatePublicProfile = profileGate
+      ..mainPhotos = const ['https://cdn/main-starred.jpg']
+      ..mainThumbs = const ['https://cdn/main-starred__thumb_400.jpg'];
+    await _pumpWithRouter(tester, api);
+
+    // Loading, no cached thumb: the reserved frame holds the hero's space.
+    expect(find.byKey(const Key('storyCoverLoadingHero')), findsOneWidget);
+    expect(find.byKey(const Key('storyCoverThumbHero')), findsNothing);
+
+    profileGate.complete();
+    storyGate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'),
+      findsOneWidget,
+    );
   });
 
 

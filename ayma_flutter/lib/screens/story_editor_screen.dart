@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../services/app_context.dart';
 import '../services/dev_panel_session.dart';
+import '../services/main_photo_cache.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -378,8 +379,19 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         _photos = const [];
         _webFindingsReport = null;
         _webFindingsLoadedFor = null;
+        // …including the hero, so the previous account's photo can't flash
+        // before this user's cached thumb / fresh GET arrives.
+        _mainPhotoUrl = null;
+        _mainThumbUrl = null;
       }
     });
+    // Fire the main-photo load IN PARALLEL with the story fetch — it used to be
+    // sequenced AFTER `await storyGet()`, so on a cold open the hero GET didn't
+    // even start until the (cold-start-retried) story fetch returned ~12s later,
+    // which is why the hero "rendered by 12s". It seeds the last-known thumb
+    // first so the hero paints at ~2s while both fetches are still in flight
+    // (Scout NOTE 272 Leg 3).
+    unawaited(_seedAndLoadMainPhoto(loadUid));
     try {
       final data = await withColdStartRetry(() => _api.storyGet());
       if (!mounted) return;
@@ -398,7 +410,24 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       });
     }
     unawaited(_loadPhotos());
-    unawaited(_loadMainPhoto());
+  }
+
+  /// Paint the last-known thumb at once (from the on-disk image cache, no
+  /// network), then kick off the authoritative [_loadMainPhoto] GET that
+  /// replaces it with the fresh hero. Split out so the seed-then-fetch runs as
+  /// one parallel unit alongside the story fetch (NOTE 272 Leg 3).
+  Future<void> _seedAndLoadMainPhoto(String loadUid) async {
+    if (loadUid.isEmpty) return;
+    await MainPhotoCache.instance.load(loadUid);
+    // The signed-in user may have changed while the (fast) cache read ran —
+    // never seed a stale uid's thumb.
+    if (mounted && _uid == loadUid && _mainPhotoUrl == null) {
+      final thumb = MainPhotoCache.instance.thumbFor(loadUid);
+      if (thumb != null && thumb.isNotEmpty && _mainThumbUrl == null) {
+        setState(() => _mainThumbUrl = thumb);
+      }
+    }
+    await _loadMainPhoto();
   }
 
   /// Load the shared main photo — the public profile's primary (order-0) photo,
@@ -423,12 +452,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
       // NOTE 268 Leg 3). The server returns the primary photo fine; the fix is
       // to not give up on the first stressed-start miss.
       final p = await withColdStartRetry(() => _api.publicProfile(loadUid));
+      final freshPhoto = p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null;
+      final freshThumb = p.thumbPhotos.isNotEmpty ? p.thumbPhotos.first : null;
+      // Persist the fresh thumb so the NEXT cold open paints it at once; a null
+      // clears a now-stale entry (the user removed their photo).
+      unawaited(MainPhotoCache.instance.save(loadUid, freshThumb));
       if (mounted) {
         setState(() {
-          _mainPhotoUrl =
-              p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null;
-          _mainThumbUrl =
-              p.thumbPhotos.isNotEmpty ? p.thumbPhotos.first : null;
+          _mainPhotoUrl = freshPhoto;
+          // Keep the already-painted seed thumb if the fresh GET somehow has no
+          // thumb variant, so the hero never blanks back from a good thumb.
+          _mainThumbUrl = freshThumb ?? (freshPhoto != null ? _mainThumbUrl : null);
           _mainPhotoLoading = false;
         });
       }
@@ -505,7 +539,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
 
   Widget _content() {
     final ac = context.ac;
-    if (_loading) return const _StorySkeleton();
+    if (_loading) return _StorySkeleton(hero: _loadingHero());
     if (_error != null) {
       return CenteredScroll(
         padding: const EdgeInsets.all(24),
@@ -525,7 +559,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     if (_userChanged) {
       // The signed-in user changed while this Story screen stayed mounted —
       // NEVER paint the previous account's cover stats. Drop them and refetch
-      // for the current user, showing a clean skeleton until it lands.
+      // for the current user, showing a clean skeleton until it lands. No hero
+      // here — a stale uid's photo must never flash across a switch.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _userChanged) _load();
       });
@@ -676,6 +711,24 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
 
   String? _heroThumbUrl() => _mainThumbUrl;
 
+  /// The hero shown inside the loading skeleton (before the story body lands),
+  /// so the cover photo/thumb is visible at ~2s instead of pure shimmer — the
+  /// same `_CoverHero` the loaded cover uses, in its final position. Null when
+  /// there is nothing to show yet (no cached thumb and not loading), so the
+  /// skeleton stays as it was.
+  Widget? _loadingHero() {
+    if (!_CoverHero.hasContent(
+        photoUrl: _mainPhotoUrl,
+        thumbUrl: _mainThumbUrl,
+        loading: _mainPhotoLoading)) {
+      return null;
+    }
+    return _CoverHero(
+      photoUrl: _mainPhotoUrl,
+      thumbUrl: _mainThumbUrl,
+      loading: _mainPhotoLoading,
+    );
+  }
 }
 
 /// Ayma's Notes — "the intelligence beneath the portrait": the full, more
@@ -997,35 +1050,15 @@ class _StoryCover extends StatelessWidget {
           const SizedBox(height: 6),
           Text(subtitle,
               style: AymaType.sans(size: 15, color: ac.fgMute).copyWith(height: 1.4)),
-          if (heroPhotoUrl != null) ...[
+          if (_CoverHero.hasContent(
+              photoUrl: heroPhotoUrl,
+              thumbUrl: heroThumbUrl,
+              loading: heroLoading)) ...[
             const SizedBox(height: 24),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: AspectRatio(
-                aspectRatio: 4 / 3,
-                child: AymaPhoto(
-                  url: heroPhotoUrl!,
-                  displayWidth: 600,
-                  placeholderUrl: heroThumbUrl,
-                  error: Container(color: ac.bgElev),
-                ),
-              ),
-            ),
-          ] else if (heroLoading) ...[
-            // GET still in flight — the hero URL isn't known until it lands, so
-            // reserve the same rounded 4/3 frame with a calm surface rather than
-            // collapsing the area and popping the photo in at ~12s (NOTE 269 Leg
-            // 2). The real hero fades in over its thumb here once resolved.
-            const SizedBox(height: 24),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: AspectRatio(
-                aspectRatio: 4 / 3,
-                child: Container(
-                  key: const Key('storyCoverLoadingHero'),
-                  color: ac.bgElev,
-                ),
-              ),
+            _CoverHero(
+              photoUrl: heroPhotoUrl,
+              thumbUrl: heroThumbUrl,
+              loading: heroLoading,
             ),
           ],
           const SizedBox(height: 24),
@@ -1298,10 +1331,71 @@ class _WebFindingsInterlude extends StatelessWidget {
   }
 }
 
+/// The ONE story cover hero image, in its rounded 4/3 frame — shared by the
+/// loaded cover ([_StoryCover]) and the loading skeleton ([_StorySkeleton]) so
+/// there is exactly one hero implementation and the frame never jumps between
+/// states. Precedence: the full photo (fading over its thumb) › a thumb alone
+/// (the last-known cached thumb, painted at once from the on-disk image cache
+/// while the fresh GET is still in flight — Scout NOTE 272 Leg 3) › a reserved
+/// calm surface while the GET loads with no thumb yet (NOTE 269 Leg 2).
+class _CoverHero extends StatelessWidget {
+  const _CoverHero({this.photoUrl, this.thumbUrl, this.loading = false});
+
+  final String? photoUrl;
+  final String? thumbUrl;
+  final bool loading;
+
+  /// True when there is anything to paint — a photo, a thumb, or a reserved
+  /// frame. False means "resolved, no photo": the caller omits the hero.
+  static bool hasContent({String? photoUrl, String? thumbUrl, bool loading = false}) =>
+      (photoUrl != null && photoUrl.isNotEmpty) ||
+      (thumbUrl != null && thumbUrl.isNotEmpty) ||
+      loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final ac = context.ac;
+    final Widget inner;
+    if (photoUrl != null && photoUrl!.isNotEmpty) {
+      // Full hero, fading in over its thumb.
+      inner = AymaPhoto(
+        url: photoUrl!,
+        displayWidth: 600,
+        placeholderUrl: thumbUrl,
+        error: Container(color: ac.bgElev),
+      );
+    } else if (thumbUrl != null && thumbUrl!.isNotEmpty) {
+      // Cached thumb alone (fresh GET still in flight). Decode at 400 — the
+      // thumb's native size — so it stays on the plain (non-resize) cache path
+      // and reuses the exact on-disk entry, painting at once. It upscales a
+      // touch to fill the 600-wide hero; the full photo replaces it when the
+      // GET lands.
+      inner = AymaPhoto(
+        key: const Key('storyCoverThumbHero'),
+        url: thumbUrl!,
+        displayWidth: 400,
+        error: Container(color: ac.bgElev),
+      );
+    } else {
+      // Loading, no thumb yet — reserve the frame with a calm surface.
+      inner = Container(key: const Key('storyCoverLoadingHero'), color: ac.bgElev);
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: AspectRatio(aspectRatio: 4 / 3, child: inner),
+    );
+  }
+}
+
 // --- tasteful loading skeleton -------------------------------------------
 
 class _StorySkeleton extends StatelessWidget {
-  const _StorySkeleton();
+  const _StorySkeleton({this.hero});
+
+  /// Optional hero cover painted in its final position (after the title/subtitle
+  /// bars), so the cover photo/thumb is visible while the story body still
+  /// loads — the hero area is never just shimmer at 2s (NOTE 272 Leg 3).
+  final Widget? hero;
 
   @override
   Widget build(BuildContext context) {
@@ -1319,8 +1413,11 @@ class _StorySkeleton extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(24, 20, 24, 48),
       physics: const NeverScrollableScrollPhysics(),
       children: [
-        bar(180, 40),
-        bar(260, 16),
+        bar(180, 40), // title ("Your Story")
+        bar(260, 16), // subtitle
+        // The real hero in its final position (after title/subtitle), so the
+        // cover photo/thumb shows while the story body is still loading.
+        if (hero != null) ...[const SizedBox(height: 24), hero!],
         const SizedBox(height: 24),
         bar(220, 12),
         const SizedBox(height: 12),

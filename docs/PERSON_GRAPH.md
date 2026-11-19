@@ -1872,6 +1872,37 @@ inference untouched, still LiveKit):
     grid width 260, not 400), `story_editor_screen_test.dart` (while the gated
     cover GET is in flight the reserved hero frame is present and the hero photo
     is not, then the hero fades into it once the GET lands).
+- **Why the story hero still showed only shimmer at 2s — two gaps the NOTE 269
+  reservation could not reach (NOTE 272, build 2524).** The 2524 retest found the
+  seeded Explore header PASS but the story hero thumb never visible at 2s — only
+  the skeleton's shimmer bars — though the hero rendered by ~12s. Two causes, both
+  in `story_editor_screen.dart`:
+  - **(a) The hero load was sequenced behind the story fetch.** `_loadMainPhoto`
+    was fired *after* `await storyGet()`, and `storyGet` is itself
+    cold-start-retried — so on a cold open the hero GET did not even start until
+    the story body returned (~12s), which is exactly why "the hero rendered by
+    12s". Fix: fire it in parallel with the story fetch (`_seedAndLoadMainPhoto`),
+    so it races instead of waiting.
+  - **(b) At 2s the cover was not even on screen — the whole screen was the
+    top-level `_StorySkeleton` (pure text-bar shimmer, no hero area) while
+    `storyGet` was still in flight.** And the thumb URL only arrives with the
+    (cold) `publicProfile` GET, so on a cold backend *no* request can deliver the
+    thumb by 2s. Fix: a tiny per-user persistent cache of the **last-known thumb
+    URL** (`MainPhotoCache`, `shared_preferences`) — the thumb's *bytes* already
+    survive a force-stop in `cached_network_image`'s on-disk cache (keyed by URL),
+    so the cached URL paints the hero from disk with no network, at ~2s. The hero
+    is now rendered *inside* the skeleton (one shared `_CoverHero` widget, in its
+    final position after the title/subtitle bars), so the cached thumb shows while
+    the body loads; the fresh `publicProfile` result then replaces it (the fresh
+    full photo fading over its fresh thumb) and re-persists the thumb for the next
+    cold open. Keyed by uid (never a previous account's photo); a stale cached
+    thumb (the user changed their primary) is replaced within the same open. No
+    cached thumb → the NOTE 269 reserved frame, unchanged.
+  - Tests: `main_photo_cache_test.dart` (save/load/clear, uid-keyed, no
+    cross-user leak), `story_editor_screen_test.dart` (a cached thumb paints the
+    `_CoverHero` in the loading skeleton at the grid width 400 and is not the
+    reserved blank, then the fresh full hero replaces it and the fresh thumb is
+    persisted; and with no cache the reserved frame still holds).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
