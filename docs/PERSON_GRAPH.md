@@ -304,7 +304,16 @@ verifies each step. Nothing irreversible (no deletes) in Phases 5/6b.
       Your Story body because the dev flag (`graph_show_ai_only`, kept ON) put
       every `ayma_only` node, images included, on the owner story surface.
       (Privacy P0: `ayma_only` is never on the story body, public or a shared
-      surface.) *Before the retention change the delete was a hard erase —
+      surface.) **Owner-visibility split (Scout NOTE 256, build 2509):** the two
+      facets are independent — hidden from the body, but the OWNER must still
+      find a retained image. The owner Photos path (`/story/photos` →
+      `image_nodes_for_view`) already returns `ayma_only` (only `public_only`
+      drops it); the `node_tree` body filter is a separate path and does not
+      touch it. The Story **Photos section** shows the labelled `AYMA-ONLY`
+      group only when the Developer panel is unlocked
+      (`DevPanelSession.unlocked`, `story_editor_screen.dart`) — sourced from the
+      full photo list, not `_livePhotos`; Ayma's Notes always surfaces it. A
+      locked/normal user never sees the group. *Before the retention change the delete was a hard erase —
       `delete_nodes` removed the overlay node with no copy, and nothing in the
       graph, subcollections or any history/audit store kept the bytes or storage
       ref, so a deleted Ayma-only image was unrecoverable.* **Follow-up (not done):** the live wiring —

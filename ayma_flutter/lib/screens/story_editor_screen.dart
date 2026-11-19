@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/dev_panel_session.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -479,9 +480,18 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     }
 
     final rows = _narrativeSections;
-    final photos = _livePhotos;
-    final photoGroupsForView =
-        photoGroups.where((g) => g.$1 != 'ayma_only').toList();
+    // With the Developer panel UNLOCKED, the owner's Photos view ALSO surfaces
+    // the retained Ayma-only images under the labelled "Ayma-only" group, so a
+    // deleted-but-retained photo (which moves to ayma_only) stays findable here
+    // and in Ayma's Notes (Scout NOTE 256 owner-visibility facet). They still
+    // NEVER render on the story BODY or any public/shared surface — the story
+    // body tree drops ayma_only images backend-side, and a normal (locked) user
+    // never sees this group (`_livePhotos`/`photoGroupsForView` exclude it).
+    final devUnlocked = DevPanelSession.instance.unlocked.value;
+    final photos = devUnlocked ? _photos : _livePhotos;
+    final photoGroupsForView = devUnlocked
+        ? photoGroups
+        : photoGroups.where((g) => g.$1 != 'ayma_only').toList();
 
     // The merged face/body/physical-profile card belongs in the Story like
     // any other private content. The owner-only full report and provenance
