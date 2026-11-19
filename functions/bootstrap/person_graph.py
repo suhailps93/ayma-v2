@@ -131,6 +131,22 @@ STANDARD_FIELDS: dict[str, dict[str, Any]] = {
 }
 
 
+# The standard rows the public-profile PHOTO HEADER already shows (name / age /
+# location). Re-rendering them as About Me bullets shows each twice (founder
+# build 2509: the header shows name/33/San Jose, About Me repeated 33/San Jose),
+# so every PUBLIC-profile surface that sits under that photo header suppresses
+# them — both the Node-Visualiser tree (``person_graph_tree.node_tree`` on
+# ``SURFACE_PUBLIC``) and the public Living Report
+# (``person_graph_render.public_sections``). A render-placement rule, not a
+# data/visibility change: the nodes are untouched and still render on every
+# owner surface that has no photo header (Your Story keeps these rows). This is
+# the single source for the set; the two render paths import it rather than
+# each defining their own literal (NOTE 261 follow-on).
+HEADER_FIELD_IDS = frozenset(
+    {"legal_first_name", "date_of_birth", "primary_location"}
+)
+
+
 def is_standard(node_id: str) -> bool:
     """True when ``node_id`` is a known structured (standard) field."""
     return node_id in STANDARD_FIELDS

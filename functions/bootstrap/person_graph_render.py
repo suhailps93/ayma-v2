@@ -305,6 +305,7 @@ def _sections_with_bullets(
     keep: set[str],
     *,
     drop_report_nodes: bool = False,
+    drop_header_fields: bool = False,
 ) -> dict[str, list[dict]]:
     by_section: dict[str, list[dict]] = {}
     seen_texts: set[str] = set()
@@ -312,6 +313,14 @@ def _sections_with_bullets(
         if not _is_renderable(n):
             continue
         if drop_report_nodes and node_page_type(n) in _REPORT_PAGE_TYPES:
+            continue
+        # The public profile sits under a photo header that already shows
+        # name/age/location, so the public render drops those standard rows to
+        # avoid showing each twice — the same placement rule the Node-Visualiser
+        # tree applies on its public surface (shared set, NOTE 261 follow-on).
+        # Owner surfaces (Your Story, persona/grounding) have no photo header
+        # and keep the rows.
+        if drop_header_fields and n.id in pg.HEADER_FIELD_IDS:
             continue
         bullets = _node_bullets(n, keep)
         deduped = []
@@ -365,7 +374,9 @@ def public_sections(graph: dict[str, GraphNode]) -> list[dict]:
     ``public_profile.public_bullet_sections``:
     ``[{page_id, page_type, title, bullets: [str, ...]}]``."""
     keep = {_VIS_PUBLIC}
-    by_section = _sections_with_bullets(graph, keep, drop_report_nodes=True)
+    by_section = _sections_with_bullets(
+        graph, keep, drop_report_nodes=True, drop_header_fields=True
+    )
     out: list[dict] = []
     for pt in question_tree.ordered_page_types():
         bullets = [b["text"] for b in by_section.get(pt, [])]

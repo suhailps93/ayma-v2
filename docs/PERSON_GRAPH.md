@@ -1646,6 +1646,27 @@ inference untouched, still LiveKit):
     (`test_public_profile_omits_header_fields_from_about_me`,
     `test_story_keeps_header_fields_in_about_me`,
     `test_interested_in_renders_under_looking_for_not_about_me`).
+  - **The header de-dup must be applied in TWO public render paths, not one
+    (NOTE 261 follow-on, build 2513).** The 2509 fix above only touched
+    `person_graph_tree.node_tree` — the Node-Visualiser *tree* surface
+    (`GET /profile/graph/tree/{uid}`). But the public-profile SCREEN's main body
+    is a **Living Report**: `public_profile_screen.dart` → `_api.publicProfile`
+    → `report_hub` (`public_profile` / `story_public`) → `report_adapters.
+    _public_bullet_sections` → `public_profile.public_bullet_sections` →
+    `person_graph_render.public_sections(graph)`. That second path did NOT
+    suppress the header rows, so About Me still repeated name/age/location on the
+    screen Scout tests. The fix: `person_graph_render.public_sections` now passes
+    `drop_header_fields=True` into `_sections_with_bullets`, skipping
+    `person_graph.HEADER_FIELD_IDS` on the public render only (Your Story /
+    persona / grounding keep the rows — no photo header). The set is defined once
+    in `person_graph.HEADER_FIELD_IDS` and imported by both
+    `person_graph_tree._HEADER_FIELD_IDS` and the render path, so the two public
+    surfaces cannot drift. The `target_match_genders` → `looking_for` section
+    move (above) is honored by this path with no extra code, because the seed
+    `section` is read from `question_tree.json`'s `page_type`. Tests:
+    `functions/bootstrap/tests/test_person_graph_render.py`
+    (`test_note261_public_profile_dedups_header_and_moves_interested_in`,
+    `test_note261_your_story_keeps_header_rows_no_photo_header`).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
