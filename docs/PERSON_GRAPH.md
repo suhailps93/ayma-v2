@@ -1665,8 +1665,44 @@ inference untouched, still LiveKit):
     move (above) is honored by this path with no extra code, because the seed
     `section` is read from `question_tree.json`'s `page_type`. Tests:
     `functions/bootstrap/tests/test_person_graph_render.py`
-    (`test_note261_public_profile_dedups_header_and_moves_interested_in`,
-    `test_note261_your_story_keeps_header_rows_no_photo_header`).
+    (`test_note261_your_story_keeps_header_rows_no_photo_header`).
+  - **The id-based drop missed the real leak: editor-identity DUPLICATES
+    (NOTE 263, build 2515 → fix).** The 2513 follow-on skipped only
+    `n.id in HEADER_FIELD_IDS`. But the bullets that actually render in About Me
+    on the live profile are not those canonical nodes — they are
+    `emergent.editor.identity.*` DUPLICATES a header import left behind
+    (`.0` = "Age: 29", `.1` = "Gender identity: Man", `.4` = "Interested in:
+    Women"). Their ids are not in `HEADER_FIELD_IDS`, so the id drop never matched
+    them, and because the global text-dedup saw the identity-section
+    "Interested in: Women" duplicate FIRST, it suppressed the canonical
+    `target_match_genders` bullet in `looking_for` — so that section vanished
+    entirely. (The 2515 in-memory test used synthetic canonical-id nodes, so it
+    passed while the real fixture shape slipped past — verified live against
+    `users/demo-test1/graph/main` on ayma-staging.) The fix routes EVERY node on
+    the public surface through one predicate,
+    `person_graph_render._public_fact_placement(graph, node)`, which returns
+    `drop` / `move`/`keep`:
+      - a header fact (name/age/location) — the canonical seed node OR an
+        editor-owned emergent duplicate of one (matched by the FACT it restates
+        via `_editor_restated_standard` → the high-precision
+        `text_restates_standard_fact`, not by id) — is **dropped** (the photo
+        header shows it);
+      - an editor-owned emergent duplicate of a NON-header standard fact in the
+        wrong section (the `identity` "Interested in: …" duplicate of the
+        `looking_for` `target_match_genders`) is **moved** to that fact's
+        canonical section, so What I'm Looking For appears with it even when the
+        section's own canonical bullets are private, and About Me loses it;
+      - an editor-owned emergent duplicate of a same-section standard fact (a
+        second "Gender identity: Man" beside the canonical Gender row) is
+        **dropped** — the canonical standard node is the single source for that
+        row. **Gender is NOT a header field** (the photo header shows only
+        name/age/location, and the Flutter client never reads the top-level
+        `gender` payload field), so Gender still renders in About Me exactly once,
+        from the canonical node — removing it would erase gender from the public
+        profile. Tests:
+        `functions/bootstrap/tests/test_person_graph_render.py`
+        (`test_note263_editor_identity_duplicates_drop_and_relocate_real_fixture`,
+        `test_note263_interested_in_relocates_even_when_canonical_is_private`).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
