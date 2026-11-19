@@ -175,10 +175,10 @@ def test_face_report_node_is_gist_first(monkeypatch):
 # --- 3. web-research node (deep-dive findings) ------------------------------
 
 
-def test_web_findings_node_is_gist_first(monkeypatch):
-    """A representative deep-dive digest (as the gist-first digest prompt would
-    return it, carrying its own `gist`) lands as the web-findings node with that
-    headline, and the long findings body in the answer."""
+def test_web_findings_lands_as_per_element_nodes(monkeypatch):
+    """Founder Nov 18: a web search no longer lands as ONE gist-first lump node —
+    each fact/summary sentence is its own source-tagged node, so tapping a web
+    finding opens that finding only. (Full coverage: test_web_findings_nodes.py.)"""
     _reads_on(monkeypatch)
     db = FakeDb()
     digest = {
@@ -187,27 +187,33 @@ def test_web_findings_node_is_gist_first(monkeypatch):
         "summary": "Dana is a product designer based in Lisbon.",
         "confidence": "high",
         "facts": [
-            {"claim": "Designer at Figma", "category": "work", "confidence": "high"}
+            {"claim": "Designer at Figma", "category": "work", "confidence": "high",
+             "source_url": "https://example.com/figma"}
         ],
         "links": [{"url": "https://example.com/dana", "is_them": "likely"}],
     }
     skill_memory.save_web_findings(db, "u1", digest)
-    node = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.web_findings"]
-    assert node.gist == digest["gist"]
-    assert _is_short(node.gist)
-    assert "Facts found" in node.answer  # the long essay body stays in answer
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.web_findings" not in overlay  # no lump
+    fact_ids = [i for i in overlay if i.startswith("emergent.webfind.fact.")]
+    assert fact_ids
+    assert overlay[fact_ids[0]]["answer"] == "Designer at Figma"
+    assert overlay[fact_ids[0]]["source_kind"] == "web_search"
+    assert overlay[fact_ids[0]]["source_ref"] == "https://example.com/figma"
 
 
-def test_web_findings_gist_falls_back_without_llm_gist(monkeypatch):
-    """A digest with no `gist` (older writer / sparse result) still gets a short
-    deterministic headline rather than an empty one."""
+def test_web_findings_summary_sentence_is_a_node(monkeypatch):
+    """A sparse digest (summary only) still splits its summary into per-sentence
+    nodes rather than a single lump."""
     _reads_on(monkeypatch)
     db = FakeDb()
     digest = {"name": "Sam Okafor", "summary": "Little found.", "confidence": "low"}
     skill_memory.save_web_findings(db, "u1", digest)
-    node = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.web_findings"]
-    assert _is_short(node.gist)
-    assert "Sam Okafor" in node.gist
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.web_findings" not in overlay
+    summary_ids = [i for i in overlay if i.startswith("emergent.webfind.summary.")]
+    assert summary_ids
+    assert overlay[summary_ids[0]]["answer"] == "Little found."
 
 
 # --- writer-contract guards (the json writers emit a gist field) ------------
@@ -292,12 +298,15 @@ def test_report_and_web_nodes_get_a_card_visual(monkeypatch):
     assert face.visual["type"] == "card"
     assert face.visual["params"]["title"] == "Above average"
 
+    # Web findings are now per-element nodes (founder Nov 18), not one card lump:
+    # each finding renders as its own plain bullet (gist_row), source-tagged.
     skill_memory.save_web_findings(db, "u1", {
         "name": "Dana", "gist": "Designer in Lisbon", "summary": "Short.",
     })
-    web = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.web_findings"]
-    assert web.visual["type"] == "card"
-    assert web.visual["params"]["body"] == "Short."
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.web_findings" not in overlay
+    web_ids = [i for i in overlay if i.startswith("emergent.webfind.summary.")]
+    assert web_ids and overlay[web_ids[0]]["source_kind"] == "web_search"
 
 
 def test_match_report_schema_requires_a_gist():
