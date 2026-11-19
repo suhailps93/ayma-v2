@@ -994,8 +994,9 @@ void main() {
   });
 
   testWidgets(
-      'Text gutter: non-self unblocked profile reserves a 64px rail gutter on '
-      'the body, while self or blocked profile reserves 0px', (tester) async {
+      'Text gutter: non-self unblocked profile reserves a 96px gutter on '
+      'the body (16 column + 80 rail footprint), while self or blocked profile '
+      'reserves the 16px column gutter only', (tester) async {
     // The gutter is now the Padding wrapping the Node-Visualiser body
     // (GraphTreeView) in ProfileBody; its right inset == the reserved gutter.
     double bodyRightGutter(WidgetTester t) {
@@ -1009,19 +1010,21 @@ void main() {
     }
 
     // 1. Non-self unblocked profile (rail mounted)
+    // JOBSUI: body right gutter now clears the rail — 16 column gutter + rail
+    // footprint (width 64 + 16 inset) = 96.
     await tester.pumpWidget(_app(_api(_profile())));
     await tester.pumpAndSettle();
-    expect(bodyRightGutter(tester), 64.0);
+    expect(bodyRightGutter(tester), 96.0);
 
-    // 2. Self view (no rail mounted)
+    // 2. Self view (no rail mounted) — only the 16px column gutter remains.
     await tester.pumpWidget(_app(_api(_profile(self: true))));
     await tester.pumpAndSettle();
-    expect(bodyRightGutter(tester), 0.0);
+    expect(bodyRightGutter(tester), 16.0);
 
-    // 3. Blocked view (no rail mounted)
+    // 3. Blocked view (no rail mounted) — only the 16px column gutter remains.
     await tester.pumpWidget(_app(_api(_profile(blocked: true))));
     await tester.pumpAndSettle();
-    expect(bodyRightGutter(tester), 0.0);
+    expect(bodyRightGutter(tester), 16.0);
 
     // Jobs pass (cluster 16, defect 9): the blocked message reads in the
     // contrast-safe errorText token, not raw AymaColors.error.

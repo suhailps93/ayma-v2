@@ -339,8 +339,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final banner = tester.widget<MaterialBanner>(find.byType(MaterialBanner));
+    // JOBSUI: banner start edge moved 20 -> 16 to share the unified 16px gutter.
     expect(banner.padding,
-        const EdgeInsetsDirectional.only(start: 20, top: 2));
+        const EdgeInsetsDirectional.only(start: 16, top: 2));
 
     // Local Size(0,44) override removed (T3); the app theme now renders Review
     // at 48 (padded tap target), clearing the 44 floor.
