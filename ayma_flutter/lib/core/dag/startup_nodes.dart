@@ -12,6 +12,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../firebase_options.dart';
+import '../firebase_config_guard.dart';
 import '../../models/boot_config.dart';
 import '../../routing/app_router.dart';
 import '../../routing/entry.dart';
@@ -176,6 +177,13 @@ class StartupNodes {
         } catch (e) {
           debugPrint('[N7:firebase_core] initializeApp warning: $e');
         }
+        // Catch a mis-built APK whose native google-services project differs
+        // from the Dart firebase_options project: the native `[DEFAULT]` app
+        // wins, so tokens are minted for the wrong project and every authed
+        // call 401s. Record the diagnostic here (runs regardless of the init
+        // warning above); the splash surfaces it as an honest, blocking error
+        // instead of a silent sign-in loop (Scout NOTE 263).
+        FirebaseConfigGuard.instance.evaluate();
       },
     );
   }

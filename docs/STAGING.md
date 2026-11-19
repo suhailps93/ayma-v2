@@ -88,7 +88,23 @@ secret):
 
 Verify the artifact before delivery: `strings`/`aapt dump` the APK must show
 `ayma-staging` for the Firebase project **and** the staging API host, never
-`ayma-ai`. **Standing rule (from the 4264706 failure): Scout bench-verifies the
+`ayma-ai`. The two Firebase axes live in **different parts** of the APK and must
+BOTH be staging — check them separately (Scout NOTE 263, build 2515: a mixed
+APK had Dart=staging but native=prod, so every authed call 401'd):
+
+    unzip -p app.apk resources.arsc        | strings | grep -oE '1:[0-9]+:android:[a-z0-9]+'   # NATIVE (google-services) — the one that mints tokens
+    unzip -p app.apk lib/arm64-v8a/libapp.so | strings | grep -oE '1:[0-9]+:android:[a-z0-9]+'   # DART (firebase_options)
+
+The **native** id is authoritative: on Android it auto-creates the `[DEFAULT]`
+FirebaseApp before Dart runs, so a prod native config mints prod-aud tokens even
+when `firebase_options.dart` is staging. Staging = `1:187469876115:…`
+(ayma-staging); prod = `1:235381544962:…` (ayma-ai). If they disagree the APK is
+mis-built — rebuild with `scripts/build-apk.sh --staging` (don't ship a plain
+`flutter build apk`, which bakes the repo-default **prod** `google-services.json`).
+At runtime `FirebaseConfigGuard` (startup DAG N7 → splash) now catches this
+mismatch and shows an honest blocking diagnostic instead of a silent
+401→sign-in loop — so a mixed APK fails loud, but the fix is still to install a
+correctly built one. **Standing rule (from the 4264706 failure): Scout bench-verifies the
 exact staging artifact on the emulator — sign in, cold start, chat history, no
 error block — before it is offered to the founder. No exceptions.**
 
