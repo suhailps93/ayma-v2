@@ -5502,12 +5502,19 @@ class AppearanceEligibility {
     this.body = const [],
     this.hasFacePhoto = false,
     this.hasBodyPhoto = false,
+    this.hasUnconfirmedPhotos = false,
   });
 
   final List<EligiblePhoto> face;
   final List<EligiblePhoto> body;
   final bool hasFacePhoto;
   final bool hasBodyPhoto;
+
+  /// True when the caller has grid photos that are NOT confirmed to be them
+  /// (`is_user != "yes"`), so none can be analysed yet. Lets the pre-run sheet
+  /// tell "no photos at all" apart from "photos exist but none are confirmed
+  /// as you" and show the honest confirm-a-photo prompt (NOTE 263 Item 3).
+  final bool hasUnconfirmedPhotos;
 
   static List<EligiblePhoto> _group(dynamic v) => (v as List? ?? const [])
       .whereType<Map>()
@@ -5521,6 +5528,7 @@ class AppearanceEligibility {
         body: _group(m['body']),
         hasFacePhoto: m['has_face_photo'] == true,
         hasBodyPhoto: m['has_body_photo'] == true,
+        hasUnconfirmedPhotos: m['has_unconfirmed_photos'] == true,
       );
 }
 

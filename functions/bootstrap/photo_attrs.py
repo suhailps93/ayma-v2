@@ -267,7 +267,15 @@ def eligibility(db, uid: str) -> dict:
         "body": [],
         "has_face_photo": False,
         "has_body_photo": False,
+        # True when the user HAS grid photos that would otherwise be analysable
+        # (solo, not a group) but which are not CONFIRMED to be them
+        # (``is_user != "yes"``) — so the pre-run sheet can tell "no photos at
+        # all" apart from "photos exist but none are confirmed as you" and show
+        # the honest confirm-a-photo prompt instead of a bare empty state
+        # (NOTE 263 Item 3). The run path drops exactly these same photos.
+        "has_unconfirmed_photos": False,
     }
+    unconfirmed = 0
     try:
         prof = (
             db.collection("users")
@@ -324,6 +332,13 @@ def eligibility(db, uid: str) -> dict:
         # is the media's stored `is_user` (the same signal the image node's
         # is_you carries: "yes" iff the face matched the account).
         is_user = str(media.get("is_user") or "").strip().lower()
+        # A solo (non-group) photo that isn't yet confirmed as the user is NOT
+        # analysable (the is-you safety rule, same filter the run path applies),
+        # but it means the user does have photos to confirm — surface that so
+        # the sheet shows an honest "confirm a photo is you" prompt rather than
+        # implying the user has no photos at all (NOTE 263 Item 3).
+        if not multi_person and is_user != "yes":
+            unconfirmed += 1
         if multi_person or is_user != "yes":
             continue
         # has_* stay the honest coverage signal (a real usable-for-axis photo
@@ -361,6 +376,7 @@ def eligibility(db, uid: str) -> dict:
             out["face"].append({**base, "auto_select": solo and uf})
         if ub or not uf:
             out["body"].append({**base, "auto_select": solo and ub})
+    out["has_unconfirmed_photos"] = unconfirmed > 0
     return out
 
 
