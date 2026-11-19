@@ -42,6 +42,38 @@ def test_extensionless_known_image_cdn_kept():
         assert wpf.is_renderable_image_url(u) is True, u
 
 
+def test_insider_extensionless_image_kept():
+    # NOTE 258: i.insider.com serves a real JPEG on an extensionless slug URL;
+    # the over-aggressive extension heuristic was dropping it. It must be kept,
+    # both via the explicit allowlist host and the image-subdomain rule.
+    for u in [
+        "https://i.insider.com/632abc1def2345678",
+        "https://i.insider.com/5f0a?width=1000&format=jpeg&auto=webp",
+    ]:
+        assert wpf.is_renderable_image_url(u) is True, u
+
+
+def test_extensionless_image_subdomains_kept():
+    # Generalized: a leading image-host subdomain fronts extensionless images.
+    for u in [
+        "https://media.nngroup.com/media/editor/2023/x",
+        "https://img.example.com/a/b/c",
+        "https://images.example.org/xyz?sig=1",
+        "https://cdn.example.net/transform/abc",
+    ]:
+        assert wpf.is_renderable_image_url(u) is True, u
+
+
+def test_insider_www_article_page_dropped():
+    # The article host (www.insider.com) is NOT an image host — adding
+    # i.insider.com must not accidentally keep its extensionless pages.
+    for u in [
+        "https://www.insider.com/some-article-2024-1",
+        "https://www.businessinsider.com/profile/jane-doe",
+    ]:
+        assert wpf.is_renderable_image_url(u) is False, u
+
+
 def test_garbage_and_non_http_rejected():
     for u in ["", "   ", "ftp://host/x.jpg", "data:image/png;base64,AAAA", "not a url"]:
         assert wpf.is_renderable_image_url(u) is False, u

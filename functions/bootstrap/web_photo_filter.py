@@ -10,13 +10,19 @@ can only fail on, showing a broken-image tile.
 
 :func:`is_renderable_image_url` is the cheap, pure gate that keeps those obvious
 *page* URLs out of the photo set, while letting real image URLs through — a
-path ending in a known image extension, or a known image-CDN/transform host
-that serves extensionless image URLs. It deliberately does **not** try to catch
-a host that *is* a real image but blocks hotlinking (``cdn.sanity.io`` /
-``framerusercontent.com`` / ``media.nngroup.com`` serve a valid image to the
-collector yet 403 a client) — that class can only be known at render time and
-is handled by the client's clean error fallback, not here. Dropping only the
-unmistakable non-image page URLs keeps every legitimate photo rendering.
+path ending in a known image extension, a known image-CDN/transform host, or an
+*image-host subdomain* (``i.insider.com``, ``media.nngroup.com``) that serves
+extensionless image URLs. It errs toward KEEPING: it deliberately does **not**
+try to catch a host that *is* a real image but blocks hotlinking (``cdn.sanity.
+io`` / ``framerusercontent.com`` / ``media.nngroup.com`` serve a valid image to
+the collector yet 403 a client), nor a URL that is image-shaped but returns an
+HTTP error on download (NOTE 258: ``spenet`` 402 / ``brightervision`` 404) —
+those can only be known at render/fetch time and are handled downstream (the
+collector's :func:`deep_dive_images._fetch_image` drops HTTP errors; the
+client's clean error fallback covers a hotlink block). Dropping only the
+unmistakable non-image page URLs keeps every legitimate photo rendering —
+including a valid JPEG on an extensionless slug URL (NOTE 258: ``i.insider.com``
+was wrongly dropped by a missing-extension-alone heuristic).
 """
 
 from __future__ import annotations
@@ -43,7 +49,22 @@ _IMAGE_HOSTS = (
     "cloudinary.com", "imgix.net", "staticflickr.com", "cloudfront.net",
     "akamaized.net", "sanity.io", "framerusercontent.com", "substackcdn.com",
     "ytimg.com", "wp.com", "unsplash.com", "pexels.com",
+    # Business Insider / Insider serve real JPEGs on this extensionless image
+    # host (``i.insider.com/<slug>?width=…&format=jpeg``). Named explicitly so
+    # it is never confused with the ``www.insider.com`` article pages.
+    "i.insider.com",
 )
+# Host *subdomains* that conventionally front an image/CDN origin and serve
+# extensionless image URLs (``i.insider.com``, ``media.nngroup.com``,
+# ``img.example.com``). When the first host label is one of these, an
+# extensionless URL is kept — it is almost always a transformed image, and the
+# client's error fallback covers the rare miss. Page URLs that must stay
+# dropped (``openalex.org``, ``www.cockcroft.ac.uk``, ``www.tuwien.at``,
+# ``www.maxiv.lu.se``) are apex/``www`` hosts and never match here.
+_IMAGE_SUBDOMAINS = {
+    "i", "img", "imgs", "image", "images", "pic", "pics", "photo", "photos",
+    "media", "cdn", "static", "assets", "thumb", "thumbs",
+}
 
 
 def is_renderable_image_url(url: str) -> bool:
@@ -71,11 +92,14 @@ def is_renderable_image_url(url: str) -> bool:
         return False
     if ext in _IMAGE_EXTS:
         return True
-    # No image extension: keep it only when the host is a known image CDN that
-    # serves extensionless image URLs, or the query carries an explicit image
-    # hint. Everything else (openalex.org/W…, *.ac.uk/people/…, *.at/…) is a
-    # page URL and is dropped.
+    # No image extension: keep it when the host is a known image CDN, when its
+    # leading label is an image-host subdomain (``i.insider.com`` →  ``i``), or
+    # when the query carries an explicit image hint. Everything else
+    # (openalex.org/W…, www.cockcroft.ac.uk/people/…, www.tuwien.at/…) is a
+    # ``www``/apex page URL and is dropped.
     if any(host == h or host.endswith("." + h) for h in _IMAGE_HOSTS):
+        return True
+    if host.split(".", 1)[0] in _IMAGE_SUBDOMAINS:
         return True
     query = (parsed.query or "").lower()
     if "format=image" in query or "imgurl=" in query:
