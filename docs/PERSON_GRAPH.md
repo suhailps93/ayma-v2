@@ -1773,6 +1773,28 @@ inference untouched, still LiveKit):
   hung full-res; null/equal-URL keep the flat tile, no self-wait),
   `carousel_node_visualiser_test.dart` (hero wires the aligned thumb; null without
   a distinct thumb list).
+- **Two more hero surfaces the carousel fix didn't reach (NOTE 267, build 2520).**
+  The NOTE 266 fix covered only the profile hero carousel. Two sibling surfaces
+  still flashed flat-dark:
+  - **(a) Other-member profile opens on a flat-dark "Loading this profile…"**
+    (`PublicProfileScreen`, from Explore). The progressive thumb can't paint
+    because the photo URLs arrive with the still-in-flight `GET /explore/profile/{uid}`.
+    Fix: a generalizable seed handoff — `PublicProfileScreen` gained
+    `seedPhotoUrl` + `seedName`; while the GET is in flight and a seed is present
+    it renders a real header skeleton (`_LoadingHeader`: the square photo + bottom
+    scrim + name + small spinner) that paints the seed photo, which the Explore
+    card already prefetched (so it's instant). The router reads the seed from
+    go_router `extra`; the Explore card passes `{photoUrl: card.gridPhotoUrl, name:
+    card.name}` on push. No seed (chat, deep link) → the existing loader, unchanged.
+    Not per-person special-casing — any caller may seed; it's the card's own photo.
+  - **(b) Story cover hero** (`_StoryCover` in `story_editor_screen.dart`, the
+    `displayWidth: 600` cover) got the NOTE 266 treatment directly: the screen
+    captures `p.thumbPhotos.first` alongside `detailPhotos.first` and passes it as
+    the cover `AymaPhoto`'s `placeholderUrl`, so the cover fades in over its thumb.
+  - Tests: `public_profile_screen_test.dart` (seeded load shows the seed photo +
+    name, not the "Loading this profile…" wall; no seed → the plain loader),
+    `story_editor_screen_test.dart` (the cover hero carries its thumb variant as
+    `placeholderUrl`).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans

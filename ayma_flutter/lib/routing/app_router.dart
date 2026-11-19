@@ -297,8 +297,17 @@ final appRouter = GoRouter(
       // clearance math (`AymaTabBar.heightFor`). Wrapping it here too
       // would stack a second bar under/behind the first.
       path: PublicProfileScreen.path,
-      builder: (context, state) =>
-          PublicProfileScreen(uid: state.pathParameters['uid']!),
+      builder: (context, state) {
+        // Optional seed (NOTE 267 Obs a): a caller (e.g. an Explore card) may
+        // pass the member's already-cached primary photo + name so the loading
+        // state paints a real header skeleton instead of a flat-dark loader.
+        final extra = state.extra as Map<String, dynamic>?;
+        return PublicProfileScreen(
+          uid: state.pathParameters['uid']!,
+          seedPhotoUrl: extra?['photoUrl'] as String?,
+          seedName: extra?['name'] as String?,
+        );
+      },
     ),
     // Practice Date (hackathon deliverable B). The debrief route is listed
     // first; go_router matches the 3-segment pattern before the 2-segment one.

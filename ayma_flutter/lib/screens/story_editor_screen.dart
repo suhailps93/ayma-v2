@@ -326,6 +326,11 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   /// main-photo setting per user, one source of truth).
   String? _mainPhotoUrl;
 
+  /// The thumb variant of [_mainPhotoUrl], painted under the cover hero's
+  /// full-res fade (progressive load, NOTE 267 Obs b) so the story cover never
+  /// shows a flat-dark tile while the 600px hero downloads cold.
+  String? _mainThumbUrl;
+
   /// The signed-in uid the currently-held story data (`_sections`/`_photos`/
   /// web-findings → the cover stats) was fetched for. Guards against this
   /// still-mounted screen painting a PREVIOUS account's cover stats if the
@@ -394,8 +399,12 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     try {
       final p = await _api.publicProfile(_uid);
       if (mounted) {
-        setState(() =>
-            _mainPhotoUrl = p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null);
+        setState(() {
+          _mainPhotoUrl =
+              p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null;
+          _mainThumbUrl =
+              p.thumbPhotos.isNotEmpty ? p.thumbPhotos.first : null;
+        });
       }
     } catch (_) {
       // Best-effort: no cover photo rather than an error.
@@ -563,6 +572,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           title: 'Your Story',
           subtitle: 'A living portrait, written by Ayma.',
           heroPhotoUrl: _heroPhotoUrl(),
+          heroThumbUrl: _heroThumbUrl(),
           topicCount: rows.where((s) => s.body.trim().isNotEmpty).length,
           photoCount: photos.length,
           webFindsCount: _webFindingsReport?.facts.length,
@@ -633,6 +643,8 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   // starred/primary photo), never a separately-picked "first profile photo" —
   // one source of truth across Story and the public profile (founder Nov 17).
   String? _heroPhotoUrl() => _mainPhotoUrl;
+
+  String? _heroThumbUrl() => _mainThumbUrl;
 
 }
 
@@ -917,6 +929,7 @@ class _StoryCover extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.heroPhotoUrl,
+    this.heroThumbUrl,
     required this.topicCount,
     required this.photoCount,
     required this.webFindsCount,
@@ -926,6 +939,10 @@ class _StoryCover extends StatelessWidget {
   final String title;
   final String subtitle;
   final String? heroPhotoUrl;
+
+  /// Thumb variant of [heroPhotoUrl], painted under its fade so a cold cover
+  /// hero never flashes flat-dark (NOTE 267 Obs b). Null keeps the flat tile.
+  final String? heroThumbUrl;
   final int topicCount;
   final int photoCount;
   final int? webFindsCount;
@@ -952,6 +969,7 @@ class _StoryCover extends StatelessWidget {
                 child: AymaPhoto(
                   url: heroPhotoUrl!,
                   displayWidth: 600,
+                  placeholderUrl: heroThumbUrl,
                   error: Container(color: ac.bgElev),
                 ),
               ),

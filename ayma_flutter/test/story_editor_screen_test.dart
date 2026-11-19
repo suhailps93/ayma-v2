@@ -34,10 +34,18 @@ class _FakeApi extends ApiClient {
   /// profile's primary/order-0 photo). First url = the starred main.
   List<String> mainPhotos = const [];
 
+  /// Thumb variants aligned with [mainPhotos]; when set, the cover hero uses
+  /// the first as its progressive placeholder (NOTE 267 Obs b).
+  List<String> mainThumbs = const [];
+
   @override
   Future<PublicProfile> publicProfile(String otherUid) async {
     calls.add('public_profile');
-    return PublicProfile.fromMap({'uid': otherUid, 'photos': mainPhotos});
+    return PublicProfile.fromMap({
+      'uid': otherUid,
+      'photos': mainPhotos,
+      if (mainThumbs.isNotEmpty) 'photos_thumb': mainThumbs,
+    });
   }
 
   StoryData data = const StoryData(sections: [
@@ -444,6 +452,20 @@ void main() {
           (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+      'NOTE 267 Obs b: the Story cover hero fades in over its thumb variant '
+      '(progressive placeholder), not a flat-dark tile', (tester) async {
+    final api = _FakeApi()
+      ..mainPhotos = const ['https://cdn/main-starred.jpg']
+      ..mainThumbs = const ['https://cdn/main-starred__thumb_400.jpg'];
+    await _pumpWithRouter(tester, api);
+
+    final hero = tester.widget<AymaPhoto>(find.byWidgetPredicate(
+        (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'));
+    expect(hero.placeholderUrl, 'https://cdn/main-starred__thumb_400.jpg',
+        reason: 'the cover hero paints its thumb under the full-res fade');
   });
 
 
