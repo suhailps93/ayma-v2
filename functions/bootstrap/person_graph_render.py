@@ -236,6 +236,69 @@ def standard_restatement_id(
     return None
 
 
+def _editor_restated_standard(
+    graph: dict[str, GraphNode], node: GraphNode
+) -> GraphNode | None:
+    """The canonical STANDARD node whose fact ``node`` (an editor-owned emergent
+    bullet) restates, or ``None``. Unlike :func:`standard_restatement_id` this is
+    deliberately NOT section-restricted: a header/structured-fact import lands as
+    an ``emergent.editor.<section>.*`` duplicate that often sits in the wrong
+    section — e.g. an ``emergent.editor.identity.*`` "Interested in: Women"
+    duplicate of the ``looking_for`` ``target_match_genders`` fact, or an
+    "Age: 29" duplicate of the ``identity`` ``date_of_birth`` fact — so the public
+    render must recognise it across sections to suppress or relocate it (NOTE 263:
+    the id-based ``HEADER_FIELD_IDS`` drop never matched these duplicates, so they
+    leaked into About Me). Scoped to emergent, non-standard nodes so a genuine
+    narrative bullet is never matched — the text test
+    (:func:`text_restates_standard_fact`) is high precision (the bare value, the
+    label+value token set, or a ``label: value`` tail equal to the value)."""
+    if getattr(node, "standard", False) or not getattr(node, "emergent", False):
+        return None
+    text = _answer_text(node)
+    if not text:
+        return None
+    for other in graph.values():
+        if other is node or not getattr(other, "standard", False):
+            continue
+        vn, lv = standard_fact_forms(other)
+        if text_restates_standard_fact(vn, lv, text):
+            return other
+    return None
+
+
+def _public_fact_placement(
+    graph: dict[str, GraphNode], node: GraphNode
+) -> tuple[str, str | None]:
+    """Where ``node`` renders on a PUBLIC surface that sits under the photo
+    header (name/age/location). Returns ``("drop", None)``, ``("move", section)``
+    or ``("keep", None)`` — the single "is this a header/duplicate fact?" decision
+    both the id-keyed canonical nodes AND their editor-identity duplicates flow
+    through (NOTE 263):
+
+    - a HEADER fact (name / age / location) — the canonical seed node
+      (``HEADER_FIELD_IDS``) OR an editor-owned emergent duplicate of one — is
+      DROPPED: the photo header already shows it (founder build 2509);
+    - an editor-owned emergent duplicate of a NON-header standard fact that
+      belongs in another section is MOVED to that fact's canonical section, so an
+      ``emergent.editor.identity.*`` "Interested in: …" duplicate renders under
+      *What I'm Looking For*, never in About Me, and that section appears even when
+      its canonical bullets are private (founder build 2509);
+    - an editor-owned emergent duplicate of a same-section standard fact (a second
+      "Gender identity: Man" beside the canonical Gender row) is DROPPED — the
+      canonical standard node is the single source for that row;
+    - everything else is KEPT where it is."""
+    if node.id in pg.HEADER_FIELD_IDS:
+        return "drop", None
+    std = _editor_restated_standard(graph, node)
+    if std is None:
+        return "keep", None
+    if std.id in pg.HEADER_FIELD_IDS:
+        return "drop", None
+    if std.section != node.section:
+        return "move", std.section
+    return "drop", None
+
+
 def _is_renderable(node: GraphNode) -> bool:
     """A node renders as a bullet once it carries content — an answer or at
     least one child. Unanswered seed scaffolding does not render."""
@@ -316,12 +379,20 @@ def _sections_with_bullets(
             continue
         # The public profile sits under a photo header that already shows
         # name/age/location, so the public render drops those standard rows to
-        # avoid showing each twice — the same placement rule the Node-Visualiser
-        # tree applies on its public surface (shared set, NOTE 261 follow-on).
-        # Owner surfaces (Your Story, persona/grounding) have no photo header
-        # and keep the rows.
-        if drop_header_fields and n.id in pg.HEADER_FIELD_IDS:
-            continue
+        # avoid showing each twice, and relocates a mis-sectioned structured
+        # duplicate (e.g. an "Interested in: …" editor bullet) to its canonical
+        # section — the same placement rule the Node-Visualiser tree applies on
+        # its public surface. Both the canonical seed nodes AND their editor
+        # duplicates flow through one predicate so an id-keyed drop can't miss a
+        # duplicate (NOTE 263). Owner surfaces (Your Story, persona/grounding)
+        # have no photo header and keep the rows.
+        section = n.section
+        if drop_header_fields:
+            kind, moved = _public_fact_placement(graph, n)
+            if kind == "drop":
+                continue
+            if kind == "move" and moved:
+                section = moved
         bullets = _node_bullets(n, keep)
         deduped = []
         for b in bullets:
@@ -337,7 +408,7 @@ def _sections_with_bullets(
             seen_texts.add(norm)
             deduped.append(b)
         if deduped:
-            by_section.setdefault(n.section, []).extend(deduped)
+            by_section.setdefault(section, []).extend(deduped)
     return by_section
 
 

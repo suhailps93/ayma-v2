@@ -254,39 +254,110 @@ def test_public_shows_only_public_and_drops_empty_sections():
     assert not any("1994-02-02" in t for t in ident["bullets"])
 
 
-def test_note261_public_profile_dedups_header_and_moves_interested_in():
-    # NOTE 261 (build 2513): the public-profile Living Report's About Me repeated
-    # the photo-header fields (name/age/location) AND showed "Interested in" in
-    # About Me while also under Looking-For. This is the EXACT render path Scout
+def _editor_identity(idx: str, text: str) -> dict:
+    """An ``emergent.editor.identity.<idx>`` overlay node in the EXACT shape a
+    header/structured-fact import writes it (verified live against demo-test1 on
+    ayma-staging, NOTE 263): a public ``narrative`` bullet in the ``identity``
+    section whose prompt/answer is the "Label: value" text — a plain duplicate of
+    a standard fact, carrying no link back to the fact it restates."""
+    return {
+        "prompt": text,
+        "answer": text,
+        "answer_type": "narrative",
+        "section": "identity",
+        "visibility": "public",
+        "state": "answered",
+        "provenance": "stated",
+        "level": 2,
+    }
+
+
+def test_note263_editor_identity_duplicates_drop_and_relocate_real_fixture():
+    # NOTE 263 (build 2515, verified against the LIVE staging deploy, server-side
+    # — story_public computes from the graph, no cache): the batch-2515 id-based
+    # drop (``n.id in HEADER_FIELD_IDS``) never matched the bullets that actually
+    # render in About Me — those are ``emergent.editor.identity.*`` DUPLICATES
+    # (Age / Gender / Interested-in). The canonical seed nodes carry only an answer
+    # in the overlay (section/visibility come from the seed); the duplicates are
+    # the leak. This is the EXACT demo-test1 shape pulled from
+    # users/demo-test1/graph/main on ayma-staging, through the render path Scout
     # sees: report_adapters._public_bullet_sections ->
     # public_profile.public_bullet_sections -> render.public_sections(graph).
     g = _graph(
         {
-            "legal_first_name": {"answer": "Sam", "visibility": "public"},
-            "date_of_birth": {"answer": "1996-01-01", "visibility": "public"},
-            "primary_location": {"answer": "Austin", "visibility": "public"},
-            "gender_identity": {"answer": "Male", "visibility": "public"},
-            "target_match_genders": {"answer": "Female", "visibility": "public"},
+            # Canonical seed nodes — overlay carries only the answer, exactly as
+            # stored (no section/visibility: those resolve from the seed).
+            "legal_first_name": {"answer": "Daniel Reyes"},
+            "date_of_birth": {"answer": "1997-02-10"},
+            "gender_identity": {"answer": "Man"},
+            "primary_location": {"answer": "Austin, TX, United States"},
+            "ethnic_cultural_origin": {"answer": ["Hispanic / Latino"]},
+            "target_match_genders": {"answer": ["Women"]},
+            # The duplicates that actually render in About Me on the live profile.
+            "emergent.editor.identity.0": _editor_identity("0", "Age: 29"),
+            "emergent.editor.identity.1": _editor_identity(
+                "1", "Gender identity: Man"
+            ),
+            "emergent.editor.identity.4": _editor_identity(
+                "4", "Interested in: Women"
+            ),
         }
     )
     pub = render.public_sections(g)
     ident = next(s["bullets"] for s in pub if s["page_type"] == "identity")
-    looking = next(s["bullets"] for s in pub if s["page_type"] == "looking_for")
+    looking = next(
+        (s["bullets"] for s in pub if s["page_type"] == "looking_for"), None
+    )
 
-    # (a) the three header fields do NOT appear in About Me (identity) — they are
-    # shown exactly once, in the photo header.
+    # (a) name / age / location do NOT appear in About Me — the photo header shows
+    # them once. Catches BOTH the canonical seed node AND its editor duplicate.
+    assert "Daniel Reyes" not in ident
     assert not any(t.startswith("Age:") for t in ident)
-    assert "Sam" not in ident
+    assert "Age: 29" not in ident
     assert not any("Austin" in t for t in ident)
-    assert not any("1996-01-01" in t for t in ident)
-    # a non-header identity field still renders, so About Me is not empty.
-    assert any("Male" in t for t in ident)
 
-    # (b) "Interested in" (target_match_genders) appears under What I'm Looking
-    # For, exactly once, and NOT in About Me / identity.
+    # (b) "What I am Looking For" EXISTS and contains "Interested in …" — the
+    # mis-sectioned identity duplicate is relocated to looking_for, so the section
+    # appears and its bullet is present.
+    assert looking is not None
     interested = [t for t in looking if t.startswith("Interested in:")]
     assert len(interested) == 1
-    assert "Female" in interested[0]
+    assert "Women" in interested[0]
+
+    # (c) "Interested in" does NOT remain in About Me / identity.
+    assert not any("Interested in" in t for t in ident)
+
+    # Gender is NOT a photo-header field (the header shows only name/age/location,
+    # and the client never reads the top-level `gender` payload field), so Gender
+    # MUST still render in About Me — exactly once, from the canonical node, with
+    # the stale editor duplicate dropped. Removing it would erase gender from the
+    # public profile entirely (NOTE 263 render analysis).
+    gender_rows = [t for t in ident if "Gender" in t or t == "Man"]
+    assert len(gender_rows) == 1
+
+
+def test_note263_interested_in_relocates_even_when_canonical_is_private():
+    # The relocation must materialise What I'm Looking For even when the section's
+    # own canonical bullets are private: the editor-identity "Interested in" is the
+    # only public looking_for bullet and still surfaces there, out of About Me.
+    g = _graph(
+        {
+            "gender_identity": {"answer": "Man", "visibility": "public"},
+            # Canonical target_match_genders private -> contributes no public
+            # bullet on its own; partner-age etc. are private seed defaults.
+            "target_match_genders": {"answer": ["Women"], "visibility": "private"},
+            "emergent.editor.identity.4": _editor_identity(
+                "4", "Interested in: Women"
+            ),
+        }
+    )
+    pub = render.public_sections(g)
+    ident = next(s["bullets"] for s in pub if s["page_type"] == "identity")
+    looking = next(
+        (s["bullets"] for s in pub if s["page_type"] == "looking_for"), None
+    )
+    assert looking is not None
+    assert any(t.startswith("Interested in:") for t in looking)
     assert not any("Interested in" in t for t in ident)
 
 
