@@ -26,24 +26,31 @@ def test_standard_fields_marked_in_canonical_order():
     assert name.standard_field_order == 0
     # a conversational seed node is NOT standard
     assert g["marital_status"].standard is False
-    # the six About Me standard fields are the founder order (orders 0-5)
-    about_me = [
-        pg.standard_label(i)
-        for i in sorted(pg.STANDARD_FIELDS, key=lambda x: pg.STANDARD_FIELDS[x]["order"])
-        if pg.STANDARD_FIELDS[i]["order"] < 10
-    ]
-    assert about_me == ["Name", "Age", "Gender", "Location", "Interested in",
-                        "Ethnic & cultural origin"]
-    # What I'm Looking For standard fields (orders 10+), fixed order: partner age
-    # preference (the min/max pair), relocation/travel radius, geographic
-    # flexibility (founder build 2507).
+    # The About Me (identity) standard fields are the founder order. "Interested
+    # in" is NOT here — it is a What-I'm-Looking-For fact (founder build 2509).
+    # Group by the seed SECTION, not the within-section order rank.
+    def _by_section(section):
+        return [
+            pg.standard_label(i)
+            for i in sorted(pg.STANDARD_FIELDS,
+                            key=lambda x: pg.STANDARD_FIELDS[x]["order"])
+            if pg.seed_node(i) is not None and pg.seed_node(i).section == section
+        ]
+
+    assert _by_section("identity") == ["Name", "Age", "Gender", "Location",
+                                       "Ethnic & cultural origin"]
+    # What I'm Looking For standard fields, fixed order: Interested in first, then
+    # partner age preference (the min/max pair), relocation/travel radius,
+    # geographic flexibility (founder builds 2507/2509).
     looking_for = [
         i
         for i in sorted(pg.STANDARD_FIELDS, key=lambda x: pg.STANDARD_FIELDS[x]["order"])
-        if pg.STANDARD_FIELDS[i]["order"] >= 10
+        if pg.seed_node(i) is not None and pg.seed_node(i).section == "looking_for"
     ]
-    assert looking_for == ["partner_age_min", "partner_age_max",
-                           "relocation_radius", "geographic_flexibility"]
+    assert looking_for == ["target_match_genders", "partner_age_min",
+                           "partner_age_max", "relocation_radius",
+                           "geographic_flexibility"]
+    assert pg.standard_label("target_match_genders") == "Interested in"
     assert pg.standard_label("relocation_radius") == "Relocation / travel radius"
     assert pg.standard_label("geographic_flexibility") == "Geographic flexibility"
     assert pg.standard_label("partner_age_min") == "Partner age preference"
@@ -116,11 +123,6 @@ def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
                 "answer_type": "narrative", "answer": f"Age: {age}",
                 "state": "answered", "visibility": "private",
             },
-            "emergent.editor.identity.7": {
-                "prompt": "Interested in: Women", "section": "identity", "level": 2,
-                "answer_type": "narrative", "answer": "Interested in: Women",
-                "state": "answered", "visibility": "public",
-            },
             "emergent.story.identity.0": {
                 "prompt": "Gender: Male", "section": "identity", "level": 2,
                 "answer_type": "narrative", "answer": "Gender: Male",
@@ -145,8 +147,10 @@ def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
 
     # the six standard fields render, each exactly once, in canonical order
     std = [n for n in ident["nodes"] if n["standard"]]
+    # "Interested in" is no longer an About Me field (founder 2509) — it renders
+    # under What I'm Looking For, so the identity standard set omits it.
     assert [n["standard_label"] for n in std] == [
-        "Name", "Age", "Gender", "Location", "Interested in", "Ethnic & cultural origin",
+        "Name", "Age", "Gender", "Location", "Ethnic & cultural origin",
     ]
 
     # every restating emergent node is suppressed (no surviving text); the
@@ -156,7 +160,6 @@ def test_about_me_shows_each_standard_fact_once_no_duplicate_bullets():
     for dup_id in (
         "emergent.editor.identity.11",  # "Ethnic and cultural origin: South Asian"
         "emergent.editor.identity.4",   # "Age: N"
-        "emergent.editor.identity.7",   # "Interested in: Women"
         "emergent.story.identity.0",    # "Gender: Male"
         "emergent.story.identity.1",    # bare "South Asian"
     ):
@@ -300,6 +303,85 @@ def test_public_surface_keeps_fact_when_standard_row_is_private():
     assert "Ethnic and cultural origin: South Asian" not in s_texts
     assert any(n["standard"] and n["standard_label"] == "Ethnic & cultural origin"
                for n in s_ident["nodes"])
+
+
+# --- founder 2509: public-profile header de-dup + "Interested in" placement --
+
+
+def _public_overlay():
+    """A public-profile overlay: name/age/location/gender public (the identity
+    header fields + Gender), plus Interested in, plus a name PROSE bullet."""
+    return {
+        "legal_first_name": {"answer": "Arun", "state": "answered",
+                             "visibility": "public"},
+        "date_of_birth": {"answer": "1992-03-04", "state": "answered",
+                          "visibility": "public"},
+        "gender_identity": {"answer": "Man", "state": "answered",
+                            "visibility": "public"},
+        "primary_location": {"answer": "San Jose", "state": "answered",
+                             "visibility": "public"},
+        "target_match_genders": {"answer": ["Women"], "state": "answered",
+                                 "visibility": "public"},
+        # a NAME prose bullet — must be LEFT ALONE (not a standard-field row)
+        "emergent.story.identity.name": {
+            "prompt": "His full name is Arun Kumar", "section": "identity",
+            "level": 2, "answer_type": "narrative",
+            "answer": "His full name is Arun Kumar",
+            "state": "answered", "visibility": "public",
+        },
+    }
+
+
+def test_public_profile_omits_header_fields_from_about_me():
+    """Founder build 2509: the public profile's photo header already shows
+    name/age/location, so About Me must NOT repeat them as standard rows. Gender
+    (not a header field) stays. The name PROSE bullet is untouched."""
+    g = _graph(_public_overlay())
+    pub = tree.node_tree(g, surface="publicProfile")
+    ident = next(s for s in pub["sections"] if s["page_type"] == "identity")
+    ids = {n["id"] for n in ident["nodes"]}
+    # the three header-equivalent standard rows are gone from About Me
+    assert "legal_first_name" not in ids
+    assert "date_of_birth" not in ids
+    assert "primary_location" not in ids
+    # Gender is NOT a header field, so its row stays in About Me
+    assert any(n["id"] == "gender_identity" and n["standard"] for n in ident["nodes"])
+    # the NAME PROSE bullet is untouched (not a standard row — left alone)
+    texts = [n["text"] for n in ident["nodes"] if n["text"]]
+    assert "His full name is Arun Kumar" in texts
+
+
+def test_story_keeps_header_fields_in_about_me():
+    """Your Story has no photo header (just a cover), so there is no duplication:
+    name/age/location DO render as About Me rows there (founder 2509 scope note —
+    the de-dup is public-surface only)."""
+    g = _graph(_public_overlay())
+    story = tree.node_tree(g, surface="story")
+    ident = next(s for s in story["sections"] if s["page_type"] == "identity")
+    ids = {n["id"] for n in ident["nodes"]}
+    assert "legal_first_name" in ids
+    assert "date_of_birth" in ids
+    assert "primary_location" in ids
+
+
+def test_interested_in_renders_under_looking_for_not_about_me():
+    """Founder build 2509: "Interested in" (``target_match_genders``) is a
+    What-I'm-Looking-For fact, not an About Me one — it renders under the
+    looking_for section on BOTH the public profile and Your Story (a section
+    assignment, so it moves everywhere), never under identity."""
+    g = _graph(_public_overlay())
+    for surface in ("publicProfile", "story"):
+        t = tree.node_tree(g, surface=surface)
+        ident = next((s for s in t["sections"] if s["page_type"] == "identity"), None)
+        assert ident is not None
+        assert "target_match_genders" not in {n["id"] for n in ident["nodes"]}, surface
+        looking = next(s for s in t["sections"] if s["page_type"] == "looking_for")
+        row = next(n for n in looking["nodes"] if n["id"] == "target_match_genders")
+        assert row["standard"] is True
+        assert row["standard_label"] == "Interested in"
+        # it leads the Looking-For section (lowest standard rank there)
+        std_ids = [n["id"] for n in looking["nodes"] if n["standard"]]
+        assert std_ids[0] == "target_match_genders"
 
 
 # --- visibility filtering: story vs public ---------------------------------

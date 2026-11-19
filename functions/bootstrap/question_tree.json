@@ -163,7 +163,7 @@
     {
       "id": "target_match_genders",
       "tier": "core",
-      "page_type": "identity",
+      "page_type": "looking_for",
       "branch": "all",
       "label": "Interested in",
       "kind": "multi",

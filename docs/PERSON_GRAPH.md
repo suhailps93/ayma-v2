@@ -1516,6 +1516,29 @@ inference untouched, still LiveKit):
   → geographic flexibility, then the conversational bullets (plain, unchanged).
   Visibility is unchanged — none of these are in `_PUBLIC_ALLOWLIST`, so they
   default private like any other structured fact (P0).
+- **"Interested in" is a Looking-For field, and the public profile does not
+  repeat its photo-header fields (build 2509, founder).** Two render-placement
+  fixes, no value/visibility change:
+  - `target_match_genders` ("Interested in") was in the `identity` (About Me)
+    section; it is a What-I'm-Looking-For fact, so its seed `page_type`
+    (`question_tree.json`) moved to `looking_for` and its `STANDARD_FIELDS`
+    `order` to `9` — so it LEADS the Looking-For section (before partner age at
+    10). A SECTION assignment, not a render tweak, so it moves on EVERY surface
+    (public profile AND Your Story). It stays in `_PUBLIC_ALLOWLIST` (public).
+  - On the **public profile** surface (`SURFACE_PUBLIC`), the photo header
+    (`ProfilePhotoHeader`, from `GET /explore/profile/{uid}`) already shows
+    name/age/location, so `person_graph_tree.node_tree` skips those standard rows
+    (`_HEADER_FIELD_IDS = {legal_first_name, date_of_birth, primary_location}`)
+    from About Me — each appears exactly once, in the header. They stay in
+    `_standard_facts_by_section`, so a prose/editor bullet restating them is still
+    suppressed (the single surviving copy is the header). **Your Story has no
+    photo header** (just a `_StoryCover`), so these rows are NOT skipped there —
+    the de-dup is public-surface only. Prose bullets (e.g. "His full name is …")
+    are standard-field rows' neighbours, not standard rows, so they are untouched.
+    Tests: `functions/bootstrap/tests/test_person_graph_tree.py`
+    (`test_public_profile_omits_header_fields_from_about_me`,
+    `test_story_keeps_header_fields_in_about_me`,
+    `test_interested_in_renders_under_looking_for_not_about_me`).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
