@@ -296,6 +296,13 @@ class OverlayNode(BaseModel):
     # time; absent/unknown → the reader falls back to a text row. Never affects
     # visibility.
     visual: Optional[dict] = None
+    # Node-level DATE (founder Nov 18: "set the node's dated field so the timeline
+    # renders"). An ISO date (``YYYY``, ``YYYY-MM`` or ``YYYY-MM-DD``) carried on
+    # the node itself — the sort key the Career timeline orders by, most-recent
+    # first. Set by dated writers (the LinkedIn work-history import); plain facts
+    # leave it None and render undated exactly as before. Distinct from
+    # ``Link.dated`` (a date on a relationship): the reader prefers this.
+    dated: Optional[str] = None
 
 
 class GraphNode(BaseModel):
@@ -348,6 +355,9 @@ class GraphNode(BaseModel):
     gist: Optional[str] = None
     # Write-time visual descriptor (see OverlayNode.visual). None on older nodes.
     visual: Optional[dict] = None
+    # Node-level ISO date — the Career timeline sort key (see OverlayNode.dated).
+    # None on every undated node.
+    dated: Optional[str] = None
 
 
 # --- seed construction (from the v7 tree) ---------------------------------
@@ -542,6 +552,8 @@ def merge_node(seed_n: Optional[SeedNode], overlay_n: Optional[OverlayNode], nod
         base.gist = o.gist
     if o.visual is not None:
         base.visual = o.visual
+    if o.dated is not None:
+        base.dated = o.dated
     # Contract 2: mark the known structured (standard) fields from the registry.
     if is_standard(base.id):
         base.standard = True

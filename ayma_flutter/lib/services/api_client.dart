@@ -1731,6 +1731,16 @@ class ApiClient {
     return m['id'] as String? ?? '';
   }
 
+  /// `POST /profile/career/linkedin-import` — import the user's LinkedIn work
+  /// history from their uploaded `Positions.csv` (LinkedIn → "Get a copy of
+  /// your data") into dated Career nodes. The CSV text is parsed server-side; a
+  /// role restating an existing prose career note is folded into it (never a
+  /// duplicate). Returns the import summary (`parsed`, `created`, `folded`,
+  /// `updated`). Throws [ApiException] (422 with the reason) when the file is
+  /// not a positions export.
+  Future<Map<String, dynamic>> linkedinImport({required String csv}) =>
+      _sendJson('POST', '/profile/career/linkedin-import', {'csv': csv});
+
   /// `POST /profile/graph/node/{id}/text` — edit one node's text manually.
   Future<void> graphSetNodeText(String nodeId, String text) => _sendJson(
         'POST',

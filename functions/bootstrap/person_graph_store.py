@@ -571,9 +571,14 @@ def add_loose_node(
     source_message_id: str = "",
     gist: str | None = None,
     visual: dict | None = None,
+    dated: str | None = None,
 ) -> str:
     """Record a free-form fact the user volunteered — the graph write path for
     the ``remember`` tool when the person-graph is authoritative (NOTE 228).
+
+    ``dated`` (optional ISO ``YYYY``/``YYYY-MM``/``YYYY-MM-DD``) sets the
+    node-level date so the Career timeline orders it most-recent-first — written
+    by the LinkedIn work-history import; plain facts leave it None.
 
     Unlike :func:`add_node`, it needs NO parent: an off-script fact rarely has a
     seed node it grows out of, and the empty ``misc`` (Little Extras, design
@@ -619,11 +624,41 @@ def add_loose_node(
     gist = (gist or "").strip()
     if gist:
         e["gist"] = gist
+    dated = (dated or "").strip()
+    if dated:
+        e["dated"] = dated
     e["visual"] = visual or node_visual.for_section(section)
     model = OverlayNode.model_validate(e)
     overlay[nid] = model.model_dump(exclude_none=True)
     _save_overlay(db, uid, overlay)
     return nid
+
+
+def set_node_dated(
+    db, uid: str, node_id: str, dated: str | None, *, visual: dict | None = None
+) -> OverlayNode:
+    """Set (or clear) a node's node-level ISO ``dated`` — the Career timeline sort
+    key (founder Nov 18). Used when a prose career note is FOLDED with its
+    imported dates so it moves onto the timeline without a duplicate. ``visual``,
+    when given, also updates the node's visual (so a folded prose note renders as
+    a timeline entry, not a plain bullet). ``node_id`` must be an overlay
+    (emergent) node; a seed node's date cannot be set here."""
+    if pg.seed_node(node_id) is not None or node_id not in load_overlay(db, uid):
+        raise ValueError(f"set_node_dated on non-overlay node {node_id!r}")
+    overlay = load_overlay(db, uid)
+    e = _entry(overlay, node_id)
+    d = (dated or "").strip()
+    if d:
+        e["dated"] = d
+    else:
+        e.pop("dated", None)
+    if visual:
+        e["visual"] = visual
+    e["updated_at"] = pg.now_iso()
+    model = OverlayNode.model_validate(e)
+    overlay[node_id] = model.model_dump(exclude_none=True)
+    _save_overlay(db, uid, overlay)
+    return model
 
 
 def node_overlay_entry(db, uid: str, node_id: str) -> dict:
