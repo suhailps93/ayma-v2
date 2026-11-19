@@ -269,20 +269,30 @@ class _NodeActionBubblesState extends State<NodeActionBubbles> {
   }
 
   Future<void> _delete() async {
+    // Deleting an IMAGE node RETAINS an Ayma-only copy (founder retention rule);
+    // every other node kind hard-deletes with its subtree. The confirmation copy
+    // must be truthful to that (Scout NOTE 256) — never "removes it everywhere"
+    // for a photo that Ayma keeps.
+    final isImage = widget.node.isImage;
     int count = 0;
-    try {
-      count = await widget.api.graphDeleteCount(widget.node.id);
-    } catch (_) {
-      // fall back to a plain confirmation if the count can't be fetched
+    if (!isImage) {
+      try {
+        count = await widget.api.graphDeleteCount(widget.node.id);
+      } catch (_) {
+        // fall back to a plain confirmation if the count can't be fetched
+      }
     }
     if (!mounted) return;
-    final msg = count > 0
-        ? 'Delete this and the $count ${count == 1 ? 'line' : 'lines'} under it?'
-        : 'Delete this?';
+    final msg = isImage
+        ? 'This removes it from your story and profile. Ayma keeps its own '
+            'copy in your Photos.'
+        : (count > 0
+            ? 'Delete this and the $count ${count == 1 ? 'line' : 'lines'} under it?'
+            : 'Delete this?');
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete'),
+        title: Text(isImage ? 'Remove this photo?' : 'Delete'),
         content: Text(msg),
         actions: [
           TextButton(
@@ -294,7 +304,7 @@ class _NodeActionBubblesState extends State<NodeActionBubbles> {
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
+            child: Text(isImage ? 'Remove' : 'Delete'),
           ),
         ],
       ),

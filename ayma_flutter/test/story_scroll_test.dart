@@ -142,6 +142,11 @@ class _FakeApi extends ApiClient {
   }
 }
 
+/// The outer vertical Story list — distinct from the horizontal PhotoGallery
+/// photo strips, which are ListViews too (Scout NOTE 256).
+final Finder _verticalList = find.byWidgetPredicate(
+    (w) => w is ListView && w.scrollDirection == Axis.vertical);
+
 void main() {
   setUp(() {
     AymaPhoto.debugCacheManager = _FakeCacheManager(File('test/fixtures/tiny.png'));
@@ -168,7 +173,9 @@ void main() {
     for (var i = 0; i < 26; i++) {
       final sw = Stopwatch()..start();
       final dy = (i % 2 == 0) ? -900.0 : 900.0;
-      await tester.fling(find.byType(ListView), Offset(0, dy), 2000);
+      // Target the OUTER vertical story list — the horizontal PhotoGallery
+      // strips are ListViews too now (Scout NOTE 256), so byType is ambiguous.
+      await tester.fling(_verticalList, Offset(0, dy), 2000);
       await tester.pump(const Duration(milliseconds: 500));
       sw.stop();
       times.add(sw.elapsedMilliseconds);
@@ -200,7 +207,7 @@ void main() {
 
       // Scout NOTE 237 reproduction: 9 half-screen swipes at pauses
       for (var i = 0; i < 9; i++) {
-        await tester.drag(find.byType(ListView), const Offset(0, -500));
+        await tester.drag(_verticalList, const Offset(0, -500));
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await tester.pump();
       }

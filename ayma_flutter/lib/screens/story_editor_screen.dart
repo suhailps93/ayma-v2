@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../services/api_client.dart';
 import '../services/app_context.dart';
+import '../services/dev_panel_session.dart';
 import '../theme.dart';
 import '../widgets/ayma_photo.dart';
 import '../widgets/ayma_wing_loader.dart';
@@ -119,6 +120,14 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   // --- photos ---------------------------------------------------------
 
   Future<void> _openPhotoDetail(AiNotePhoto p) async {
+    // The sibling strip (its display group) so the detail sheet's image opens
+    // the fullscreen gallery that advances on swipe (Scout NOTE 256). Same group
+    // the strip renders — an ayma_only photo's siblings are the other ayma_only
+    // photos; a story photo's are the other profile/chat/web photos.
+    final group = displayGroup(p);
+    final siblings =
+        _photos.where((x) => displayGroup(x) == group).toList(growable: false);
+    final idx = siblings.indexWhere((x) => x.id == p.id);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -128,6 +137,8 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
         onPublish: () => _publishPhoto(p),
         onMakePrivate: () => _makePhotoPrivate(p),
         onChat: () => _openChatForPhoto(p),
+        galleryUrls: [for (final x in siblings) x.url],
+        galleryIndex: idx < 0 ? 0 : idx,
       ),
     );
   }
@@ -469,9 +480,18 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
     }
 
     final rows = _narrativeSections;
-    final photos = _livePhotos;
-    final photoGroupsForView =
-        photoGroups.where((g) => g.$1 != 'ayma_only').toList();
+    // With the Developer panel UNLOCKED, the owner's Photos view ALSO surfaces
+    // the retained Ayma-only images under the labelled "Ayma-only" group, so a
+    // deleted-but-retained photo (which moves to ayma_only) stays findable here
+    // and in Ayma's Notes (Scout NOTE 256 owner-visibility facet). They still
+    // NEVER render on the story BODY or any public/shared surface — the story
+    // body tree drops ayma_only images backend-side, and a normal (locked) user
+    // never sees this group (`_livePhotos`/`photoGroupsForView` exclude it).
+    final devUnlocked = DevPanelSession.instance.unlocked.value;
+    final photos = devUnlocked ? _photos : _livePhotos;
+    final photoGroupsForView = devUnlocked
+        ? photoGroups
+        : photoGroups.where((g) => g.$1 != 'ayma_only').toList();
 
     // The merged face/body/physical-profile card belongs in the Story like
     // any other private content. The owner-only full report and provenance

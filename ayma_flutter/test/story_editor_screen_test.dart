@@ -6,6 +6,7 @@ import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/screens/story_editor_screen.dart';
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/services/ayma_session.dart';
+import 'package:ayma_flutter/services/dev_panel_session.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_action.dart';
 import 'package:ayma_flutter/widgets/ask_ayma_overlay.dart';
 import 'package:ayma_flutter/widgets/photo_gallery.dart';
@@ -783,6 +784,24 @@ void main() {
     expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
     expect(find.textContaining('AYMA-ONLY'), findsNothing); // never on the Story
     expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
+  });
+
+  testWidgets('Story Photos view surfaces the retained Ayma-only group when the '
+      'Developer panel is unlocked (owner-visibility, Scout NOTE 256)',
+      (tester) async {
+    // Owner-visibility facet: a deleted-but-retained image (ayma_only) must be
+    // findable by the owner in his Photos view when dev mode is on — not vanish
+    // everywhere — while still never touching the story body or public surface.
+    DevPanelSession.instance.unlocked.value = true;
+    addTearDown(() => DevPanelSession.instance.unlocked.value = false);
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
+    // The retained Ayma-only image now shows under its labelled, dev-gated group.
+    expect(find.text('AYMA-ONLY — KEPT, NOT ON YOUR PROFILE (1)'), findsOneWidget);
   });
 
   // NOTE 248: the strip is node-driven now. A previously-described photo must
