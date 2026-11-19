@@ -209,10 +209,24 @@ async def profile_graph_tree(
     surface: str = "story", uid: str = Depends(require_uid)
 ) -> dict[str, object]:
     """The caller's person graph as a Node-Visualiser tree (one payload for Your
-    Story / reports / graph-detail). ``surface`` ∈ story|report|graphDetail
-    selects the owner visibility set; AI-only nodes are included per the
-    developer flag (``graph_show_ai_only``)."""
-    sfc = surface if surface in {"story", "report", "graphDetail"} else "story"
+    Story / reports / graph-detail / the caller's own public-profile preview).
+    ``surface`` ∈ story|report|graphDetail|publicProfile selects the owner
+    visibility set; AI-only nodes are included per the developer flag
+    (``graph_show_ai_only``).
+
+    ``publicProfile`` is in the allowlist (NOTE 265): the founder viewing his OWN
+    profile hits THIS self route (uid = caller, no target), and only the
+    publicProfile surface reaches the public header/duplicate suppression in
+    ``person_graph_tree.node_tree``. Coercing it to ``story`` (the old default)
+    left the self preview un-deduped while the other-member route
+    (``/profile/graph/tree/{uid}``) was fixed — the exact 2518 split Scout saw.
+    It is still the caller's OWN graph, further filtered to public nodes, so no
+    private data leaks."""
+    sfc = (
+        surface
+        if surface in {"story", "report", "graphDetail", "publicProfile"}
+        else "story"
+    )
     return await asyncio.to_thread(_tree_payload, uid, sfc)
 
 

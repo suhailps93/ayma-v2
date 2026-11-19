@@ -1735,6 +1735,24 @@ inference untouched, still LiveKit):
     `test_public_surface_keeps_fact_when_standard_row_is_private`) and
     `test_person_graph_render.py`
     (`test_note264_public_restatement_of_private_standard_survives`).
+  - **The SELF route has to be allowed to request the publicProfile surface
+    (NOTE 265, build 2518 → fix).** The predicate above was correct, and the
+    other-member route `GET /profile/graph/tree/{uid}` (which hard-codes
+    `publicProfile`) was deduped — but the founder viewing his OWN profile hits the
+    SELF route `GET /profile/graph/tree?surface=publicProfile` (uid = caller, no
+    target), and that handler (`routes/profile.py`) coerced any surface outside
+    `{story, report, graphDetail}` to `story`. So the self preview rendered the
+    STORY owner set (private nodes + no public suppression) and still leaked
+    `Age: 29` / `Austin` / `Interested in: Women` into About Me, while the
+    other-member view was clean — the exact 2518 split. Fix: add `publicProfile`
+    to the self route's surface allowlist (one line). It stays the caller's OWN
+    graph, filtered to public nodes, so nothing private leaks; `_tree_payload`
+    already handled `publicProfile` downstream (the LinkedIn button). Tests:
+    `test_graph_tree_route.py`
+    (`test_self_route_publicprofile_dedups_like_other_member_route` — the self and
+    other-member public views are now identical, section-for-section;
+    `test_self_route_publicprofile_not_coerced_to_story` — the self publicProfile
+    surface excludes the private loose nodes the story coercion would have shown).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans

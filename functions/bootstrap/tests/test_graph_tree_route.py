@@ -165,6 +165,123 @@ def test_public_tree_shows_only_public_nodes(monkeypatch):
     assert "Lisbon" not in blob and "ultramarathons" not in blob  # private excluded
 
 
+def _editor_identity_entry(text):
+    """An ``emergent.editor.identity.*`` overlay node in the shape a header
+    import leaves behind (public narrative bullet in the identity section whose
+    text restates a standard fact) — the real demo-test1 leak shape."""
+    return {
+        "prompt": text, "answer": text, "answer_type": "narrative",
+        "section": "identity", "visibility": "public",
+        "state": "answered", "provenance": "stated", "level": 2,
+    }
+
+
+def _seed_note265_public_fixture(db):
+    """The EXACT demo-test1 overlay the NOTE 264 unit tests pin, seeded through
+    the store so the LIVE self + other-member routes both exercise the public
+    header/duplicate suppression (canonical answer-only seed nodes + the three
+    ``emergent.editor.identity.*`` duplicates)."""
+    store.replace_overlay(db, _ME, {
+        "legal_first_name": {"answer": "Daniel Reyes"},
+        "date_of_birth": {"answer": "1997-02-10"},
+        "gender_identity": {"answer": "Man"},
+        "primary_location": {"answer": "Austin, TX, United States"},
+        "ethnic_cultural_origin": {"answer": ["Hispanic / Latino"]},
+        "target_match_genders": {"answer": ["Women"]},
+        "emergent.editor.identity.0": _editor_identity_entry("Age: 29"),
+        "emergent.editor.identity.1": _editor_identity_entry("Gender identity: Man"),
+        "emergent.editor.identity.4": _editor_identity_entry("Interested in: Women"),
+    })
+
+
+def _section_texts(body, page_type):
+    """Every rendered text in a section's node-trees (recursing children), or
+    ``None`` when the section is absent from this surface."""
+    sec = next(
+        (s for s in body.get("sections", []) if s.get("page_type") == page_type),
+        None,
+    )
+    if sec is None:
+        return None
+    out = []
+
+    def _walk(nodes):
+        for n in nodes:
+            t = str(n.get("text", ""))
+            if t:
+                out.append(t)
+            _walk(n.get("children") or [])
+
+    _walk(sec.get("nodes") or [])
+    return out
+
+
+def test_self_route_publicprofile_dedups_like_other_member_route(monkeypatch):
+    """NOTE 265 (build 2518): the SELF route (uid = caller, ``surface=
+    publicProfile``) is the founder's OWN public-profile preview — the path he
+    tests. The allowlist used to coerce ``publicProfile`` → ``story``, so this
+    route never reached the fixed public walk: About Me still leaked ``Age: 29``
+    / ``Austin`` / ``Interested in: Women`` while the other-member route
+    ``/profile/graph/tree/{uid}`` was already deduped. With ``publicProfile`` in
+    the allowlist the two public views must be identical."""
+    db = FakeDb()
+    _seed_note265_public_fixture(db)
+    monkeypatch.setattr(main, "get_db", lambda: db)
+
+    self_r = client.get(
+        "/profile/graph/tree?surface=publicProfile", headers=_auth(monkeypatch)
+    )
+    other_r = client.get(
+        f"/profile/graph/tree/{_ME}", headers=_auth(monkeypatch, uid="viewer")
+    )
+    assert self_r.status_code == 200, self_r.text
+    assert other_r.status_code == 200, other_r.text
+    self_body, other_body = self_r.json(), other_r.json()
+
+    ident = _section_texts(self_body, "identity") or []
+    looking = _section_texts(self_body, "looking_for")
+
+    # About Me on the SELF route no longer leaks age / location / interested-in.
+    assert not any("29" in t for t in ident), ident
+    assert not any("Austin" in t for t in ident), ident
+    assert not any("Interested in" in t for t in ident), ident
+    assert not any("Women" in t for t in ident), ident
+    # The Interested-in fact renders exactly once under What I'm Looking For.
+    assert looking is not None
+    assert len([t for t in looking if "Women" in t]) == 1, looking
+
+    # The self preview matches the other-member public view section-for-section
+    # (both render _ME's graph at publicProfile through one `_tree_payload`).
+    def _sectmap(body):
+        return {
+            s["page_type"]: _section_texts(body, s["page_type"])
+            for s in body.get("sections", [])
+        }
+
+    assert _sectmap(self_body) == _sectmap(other_body)
+
+
+def test_self_route_publicprofile_not_coerced_to_story(monkeypatch):
+    """Guards the allowlist directly: the self ``publicProfile`` surface must
+    carry the public visibility set (private loose nodes excluded), NOT the
+    story owner set that the old coercion produced."""
+    db = FakeDb()
+    _seed_flat_parentless_graph(db)  # mixes a public fact with private loose nodes
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = client.get(
+        "/profile/graph/tree?surface=publicProfile", headers=_auth(monkeypatch)
+    )
+    assert r.status_code == 200, r.text
+    blob = " ".join(
+        str(n.get("label", "")) + " " + str(n.get("text", ""))
+        for s in r.json().get("sections", [])
+        for n in s.get("nodes", [])
+    )
+    assert "Founder" in blob  # the public fact survives
+    # the private loose nodes that `story` WOULD show are excluded on publicProfile
+    assert "Lisbon" not in blob and "ultramarathons" not in blob
+
+
 def test_career_section_renders_linkedin_source_link_plus_prose_no_timeline(monkeypatch):
     """Build 2502 end-to-end: the founder's Career today — his LinkedIn URL plus
     PROSE career facts, no dated role/company nodes. The Career section renders
