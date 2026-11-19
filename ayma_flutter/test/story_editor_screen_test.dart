@@ -770,8 +770,8 @@ void main() {
             visibility: 'ayma_only'),
       ];
 
-  testWidgets('the Photos section renders inline, grouped, with no "view all" link',
-      (tester) async {
+  testWidgets('the Photos section renders ALL visible photos as ONE swipeable '
+      'strip, not per-group tiles (Scout NOTE 260)', (tester) async {
     final api = _FakeApi()..photos = mixedSourcePhotos();
     silenceImageLoadErrors();
 
@@ -779,11 +779,46 @@ void main() {
 
     expect(find.text('A few glimpses into my world.'), findsOneWidget);
     expect(find.textContaining('3 photos'), findsOneWidget); // Ayma-only excluded
-    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
-    expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
-    expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
+    // ONE strip (not one per source group) holding every visible photo.
+    expect(find.byKey(const Key('photo_gallery_strip')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('photo_gallery_strip')),
+        matching: find.byType(InkWell),
+      ),
+      findsNWidgets(3), // profile + chat + web, all in the one strip
+    );
+    // No per-group headers and no Ayma-only on the Story surface.
+    expect(find.text('PROFILE PHOTOS (1)'), findsNothing);
+    expect(find.text('FROM CHAT & SKILLS (1)'), findsNothing);
+    expect(find.text('FOUND ON THE INTERNET (1)'), findsNothing);
     expect(find.textContaining('AYMA-ONLY'), findsNothing); // never on the Story
     expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
+  });
+
+  testWidgets('tapping a strip photo opens a gallery spanning ALL visible '
+      'photos that advances on swipe (Scout NOTE 260)', (tester) async {
+    final api = _FakeApi()..photos = mixedSourcePhotos();
+    silenceImageLoadErrors();
+
+    await _pumpWithRouter(tester, api);
+
+    // Tap the first visible tile → the detail sheet carries ALL three visible
+    // photos as its gallery (one PageView across the whole strip), opening at
+    // the tapped photo's slot — never a single-URL, un-advanceable gallery.
+    await tester.tap(find.descendant(
+      of: find.byKey(const Key('photo_gallery_strip')),
+      matching: find.byType(InkWell),
+    ).first);
+    await tester.pumpAndSettle();
+
+    final sheet = tester.widget<PhotoDetailSheet>(find.byType(PhotoDetailSheet));
+    expect(sheet.galleryUrls, const [
+      'https://example.com/profile.jpg',
+      'https://example.com/chat.jpg',
+      'https://example.com/web.jpg',
+    ]);
+    expect(sheet.galleryIndex, 0);
   });
 
   testWidgets('Story Photos view surfaces the retained Ayma-only group when the '
@@ -799,9 +834,19 @@ void main() {
 
     await _pumpWithRouter(tester, api);
 
-    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
-    // The retained Ayma-only image now shows under its labelled, dev-gated group.
+    // Two strips: the visible photos in ONE unified strip, and the retained
+    // Ayma-only image in its own SEPARATE labelled, dev-gated strip below —
+    // never merged into the main strip (Scout NOTE 260 Leg 2 retention).
+    expect(find.byKey(const Key('photo_gallery_strip')), findsNWidgets(2));
     expect(find.text('AYMA-ONLY — KEPT, NOT ON YOUR PROFILE (1)'), findsOneWidget);
+    // 4 tiles total (3 visible + 1 retained) across the two strips.
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('photo_gallery_strip')),
+        matching: find.byType(InkWell),
+      ),
+      findsNWidgets(4),
+    );
   });
 
   // NOTE 248: the strip is node-driven now. A previously-described photo must
@@ -937,17 +982,19 @@ void main() {
     expect(find.byType(AymaPhoto), findsWidgets);
   });
 
-  testWidgets("Ayma's Notes shows every group, including the retained Ayma-only "
-      'images', (tester) async {
+  testWidgets("Ayma's Notes shows the visible photos in ONE strip plus the "
+      'retained Ayma-only images in a separate strip (Scout NOTE 260)',
+      (tester) async {
     final api = _FakeApi()..photos = mixedSourcePhotos();
     silenceImageLoadErrors();
 
     await _pumpNotes(tester, api);
 
     expect(find.text('Photos'), findsOneWidget);
-    expect(find.text('PROFILE PHOTOS (1)'), findsOneWidget);
-    expect(find.text('FROM CHAT & SKILLS (1)'), findsOneWidget);
-    expect(find.text('FOUND ON THE INTERNET (1)'), findsOneWidget);
+    // One unified strip for the visible photos + a separate Ayma-only strip.
+    expect(find.byKey(const Key('photo_gallery_strip')), findsNWidgets(2));
+    expect(find.text('PROFILE PHOTOS (1)'), findsNothing);
+    expect(find.text('FROM CHAT & SKILLS (1)'), findsNothing);
     // The owner's Ayma-only Photos view surfaces the retained (deleted) image.
     expect(find.text('AYMA-ONLY — KEPT, NOT ON YOUR PROFILE (1)'), findsOneWidget);
   });
