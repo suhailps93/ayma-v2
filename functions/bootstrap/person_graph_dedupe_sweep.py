@@ -253,16 +253,32 @@ async def sweep_user(
         node_count=report.node_count,
     )
 
-    if not dry_run:
-        graph = store.effective(db, uid)
+    # Both modes walk ``merge_pairs`` collapsing overlapping pairs the SAME way:
+    # once a node is folded away, a later pair that referenced it is a no-op, so
+    # a k-node duplicate CLUSTER is k-1 merges, not its C(k,2) candidate pairs.
+    # The apply does this with its ``removed`` set + a graph re-read; the dry
+    # PREVIEW now simulates the same collapse WITHOUT writing, so it reports the
+    # number of MERGES the apply would perform instead of overshooting with the
+    # raw pair count (DEDUPEPREVIEW — reporting-only; ``merge_pairs`` and the
+    # apply's writes are unchanged). ``store.effective`` is a READ in both modes.
+    graph = store.effective(db, uid)
     removed: set[str] = set()
     for p in merge_pairs:
         if p.a in removed or p.b in removed:
             continue
-        if dry_run:
-            out.merged.append((p.a, p.b))
-            continue
         if p.a not in graph or p.b not in graph:
+            continue
+        if dry_run:
+            # Simulate apply_merge without writing: the survivor/duplicate split
+            # is the SAME ``choose_survivor`` the apply uses, and a pair whose
+            # DUPLICATE is a seed node can't be folded (``merge_nodes`` refuses to
+            # delete a seed → ``apply_merge`` returns None and the apply counts
+            # no merge), so the preview must not count it either.
+            survivor_id, dup_id = choose_survivor(graph, p.a, p.b)
+            if pg.seed_node(dup_id) is not None:
+                continue
+            out.merged.append((survivor_id, dup_id))
+            removed.add(dup_id)
             continue
         res = apply_merge(db, uid, p.a, p.b, graph)
         if res is not None:
