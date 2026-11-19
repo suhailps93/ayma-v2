@@ -560,6 +560,54 @@ Your Story / public / grounding bullet.
   runs the collections until its own cutover).
 - Tests: `tests/test_reports_as_nodes.py` (11) + `tests/test_reports_as_nodes_web.py` (8).
 
+## Reports as PER-ELEMENT nodes (founder Nov 18 2026)
+
+Branch `fleet/reports-per-element-nodes`. Founder order (voice): a web-search and
+an appearance report must be **ONE SOURCE-TAGGED NODE PER ELEMENT, not a single
+lump** — so tapping a report element (a fact, a strength) opens THAT element only
+in the partial chat, never the whole report. This supersedes the single
+`emergent.skill.*` grounding lump each report used to write; the structured
+`report_doc` METADATA node (above) stays as the report-level home for score /
+photos / verdict / `finding_history`, which the templated report screen still
+renders from. With `PERSON_GRAPH_READS` on:
+
+- **Web search** → `skill_memory.save_web_findings` writes one node per DISTINCT
+  finding — `emergent.webfind.summary.<n>` (one per summary sentence),
+  `emergent.webfind.fact.<fact_id>`, `emergent.webfind.link.<hash>`,
+  `emergent.webfind.social.<hash>` — each stamped `source_kind="web_search"` with
+  the web link in `source_ref`. Stale findings from a prior dive are cleared
+  (overwrite semantics); the legacy `emergent.skill.web_findings` lump is retired.
+  Nodes map to the `web_findings` page_type (`node_page_type`), so grounding /
+  persona group them exactly as the lump did, and they stay out of Your Story /
+  public (report-linked). The structured digest still rides
+  `emergent.webfind.report.*` for the report SCREEN (`deep_dive_blocks`).
+- **Appearance** → `skill_memory.save_face_analysis` / `save_body_analysis` (and
+  the auto-analysis `merge_*`) write one node per discrete finding — each
+  strength / improvement / recommendation — at `emergent.skill.{face,body}_
+  analysis.<kind>.<n>`, stamped `source_kind="appearance"` with the source photo
+  in `source_ref`. The legacy `emergent.skill.{face,body}_analysis` lumps are
+  retired. Report-level metadata (score / verdict / `category_status` /
+  `finding_history` / photos) stays on the structured `emergent.appearance.report`
+  node; `report_adapters.appearance_blocks` keeps rendering the templated page
+  from it (the report screen already renders per-element via `report_tree`, so a
+  tap already opens one block — no render rewrite, no render-correctness risk).
+  `node_page_type` now maps a multi-segment skill suffix
+  (`face_analysis.strength.0`) to its base page_type.
+- **Dedupe / visibility unchanged:** stable ids make re-runs idempotent, batch
+  dedupe drops identical findings, default visibility is `private` (a prior user
+  promotion is kept); node controls apply like any other node.
+- **Migration (lossless):** `skill_memory.migrate_web_findings` re-splits a user's
+  existing web lump from the live `emergent.webfind.report.*` digest;
+  `migrate_appearance_findings` re-splits the face/body lumps from the structured
+  `emergent.appearance.report` axes. Both delete the lumps. Run on ayma-staging
+  for the founder uid (+ demo-test1) by Astro/Scout (needs staging Firestore).
+- **Flag OFF (prod) unchanged:** the wiki-page lumps are still written; the
+  `appearance_reports` doc store (`_persist_report`/`_read_report_doc`/
+  `_report_ref`) is KEPT for prod and is deleted only at the prod cutover — a
+  staging-only change must not break prod (consistent with "reports as nodes").
+- Tests: `tests/test_web_findings_nodes.py` (6) + `tests/test_appearance_finding_nodes.py`
+  (5); updated the superseded lump assertions in `tests/test_gist_first_writing.py`.
+
 ## Node dedupe — index, cross-check, resolution (founder Nov 17 2026)
 
 Founder's ask: "a way to index and cross check the nodes to find related nodes

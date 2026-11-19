@@ -146,10 +146,11 @@ def test_pg_add_node_tool_stores_gist():
 # --- 2. report node (appearance / face report) ------------------------------
 
 
-def test_face_report_node_is_gist_first(monkeypatch):
-    """A representative face-report payload (as the vision json writer would
-    return it) lands as an emergent.skill node with a short gist from the
-    verdict, and the long compiled body in the answer."""
+def test_face_report_lands_as_per_element_finding_nodes(monkeypatch):
+    """Founder Nov 18: a face report no longer lands as ONE gist-first lump node —
+    each strength/improvement/recommendation is its own source-tagged node
+    (source_kind="appearance"), so tapping an appearance finding opens that
+    finding only. (Full coverage: test_appearance_finding_nodes.py.)"""
     _reads_on(monkeypatch)
     db = FakeDb()
     report = {
@@ -161,15 +162,18 @@ def test_face_report_node_is_gist_first(monkeypatch):
         "strengths": ["clear skin"],
         "improvements": ["sleep"],
         "recommendations": [{"category": "under_eye", "text": "eye cream"}],
+        "source_photos": ["photos/u1/face.jpg"],
     }
     skill_memory.save_face_analysis(db, "u1", report)
-    node = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.face_analysis"]
-    assert _is_short(node.gist)
-    assert node.gist.startswith("Above average")
-    # the long compiled report body stays in the answer, not the gist
-    assert len(node.answer) > len(node.gist)
-    assert "Feature scores" in node.answer
-    assert node.visibility == pg.Visibility.PRIVATE  # unchanged
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.face_analysis" not in overlay  # no lump
+    finding_ids = [i for i in overlay if i.startswith("emergent.skill.face_analysis.")]
+    texts = {overlay[i]["answer"] for i in finding_ids}
+    assert {"clear skin", "sleep", "eye cream"} <= texts
+    node = overlay[finding_ids[0]]
+    assert node["source_kind"] == "appearance"
+    assert node["source_ref"] == "photos/u1/face.jpg"
+    assert node["visibility"] == pg.Visibility.PRIVATE.value
 
 
 # --- 3. web-research node (deep-dive findings) ------------------------------
@@ -287,19 +291,25 @@ def test_pg_add_node_visual_explicit_and_fallback():
     assert n3.visual["type"] == "gist_row"
 
 
-def test_report_and_web_nodes_get_a_card_visual(monkeypatch):
+def test_report_and_web_findings_are_per_element_nodes(monkeypatch):
+    """Founder Nov 18: appearance and web findings are per-element source-tagged
+    nodes, each a plain finding bullet (gist_row), not one card lump."""
     _reads_on(monkeypatch)
     db = FakeDb()
     skill_memory.save_face_analysis(db, "u1", {
         "usable": True, "overall_score": 7.0, "verdict": "Above average",
-        "verdict_note": "Even features.",
+        "verdict_note": "Even features.", "strengths": ["even features"],
+        "source_photos": ["photos/u1/f.jpg"],
     })
-    face = pg.effective_graph(store.load_overlay(db, "u1"))["emergent.skill.face_analysis"]
-    assert face.visual["type"] == "card"
-    assert face.visual["params"]["title"] == "Above average"
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.face_analysis" not in overlay
+    face_ids = [i for i in overlay if i.startswith("emergent.skill.face_analysis.")]
+    assert face_ids
+    graph = pg.effective_graph(store.load_overlay(db, "u1"))
+    assert graph[face_ids[0]].visual["type"] == "gist_row"
+    assert graph[face_ids[0]].source_kind == "appearance"
 
-    # Web findings are now per-element nodes (founder Nov 18), not one card lump:
-    # each finding renders as its own plain bullet (gist_row), source-tagged.
+    # Web findings are now per-element nodes (founder Nov 18), not one card lump.
     skill_memory.save_web_findings(db, "u1", {
         "name": "Dana", "gist": "Designer in Lisbon", "summary": "Short.",
     })

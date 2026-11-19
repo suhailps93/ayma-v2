@@ -72,8 +72,11 @@ def _graph_reads_on() -> bool:
     return bool(CONFIG.person_graph_reads)
 
 
+_SKILL_PREFIX = "emergent.skill."
+
+
 def _skill_node_id(page_type: str) -> str:
-    return f"emergent.skill.{page_type}"
+    return f"{_SKILL_PREFIX}{page_type}"
 
 
 def _graph_upsert_skill(
@@ -481,9 +484,98 @@ def migrate_web_findings(db, uid: str) -> int:
     return len(_web_finding_specs(digest))
 
 
+# --- appearance findings as per-element graph nodes (founder Nov 18) --------
+#
+# A face / body analysis no longer lands as ONE lump (the single
+# ``emergent.skill.face_analysis`` / ``body_analysis`` node that held the whole
+# compiled report). With the person-graph authoritative, each discrete FINDING —
+# every strength, improvement and recommendation — lands as its own source-tagged
+# node (``source_kind="appearance"`` + the source photo), so tapping an
+# appearance finding opens THAT finding only. The report-level METADATA (score,
+# verdict, category_status, finding_history, source_photos) stays on the
+# structured ``emergent.appearance.report`` node, which the templated appearance
+# page still renders from. Flag OFF (prod) is unchanged: the wiki page lump.
+
+# kind -> report field holding that axis's findings.
+_APPEARANCE_FINDING_FIELDS = (
+    ("strength", "strengths"),
+    ("improvement", "improvements"),
+)
+
+
+def _appearance_finding_specs(report: dict, page_type: str) -> list[tuple[str, str, str]]:
+    """Split a face/body report into ``(node_id, text, source_ref)`` per discrete
+    finding — each strength, improvement and recommendation. Deterministic, no
+    fabrication: each finding's text is lifted verbatim; the source is the photo
+    the read was taken from."""
+    r = report or {}
+    photos = r.get("source_photos") or []
+    src = str(photos[0] or "").strip() if photos else ""
+    base = f"{_SKILL_PREFIX}{page_type}."
+    specs: list[tuple[str, str, str]] = []
+    for kind, field in _APPEARANCE_FINDING_FIELDS:
+        for i, item in enumerate(r.get(field) or []):
+            text = str(item or "").strip()
+            if text:
+                specs.append((f"{base}{kind}.{i}", text, src))
+    for i, rec in enumerate(r.get("recommendations") or []):
+        if not isinstance(rec, dict):
+            continue
+        text = str(rec.get("text") or "").strip()
+        if text:
+            specs.append((f"{base}reco.{i}", text, src))
+    return specs
+
+
+def _graph_write_appearance(db, uid: str, page_type: str, report: dict) -> None:
+    """Write a face/body report's findings as per-element ``emergent.skill.
+    <page_type>.*`` nodes (replacing the single lump). Stale findings from a prior
+    read are cleared first (the lump was overwritten wholesale), and the legacy
+    lump node is retired. Each node keeps a prior user visibility promotion,
+    defaults ``private``, and is deduped by normalized text within the batch."""
+    import person_graph_store as store
+
+    specs = _appearance_finding_specs(report, page_type)
+    new_ids = {nid for nid, _, _ in specs}
+    prefix = f"{_SKILL_PREFIX}{page_type}."
+
+    overlay = store.load_overlay(db, uid)
+    stale = [nid for nid in overlay if nid.startswith(prefix) and nid not in new_ids]
+    stale.append(_skill_node_id(page_type))  # retire the legacy lump
+    store.delete_nodes(db, uid, stale)
+
+    seen: set[str] = set()
+    for node_id, text, src in specs:
+        norm = " ".join(text.casefold().split())
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        vis = "private"
+        cur = store.node_overlay_entry(db, uid, node_id)
+        if cur.get("visibility") and cur["visibility"] != "ai_only":
+            vis = cur["visibility"]  # keep a prior promotion
+        store.upsert_fact_node(
+            db, uid, node_id, text,
+            section=_SKILL_SECTION,
+            visibility=vis,
+            provenance="inferred",
+            label=page_type.replace("_", " "),
+            source_kind="appearance",
+            source_ref=src,
+        )
+
+
 def save_face_analysis(db, uid: str, report: dict) -> None:
-    """Compile a face report into the ``face-analysis`` ``private`` page."""
-    if not (report or {}).get("usable", True):
+    """Record a face report. Person-graph authoritative: ONE source-tagged node
+    per finding (:func:`_graph_write_appearance`). Flag OFF (prod): the unchanged
+    ``face-analysis`` wiki page lump."""
+    if not uid or not (report or {}).get("usable", True):
+        return
+    if _graph_reads_on():
+        try:
+            _graph_write_appearance(db, uid, "face_analysis", report or {})
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: face_analysis graph save failed for %s", uid)
         return
     gist = _report_gist(report or {}, noun="Face")
     _upsert(
@@ -496,8 +588,16 @@ def save_face_analysis(db, uid: str, report: dict) -> None:
 
 
 def save_body_analysis(db, uid: str, report: dict) -> None:
-    """Compile a body report into the ``body-analysis`` ``private`` page."""
-    if not (report or {}).get("usable", True):
+    """Record a body report. Person-graph authoritative: ONE source-tagged node
+    per finding (:func:`_graph_write_appearance`). Flag OFF (prod): the unchanged
+    ``body-analysis`` wiki page lump."""
+    if not uid or not (report or {}).get("usable", True):
+        return
+    if _graph_reads_on():
+        try:
+            _graph_write_appearance(db, uid, "body_analysis", report or {})
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: body_analysis graph save failed for %s", uid)
         return
     gist = _report_gist(report or {}, noun="Physique")
     _upsert(
@@ -507,6 +607,28 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
         visual=node_visual.card(title=str((report or {}).get("verdict", "")).strip(),
                                 body=str((report or {}).get("verdict_note", "")).strip()),
     )
+
+
+def migrate_appearance_findings(db, uid: str) -> int:
+    """One-off: re-split a user's existing face/body analysis lumps into
+    per-element finding nodes, losslessly, from the LIVE structured source — the
+    ``face``/``body`` axes of the ``emergent.appearance.report`` metadata node.
+    Deletes the legacy ``emergent.skill.{face,body}_analysis`` lumps. Returns the
+    number of per-element finding nodes written. Idempotent. Only meaningful with
+    ``person_graph_reads`` ON."""
+    import person_graph_store as store
+
+    # The structured appearance metadata node (appearance_storage._REPORT_NODE_ID).
+    payload = store.report_node_payload(db, uid, "emergent.appearance.report")
+    count = 0
+    for page_type, axis_key in (("face_analysis", "face"), ("body_analysis", "body")):
+        axis = payload.get(axis_key) if isinstance(payload, dict) else None
+        if isinstance(axis, dict) and not axis.get("status") and axis.get("usable", True):
+            _graph_write_appearance(db, uid, page_type, axis)
+            count += len(_appearance_finding_specs(axis, page_type))
+        else:
+            store.delete_nodes(db, uid, [_skill_node_id(page_type)])
+    return count
 
 
 def save_physical_profile(db, uid: str, body_md: str) -> None:
@@ -686,15 +808,13 @@ def _merge_report(
     if not uid or not (report or {}).get("usable", True):
         return
     if _graph_reads_on():
-        # Graph home: store the latest compiled report as the node body. The
-        # structured per-photo ``reads`` history + photo refs are a report-screen
-        # feature the separate reports-as-views phase models as per-field
-        # appearance nodes; here the latest read is what the grounding / story
-        # read need.
+        # Graph home (founder Nov 18): the latest read's discrete findings land as
+        # per-element nodes (:func:`_graph_write_appearance`), same as the direct
+        # save path — so an auto-analysis read and an explicit report never
+        # disagree on the shape. The structured per-photo ``reads`` history lives
+        # on the ``emergent.appearance.report`` metadata node.
         try:
-            _graph_upsert_skill(
-                db, uid, page_type, _report_md(report or {}, kind=kind, noun=noun)
-            )
+            _graph_write_appearance(db, uid, page_type, report or {})
         except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
             logger.exception("skill_memory: %s graph merge failed for %s", page_type, uid)
         return

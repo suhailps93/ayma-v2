@@ -327,6 +327,16 @@ reroute to work around an empty response.
   **Privacy (P0)**: the report tree is already viewer-visibility-filtered by `report_tree.py` (`report_hub.get_report`
   owner/match-scoped checks), so a shared/public report's visuals, scores and counts are built ONLY from viewer-visible
   nodes.
+  **Reports are PER-ELEMENT graph nodes (founder Nov 18)**: a web-search and an appearance report are stored as ONE
+  source-tagged node PER FINDING, not a single lump — so tapping a report element opens THAT element only in the partial
+  chat, never the whole report. `skill_memory.save_web_findings` writes `emergent.webfind.{summary,fact,link,social}.*`
+  (each `source_kind="web_search"` + its web link); `save_face_analysis`/`save_body_analysis` write
+  `emergent.skill.{face,body}_analysis.<kind>.<n>` (each `source_kind="appearance"` + source photo). Report-level
+  metadata (score/verdict/photos/`finding_history`) stays on the structured `emergent.appearance.report` /
+  `emergent.webfind.report.*` node the report SCREEN renders from. Both split losslessly and go through the usual
+  write-time dedupe + default (`private`) visibility; migrations (`migrate_web_findings`/`migrate_appearance_findings`)
+  re-split a user's existing lumps from the live structured source. See `docs/PERSON_GRAPH.md` §"Reports as PER-ELEMENT
+  nodes". (Flag OFF / prod keeps the wiki-page lumps + `appearance_reports` doc store until the prod cutover.)
   **No point shown twice + findings-first ordering (founder build 2495)**: a report must never render the same point
   twice — the founder's Appearance report listed each finding as a bullet, then restated it as a recommendation bullet
   right below ("Overgrown mustache…" → "Trim the mustache…"). The assembler (`report_tree._finalize_sections`, applied

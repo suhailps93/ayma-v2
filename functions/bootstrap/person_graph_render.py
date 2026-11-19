@@ -460,7 +460,14 @@ def node_page_type(node: GraphNode) -> str:
     nid = node.id or ""
     if nid.startswith(_SKILL_PREFIX):
         suffix = nid[len(_SKILL_PREFIX):]
-        return _SKILL_SUFFIX_PAGE_TYPE.get(suffix, suffix)
+        if suffix in _SKILL_SUFFIX_PAGE_TYPE:
+            return _SKILL_SUFFIX_PAGE_TYPE[suffix]
+        # A per-element skill node homes its findings at
+        # ``emergent.skill.<page_type>.<kind>.<n>`` (appearance findings,
+        # founder Nov 18) — map the BASE segment to its page_type so grounding /
+        # context-diet group them exactly as the old single lump node did.
+        base = suffix.split(".", 1)[0]
+        return _SKILL_SUFFIX_PAGE_TYPE.get(base, base)
     for prefix, pt in _META_PREFIX_PAGE_TYPE:
         if nid.startswith(prefix):
             return pt
