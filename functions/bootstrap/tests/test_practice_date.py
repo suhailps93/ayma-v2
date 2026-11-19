@@ -70,6 +70,35 @@ def test_persona_context_photo_url_is_null_for_photoless_demo_and_not_in_prompt(
     assert "photo_url" not in ctx.to_prompt_block()
 
 
+def test_persona_context_includes_public_headline_occupation():
+    """Regression — founder NOTE 259 (Sofia Marino / demo-test2). A match whose
+    occupation lives ONLY in the public profile ``headline`` (no wiki page, no
+    career graph node) had no job grounding in the persona prompt, so the voice
+    model improvised one ("tech / marketing") for a ceramic artist. The public
+    tagline must now reach the persona so the simulated match knows what they do.
+    """
+    db = FakeDb()
+    uid = "headline_only_user"
+    db.collection("users").document(uid).collection("profile").document("main").set(
+        {
+            "name": "Sofia Marino",
+            "gender": "woman",
+            "birthdate": "1999-06-18",
+            "location": "San Jose, United States",
+            # Occupation carried ONLY here — no wiki page, no graph node.
+            "headline": "Ceramic artist & art teacher who lives for folk harmonies",
+            "photos": [],
+        }
+    )
+    ctx = practice_date.build_persona_context(db, VIEWER, uid)
+    assert ctx is not None
+    assert ctx.headline == "Ceramic artist & art teacher who lives for folk harmonies"
+    block = ctx.to_prompt_block()
+    assert "Ceramic artist & art teacher" in block
+    # It is genuinely in the composed system prompt the persona runs on.
+    assert "Ceramic artist" in practice_date.compose_persona_prompt(ctx)
+
+
 def test_persona_context_excludes_private_and_contact_data():
     """Query-level exclusion: nothing from a NEVER_LOAD category is present."""
     ctx = practice_date.build_persona_context(_seeded_db(), VIEWER, MAYA)
