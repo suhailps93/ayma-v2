@@ -211,6 +211,85 @@ async def test_proposer_flag_off_is_noop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_same_fact_pair_routes_to_dedupe_not_link(monkeypatch):
+    # A SAME-FACT pair (one request reworded as a concrete feature) the judge now
+    # labels "duplicate" must go to the DEDUPE path: neither linked nor raised
+    # here (held-apply fix: the notifications tripwire pair).
+    _on(monkeypatch)
+    db = _db(_nodes())
+    report = _report(("n3a", "n3d", "same dog fact"))
+    monkeypatch.setattr(crosscheck, "candidate_report", lambda db, uid, index: report)
+    global _ORDER
+    _ORDER = {0: "duplicate"}
+    _judge(monkeypatch, {})
+
+    rep = await related.sweep_user(db, UID, dry_run=False)
+    assert rep.linked == []          # same fact is NEVER linked
+    assert rep.raised == []          # and NEVER raised — it is the dedupe path's job
+    graph = store.effective(db, UID)
+    assert pg.mutual_related(graph) == {}
+    assert store.pending_dedupe(db, UID) == []
+
+
+@pytest.mark.asyncio
+async def test_judge_batches_large_set_without_truncation(monkeypatch):
+    # >40 pairs must be judged in bounded batches (each <= _JUDGE_BATCH) with a
+    # per-batch max_tokens, and every verdict merged back by global index — the
+    # old single max_tokens=1024 call truncated and lost them all.
+    n = 50
+    items = [{"i": k, "a": f"a{k}", "b": f"b{k}"} for k in range(n)]
+    seen_sizes = []
+
+    async def fake(payload, system, **kw):
+        import json as _json
+        chunk = _json.loads(payload)
+        seen_sizes.append(len(chunk))
+        # a single call must never exceed the batch size, and its token budget
+        # must scale with the chunk (never the old fixed 1024).
+        assert len(chunk) <= related._JUDGE_BATCH
+        assert kw["max_tokens"] == 256 + len(chunk) * 48
+        return [{"i": it["i"], "verdict": "related"} for it in chunk]
+
+    monkeypatch.setattr(gemini, "generate_json", fake)
+    got = await related._judge(items, uid=UID)
+    assert len(seen_sizes) == 3                 # 24 + 24 + 2
+    assert max(seen_sizes) <= related._JUDGE_BATCH
+    assert set(got) == set(range(n))            # no verdict lost to truncation
+    assert all(v == "related" for v in got.values())
+
+
+@pytest.mark.asyncio
+async def test_bare_numeric_seeds_are_not_candidates(monkeypatch):
+    # Two bare-number slider seeds "match" only on the digit — noise, dropped
+    # from the candidate set before the judge, so neither linked nor raised.
+    _on(monkeypatch)
+    nodes = {
+        "social_energy": {
+            "prompt": "", "section": "misc", "level": 3, "answer_type": "narrative",
+            "answer": "4", "state": "answered",
+            "visibility": "private", "provenance": "stated",
+        },
+        "capital_vs_experiential": {
+            "prompt": "", "section": "misc", "level": 3, "answer_type": "narrative",
+            "answer": "5", "state": "answered",
+            "visibility": "private", "provenance": "stated",
+        },
+    }
+    db = _db(nodes)
+    report = _report(("social_energy", "capital_vs_experiential", "same digit"))
+    monkeypatch.setattr(crosscheck, "candidate_report", lambda db, uid, index: report)
+
+    async def boom(payload, system, **kw):  # the judge must never be reached
+        raise AssertionError("numeric-seed pair should be dropped before the judge")
+
+    monkeypatch.setattr(gemini, "generate_json", boom)
+    rep = await related.sweep_user(db, UID, dry_run=False)
+    assert rep.dropped_numeric == 1
+    assert rep.linked == [] and rep.raised == []
+    assert pg.mutual_related(store.effective(db, UID)) == {}
+
+
+@pytest.mark.asyncio
 async def test_judge_failure_raises_never_links(monkeypatch):
     _on(monkeypatch)
     db = _db(_nodes())

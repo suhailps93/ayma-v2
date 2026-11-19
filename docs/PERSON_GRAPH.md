@@ -1479,6 +1479,25 @@ changes a node's visibility/text/level.
   any judge failure) is RAISED in chat via the settled `record_pending_dedupe`
   flow — surfaced by `pg_find_duplicates`, NEVER linked silently; `unrelated` is
   dropped. Already-linked / dismissed pairs are skipped.
+- **Same-fact → `duplicate` (held-apply fix, Nov 18).** The judge prompt
+  (`prompts/related_link_judge.md`) was tightened so a pair that restates the SAME
+  underlying request/fact — even when one is phrased as a general capability and
+  the other as a concrete feature/UI, or differs in wording or specificity —
+  returns `duplicate` (→ dedupe path), reserving `related` for genuinely different
+  facts that must BOTH survive. (Tripwire: "clear all notifications" ↔ "add a
+  'Mark all as read' button to clear all notifications" is one request → DEDUPE,
+  never a link.)
+- **Batched judge — no truncation.** `person_graph_related._judge` judges pairs in
+  bounded batches (`_JUDGE_BATCH=24`, per-batch `max_tokens = 256 + n*48`) instead
+  of one hardcoded `max_tokens=1024` call that silently TRUNCATED the verdict JSON
+  past ~40 pairs (the same bug class the dedupe judge fixed by batching). Each item
+  keeps its GLOBAL `i`, so verdicts merge positionally across batches; a single
+  failing batch skips only its own pairs.
+- **Bare-numeric-seed drop.** A node whose entire value is a bare number (a slider
+  seed, e.g. `social_energy`=4) carries no relational meaning; two such nodes
+  "match" only on the digit (via embedding cosine between near-identical one-token
+  texts). Those pairs (`_is_bare_numeric`) are dropped from the candidate set
+  before the judge (`dropped_numeric`), so they are neither linked nor raised.
 - **Dedupe-consumable reason data** (founder amendment 2). A confident link
   stores its reason as the link `label`; `crosscheck.related_link_pairs(graph)`
   yields `(a, b, reason)` candidate pairs from stored related links so the dedupe
