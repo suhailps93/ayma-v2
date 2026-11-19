@@ -148,6 +148,81 @@ void main() {
     expect(find.text('DEVELOPER SCREEN'), findsNothing);
   });
 
+  // NOTE 262 (Scout, build 2514): the Developer panel "would not open" when
+  // driven by adb/uiautomator2. The open gesture, flag and route are all
+  // intact in code (verified across 2511→2514) — the real failure mode is the
+  // per-tap timing contract: EACH tap must land within 2s of the PREVIOUS one
+  // (`_tapWindow` in settings_screen.dart), or the run counter resets and 7
+  // taps never accumulate. Slow automated taps (>2s apart) silently reset and
+  // look like "the panel won't open". The gesture reads the clock through
+  // SettingsScreen.nowOverride, so these tests drive the window deterministically
+  // (tester.pump cannot advance the real wall clock DateTime.now uses).
+  Future<void> pumpDevRoutedClocked(
+    WidgetTester tester, {
+    required DateTime Function() now,
+  }) async {
+    final router = GoRouter(
+      initialLocation: SettingsScreen.path,
+      routes: [
+        GoRoute(
+          path: SettingsScreen.path,
+          builder: (_, __) => SettingsScreen(
+            packageInfoOverride: pkg(),
+            environmentOverride: 'staging',
+            nowOverride: now,
+          ),
+        ),
+        GoRoute(
+          path: '/settings/developer',
+          builder: (_, __) => const Scaffold(body: Text('DEVELOPER SCREEN')),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+        MaterialApp.router(theme: AymaTheme.light, routerConfig: router));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'seven taps each within the 2s window accumulate and open the panel',
+      (tester) async {
+    debugDevModeOverride = true;
+    var clock = DateTime(2026, 1, 1, 12);
+    await pumpDevRoutedClocked(tester, now: () => clock);
+    await scrollToStamp(tester);
+
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    // A realistic, un-rushed adb cadence: 1.5s between taps — inside the 2s
+    // window, so every tap counts toward the seven.
+    for (var i = 0; i < 7; i++) {
+      await tester.tap(stamp);
+      clock = clock.add(const Duration(milliseconds: 1500));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('DEVELOPER SCREEN'), findsOneWidget);
+  });
+
+  testWidgets(
+      'taps spaced wider than the 2s window reset the counter and never open '
+      'the panel (the NOTE 262 slow-automation failure)', (tester) async {
+    debugDevModeOverride = true;
+    var clock = DateTime(2026, 1, 1, 12);
+    await pumpDevRoutedClocked(tester, now: () => clock);
+    await scrollToStamp(tester);
+
+    final stamp = find.byKey(const ValueKey('build-stamp'));
+    // >2s between taps: each tap starts a fresh run of one, so the count never
+    // reaches seven no matter how many taps are sent.
+    for (var i = 0; i < 10; i++) {
+      await tester.tap(stamp);
+      clock = clock.add(const Duration(milliseconds: 2100));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('DEVELOPER SCREEN'), findsNothing);
+  });
+
   testWidgets('tapping Plan and credits opens the Plan screen',
       (tester) async {
     await pumpRouted(tester);

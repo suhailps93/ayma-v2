@@ -38,6 +38,7 @@ class SettingsScreen extends StatefulWidget {
     this.packageInfoOverride,
     this.environmentOverride,
     this.assistantService,
+    this.nowOverride,
   });
 
   static const path = '/settings';
@@ -47,6 +48,12 @@ class SettingsScreen extends StatefulWidget {
 
   /// Injectable for tests; defaults to the app-wide singleton.
   final AssistantService? assistantService;
+
+  /// Injectable clock for the Developer-panel unlock gesture, so tests can
+  /// drive the [_SettingsScreenState._tapWindow] contract deterministically
+  /// (the real wall clock cannot be advanced by `tester.pump`). Defaults to
+  /// [DateTime.now] in every real build.
+  final DateTime Function()? nowOverride;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -75,7 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     // false): the unlock gesture is a complete no-op and the Developer panel
     // is unreachable.
     if (!devModeEnabled) return;
-    final now = DateTime.now();
+    final now = (widget.nowOverride ?? DateTime.now)();
     final last = _lastBuildTap;
     _buildTaps = last != null && now.difference(last) < _tapWindow
         ? _buildTaps + 1

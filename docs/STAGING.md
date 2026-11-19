@@ -181,6 +181,43 @@ debug one, e.g. `gh release upload staging-<tip> app-profile.apk` renamed
 signed-in debug build, then first launch) and keeps **subscription / RevenueCat
 legs** on the debug APK.
 
+## Opening + unlocking the Developer panel (to see owner-only `ayma_only` photos)
+
+The hidden Developer panel is how a tester reveals owner-only content such as the
+retained **"Ayma-only Photos"** group in the Story editor (a deleted-but-retained
+photo moves to `ayma_only`; it never renders on the story body or any public
+surface, and a normal locked user never sees it — `story_editor_screen.dart`
+gates the group on `DevPanelSession.unlocked`). Revealing it is a **two-step**
+unlock, not one:
+
+1. **Open the panel** — Settings → scroll to the bottom **Version** row (widget
+   key `build-stamp`, label `Version <x.y.z>+<build> · staging`) and tap it
+   **7 times, each tap within 2 s of the previous one** (`_tapsToUnlock = 7`,
+   `_tapWindow = 2 s` in `settings_screen.dart`), or **long-press** it once.
+   The panel opens to a **password field** titled *Developer* with the text
+   *"Enter the developer password to continue."* (key `dev-locked`) — seeing
+   that screen IS "the panel opened".
+2. **Unlock the contents** — enter the developer password and submit; the app
+   calls `POST /dev/verify` against the `DEV_PANEL_PASSWORD` secret (ayma-api).
+   On success `DevPanelSession.unlocked` flips true (in memory only; a restart
+   or a 5-min backgrounding re-locks). Only then does the Story editor render
+   the **Ayma-only Photos** group.
+
+**Automation / adb gotchas (NOTE 262, build 2514 — Scout "panel won't open"):**
+the open gesture, the `ENABLE_DEV_MODE` flag and the `/settings/developer` route
+are all **intact and unchanged** across 2511→2514 (no code regression). Two real,
+non-code reasons the 7-tap fails under automation on a **`--debug` (JIT) APK**:
+
+- **Per-tap window.** EACH tap must land within 2 s of the previous one, or the
+  run counter resets to 1 and never reaches 7. Slow `adb input tap` / uiautomator2
+  taps (>2 s apart) silently reset — send the 7 taps with a tight cadence
+  (≤1.5 s apart), e.g. a single `for` loop with no per-tap sleep.
+- **First-launch JIT ANR.** On the debug JIT APK the first-launch ANR
+  (see the AOT section above, NOTE 226) eats input dispatch on a loaded
+  emulator, so the navigation/taps don't register. **Verify the gesture on the
+  `--profile` (AOT) staging APK**, which launches clean — the gesture code is
+  byte-identical between the debug and AOT builds.
+
 ## Data isolation
 
 - **Default (no `--firebase-project`): staging shares prod Firestore/Auth/Storage.**
