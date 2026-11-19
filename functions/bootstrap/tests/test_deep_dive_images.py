@@ -107,6 +107,46 @@ def test_keeps_only_face_verified_matches(monkeypatch):
     assert out[0]["verified"] is True
 
 
+def test_insider_kept_http_error_candidates_dropped(monkeypatch):
+    # NOTE 258 end-to-end over the 3 anchor candidates Scout flagged:
+    #  * i.insider.com — a valid JPEG on an extension-less slug URL. The Leg-33
+    #    over-filter wrongly dropped it at the renderability gate; it must now
+    #    survive the gate, be fetched, and come back verified.
+    #  * spenet (HTTP 402) and brightervision (HTTP 404) — their URLs look
+    #    renderable, so they pass the cheap URL gate, but the actual download
+    #    returns an HTTP error. They are dropped at the fetch stage. Giving them
+    #    image-shaped URLs proves this drop is the fetch layer, not the gate.
+    insider = "https://i.insider.com/632abcdef?width=1000&format=jpeg"
+    spenet = "https://img.spenet.com/athletes/jane.jpg"        # fetch -> 402
+    bright = "https://cdn.brightervision.com/team/jane.jpg"     # fetch -> 404
+    monkeypatch.setattr(
+        deep_dive_images, "_search_image_urls",
+        lambda q, n: [
+            {"url": insider, "source_page": "https://www.insider.com/x"},
+            {"url": spenet, "source_page": spenet},
+            {"url": bright, "source_page": bright},
+        ],
+    )
+
+    def _fetch(url):
+        if url == insider:
+            return (b"jpegbytes", "image/jpeg")
+        raise ValueError("http error")  # open_public raises on 402 / 404
+
+    monkeypatch.setattr(deep_dive_images, "_fetch_image", _fetch)
+
+    async def _check(ref, cand, uid=None, feature=None):
+        return {"verdict": "self", "confidence": "high",
+                "face_visible": True, "reason": "match"}
+
+    monkeypatch.setattr(face_match, "check_same_person", _check)
+
+    db = _Db([{"storage_path": "users/u1/media/1.jpg"}])
+    out = _run(deep_dive_images.find_web_images(db, "u1", "Jane Roe"))
+    assert [im["url"] for im in out] == [insider]
+    assert out[0]["verified"] is True
+
+
 def test_runs_for_another_target_using_their_embeddings(monkeypatch):
     _patch_common(monkeypatch)
     db = _Db([{"storage_path": "users/other/media/1.jpg"}])
