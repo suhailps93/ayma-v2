@@ -168,9 +168,16 @@ def test_skill_memory_web_findings_writes_graph_not_wiki(monkeypatch):
     _set_reads(monkeypatch, True)
     skill_memory.save_web_findings(db, "u1", {"summary": "Runs a robotics blog"})
     assert not _wiki_pages(db)  # no wiki write
-    node = store.node_overlay_entry(db, "u1", "emergent.skill.web_findings")
+    # Founder Nov 18: per-element nodes, not the single emergent.skill.web_findings
+    # lump — the summary sentence lands as its own source-tagged node.
+    overlay = store.load_overlay(db, "u1")
+    assert "emergent.skill.web_findings" not in overlay
+    summary_ids = [i for i in overlay if i.startswith("emergent.webfind.summary.")]
+    assert summary_ids
+    node = overlay[summary_ids[0]]
     assert "robotics blog" in str(node.get("answer"))
     assert node.get("visibility") == "private"
+    assert node.get("source_kind") == "web_search"
 
 
 def test_steering_add_rule_writes_graph_and_grounds(monkeypatch):

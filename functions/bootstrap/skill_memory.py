@@ -72,8 +72,11 @@ def _graph_reads_on() -> bool:
     return bool(CONFIG.person_graph_reads)
 
 
+_SKILL_PREFIX = "emergent.skill."
+
+
 def _skill_node_id(page_type: str) -> str:
-    return f"emergent.skill.{page_type}"
+    return f"{_SKILL_PREFIX}{page_type}"
 
 
 def _graph_upsert_skill(
@@ -290,8 +293,162 @@ def _report_gist(report: dict, *, noun: str) -> str:
 # --- public API ------------------------------------------------------------
 
 
+# --- web findings as per-element graph nodes (founder Nov 18) ---------------
+#
+# A web search no longer lands as ONE lump (the single ``emergent.skill.web_
+# findings`` node that held the whole digest text). With the person-graph
+# authoritative it lands as ONE SOURCE-TAGGED NODE PER FINDING — each summary
+# sentence, each fact, each link, each social profile — so tapping a web finding
+# opens THAT finding only, never the whole report. Every node carries where it
+# came from (``source_kind="web_search"`` + the web link in ``source_ref``) and
+# maps to the ``web_findings`` page_type (``emergent.webfind.*``) so grounding /
+# persona keep grouping and filtering it exactly as the lump did. Flag OFF (prod)
+# is unchanged: the wiki ``web-findings`` page lump is still written.
+
+_WEBFIND_PREFIX = "emergent.webfind."
+# ``emergent.webfind.report.*`` is the structured dive digest node (report_doc,
+# non-rendering) — the per-element finding nodes must never collide with it.
+_WEBFIND_REPORT_PREFIX = "emergent.webfind.report."
+
+
+def _hash12(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _fact_node_id(fact: dict) -> str:
+    fid = str((fact or {}).get("id") or "").strip()
+    if not fid:
+        # Stable id derived from claim+category, mirroring ``deep_dive.fact_id``
+        # (no import, to avoid a load-time cycle): position shifts once a fact is
+        # disputed away, so never key on list index.
+        claim = str((fact or {}).get("claim", "")).strip().lower()
+        category = str((fact or {}).get("category", "")).strip().lower()
+        fid = _hash12(f"{category}|{claim}")
+    return f"{_WEBFIND_PREFIX}fact.{fid}"
+
+
+def _web_finding_specs(digest: dict) -> list[tuple[str, str, str]]:
+    """Split a deep-dive digest into ``(node_id, text, source_ref)`` per DISTINCT
+    finding — summary sentences, facts, links, social profiles. Deterministic, no
+    fabrication: every piece is lifted verbatim from the stored digest."""
+    from report_blocks import split_sentences
+
+    d = digest or {}
+    specs: list[tuple[str, str, str]] = []
+
+    # Summary — one node per sentence. A summary is a synthesis, so it has no one
+    # link; it inherits the first fact's source as its best available citation.
+    facts = [f for f in (d.get("facts") or []) if isinstance(f, dict)]
+    summary_src = ""
+    for f in facts:
+        u = str(f.get("source_url") or "").strip()
+        if u:
+            summary_src = u
+            break
+    summary = str(d.get("summary") or "").strip()
+    if summary:
+        for i, sent in enumerate(split_sentences(summary)):
+            sent = sent.strip()
+            if sent:
+                specs.append((f"{_WEBFIND_PREFIX}summary.{i}", sent, summary_src))
+
+    # Facts — one node each, carrying the exact source url it was found at.
+    for f in facts:
+        claim = str(f.get("claim") or "").strip()
+        if not claim:
+            continue
+        specs.append((_fact_node_id(f), claim, str(f.get("source_url") or "").strip()))
+
+    # Links — one node each, the url itself is both the finding and the source.
+    for ln in d.get("links") or []:
+        if not isinstance(ln, dict):
+            continue
+        url = str(ln.get("url") or "").strip()
+        if not url:
+            continue
+        title = str(ln.get("title") or "").strip() or url
+        specs.append((f"{_WEBFIND_PREFIX}link.{_hash12(url)}", f"{title}: {url}", url))
+
+    # Social profiles — one node each.
+    for s in d.get("social_handles") or []:
+        if not isinstance(s, dict):
+            continue
+        url = str(s.get("url") or "").strip()
+        handle = str(s.get("handle") or "").strip()
+        platform = str(s.get("platform") or "").strip()
+        label = (
+            f"@{handle}" if handle
+            else (str(s.get("display_name") or "").strip() or platform)
+        )
+        key = url or f"{platform}:{handle}"
+        if not key or not label:
+            continue
+        text = f"{label} ({platform})" if platform else label
+        if url:
+            text = f"{text}: {url}"
+        specs.append((f"{_WEBFIND_PREFIX}social.{_hash12(key)}", text, url))
+
+    return specs
+
+
+def _graph_write_web_findings(db, uid: str, digest: dict) -> None:
+    """Write the digest as per-element ``emergent.webfind.*`` nodes (replacing the
+    old single ``emergent.skill.web_findings`` lump). Stale finding nodes from a
+    prior dive are cleared first (the lump was overwritten wholesale — same
+    semantics); the old lump node, if present, is removed. Each node keeps a
+    prior user visibility promotion, defaults ``private``, and is deduped by
+    normalized text within the batch (stable ids dedupe across re-runs)."""
+    import person_graph_store as store
+
+    specs = _web_finding_specs(digest)
+    new_ids = {nid for nid, _, _ in specs}
+
+    overlay = store.load_overlay(db, uid)
+    stale = [
+        nid
+        for nid in overlay
+        if nid.startswith(_WEBFIND_PREFIX)
+        and not nid.startswith(_WEBFIND_REPORT_PREFIX)
+        and nid not in new_ids
+    ]
+    stale.append(_skill_node_id("web_findings"))  # retire the legacy lump
+    store.delete_nodes(db, uid, stale)
+
+    seen: set[str] = set()
+    for node_id, text, src in specs:
+        norm = " ".join(text.casefold().split())
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        vis = "private"
+        cur = store.node_overlay_entry(db, uid, node_id)
+        if cur.get("visibility") and cur["visibility"] != "ai_only":
+            vis = cur["visibility"]  # keep a prior promotion
+        store.upsert_fact_node(
+            db, uid, node_id, text,
+            section=_SKILL_SECTION,
+            visibility=vis,
+            provenance="inferred",
+            label="web finding",
+            source_kind="web_search",
+            source_ref=src,
+        )
+
+
 def save_web_findings(db, uid: str, digest: dict) -> None:
-    """Compile a deep-dive digest into the ``web-findings`` ``private`` page."""
+    """Record a deep-dive digest. Person-graph authoritative: ONE source-tagged
+    node per finding (:func:`_graph_write_web_findings`). Flag OFF (prod): the
+    unchanged ``web-findings`` wiki page lump."""
+    if not uid:
+        return
+    if _graph_reads_on():
+        try:
+            _graph_write_web_findings(db, uid, digest or {})
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: web_findings graph save failed for %s", uid)
+        return
     gist = _web_findings_gist(digest or {})
     _upsert(
         db, uid, "web_findings",
@@ -302,9 +459,123 @@ def save_web_findings(db, uid: str, digest: dict) -> None:
     )
 
 
+def migrate_web_findings(db, uid: str) -> int:
+    """One-off: re-split a user's existing web-findings lump into per-element
+    nodes, losslessly, from the LIVE stored digest — the most recent
+    ``emergent.webfind.report.*`` dive node (the structured source the lump was
+    rendered from). Deletes the legacy ``emergent.skill.web_findings`` lump.
+    Returns the number of per-element finding nodes written (0 = nothing to
+    migrate). Idempotent. Only meaningful with ``person_graph_reads`` ON."""
+    import person_graph_store as store
+
+    overlay = store.load_overlay(db, uid)
+    reports = [
+        (nid, e) for nid, e in overlay.items()
+        if nid.startswith(_WEBFIND_REPORT_PREFIX) and isinstance(e, dict)
+    ]
+    if not reports:
+        # Nothing structured to re-split — still retire the lump so it can't
+        # linger as a competing render of the same findings.
+        store.delete_nodes(db, uid, [_skill_node_id("web_findings")])
+        return 0
+    reports.sort(key=lambda r: str(r[1].get("updated_at") or ""), reverse=True)
+    digest = (reports[0][1].get("answer") or {}).get("digest") or {}
+    _graph_write_web_findings(db, uid, digest)
+    return len(_web_finding_specs(digest))
+
+
+# --- appearance findings as per-element graph nodes (founder Nov 18) --------
+#
+# A face / body analysis no longer lands as ONE lump (the single
+# ``emergent.skill.face_analysis`` / ``body_analysis`` node that held the whole
+# compiled report). With the person-graph authoritative, each discrete FINDING —
+# every strength, improvement and recommendation — lands as its own source-tagged
+# node (``source_kind="appearance"`` + the source photo), so tapping an
+# appearance finding opens THAT finding only. The report-level METADATA (score,
+# verdict, category_status, finding_history, source_photos) stays on the
+# structured ``emergent.appearance.report`` node, which the templated appearance
+# page still renders from. Flag OFF (prod) is unchanged: the wiki page lump.
+
+# kind -> report field holding that axis's findings.
+_APPEARANCE_FINDING_FIELDS = (
+    ("strength", "strengths"),
+    ("improvement", "improvements"),
+)
+
+
+def _appearance_finding_specs(report: dict, page_type: str) -> list[tuple[str, str, str]]:
+    """Split a face/body report into ``(node_id, text, source_ref)`` per discrete
+    finding — each strength, improvement and recommendation. Deterministic, no
+    fabrication: each finding's text is lifted verbatim; the source is the photo
+    the read was taken from."""
+    r = report or {}
+    photos = r.get("source_photos") or []
+    src = str(photos[0] or "").strip() if photos else ""
+    base = f"{_SKILL_PREFIX}{page_type}."
+    specs: list[tuple[str, str, str]] = []
+    for kind, field in _APPEARANCE_FINDING_FIELDS:
+        for i, item in enumerate(r.get(field) or []):
+            text = str(item or "").strip()
+            if text:
+                specs.append((f"{base}{kind}.{i}", text, src))
+    for i, rec in enumerate(r.get("recommendations") or []):
+        if not isinstance(rec, dict):
+            continue
+        text = str(rec.get("text") or "").strip()
+        if text:
+            specs.append((f"{base}reco.{i}", text, src))
+    return specs
+
+
+def _graph_write_appearance(db, uid: str, page_type: str, report: dict) -> None:
+    """Write a face/body report's findings as per-element ``emergent.skill.
+    <page_type>.*`` nodes (replacing the single lump). Stale findings from a prior
+    read are cleared first (the lump was overwritten wholesale), and the legacy
+    lump node is retired. Each node keeps a prior user visibility promotion,
+    defaults ``private``, and is deduped by normalized text within the batch."""
+    import person_graph_store as store
+
+    specs = _appearance_finding_specs(report, page_type)
+    new_ids = {nid for nid, _, _ in specs}
+    prefix = f"{_SKILL_PREFIX}{page_type}."
+
+    overlay = store.load_overlay(db, uid)
+    stale = [nid for nid in overlay if nid.startswith(prefix) and nid not in new_ids]
+    stale.append(_skill_node_id(page_type))  # retire the legacy lump
+    store.delete_nodes(db, uid, stale)
+
+    seen: set[str] = set()
+    for node_id, text, src in specs:
+        norm = " ".join(text.casefold().split())
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        vis = "private"
+        cur = store.node_overlay_entry(db, uid, node_id)
+        if cur.get("visibility") and cur["visibility"] != "ai_only":
+            vis = cur["visibility"]  # keep a prior promotion
+        store.upsert_fact_node(
+            db, uid, node_id, text,
+            section=_SKILL_SECTION,
+            visibility=vis,
+            provenance="inferred",
+            label=page_type.replace("_", " "),
+            source_kind="appearance",
+            source_ref=src,
+        )
+
+
 def save_face_analysis(db, uid: str, report: dict) -> None:
-    """Compile a face report into the ``face-analysis`` ``private`` page."""
-    if not (report or {}).get("usable", True):
+    """Record a face report. Person-graph authoritative: ONE source-tagged node
+    per finding (:func:`_graph_write_appearance`). Flag OFF (prod): the unchanged
+    ``face-analysis`` wiki page lump."""
+    if not uid or not (report or {}).get("usable", True):
+        return
+    if _graph_reads_on():
+        try:
+            _graph_write_appearance(db, uid, "face_analysis", report or {})
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: face_analysis graph save failed for %s", uid)
         return
     gist = _report_gist(report or {}, noun="Face")
     _upsert(
@@ -317,8 +588,16 @@ def save_face_analysis(db, uid: str, report: dict) -> None:
 
 
 def save_body_analysis(db, uid: str, report: dict) -> None:
-    """Compile a body report into the ``body-analysis`` ``private`` page."""
-    if not (report or {}).get("usable", True):
+    """Record a body report. Person-graph authoritative: ONE source-tagged node
+    per finding (:func:`_graph_write_appearance`). Flag OFF (prod): the unchanged
+    ``body-analysis`` wiki page lump."""
+    if not uid or not (report or {}).get("usable", True):
+        return
+    if _graph_reads_on():
+        try:
+            _graph_write_appearance(db, uid, "body_analysis", report or {})
+        except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
+            logger.exception("skill_memory: body_analysis graph save failed for %s", uid)
         return
     gist = _report_gist(report or {}, noun="Physique")
     _upsert(
@@ -328,6 +607,28 @@ def save_body_analysis(db, uid: str, report: dict) -> None:
         visual=node_visual.card(title=str((report or {}).get("verdict", "")).strip(),
                                 body=str((report or {}).get("verdict_note", "")).strip()),
     )
+
+
+def migrate_appearance_findings(db, uid: str) -> int:
+    """One-off: re-split a user's existing face/body analysis lumps into
+    per-element finding nodes, losslessly, from the LIVE structured source — the
+    ``face``/``body`` axes of the ``emergent.appearance.report`` metadata node.
+    Deletes the legacy ``emergent.skill.{face,body}_analysis`` lumps. Returns the
+    number of per-element finding nodes written. Idempotent. Only meaningful with
+    ``person_graph_reads`` ON."""
+    import person_graph_store as store
+
+    # The structured appearance metadata node (appearance_storage._REPORT_NODE_ID).
+    payload = store.report_node_payload(db, uid, "emergent.appearance.report")
+    count = 0
+    for page_type, axis_key in (("face_analysis", "face"), ("body_analysis", "body")):
+        axis = payload.get(axis_key) if isinstance(payload, dict) else None
+        if isinstance(axis, dict) and not axis.get("status") and axis.get("usable", True):
+            _graph_write_appearance(db, uid, page_type, axis)
+            count += len(_appearance_finding_specs(axis, page_type))
+        else:
+            store.delete_nodes(db, uid, [_skill_node_id(page_type)])
+    return count
 
 
 def save_physical_profile(db, uid: str, body_md: str) -> None:
@@ -507,15 +808,13 @@ def _merge_report(
     if not uid or not (report or {}).get("usable", True):
         return
     if _graph_reads_on():
-        # Graph home: store the latest compiled report as the node body. The
-        # structured per-photo ``reads`` history + photo refs are a report-screen
-        # feature the separate reports-as-views phase models as per-field
-        # appearance nodes; here the latest read is what the grounding / story
-        # read need.
+        # Graph home (founder Nov 18): the latest read's discrete findings land as
+        # per-element nodes (:func:`_graph_write_appearance`), same as the direct
+        # save path — so an auto-analysis read and an explicit report never
+        # disagree on the shape. The structured per-photo ``reads`` history lives
+        # on the ``emergent.appearance.report`` metadata node.
         try:
-            _graph_upsert_skill(
-                db, uid, page_type, _report_md(report or {}, kind=kind, noun=noun)
-            )
+            _graph_write_appearance(db, uid, page_type, report or {})
         except Exception:  # noqa: BLE001 - memory is best-effort, never fail a skill
             logger.exception("skill_memory: %s graph merge failed for %s", page_type, uid)
         return
