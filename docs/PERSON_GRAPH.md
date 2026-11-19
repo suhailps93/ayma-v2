@@ -831,6 +831,16 @@ flag-off writes and stores exactly as before).
 - **Staging runner** (project-pinned `ayma-staging`, dry-run default, `--apply`):
   `GRAPH_DEDUPE_SWEEP=true GRAPH_EMBEDDING_DEDUPE=true PYTHONPATH=. python3 tools/dedupe_sweep_run.py <uid> --project=ayma-staging [--apply]`.
   Reports pairs FOUND / MERGED / RAISED.
+- **Dry-run preview counts MERGES, not pairs (DEDUPEPREVIEW).** FOUND is the raw
+  candidate-pair count, but WOULD-MERGE must equal what `--apply` will actually
+  do: a k-node duplicate CLUSTER is C(k,2) candidate pairs yet only k-1 merges,
+  because once a node is folded away every later pair that referenced it is a
+  no-op. The dry branch of `sweep_user` simulates the apply's `removed`-set +
+  survivor collapse WITHOUT writing (same `choose_survivor`; a pair whose
+  duplicate is a seed node isn't counted, mirroring `apply_merge` returning
+  `None`), so the preview no longer overshoots the apply (e.g. the founder graph's
+  13-pair preview that applied as 3). Reporting-only — the merge decisions and the
+  apply's writes are unchanged.
 - Embeddings are the founder-approved **direct-Google** exception (embeddings
   only; the judge stays on **LiveKit** per `AGENTS.md`). Model string from
   `config.py` only.
