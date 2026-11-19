@@ -49,6 +49,21 @@ SURFACE_GRAPH_DETAIL = "graphDetail"
 
 _OWNER_SURFACES = {SURFACE_STORY, SURFACE_REPORT, SURFACE_GRAPH_DETAIL}
 
+# The standard identity fields the public profile already renders in its PHOTO
+# HEADER (name / age / location, from ``GET /explore/profile/{uid}``). On the
+# public surface the header sits directly above the Node-Visualiser body, so
+# re-rendering these as About Me rows would show each twice (founder build 2509:
+# the header shows name/33/San Jose, About Me repeated 33/San Jose). They are
+# skipped from the public tree so each appears exactly ONCE, in the header — a
+# render-placement rule, not a data/visibility change: the nodes are untouched
+# and still render on every owner surface (Your Story has no photo header, so it
+# keeps these rows). Restatement suppression is unaffected: these facts stay in
+# ``_standard_facts_by_section`` so a prose/editor bullet restating them is still
+# collapsed, and the single surviving copy is the header.
+_HEADER_FIELD_IDS = frozenset(
+    {"legal_first_name", "date_of_birth", "primary_location"}
+)
+
 _VIS_STR = {
     Visibility.PUBLIC: "public",
     Visibility.PRIVATE: "private",
@@ -427,6 +442,11 @@ def node_tree(
     )
     for n in roots:
         if drop_report and render.node_page_type(n) in render._REPORT_PAGE_TYPES:
+            continue
+        # Public profile: the photo header already shows name/age/location, so
+        # skip those standard rows here (founder 2509) — they stay in
+        # ``std_by_section`` above, so restatements remain suppressed.
+        if surface == SURFACE_PUBLIC and n.id in _HEADER_FIELD_IDS:
             continue
         built = _build_node(
             n, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens

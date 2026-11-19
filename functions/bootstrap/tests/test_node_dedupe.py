@@ -305,7 +305,6 @@ def test_editor_import_does_not_mint_restatement_of_standard_fact():
     bullets = [
         {"id": "ethnic_cultural_origin", "text": "South Asian", "visibility": "private"},
         {"id": "", "text": "Ethnic and cultural origin: South Asian", "visibility": "private"},
-        {"id": "", "text": "Interested in: Women", "visibility": "public"},
         {"id": "", "text": "Gender: Male", "visibility": "public"},
         {"id": "", "text": "Grew up in Chennai", "visibility": "public"},  # a distinct fact
     ]
@@ -316,9 +315,22 @@ def test_editor_import_does_not_mint_restatement_of_standard_fact():
     editor_texts = {str(overlay[n].get("answer")) for n in editor_nodes}
     assert editor_texts == {"Grew up in Chennai"}  # only the distinct bullet survived
     assert "Ethnic and cultural origin: South Asian" not in editor_texts
-    assert "Interested in: Women" not in editor_texts
     # the standard seed nodes are untouched (the facts still live on them)
     assert overlay["ethnic_cultural_origin"]["answer"] == "South Asian"
+    # "Interested in" is a What-I'm-Looking-For fact now (founder 2509): a bullet
+    # restating it is suppressed in the looking_for section, where that standard
+    # field lives — not minted as a looking_for editor node.
+    store.replace_section_bullets(
+        db, UID, "looking_for",
+        [{"id": "", "text": "Interested in: Women", "visibility": "public"}],
+    )
+    overlay = store.load_overlay(db, UID)
+    lf_texts = {
+        str(overlay[n].get("answer"))
+        for n in overlay
+        if n.startswith("emergent.editor.looking_for.")
+    }
+    assert "Interested in: Women" not in lf_texts
 
 
 def test_add_loose_node_reuses_standard_fact_instead_of_minting():

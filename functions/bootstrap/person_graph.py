@@ -99,27 +99,31 @@ VALID_ANSWER_TYPES = question_tree.VALID_KINDS
 # ``STANDARD_FIELDS`` is the registry: seed node id -> {label, order}. ``label``
 # is the field's display label (e.g. "Name", "Age"); ``order`` is its position
 # in the section's fixed order (lower renders first). The founder-specified
-# About Me order is Name, Age, Gender, Location, Interested in, Ethnic & cultural
-# origin. The registry is the single source for "is this node standard", its
-# label, and its fixed-order rank — extend it here to mark a new structured
-# field; nothing else changes.
+# About Me order is Name, Age, Gender, Location, Ethnic & cultural origin.
+# "Interested in" (``target_match_genders``) is a What-I'm-Looking-For fact, not
+# an About Me one (founder build 2509), so it lives in the Looking-For group
+# below and in the ``looking_for`` seed section. The registry is the single
+# source for "is this node standard", its label, and its fixed-order rank —
+# extend it here to mark a new structured field; nothing else changes.
 STANDARD_FIELDS: dict[str, dict[str, Any]] = {
-    # About Me (identity) — the founder-specified canonical order.
+    # About Me (identity) — the founder-specified canonical order (0-5 band).
     "legal_first_name": {"label": "Name", "order": 0},
     "date_of_birth": {"label": "Age", "order": 1},
     "gender_identity": {"label": "Gender", "order": 2},
     "primary_location": {"label": "Location", "order": 3},
-    "target_match_genders": {"label": "Interested in", "order": 4},
     "ethnic_cultural_origin": {"label": "Ethnic & cultural origin", "order": 5},
-    # What I'm Looking For (founder build 2507) — the fixed Looking-For order is
-    # partner age preference, then relocation/travel radius, then geographic
-    # flexibility. ``order`` ranks WITHIN the field's own section (section_order
-    # dominates in ``person_graph_tree._order_key``), so these Looking-For ranks
-    # sit in their own 10+ band and never tie-break against the 0-5 About Me set.
-    # The partner-age range is two nodes (min/max) the client combines into one
-    # row; both carry the SAME label and adjacent ranks so the combined row sorts
-    # first in the section. Visibility is unchanged — none are in the public
-    # allow-list, so all default private like any other structured fact.
+    # What I'm Looking For (founder builds 2507/2509) — the fixed Looking-For
+    # order is "Interested in" first (the headline looking-for fact: who you want
+    # to match with), then partner age preference, relocation/travel radius, then
+    # geographic flexibility. ``order`` ranks WITHIN the field's own section
+    # (section_order dominates in ``person_graph_tree._order_key``), so these
+    # Looking-For ranks sit in their own 9+ band and never tie-break against the
+    # 0-5 About Me set. The partner-age range is two nodes (min/max) the client
+    # combines into one row; both carry the SAME label and adjacent ranks so the
+    # combined row sorts first. Visibility is unchanged — ``target_match_genders``
+    # stays in the public allow-list (founder-approved public); the rest default
+    # private like any other structured fact.
+    "target_match_genders": {"label": "Interested in", "order": 9},
     "partner_age_min": {"label": "Partner age preference", "order": 10},
     "partner_age_max": {"label": "Partner age preference", "order": 11},
     "relocation_radius": {"label": "Relocation / travel radius", "order": 12},

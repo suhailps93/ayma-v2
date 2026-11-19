@@ -553,8 +553,10 @@ def test_section_locked_until_earlier_core_is_covered(monkeypatch):
         if n["page_type"] == "identity" and n["tier"] == "core"
     ]
     assert by_pt["identity"]["core_total"] == len(core_ids)
-    # 4 identity core nodes come from preboarding; the rest are open
-    assert by_pt["identity"]["core_answered"] == 4
+    # 3 identity core nodes come from preboarding (name/age/gender); "Interested
+    # in" moved to What I'm Looking For (founder 2509), so it no longer counts
+    # toward identity. The rest are open.
+    assert by_pt["identity"]["core_answered"] == 3
     # User-facing: every section is open (no "unlocks as you go" gate) —
     # personality is answerable now even with earlier cores unfinished.
     assert by_pt["personality"]["unlocked"] is True
