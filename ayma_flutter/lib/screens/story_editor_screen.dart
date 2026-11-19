@@ -122,13 +122,15 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   // --- photos ---------------------------------------------------------
 
   Future<void> _openPhotoDetail(AiNotePhoto p) async {
-    // The sibling strip (its display group) so the detail sheet's image opens
-    // the fullscreen gallery that advances on swipe (Scout NOTE 256). Same group
-    // the strip renders — an ayma_only photo's siblings are the other ayma_only
-    // photos; a story photo's are the other profile/chat/web photos.
-    final group = displayGroup(p);
-    final siblings =
-        _photos.where((x) => displayGroup(x) == group).toList(growable: false);
+    // The fullscreen gallery spans the whole strip the photo lives in — ALL the
+    // visible (non-ayma_only) photos for a story/profile photo, or all the
+    // retained ayma_only photos for a kept one — so the PageView advances across
+    // every photo on swipe (Scout NOTE 260; was scoped to a single source group,
+    // giving a one-URL gallery that couldn't advance). The index maps to the
+    // tapped photo's slot in that same strip ordering.
+    final siblings = p.visibility == 'ayma_only'
+        ? aymaOnlyStripPhotos(_photos)
+        : visibleStripPhotos(_photos);
     final idx = siblings.indexWhere((x) => x.id == p.id);
     await showModalBottomSheet<void>(
       context: context,
@@ -1100,9 +1102,15 @@ class _PhotosSection extends StatelessWidget {
   }
 }
 
-/// The grouped thumbnail grids themselves — one labeled header + [PhotoGallery]
-/// per non-empty group, in [groups] order. Shared between the numbered Story
-/// document section above and Ayma's Notes' own (unnumbered) Photos block.
+/// The Photos thumbnails: ONE swipeable [PhotoGallery] strip spanning ALL the
+/// visible (non-`ayma_only`) photos — a single drag scrolls every story/profile
+/// photo and a tap opens one fullscreen gallery across all of them (Scout NOTE
+/// 260; the old per-group split rendered a one-tile strip + one-URL gallery per
+/// group, so nothing swiped). The retained Ayma-only photos, when [groups]
+/// includes the `ayma_only` group (dev mode only), stay a SEPARATE labelled
+/// strip below — never merged into the main strip or any public surface
+/// (founder retention rule). Shared between the numbered Story document section
+/// and Ayma's Notes' own (unnumbered) Photos block.
 class _PhotoGroupsList extends StatelessWidget {
   const _PhotoGroupsList({
     required this.photos,
@@ -1117,22 +1125,25 @@ class _PhotoGroupsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
+    final visible = visibleStripPhotos(photos);
+    final showAymaOnly = groups.any((g) => g.$1 == 'ayma_only');
+    final aymaOnly = showAymaOnly ? aymaOnlyStripPhotos(photos) : const <AiNotePhoto>[];
+    final aymaOnlyLabel = showAymaOnly
+        ? groups.firstWhere((g) => g.$1 == 'ayma_only').$2
+        : '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final (group, label) in groups)
-          if (photos.any((p) => displayGroup(p) == group)) ...[
-            Text(
-              '$label (${photos.where((p) => displayGroup(p) == group).length})',
-              style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4),
-            ),
-            const SizedBox(height: 12),
-            PhotoGallery(
-              photos: photos.where((p) => displayGroup(p) == group).toList(),
-              onOpen: onOpen,
-            ),
-            const SizedBox(height: 20),
-          ],
+        if (visible.isNotEmpty) PhotoGallery(photos: visible, onOpen: onOpen),
+        if (aymaOnly.isNotEmpty) ...[
+          if (visible.isNotEmpty) const SizedBox(height: 20),
+          Text(
+            '$aymaOnlyLabel (${aymaOnly.length})',
+            style: AymaType.mono(size: 10, color: ac.fgMute).copyWith(letterSpacing: 1.4),
+          ),
+          const SizedBox(height: 12),
+          PhotoGallery(photos: aymaOnly, onOpen: onOpen),
+        ],
       ],
     );
   }

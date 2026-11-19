@@ -41,6 +41,24 @@ const photoGroups = [
   ('ayma_only', 'AYMA-ONLY — KEPT, NOT ON YOUR PROFILE'),
 ];
 
+/// The visible (story/profile) photos in ONE strip-and-gallery order: all the
+/// non-`ayma_only` photos, grouped by source in [photoGroups] order so the
+/// single swipeable strip and the fullscreen gallery share one ordering (Scout
+/// NOTE 260 — the old per-group split rendered a one-tile strip + a one-URL
+/// gallery per group, so nothing could swipe).
+List<AiNotePhoto> visibleStripPhotos(List<AiNotePhoto> photos) => [
+      for (final (group, _) in photoGroups)
+        if (group != 'ayma_only')
+          ...photos.where((p) => displayGroup(p) == group),
+    ];
+
+/// The retained Ayma-only photos (deleted-but-kept, or privately-kept web
+/// finds). These stay a SEPARATE, dev-gated strip — never merged into the
+/// visible strip or any public/story-body surface (founder retention rule;
+/// Scout NOTE 260 Leg 2).
+List<AiNotePhoto> aymaOnlyStripPhotos(List<AiNotePhoto> photos) =>
+    photos.where((p) => displayGroup(p) == 'ayma_only').toList();
+
 /// ONE horizontal, swipeable strip of square thumbnails, edge-coloured by
 /// source — a DRAG scrolls through ALL of the group's photos (Scout NOTE 256:
 /// the old `Wrap` was a static multi-row grid, never swipeable). Tapping a tile
