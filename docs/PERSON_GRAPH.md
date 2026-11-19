@@ -1659,9 +1659,10 @@ inference untouched, still LiveKit):
     `drop_header_fields=True` into `_sections_with_bullets`, skipping
     `person_graph.HEADER_FIELD_IDS` on the public render only (Your Story /
     persona / grounding keep the rows — no photo header). The set is defined once
-    in `person_graph.HEADER_FIELD_IDS` and imported by both
-    `person_graph_tree._HEADER_FIELD_IDS` and the render path, so the two public
-    surfaces cannot drift. The `target_match_genders` → `looking_for` section
+    in `person_graph.HEADER_FIELD_IDS`. (At this point the tree path still kept its
+    own `person_graph_tree._HEADER_FIELD_IDS` id-drop; NOTE 264 below replaced it
+    with the shared `_public_fact_placement` predicate so the surfaces cannot
+    drift.) The `target_match_genders` → `looking_for` section
     move (above) is honored by this path with no extra code, because the seed
     `section` is read from `question_tree.json`'s `page_type`. Tests:
     `functions/bootstrap/tests/test_person_graph_render.py`
@@ -1703,6 +1704,37 @@ inference untouched, still LiveKit):
         `functions/bootstrap/tests/test_person_graph_render.py`
         (`test_note263_editor_identity_duplicates_drop_and_relocate_real_fixture`,
         `test_note263_interested_in_relocates_even_when_canonical_is_private`).
+  - **The SAME fix had to reach the GRAPH-TREE path the app actually renders, and
+    the duplicate drop had to become surface-aware (NOTE 264, build 2517 → fix).**
+    The NOTE 263 fix landed in `person_graph_render.public_sections` (the Living
+    Report path). But the app's public profile is drawn by **GraphTreeView** from
+    `person_graph_tree.node_tree(surface="publicProfile")` — a THIRD path that was
+    still doing the id-only `n.id in _HEADER_FIELD_IDS` drop, so on device About Me
+    still leaked "Age: 29 / Austin / Interested in: Women" (the editor duplicates).
+    The fix routes the tree's public walk through the SAME
+    `render._public_fact_placement`, and the old `_HEADER_FIELD_IDS` alias/import in
+    `person_graph_tree` is deleted (the one predicate in `person_graph_render` now
+    owns the decision). Making the three surfaces share that one predicate exposed
+    a latent bug it had to fix: the same-section/relocation drop was NOT surface-
+    aware. The two public renderers format a standard row differently — the Living
+    Report inlines `label: value` ("Interested in: Women"), the Node-Visualiser
+    keeps label and value apart (bullet text just "Women") — so a moved editor
+    duplicate collided textually (and deduped) in the report but rendered TWICE in
+    the tree (canonical "Women" + moved "Interested in: Women"). `_public_fact_
+    placement` is now surface-aware: an editor duplicate of a non-header standard
+    fact is **dropped wherever it sits when the canonical row renders publicly**
+    (the canonical is the single source — it shows the fact in its own section),
+    and is **moved/kept only when the canonical is PRIVATE** (then the public editor
+    bullet is the sole public copy and must survive, or the fact vanishes). Net:
+    all three surfaces now agree on CONTENT — gender once in About Me, the
+    Interested-in fact once under What I'm Looking For, nothing duplicated — while
+    each keeps its own row formatting. Tests:
+    `test_person_graph_tree.py`
+    (`test_note264_graphtree_public_drops_editor_identity_header_duplicates`,
+    `test_note264_graphtree_story_keeps_header_fields`,
+    `test_public_surface_keeps_fact_when_standard_row_is_private`) and
+    `test_person_graph_render.py`
+    (`test_note264_public_restatement_of_private_standard_survives`).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans

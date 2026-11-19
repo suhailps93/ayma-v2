@@ -278,15 +278,22 @@ def _public_fact_placement(
     - a HEADER fact (name / age / location) — the canonical seed node
       (``HEADER_FIELD_IDS``) OR an editor-owned emergent duplicate of one — is
       DROPPED: the photo header already shows it (founder build 2509);
-    - an editor-owned emergent duplicate of a NON-header standard fact that
-      belongs in another section is MOVED to that fact's canonical section, so an
-      ``emergent.editor.identity.*`` "Interested in: …" duplicate renders under
-      *What I'm Looking For*, never in About Me, and that section appears even when
-      its canonical bullets are private (founder build 2509);
-    - an editor-owned emergent duplicate of a same-section standard fact (a second
-      "Gender identity: Man" beside the canonical Gender row) is DROPPED — the
-      canonical standard node is the single source for that row;
-    - everything else is KEPT where it is."""
+    - an editor-owned emergent duplicate of a NON-header standard fact is SURFACE-
+      AWARE (NOTE 264). When the canonical row itself renders publicly it is the
+      single source for the fact — it already shows in its own section — so the
+      duplicate is DROPPED wherever it sits (this is why an ``Interested in: …``
+      editor bullet in About Me disappears: the canonical ``target_match_genders``
+      row renders it under *What I'm Looking For*). Only when the canonical is
+      PRIVATE (it contributes no public bullet) is this public editor bullet the
+      ONLY public copy of the fact: it is then MOVED to the canonical section if it
+      sits in the wrong one (so *What I'm Looking For* still appears), else KEPT —
+      otherwise the fact would silently vanish from the public profile;
+    - everything else is KEPT where it is.
+
+    The two public surfaces format a standard row differently (the Living Report
+    inlines ``label: value``, the Node-Visualiser keeps label and value apart), so
+    textual de-dup alone cannot keep them consistent — routing BOTH through this
+    one predicate is what makes About Me and *What I'm Looking For* match on each."""
     if node.id in pg.HEADER_FIELD_IDS:
         return "drop", None
     std = _editor_restated_standard(graph, node)
@@ -294,9 +301,15 @@ def _public_fact_placement(
         return "keep", None
     if std.id in pg.HEADER_FIELD_IDS:
         return "drop", None
+    # A duplicate of a non-header standard fact. When the canonical row renders
+    # publicly it is the single source, so drop the duplicate wherever it sits.
+    # Only a PRIVATE canonical makes this public bullet the sole public copy:
+    # relocate it to the canonical section (or keep it) so the fact survives.
+    if _story_vis(std.visibility) == _VIS_PUBLIC:
+        return "drop", None
     if std.section != node.section:
         return "move", std.section
-    return "drop", None
+    return "keep", None
 
 
 def _is_renderable(node: GraphNode) -> bool:

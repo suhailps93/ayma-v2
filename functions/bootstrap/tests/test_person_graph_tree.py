@@ -384,6 +384,116 @@ def test_interested_in_renders_under_looking_for_not_about_me():
         assert std_ids[0] == "target_match_genders"
 
 
+# --- NOTE 264: fact-based header/duplicate suppression on the GRAPH-TREE path -
+# The app's public profile is rendered by GraphTreeView from
+# ``node_tree(surface="publicProfile")``. NOTE 263 fixed the Living-Report render
+# path (``person_graph_render.public_sections``), but the id-only drop still lived
+# here, so the ``emergent.editor.identity.*`` header / Interested-in DUPLICATES
+# leaked into About Me on device (Scout NOTE 264 FAIL, build 2517). These pins put
+# the SAME real demo-test1 fixture shape through the tree path.
+
+
+def _editor_identity_node(text: str) -> dict:
+    """An ``emergent.editor.identity.<idx>`` overlay node in the EXACT shape a
+    header/structured-fact import writes it (verified live against demo-test1 on
+    ayma-staging, NOTE 263): a public ``narrative`` bullet in the ``identity``
+    section whose prompt/answer is the "Label: value" text — a plain duplicate of
+    a standard fact, carrying no link back to the fact it restates."""
+    return {
+        "prompt": text,
+        "answer": text,
+        "answer_type": "narrative",
+        "section": "identity",
+        "visibility": "public",
+        "state": "answered",
+        "provenance": "stated",
+        "level": 2,
+    }
+
+
+def _note264_real_fixture():
+    """The EXACT demo-test1 shape (users/demo-test1/graph/main on ayma-staging):
+    canonical seed nodes carry only an answer; the leak is the three
+    ``emergent.editor.identity.*`` duplicates that actually render in About Me."""
+    return _graph(
+        {
+            "legal_first_name": {"answer": "Daniel Reyes"},
+            "date_of_birth": {"answer": "1997-02-10"},
+            "gender_identity": {"answer": "Man"},
+            "primary_location": {"answer": "Austin, TX, United States"},
+            "ethnic_cultural_origin": {"answer": ["Hispanic / Latino"]},
+            "target_match_genders": {"answer": ["Women"]},
+            "emergent.editor.identity.0": _editor_identity_node("Age: 29"),
+            "emergent.editor.identity.1": _editor_identity_node("Gender identity: Man"),
+            "emergent.editor.identity.4": _editor_identity_node("Interested in: Women"),
+        }
+    )
+
+
+def _section_texts(t, page_type):
+    """Every rendered text in a section's node-trees (recursing children), or
+    ``None`` when the section is not present on this surface."""
+    sec = next((s for s in t["sections"] if s["page_type"] == page_type), None)
+    if sec is None:
+        return None
+    out: list[str] = []
+
+    def walk(nodes):
+        for n in nodes:
+            if n.get("text"):
+                out.append(n["text"])
+            walk(n.get("children", []))
+
+    walk(sec["nodes"])
+    return out
+
+
+def test_note264_graphtree_public_drops_editor_identity_header_duplicates():
+    # The fail Scout filed on 2517: /profile/graph/tree?surface=publicProfile still
+    # showed Age 29 / Austin / "Interested in: Women" in About Me because the
+    # id-only drop missed the editor duplicates. The fix routes the same
+    # fact-based placement (render._public_fact_placement) through this path.
+    g = _note264_real_fixture()
+    pub = tree.node_tree(g, surface="publicProfile")
+    ident = _section_texts(pub, "identity") or []
+    looking = _section_texts(pub, "looking_for")
+
+    # (a) name / age / location never render in About Me (the photo header shows
+    # them once) — catches the editor duplicates, not just the canonical ids.
+    assert "Daniel Reyes" not in ident
+    assert not any(t.startswith("Age:") for t in ident), ident
+    assert "Age: 29" not in ident
+    assert not any("Austin" in t for t in ident), ident
+
+    # (b) The "Interested in: Women" editor duplicate leaves About Me entirely and
+    # the fact renders exactly ONCE under What I'm Looking For — here as the
+    # canonical ``target_match_genders`` row (the tree keeps a standard row's label
+    # and value apart, so its bullet text is the value "Women"). No duplicate of
+    # the fact across the two sections, and nothing Interested-in in About Me.
+    assert looking is not None
+    women = [t for t in looking if "Women" in t]
+    assert len(women) == 1, looking
+    assert not any("Women" in t for t in ident), ident
+    assert not any("Interested in" in t for t in ident), ident
+
+    # (c) Gender is NOT a photo-header field, so it still renders in About Me
+    # exactly once (the stale editor duplicate is dropped; the surviving row is
+    # the single source). Removing it would erase gender from the public profile.
+    gender_rows = [t for t in ident if "Gender" in t or t == "Man"]
+    assert len(gender_rows) == 1, ident
+
+
+def test_note264_graphtree_story_keeps_header_fields():
+    # The suppression is PUBLIC-profile only (it sits under a photo header). Your
+    # Story has no photo header, so the header fields MUST still render there.
+    g = _note264_real_fixture()
+    story = tree.node_tree(g, surface="story")
+    ident = next(s for s in story["sections"] if s["page_type"] == "identity")
+    ids = {n["id"] for n in ident["nodes"]}
+    assert "date_of_birth" in ids
+    assert "primary_location" in ids
+
+
 # --- visibility filtering: story vs public ---------------------------------
 
 
