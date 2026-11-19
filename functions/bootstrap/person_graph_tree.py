@@ -158,12 +158,15 @@ def _source_out(node: GraphNode) -> dict:
 
 
 def _node_dated(node: GraphNode) -> str:
-    """The date a node ALREADY carries, if any — the first typed-link ``dated``
-    on it (``Link.dated``, the only user-facing date on the node model). Surfaced
-    read-only so the dedicated Career view can render a date where one already
-    exists; a node without one gets ``""`` and lists with no date. Never
-    invents a date, never adds start/end fields (founder Nov 17: no schema
-    change)."""
+    """The date a node carries, if any — the node-level ``dated`` (founder Nov 18:
+    "set the node's dated field so the timeline renders"; written by the LinkedIn
+    work-history import), else the first typed-link ``dated`` (``Link.dated``) for
+    older dated nodes. Surfaced read-only so the Career view renders a date where
+    one exists; a node without one gets ``""`` and lists with no date. Never
+    invents a date."""
+    own = (getattr(node, "dated", None) or "").strip()
+    if own:
+        return own
     for link in getattr(node, "links", None) or []:
         dated = (getattr(link, "dated", None) or "").strip()
         if dated:

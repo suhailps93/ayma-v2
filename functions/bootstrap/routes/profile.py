@@ -377,6 +377,34 @@ async def profile_graph_node_text(
     return {"id": node_id}
 
 
+class LinkedinImportRequest(BaseModel):
+    # The text of the user's LinkedIn ``Positions.csv`` (from LinkedIn →
+    # Settings → "Get a copy of your data"). Read client-side and sent as text —
+    # no LinkedIn credentials, no multipart, no scraping. Capped generously.
+    csv: str = Field(min_length=1, max_length=2_000_000)
+
+
+@router.post("/profile/career/linkedin-import")
+async def profile_career_linkedin_import(
+    req: LinkedinImportRequest, uid: str = Depends(require_uid)
+) -> dict[str, object]:
+    """Import the user's LinkedIn work history from their uploaded
+    ``Positions.csv`` into DATED career nodes (founder order Nov 18). The CSV is
+    parsed deterministically; each role becomes a timeline career node carrying
+    the ``linkedin_import`` source, and a role that restates an existing prose
+    career note is folded into it (never a duplicate). Returns the import summary
+    (positions parsed, created / updated / folded)."""
+    import linkedin_import
+
+    try:
+        result = await asyncio.to_thread(
+            linkedin_import.import_csv, get_db(), uid, req.csv
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return result
+
+
 @router.get("/profile/graph/node/{node_id}/delete-count")
 async def profile_graph_delete_count(
     node_id: str, uid: str = Depends(require_uid)

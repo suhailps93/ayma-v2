@@ -18,6 +18,8 @@ import '../widgets/overflow_guards.dart';
 import '../widgets/out_of_credits.dart';
 import '../widgets/photo_gallery.dart';
 import 'chat_screen.dart';
+import 'linkedin_import_screen.dart';
+import '../services/tour_anchors.dart';
 import '../widgets/ayma_back_button.dart';
 import '../services/share_kit.dart';
 import '../widgets/ayma_share_sheet.dart';
@@ -423,6 +425,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
         foregroundColor: ac.fg,
         title: const SizedBox.shrink(),
         actions: [
+          // Import LinkedIn work history → dated Career timeline (founder order
+          // 2026-11-18). Lives in Your Story because the Career section is where
+          // the imported roles land.
+          KeyedSubtree(
+            key: TourAnchors.keyFor(TourAnchors.storyLinkedinImport),
+            child: IconButton(
+              icon: const Icon(Icons.work_history_outlined),
+              tooltip: 'Import from LinkedIn',
+              onPressed: () => context.push(LinkedInImportScreen.path),
+            ),
+          ),
           // Your Story is private (founder, 2026-11-08): the share
           // button is here, but the Story target is Ayma-only — the
           // sheet offers "Send to Ayma" and nothing else, and the kit

@@ -1014,10 +1014,9 @@ subsystem stays deleted; no new schema.
   import path** that creates dated role/company/period nodes: the only LinkedIn
   mechanism is the user-given `PF_LINKEDIN_URL` (`career_timeline`) surfaced as
   the link node + handed to `deep_dive`'s Gemini `url_context` as a research
-  **source** (which writes prose, not dated nodes). **TODO (founder decision):** a
-  LinkedIn→dated-node import (OAuth / user-supplied work history → dated career
-  nodes) is what populates the timeline; it does not exist and is a policy call
-  (the codebase deliberately only stores the user-given URL, never scrapes).
+  **source** (which writes prose, not dated nodes). **RESOLVED (founder order Nov
+  18) — now built:** the LinkedIn→dated-node import below populates the timeline
+  via the user's own data export (never scraping).
 - Tests: `tests/test_person_graph_tree.py::
   test_career_dated_entries_render_as_an_editable_timeline_date_ordered` and
   `::test_career_without_dates_renders_bullets_not_a_fabricated_timeline`
@@ -1027,6 +1026,47 @@ subsystem stays deleted; no new schema.
   `ayma_flutter/test/node_visualiser_test.dart` — "Career: dated children render
   as an editable timeline…" + "Career: with NO dated children renders the
   LinkedIn source link + prose bullets…".
+
+## LinkedIn work-history import — populates the Career timeline (founder order, Nov 18 2026)
+
+The dated career nodes the timeline needs come from the user's own **LinkedIn
+data export**, parsed deterministically — the only route that actually delivers
+dated positions.
+
+- **Route verified = data export, NOT OAuth.** Official "Sign in with LinkedIn
+  (OpenID Connect)" grants only `openid`/`profile`/`email`; its published
+  `claims_supported` carries name/email/picture and **no positions** — work
+  history is restricted to partner programs Ayma is not in (verified against the
+  LinkedIn OIDC reference, Nov 2026). Ayma holds no LinkedIn OAuth app or secret.
+  So the user downloads their archive (LinkedIn → Settings → "Get a copy of your
+  data") and uploads its **`Positions.csv`** (Company Name, Title, Description,
+  Location, Started On, Finished On). No credentials, no multipart, **no
+  scraping.**
+- **Parse → dated nodes.** `linkedin_import.py` (`parse_positions_csv` →
+  `import_positions`): tolerant header + date parsing ("MMM YYYY", ISO,
+  year-only; blank Finished On → current → "… – Present"). Each role becomes one
+  emergent `career`-section node written via `person_graph_store.add_loose_node`
+  with a node-level **`dated`** (the start date — the timeline sort key), a
+  `timeline_entry` visual, gist "Title · Company", and the `linkedin_import`
+  SOURCE (`source_kind`/`source_ref`, per the node-sources rule).
+- **Node-level `dated`.** A new optional `dated` field on `OverlayNode` /
+  `GraphNode` (founder's "set the node's `dated` field" order — additive, no
+  migration); `person_graph_tree._node_dated` prefers it over `Link.dated`. This
+  is what the build-2502 note meant by "no schema change" being superseded: a
+  single additive field, nothing migrated.
+- **Dedupe vs prose career notes (fold or link, never two).** Before minting, a
+  role whose company tokens **and** title tokens are both contained in an
+  existing career node folds into it (`fold_into_node` + `set_node_dated`): the
+  prose note gains the dates and moves onto the timeline — one node, not two.
+  Stable per-role id (`linkedin.<company>__<title>`) makes a re-import idempotent.
+- **Entry + endpoint.** `POST /profile/career/linkedin-import` (`{csv}` body).
+  App: **Import from LinkedIn** — the work-history icon in Your Story's app bar
+  and a Settings tile → `LinkedInImportScreen` (`/settings/linkedin-import`).
+  Registered (`app_registry.json` → `linkedin_import`) and toured
+  (`linkedin_import`, anchor `story_linkedin_import`).
+- Tests: `tests/test_linkedin_import.py` (parse, dated nodes + source, timeline
+  order, prose-note fold, idempotent re-import); `ayma_flutter/test/
+  linkedin_import_test.dart` (screen flow + tour anchor).
 
 ## Live graph layout + highlight fix (person-graph-sections, Nov 17 2026)
 

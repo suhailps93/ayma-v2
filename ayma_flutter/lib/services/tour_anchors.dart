@@ -42,6 +42,10 @@ class TourAnchors {
   /// The "My person graph" row inside the Profile tab.
   static const profileGraphRow = 'profile_graph_row';
 
+  /// The "Import from LinkedIn" action in Your Story's app bar — imports your
+  /// LinkedIn work history into the dated Career timeline.
+  static const storyLinkedinImport = 'story_linkedin_import';
+
   /// The "Appearance" row inside the Profile tab.
   static const profileAppearanceRow = 'profile_appearance_row';
 

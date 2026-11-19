@@ -12,6 +12,7 @@ import 'package:ayma_flutter/screens/biometric_info_screen.dart';
 import 'package:ayma_flutter/screens/chat_screen.dart';
 import 'package:ayma_flutter/screens/complete_profile_screen.dart';
 import 'package:ayma_flutter/screens/connect_agent_screen.dart';
+import 'package:ayma_flutter/screens/linkedin_import_screen.dart';
 import 'package:ayma_flutter/screens/deep_dive_report_screen.dart';
 import 'package:ayma_flutter/screens/delete_account_screen.dart';
 import 'package:ayma_flutter/screens/admin_feedback_screen.dart';
@@ -216,6 +217,7 @@ Map<String, Widget Function()> layoutRoutes([FakeFirebaseFirestore? seeded]) {
         shell(ProfileProposalsScreen(apiClient: api)),
     ConnectAgentScreen.path: () =>
         shell(ConnectAgentScreen(service: layoutMcpConnect())),
+    LinkedInImportScreen.path: () => shell(LinkedInImportScreen(api: api)),
     InstagramScreen.path: () => shell(
       InstagramScreen(
         service: InstagramService(api: api, auth: kLayoutAuth, firestore: fs),
