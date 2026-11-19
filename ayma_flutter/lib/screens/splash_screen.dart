@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/dag/boot_trace.dart';
+import '../core/firebase_config_guard.dart';
 import '../legal/biometric_consent_text.dart';
 import '../models/boot_config.dart';
 import '../routing/entry.dart';
@@ -275,6 +276,18 @@ class _SplashScreenState extends State<SplashScreen> {
     if (_inFlight) return;
     _inFlight = true;
     BootTrace.mark('splash _resolve() enter');
+
+    // A mis-built APK (native Firebase project ≠ Dart firebase_options project)
+    // mints tokens for the wrong project, so sign-in succeeds but every authed
+    // call 401s and the user is bounced through sign-in forever. Surface an
+    // honest, non-retryable diagnostic instead — before the cached-route fast
+    // path or any bootstrap — rather than looping silently (Scout NOTE 263).
+    final configError = FirebaseConfigGuard.instance.mismatch;
+    if (configError != null) {
+      _inFlight = false;
+      _onTransientFailure(configError, retryable: false);
+      return;
+    }
 
     // Sign-in is required up front (§3.3) — no anonymous sessions. No user, or
     // an anonymous one left over from an older build, means "go sign in".
