@@ -386,3 +386,55 @@ def test_fold_into_node_direct_shorter_text_keeps_survivor_and_records_source():
     assert node["answer"].startswith("I have a brown tabby cat")
     # ...but the shorter wording + its source is recorded so both sources live.
     assert any(h.get("source_ref") == "sess-2" for h in (node.get("history") or []))
+
+
+# --- DEDUPEPREVIEW: dry preview counts MERGES, not raw pairs ----------------
+
+
+def _cluster(n):
+    """``n`` emergent nodes carrying the SAME fact in one section — an
+    all-pairs duplicate CLUSTER (C(n,2) candidate pairs) that collapses to n-1
+    merges once overlapping pairs fold."""
+    return {
+        f"emergent.dup{i}": {
+            "prompt": "Social Circle", "section": "misc", "level": 1,
+            "answer_type": "narrative",
+            "answer": "Has a close friend from college named Priya",
+            "state": "answered", "visibility": "private", "provenance": "stated",
+            "source_kind": "chat", "source_ref": f"sess-{i}",
+        }
+        for i in range(n)
+    }
+
+
+def test_dry_preview_matches_apply_merge_count_on_overlapping_cluster(monkeypatch):
+    """The dry-run preview reports the COLLAPSED merge count (what the apply will
+    actually do), not the raw candidate-pair count it used to overshoot by: a
+    3-node cluster is 3 candidate pairs but only 2 merges, and the preview now
+    says 2 — matching the apply exactly."""
+    _on(monkeypatch)
+    _judge_all_duplicate(monkeypatch)
+
+    dry = asyncio.run(sweep.sweep_user(_db(_cluster(3)), UID, dry_run=True))
+    applied = asyncio.run(sweep.sweep_user(_db(_cluster(3)), UID, dry_run=False))
+
+    # 3 identical nodes -> C(3,2) = 3 candidate pairs, but the cluster collapses.
+    assert dry.found == 3, "the raw candidate-pair count is still surfaced"
+    assert len(applied.merged) == 2, "a 3-node cluster collapses to 2 merges"
+    assert len(dry.merged) == len(applied.merged), (
+        "the preview must report merges, not pairs"
+    )
+    assert len(dry.merged) == 2
+
+
+def test_dry_preview_still_counts_an_isolated_pair(monkeypatch):
+    """A single non-overlapping duplicate pair is 1 merge in both modes — the
+    collapse simulation must not under-count a pair that shares no node."""
+    _on(monkeypatch)
+    _judge_all_duplicate(monkeypatch)
+
+    dry = asyncio.run(sweep.sweep_user(_db(_SOCIAL_CIRCLE), UID, dry_run=True))
+    applied = asyncio.run(sweep.sweep_user(_db(_SOCIAL_CIRCLE), UID, dry_run=False))
+    assert len(dry.merged) == len(applied.merged) == 1
+    # preview reports the survivor/duplicate split, like the apply
+    assert dry.merged[0] == ("emergent.a", "emergent.b")
