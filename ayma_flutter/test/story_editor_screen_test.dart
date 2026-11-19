@@ -43,6 +43,11 @@ class _FakeApi extends ApiClient {
   /// (NOTE 268 Leg 3: without it, one stressed-start miss left the hero absent).
   int failPublicProfileTimes = 0;
 
+  /// When set, [publicProfile] awaits this before returning — lets a test hold
+  /// the cover-photo GET in flight to observe the reserved loading hero frame
+  /// (NOTE 269 Leg 2: the hero area must not collapse while the GET retries).
+  Completer<void>? gatePublicProfile;
+
   @override
   Future<PublicProfile> publicProfile(String otherUid) async {
     calls.add('public_profile');
@@ -50,6 +55,7 @@ class _FakeApi extends ApiClient {
       failPublicProfileTimes--;
       throw TimeoutException('cold start');
     }
+    if (gatePublicProfile != null) await gatePublicProfile!.future;
     return PublicProfile.fromMap({
       'uid': otherUid,
       'photos': mainPhotos,
@@ -498,6 +504,40 @@ void main() {
     expect(api.calls.where((c) => c == 'public_profile').length,
         greaterThanOrEqualTo(2),
         reason: 'the failed first cover-photo fetch must be retried');
+  });
+
+  testWidgets(
+      'NOTE 269 Leg 2: while the cover-photo GET is in flight the hero area is '
+      'RESERVED (sized frame), not a collapsed gap that pops at ~12s',
+      (tester) async {
+    final gate = Completer<void>();
+    final api = _FakeApi()
+      ..gatePublicProfile = gate // hold the cover-photo GET pending
+      ..mainPhotos = const ['https://cdn/main-starred.jpg']
+      ..mainThumbs = const ['https://cdn/main-starred__thumb_400.jpg'];
+    await _pumpWithRouter(tester, api);
+
+    // GET still pending: the hero photo isn't painted yet…
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'),
+      findsNothing,
+      reason: 'the hero URL is unknown until the GET lands',
+    );
+    // …but the cover reserves the hero's frame so the area never collapses.
+    expect(find.byKey(const Key('storyCoverLoadingHero')), findsOneWidget,
+        reason: 'the loading cover keeps a sized hero frame, not an empty gap');
+
+    // Once the GET lands, the real hero fades into that same reserved frame
+    // (and the reserved placeholder is gone).
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('storyCoverLoadingHero')), findsNothing);
   });
 
 

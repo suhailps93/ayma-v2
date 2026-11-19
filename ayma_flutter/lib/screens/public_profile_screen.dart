@@ -601,7 +601,19 @@ class _LoadingHeader extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              AymaPhoto(url: photoUrl, displayWidth: 400),
+              // Decode at the SAME width the Explore grid already warmed
+              // (`_Photo` / `prefetchCardPhotos`, displayWidth 260), not 400:
+              // Flutter's ImageCache keys on the resize dimension
+              // (`memCacheWidth` = displayWidth × dpr), so requesting a
+              // different width is a cache MISS that forces a fresh cold decode
+              // — the flat-dark hero that only "resolved by ~12s" on first
+              // entry while the identical card photo was already on screen
+              // (NOTE 269 Leg 3). Matching 260 reuses the live grid decode, so
+              // the seed photo paints at once, exactly like a cached re-entry.
+              // The square upscales a touch but it is the same pixels the user
+              // just tapped, and the full-res hero replaces it when the GET
+              // lands.
+              AymaPhoto(url: photoUrl, displayWidth: 260),
               // Same bottom scrim as the real hero so the name stays legible.
               const Positioned.fill(
                 child: IgnorePointer(
