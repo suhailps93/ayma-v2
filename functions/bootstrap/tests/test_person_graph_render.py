@@ -361,6 +361,31 @@ def test_note263_interested_in_relocates_even_when_canonical_is_private():
     assert not any("Interested in" in t for t in ident)
 
 
+def test_note264_public_restatement_of_private_standard_survives():
+    # Surface-awareness (NOTE 264): the same-section duplicate drop fires only when
+    # the canonical standard row renders publicly. ``ethnic_cultural_origin``
+    # defaults PRIVATE, so its row contributes no public bullet; a PUBLIC editor
+    # bullet restating it is then the ONLY public copy of the fact and MUST
+    # survive, or the fact silently vanishes from the public profile. (With the
+    # canonical public, the duplicate is dropped — covered by the real-fixture
+    # Gender assertion above.)
+    g = _graph(
+        {
+            # private canonical (no public bullet of its own)
+            "ethnic_cultural_origin": {"answer": "South Asian", "visibility": "private"},
+            "emergent.editor.identity.0": _editor_identity(
+                "0", "Ethnic and cultural origin: South Asian"
+            ),
+        }
+    )
+    pub = render.public_sections(g)
+    ident = next(
+        (s["bullets"] for s in pub if s["page_type"] == "identity"), None
+    )
+    assert ident is not None
+    assert "Ethnic and cultural origin: South Asian" in ident
+
+
 def test_note261_your_story_keeps_header_rows_no_photo_header():
     # The suppression is PUBLIC-profile only (it sits under a photo header). Your
     # Story has no photo header, so the same header fields MUST still render there

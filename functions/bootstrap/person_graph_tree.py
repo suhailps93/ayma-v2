@@ -39,7 +39,7 @@ import node_visual
 import person_graph_index as index_mod
 import person_graph_render as render
 import question_tree
-from person_graph import HEADER_FIELD_IDS, GraphNode, Visibility
+from person_graph import GraphNode, Visibility
 
 # Surfaces the one visualiser renders (parallels the client's NodeVisualiserSurface).
 SURFACE_STORY = "story"
@@ -49,21 +49,17 @@ SURFACE_GRAPH_DETAIL = "graphDetail"
 
 _OWNER_SURFACES = {SURFACE_STORY, SURFACE_REPORT, SURFACE_GRAPH_DETAIL}
 
-# The standard identity fields the public profile already renders in its PHOTO
-# HEADER (name / age / location, from ``GET /explore/profile/{uid}``). On the
-# public surface the header sits directly above the Node-Visualiser body, so
-# re-rendering these as About Me rows would show each twice (founder build 2509:
-# the header shows name/33/San Jose, About Me repeated 33/San Jose). They are
-# skipped from the public tree so each appears exactly ONCE, in the header — a
-# render-placement rule, not a data/visibility change: the nodes are untouched
-# and still render on every owner surface (Your Story has no photo header, so it
-# keeps these rows). Restatement suppression is unaffected: these facts stay in
-# ``_standard_facts_by_section`` so a prose/editor bullet restating them is still
-# collapsed, and the single surviving copy is the header. The set is defined once
-# in ``person_graph.HEADER_FIELD_IDS`` and shared with the public Living Report
-# render (``person_graph_render.public_sections``) so the two public surfaces can
-# never drift apart (NOTE 261 follow-on).
-_HEADER_FIELD_IDS = HEADER_FIELD_IDS
+# The public profile sits under a PHOTO HEADER that already shows name / age /
+# location (from ``GET /explore/profile/{uid}``), so the public tree drops those
+# header facts and relocates a mis-sectioned structured duplicate to its
+# canonical section — exactly the placement the public Living Report applies via
+# ``person_graph_render._public_fact_placement`` (the single source of that
+# drop/move/keep decision, keyed on ``person_graph.HEADER_FIELD_IDS`` AND the
+# fact an editor bullet restates). Both public surfaces share that one helper so
+# they can never drift apart (NOTE 261 → NOTE 263 → NOTE 264). Restatement
+# suppression is unaffected: the header facts stay in
+# ``_standard_facts_by_section`` so a prose bullet restating them is still
+# collapsed, and the single surviving copy is the header.
 
 _VIS_STR = {
     Visibility.PUBLIC: "public",
@@ -465,17 +461,34 @@ def node_tree(
     for n in roots:
         if drop_report and render.node_page_type(n) in render._REPORT_PAGE_TYPES:
             continue
-        # Public profile: the photo header already shows name/age/location, so
-        # skip those standard rows here (founder 2509) — they stay in
-        # ``std_by_section`` above, so restatements remain suppressed.
-        if surface == SURFACE_PUBLIC and n.id in _HEADER_FIELD_IDS:
-            continue
+        # Public profile sits under a photo header that already shows
+        # name/age/location, so the public tree drops those header facts and
+        # relocates a mis-sectioned structured duplicate to its canonical
+        # section — the SAME fact-based placement the public Living Report uses
+        # (``render._public_fact_placement``), now applied to the surface the
+        # app's GraphTreeView actually renders (NOTE 264). This catches the
+        # editor duplicates (``emergent.editor.identity.*`` "Interested in:
+        # Women", "Age: 29", …) the old id-only drop missed — the canonical
+        # header nodes carry ``section``/``visibility`` ``None`` and never
+        # rendered, so dropping them by id alone changed nothing on screen.
+        section = n.section
+        if surface == SURFACE_PUBLIC:
+            kind, moved = render._public_fact_placement(graph, n)
+            if kind == "drop":
+                continue
+            if kind == "move" and moved:
+                section = moved
         built = _build_node(
             n, graph, adj, keep, seen, std_by_section, seen_texts, seen_tokens,
             hide_ayma_only_images,
         )
         if built is not None:
-            by_section.setdefault(n.section, []).append(built)
+            # A relocated node renders under its target section, so its own
+            # ``section`` field tracks the group it lands in (the client groups
+            # by this field; a stale ``identity`` would mis-tag the moved bullet).
+            if section != n.section:
+                built["section"] = section
+            by_section.setdefault(section, []).append(built)
 
     sections = []
     for pt in question_tree.ordered_page_types():
