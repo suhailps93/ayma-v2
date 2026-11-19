@@ -409,8 +409,17 @@ class _PublicProfileScreenState extends State<PublicProfileScreen>
               reportId: p.uid,
               api: _api,
               profile: p,
-              bottomPadding: 120,
-              extraRightPadding: hasRail ? _RailButton._width : 0,
+              // Clear the persistent tab bar + home indicator (its real
+              // on-screen height here, safe-area included) plus the standard
+              // 16 gap — the same math the floating rail's own bottom offset
+              // uses — instead of a hardcoded guess that under-clears on a
+              // device with a tall gesture inset.
+              bottomPadding: AymaTabBar.heightFor(context) + 16,
+              // The report text column must clear the whole floating rail,
+              // not just its glyph width: the rail is docked `right: 16` and
+              // is `_width` wide, so reserve its full footprint (16 + width)
+              // and the body's own 16 gutter leaves a 16 gap to the rail.
+              extraRightPadding: hasRail ? _RailButton._width + 16 : 0,
             );
           }
           // Screen-level `Stack` — a sibling of the scrollable content below,
@@ -790,8 +799,8 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                 ),
               ),
               Positioned(
-                left: 20,
-                right: widget.actions != null ? 84 : 20,
+                left: 16,
+                right: widget.actions != null ? 84 : 16,
                 bottom: 16,
                 // Name/status are display-only — taps fall through to the
                 // photo below, which opens it full screen.
@@ -817,7 +826,7 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                         ),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
+                              horizontal: 12, vertical: 6),
                           child: Text(
                             'AI-generated profile',
                             style:
@@ -1007,7 +1016,7 @@ class _Filmstrip extends StatelessWidget {
     return ColoredBox(
       color: AymaColors.darkBg,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: SizedBox(
           height: _thumb,
           child: ListView.separated(
@@ -1153,7 +1162,12 @@ class ProfileBody extends StatelessWidget {
         // as "mine" (uid null); `public_profile` = anyone else's (read-only,
         // by uid). The rail gutter is reserved by this wrapping Padding.
         Padding(
-          padding: EdgeInsets.only(right: extraRightPadding),
+          // ONE text column: a consistent 16 left/right gutter (the app's
+          // standard side inset), with the rail's extra footprint added on the
+          // right when the floating action rail is present so no prose runs
+          // under it. The photo header above stays full-bleed — it's a
+          // sibling list item, not inside this Padding.
+          padding: EdgeInsets.only(left: 16, right: 16 + extraRightPadding),
           child: GraphTreeView(
             uid: reportType == 'story_public' ? null : reportId,
             surface: NodeVisualiserSurface.publicProfile,

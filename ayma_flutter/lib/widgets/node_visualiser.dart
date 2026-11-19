@@ -245,9 +245,20 @@ class NodeVisualiser extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: EdgeInsets.only(top: icon != null ? 2 : 6),
-                child: leading,
+              // Fixed-width leading slot so an icon field (18) and a bullet
+              // field (10) start the TEXT column at the SAME x — one text
+              // column, not two (founder build 2509 screenshot). The glyph
+              // top-aligns with the first text line (icons sit a touch higher
+              // than the round bullet).
+              SizedBox(
+                width: 18,
+                child: Padding(
+                  padding: EdgeInsets.only(top: icon != null ? 2 : 6),
+                  child: Align(
+                    alignment: AlignmentDirectional.topStart,
+                    child: leading,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(child: _content(context)),
@@ -804,8 +815,11 @@ class NodeVisualiserSection extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (section.title.isNotEmpty)
+          // 8pt rhythm: a 16 break above each section header (clear section
+          // separation) and 8 below it to the first row, descending cleanly to
+          // the 8 between-row gaps.
           Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 4),
+            padding: const EdgeInsets.only(top: 16, bottom: 8),
             child: Text(
               section.title,
               style: Theme.of(context)
@@ -1031,15 +1045,23 @@ Widget _rangeRowWidget(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: EdgeInsets.only(top: showIcon ? 2 : 6),
-              child: showIcon
-                  ? Icon(icon,
-                      key: Key('node_range_icon_${target.id}'),
-                      size: 18,
-                      color: nodeVisibilityColor(target.subtreeVisibility))
-                  : NodeVisibilityBullet(
-                      visibility: target.subtreeVisibility),
+            // Same fixed-width leading slot as [NodeVisualiser._row] so a
+            // range/plain row's text lines up on the ONE profile text column.
+            SizedBox(
+              width: 18,
+              child: Padding(
+                padding: EdgeInsets.only(top: showIcon ? 2 : 6),
+                child: Align(
+                  alignment: AlignmentDirectional.topStart,
+                  child: showIcon
+                      ? Icon(icon,
+                          key: Key('node_range_icon_${target.id}'),
+                          size: 18,
+                          color: nodeVisibilityColor(target.subtreeVisibility))
+                      : NodeVisibilityBullet(
+                          visibility: target.subtreeVisibility),
+                ),
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
