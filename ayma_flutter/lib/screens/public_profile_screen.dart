@@ -764,15 +764,27 @@ class _ProfilePhotoHeaderState extends State<ProfilePhotoHeader> {
                         controller: _controller,
                         onPageChanged: (i) => setState(() => _page = i),
                         itemCount: photos.length,
-                        itemBuilder: (_, i) => NodeImage(
-                          node: StoryNode.image(
-                            id: 'carousel_$i',
-                            imageUrl: photos[i],
-                          ),
-                          fill: true,
-                          displayWidth: 900,
-                          error: fallback,
-                        ),
+                        itemBuilder: (_, i) {
+                          // Progressive load: paint the aligned thumb (filmstrip
+                          // variant, usually already cached) under the full-res
+                          // fade so a cold hero never flashes a flat dark tile
+                          // (recurring hero-lag observation). Null when no
+                          // distinct thumb exists (edit mode / mismatch).
+                          final strip = _stripPhotos;
+                          final thumb = i < strip.length && strip[i] != photos[i]
+                              ? strip[i]
+                              : null;
+                          return NodeImage(
+                            node: StoryNode.image(
+                              id: 'carousel_$i',
+                              imageUrl: photos[i],
+                            ),
+                            fill: true,
+                            displayWidth: 900,
+                            placeholderUrl: thumb,
+                            error: fallback,
+                          );
+                        },
                       ),
                     ),
               // Dark gradient scrim fading up from the bottom of the photo

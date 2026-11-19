@@ -157,6 +157,81 @@ void main() {
     final staleResizeKey = CachedNetworkImageProvider(thumbUrl, maxWidth: 780);
     expect(prefetch, isNot(equals(staleResizeKey)));
   });
+
+  // --- NOTE 266 Obs 2: progressive placeholder kills the flat-dark hero -------
+
+  const heroUrl = 'https://x/profile__medium_1080.jpg';
+
+  testWidgets(
+      'hero lag: a placeholderUrl paints the low-res thumb UNDER the full-res '
+      'fade (not a flat dark tile) while the large variant loads', (tester) async {
+    // Both the hero and its thumb hang, so the widget stays in the placeholder
+    // state — the thumb the progressive placeholder paints is observable.
+    AymaPhoto.debugCacheManager = _HangCacheManager();
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    // Plain decode path (<=400) so the hung fake stays on the loading
+    // placeholder; `_placeholder` is width-independent, so this exercises the
+    // same progressive-thumb branch the 900px hero uses.
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: AymaPhoto(
+          url: heroUrl,
+          displayWidth: 260,
+          placeholderUrl: thumbUrl,
+        ),
+      ),
+    ));
+    await tester.pump(); // start loading
+    await tester.pump(const Duration(milliseconds: 50)); // placeholder mounts
+
+    final imgs = tester
+        .widgetList<CachedNetworkImage>(find.byType(CachedNetworkImage))
+        .toList();
+    // The outer (hero) image plus the inner thumb painted as its placeholder.
+    expect(imgs.map((w) => w.imageUrl), containsAll(<String>[heroUrl, thumbUrl]));
+    final thumb = imgs.firstWhere((w) => w.imageUrl == thumbUrl);
+    expect(thumb.maxWidthDiskCache, isNull,
+        reason: 'the thumb placeholder must stay on the non-stalling plain path');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('no placeholderUrl keeps the plain flat placeholder (one image)',
+      (tester) async {
+    AymaPhoto.debugCacheManager = _HangCacheManager();
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: AymaPhoto(url: heroUrl, displayWidth: 900),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.byType(CachedNetworkImage), findsOneWidget,
+        reason: 'without a thumb hint the placeholder is the flat tile, not an image');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a placeholderUrl equal to the url is ignored (no self-wait)',
+      (tester) async {
+    AymaPhoto.debugCacheManager = _HangCacheManager();
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: AymaPhoto(url: heroUrl, displayWidth: 900, placeholderUrl: heroUrl),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.byType(CachedNetworkImage), findsOneWidget,
+        reason: 'a same-URL thumb would only wait on the download it should cover');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 /// Serves one local fixture for any URL so the real decode pipeline runs with

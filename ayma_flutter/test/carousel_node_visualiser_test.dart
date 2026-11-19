@@ -7,6 +7,7 @@
 import 'package:ayma_flutter/screens/public_profile_screen.dart'
     show ProfilePhotoHeader;
 import 'package:ayma_flutter/services/photo_carousel_registry.dart';
+import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/node_visualiser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -72,5 +73,73 @@ void main() {
     expect(miss.photoCount, 3);
     await tester.pumpAndSettle();
     expect(registry.active!.currentPage(), 2);
+  });
+
+  // NOTE 266 Obs 2: the hero page wires its aligned thumb variant through to
+  // NodeImage.placeholderUrl so a cold full-bleed hero fades in over the small
+  // thumb instead of flashing a flat dark tile.
+  const thumbs = [
+    'https://example.com/p1__thumb_400.jpg',
+    'https://example.com/p2__thumb_400.jpg',
+    'https://example.com/p3__thumb_400.jpg',
+  ];
+
+  testWidgets('hero page passes the aligned thumb as its progressive placeholder',
+      (tester) async {
+    PhotoCarouselRegistry.instance.clear();
+    addTearDown(PhotoCarouselRegistry.instance.clear);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfilePhotoHeader(
+              photos: _photos,
+              stripPhotos: thumbs,
+              seed: 'her',
+              name: 'Dana',
+              age: 30,
+              location: 'Berlin',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The carousel page id key sits on the hero's AymaPhoto (NodeImage wires it
+    // through); assert the progressive thumb reached it.
+    final hero = tester.widget<AymaPhoto>(
+      find.byKey(const Key('node_image_carousel_0')),
+    );
+    expect(hero.placeholderUrl, thumbs[0],
+        reason: 'the hero fades in over its own aligned thumb');
+  });
+
+  testWidgets('hero placeholder is null when no distinct thumb list is given',
+      (tester) async {
+    PhotoCarouselRegistry.instance.clear();
+    addTearDown(PhotoCarouselRegistry.instance.clear);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ProfilePhotoHeader(
+              photos: _photos,
+              seed: 'her',
+              name: 'Dana',
+              age: 30,
+              location: 'Berlin',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final hero = tester.widget<AymaPhoto>(
+      find.byKey(const Key('node_image_carousel_0')),
+    );
+    expect(hero.placeholderUrl, isNull,
+        reason: 'no aligned thumbs -> plain flat placeholder, no self-wait');
   });
 }

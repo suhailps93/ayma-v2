@@ -1753,6 +1753,26 @@ inference untouched, still LiveKit):
     other-member public views are now identical, section-for-section;
     `test_self_route_publicprofile_not_coerced_to_story` — the self publicProfile
     surface excludes the private loose nodes the story coercion would have shown).
+- **Hero photo: progressive thumb under the full-res fade — no flat-dark flash
+  (NOTE 266 Obs 2, build 2519).** The carousel hero renders at `displayWidth: 900`
+  (`NodeImage(fill)` → `AymaPhoto`), which decodes a large variant on the
+  disk-resize path. On first entry that variant is fetched COLD (the Explore
+  prefetch warms only the 260px thumb — a different `CachedNetworkImageProvider`
+  key — and the founder's self-profile has no prior card to warm it at all), so
+  the hero sat on `AymaPhoto`'s flat `surfaceContainerHighest` placeholder until
+  the big image arrived — read on-device as "the hero is dark on first entry and
+  settles after scroll" (the scroll is coincidental; the photo paints when the
+  large variant finishes, not because of the scroll). Fix: `AymaPhoto` gained an
+  opt-in `placeholderUrl` (a small low-res variant painted UNDER the fade, on the
+  non-stalling plain path, falling back to the flat tile); `NodeImage` threads it
+  through; the hero carousel passes the aligned `thumb_400` (`stripPhotos`, the
+  same variant the filmstrip already loads — small, fast cold, usually already on
+  disk). So a cold hero shows the thumb instantly and the full-res sharpens in
+  over it. Every other `AymaPhoto` caller passes no `placeholderUrl` and keeps the
+  flat placeholder unchanged. Tests: `ayma_photo_test.dart` (thumb painted under a
+  hung full-res; null/equal-URL keep the flat tile, no self-wait),
+  `carousel_node_visualiser_test.dart` (hero wires the aligned thumb; null without
+  a distinct thumb list).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans
