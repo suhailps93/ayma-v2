@@ -280,9 +280,10 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
         header: [
           if (_pendingUpdates > 0)
             MaterialBanner(
-              // Explicit start 20 to share the profile body's left edge (the
-              // M3 single-row default is start 16); keep the M3 top 2.
-              padding: const EdgeInsetsDirectional.only(start: 20, top: 2),
+              // Explicit start 16 to share the profile body's left edge (its
+              // unified 16 gutter); the M3 single-row default is also 16, so
+              // this is now aligned by construction. Keep the M3 top 2.
+              padding: const EdgeInsetsDirectional.only(start: 16, top: 2),
               content: Text(_pendingUpdates == 1
                   ? 'Ayma suggests an update to your public profile.'
                   : 'Ayma suggests $_pendingUpdates updates to your '
