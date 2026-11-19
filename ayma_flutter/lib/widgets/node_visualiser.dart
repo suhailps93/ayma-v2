@@ -1416,6 +1416,7 @@ class NodeImage extends StatelessWidget {
     this.onTap,
     this.error,
     this.displayWidth = 480.0,
+    this.placeholderUrl,
   });
 
   /// The image node to render ([StoryNode.isImage] is expected true).
@@ -1435,6 +1436,12 @@ class NodeImage extends StatelessWidget {
 
   final double displayWidth;
 
+  /// Low-res variant painted under the full-res fade (progressive load), passed
+  /// straight to [AymaPhoto.placeholderUrl]. Set by the profile hero carousel
+  /// (the aligned `thumb_400`) so a cold full-bleed hero never flashes dark;
+  /// null everywhere else keeps the flat placeholder.
+  final String? placeholderUrl;
+
   @override
   Widget build(BuildContext context) {
     // A failed photo NEVER shows the broken-image glyph: fall back to a clean
@@ -1446,6 +1453,7 @@ class NodeImage extends StatelessWidget {
         key: Key('node_image_${node.id}'),
         url: node.imageUrl,
         displayWidth: displayWidth,
+        placeholderUrl: placeholderUrl,
         error: fallback,
       );
       return onTap == null

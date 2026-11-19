@@ -102,3 +102,22 @@ Sources 1–3 cover an answer that is on the question's own seed node, on `profi
 - Exact income or net-worth figures and partner ethnicity preferences: deliberately not collected.
 - Height as a structured hard filter: kept as free text under `physical_preferences_narrative`.
 - Visibility: wiki pages `values` and `dealbreakers` default to public (existing `wiki_schema.json` policy), and faith and politics answers live under `values`. Consider making these private by default or per-field.
+
+## 7. NOTE 266 Obs 1 (2026-11-19, build 2519): the 86% → 85% move is NOT the dedup — report only, metric unchanged
+
+Scout saw profile completeness read 86% on build 2518 and 85% on 2519, and asked whether the self-route dedup (NOTE 265) removed double-counted fields (correct) or caused a real regression. **Neither.** The completeness number is independent of the dedup; the 1-point move is score noise, and per the order the metric was left unchanged.
+
+**The exact counting path.** The ring's number is `completeness._score(evaluated)` (served as `score`; the ring widget `completeness_ring.dart` reads it, capped at `_MAX_SCORE = 95`). It is a weighted coverage over the user's intent question tree:
+
+```
+score = round( 95 * Σ_i weight_i · coverage_i  /  Σ_i weight_i )     (completeness.py _score)
+```
+
+where `evaluated` (`completeness._evaluate`) is built from exactly three sources, in priority order, per node:
+1. a preboarding **profile** field (`_profile_derived_field` / `qz_*`) → coverage 1.0;
+2. the **questionnaire store** entry (`_questionnaire_store`) → 1.0 stated / 0.7 inferred;
+3. otherwise the **free-text story** judged by the narrative LLM (`_narrative_status` → `_run_narrative_llm`, Gemini `generate_json`, temperature 0.0, cached on a hash of the wiki text + the target-id set) → narrative 1.0/0.5/0.0, structured 1.0 only if `covered`.
+
+**Why the dedup cannot move it.** `completeness.py` imports only `question_tree`, `person_graph_source`, `person_graph_store` — it never imports `person_graph_render`, `person_graph_tree` or the profile route. The dedup drops/moves/keeps nodes **only on the public render surface**; it never deletes or alters store nodes, so the effective graph `_evaluate` reads is byte-for-byte the same before and after NOTE 265. Between 2518 and 2519 the ONLY code change was the one-line self-route surface allowlist — which touches no completeness input. So "dedup removing double-counted fields" is not the cause (the metric never counts rendered/public fields), and there is no structural completeness regression (no node lost its answer).
+
+**What the move actually is.** A re-evaluation (the `/cron/completeness-backfill` sweep) re-judges the story nodes. The narrative-LLM cache re-runs when its key changes (a chat turn folded a little new text into the wiki, or the target-id set shifted); temperature 0.0 is near- but not perfectly deterministic. A single low-weight narrative node flipping `covered`(1.0)→`partial`, or a coverage ratio crossing a `round()` 0.5 boundary, moves the displayed integer by ~1 point — 86 → 85. This is the same LLM-judge/denominator jitter that `person_graph_completeness.py` §6.1 ("killed the live 81↔86% wobble") was designed to retire in the tier model, which is not yet wired to the live endpoint. **Not changed here** (the order said report the cause first; do not change the metric until it is known). If the founder wants the wobble gone, the fix is to cut over the ring to the fixed-seed tier measure (`person_graph_completeness.compute_tier`), tracked separately.

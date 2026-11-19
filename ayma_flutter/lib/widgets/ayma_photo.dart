@@ -41,6 +41,7 @@ class AymaPhoto extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.displayWidth = 1000,
     this.placeholderColor,
+    this.placeholderUrl,
     this.error,
     this.width,
     this.height,
@@ -50,6 +51,14 @@ class AymaPhoto extends StatefulWidget {
   final BoxFit fit;
   final double displayWidth;
   final Color? placeholderColor;
+
+  /// Progressive-load hint: a small low-res variant of [url] (a `thumb_400`)
+  /// painted *under* the full-res fade while the large image downloads, so a
+  /// cold full-size photo (the profile hero) never shows as a flat dark tile.
+  /// Null (every caller but the hero) keeps the plain flat placeholder. Ignored
+  /// when empty or equal to [url] — a same-URL "thumb" would only wait on the
+  /// very download it is meant to cover.
+  final String? placeholderUrl;
   final Widget? error;
   final double? width;
   final double? height;
@@ -174,12 +183,34 @@ class _AymaPhotoState extends State<AymaPhoto> {
     );
   }
 
-  Widget _placeholder(BuildContext context) => Container(
-        width: widget.width,
-        height: widget.height,
-        color: widget.placeholderColor ??
-            Theme.of(context).colorScheme.surfaceContainerHighest,
-      );
+  Widget _placeholder(BuildContext context) {
+    final flat = Container(
+      width: widget.width,
+      height: widget.height,
+      color: widget.placeholderColor ??
+          Theme.of(context).colorScheme.surfaceContainerHighest,
+    );
+    final low = widget.placeholderUrl;
+    if (low == null || low.isEmpty || low == widget.url) return flat;
+    // The thumb variant is small (fast to fetch cold, usually already on disk
+    // from the filmstrip/grid), so it fills the gap while the full-res loads
+    // and the real image fades in over it. Kept on the plain download path
+    // (`maxWidthDiskCache` null — see PC8) and falling back to the flat tile if
+    // it can't load, so the placeholder can never itself stall a tile.
+    final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 2.0;
+    final thumbPx = (_kDiskResizeThreshold * dpr).round().clamp(48, 2000);
+    return CachedNetworkImage(
+      imageUrl: low,
+      width: widget.width,
+      height: widget.height,
+      cacheManager: AymaPhoto.debugCacheManager,
+      fit: widget.fit,
+      fadeInDuration: Duration.zero,
+      memCacheWidth: thumbPx,
+      placeholder: (_, __) => flat,
+      errorWidget: (_, __, ___) => flat,
+    );
+  }
 
   Widget _fallback(BuildContext context) => Container(
         width: widget.width,
