@@ -232,6 +232,10 @@ def test_story_includes_children_as_bullets():
 def test_public_shows_only_public_and_drops_empty_sections():
     g = _graph(
         {
+            # gender_identity is an identity field the photo header does NOT show,
+            # so it keeps the identity section present on the public profile; the
+            # header fields (age/name/location) are suppressed there (NOTE 261).
+            "gender_identity": {"answer": "Female", "visibility": "public"},
             "date_of_birth": {"answer": "1994-02-02", "visibility": "public"},
             "financial_security_narrative": {
                 "answer": "A private money thought.",
@@ -244,8 +248,63 @@ def test_public_shows_only_public_and_drops_empty_sections():
     assert "identity" in pts
     assert "finances" not in pts  # all-private section hidden on public profile
     ident = next(s for s in pub if s["page_type"] == "identity")
-    assert any(t.startswith("Age:") for t in ident["bullets"])  # age, not raw DOB
+    # date_of_birth is a header field — suppressed on the public profile (shown
+    # once, in the photo header), so no age/DOB bullet appears in About Me.
+    assert not any(t.startswith("Age:") for t in ident["bullets"])
     assert not any("1994-02-02" in t for t in ident["bullets"])
+
+
+def test_note261_public_profile_dedups_header_and_moves_interested_in():
+    # NOTE 261 (build 2513): the public-profile Living Report's About Me repeated
+    # the photo-header fields (name/age/location) AND showed "Interested in" in
+    # About Me while also under Looking-For. This is the EXACT render path Scout
+    # sees: report_adapters._public_bullet_sections ->
+    # public_profile.public_bullet_sections -> render.public_sections(graph).
+    g = _graph(
+        {
+            "legal_first_name": {"answer": "Sam", "visibility": "public"},
+            "date_of_birth": {"answer": "1996-01-01", "visibility": "public"},
+            "primary_location": {"answer": "Austin", "visibility": "public"},
+            "gender_identity": {"answer": "Male", "visibility": "public"},
+            "target_match_genders": {"answer": "Female", "visibility": "public"},
+        }
+    )
+    pub = render.public_sections(g)
+    ident = next(s["bullets"] for s in pub if s["page_type"] == "identity")
+    looking = next(s["bullets"] for s in pub if s["page_type"] == "looking_for")
+
+    # (a) the three header fields do NOT appear in About Me (identity) — they are
+    # shown exactly once, in the photo header.
+    assert not any(t.startswith("Age:") for t in ident)
+    assert "Sam" not in ident
+    assert not any("Austin" in t for t in ident)
+    assert not any("1996-01-01" in t for t in ident)
+    # a non-header identity field still renders, so About Me is not empty.
+    assert any("Male" in t for t in ident)
+
+    # (b) "Interested in" (target_match_genders) appears under What I'm Looking
+    # For, exactly once, and NOT in About Me / identity.
+    interested = [t for t in looking if t.startswith("Interested in:")]
+    assert len(interested) == 1
+    assert "Female" in interested[0]
+    assert not any("Interested in" in t for t in ident)
+
+
+def test_note261_your_story_keeps_header_rows_no_photo_header():
+    # The suppression is PUBLIC-profile only (it sits under a photo header). Your
+    # Story has no photo header, so the same header fields MUST still render there
+    # (f41191d2 / NOTE 261: a render-placement rule, not a data change).
+    g = _graph(
+        {
+            "legal_first_name": {"answer": "Sam", "visibility": "public"},
+            "date_of_birth": {"answer": "1996-01-01", "visibility": "public"},
+            "primary_location": {"answer": "Austin", "visibility": "public"},
+        }
+    )
+    ident = _texts(render.story_sections(g)["sections"], "identity")
+    assert "Sam" in ident
+    assert any(t.startswith("Age:") for t in ident)
+    assert any("Austin" in t for t in ident)
 
 
 def test_public_child_visibility_is_independent_of_parent():

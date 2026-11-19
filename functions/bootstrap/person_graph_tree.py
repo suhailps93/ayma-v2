@@ -39,7 +39,7 @@ import node_visual
 import person_graph_index as index_mod
 import person_graph_render as render
 import question_tree
-from person_graph import GraphNode, Visibility
+from person_graph import HEADER_FIELD_IDS, GraphNode, Visibility
 
 # Surfaces the one visualiser renders (parallels the client's NodeVisualiserSurface).
 SURFACE_STORY = "story"
@@ -59,10 +59,11 @@ _OWNER_SURFACES = {SURFACE_STORY, SURFACE_REPORT, SURFACE_GRAPH_DETAIL}
 # and still render on every owner surface (Your Story has no photo header, so it
 # keeps these rows). Restatement suppression is unaffected: these facts stay in
 # ``_standard_facts_by_section`` so a prose/editor bullet restating them is still
-# collapsed, and the single surviving copy is the header.
-_HEADER_FIELD_IDS = frozenset(
-    {"legal_first_name", "date_of_birth", "primary_location"}
-)
+# collapsed, and the single surviving copy is the header. The set is defined once
+# in ``person_graph.HEADER_FIELD_IDS`` and shared with the public Living Report
+# render (``person_graph_render.public_sections``) so the two public surfaces can
+# never drift apart (NOTE 261 follow-on).
+_HEADER_FIELD_IDS = HEADER_FIELD_IDS
 
 _VIS_STR = {
     Visibility.PUBLIC: "public",
