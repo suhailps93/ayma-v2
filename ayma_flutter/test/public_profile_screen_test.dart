@@ -1091,6 +1091,42 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  // --- NOTE 269 Leg 3: the seed paints at the grid's width, so it reuses the
+  //     already-warm decode and shows at once instead of a cold 12s flat-dark --
+  testWidgets(
+      'the seeded loading photo is requested at the Explore grid width (260), '
+      'so it hits the warm decode instead of forcing a cold re-decode',
+      (tester) async {
+    AymaPhoto.debugCacheManager =
+        _FakeCacheManager(File('test/fixtures/tiny.png'));
+    addTearDown(() => AymaPhoto.debugCacheManager = null);
+
+    final gate = Completer<http.Response>();
+    await tester.pumpWidget(_app(
+      _gatedApi(gate),
+      seedPhotoUrl: 'https://x/seed_thumb.jpg',
+      seedName: 'Dana',
+    ));
+    await tester.pump(); // initState; profile GET still pending (gated)
+
+    final seeded = tester
+        .widgetList<AymaPhoto>(find.byType(AymaPhoto))
+        .where((w) => w.url == 'https://x/seed_thumb.jpg')
+        .toList();
+    expect(seeded, isNotEmpty);
+    // The Explore grid (`_Photo`) and its prefetch both decode the card photo
+    // at displayWidth 260. Flutter's ImageCache keys on the resize dimension,
+    // so the loading header MUST request the same 260 to reuse that live entry
+    // — a 400 request is a cache miss that cold-decodes for ~12s (the reported
+    // flat-dark hero).
+    expect(seeded.every((w) => w.displayWidth == 260), isTrue,
+        reason: 'seed photo reuses the grid-warmed 260px decode, not a cold '
+            '400px entry');
+
+    gate.complete(http.Response('no', 404));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets(
       'without a seed the loading state is the plain labelled loader (no hero)',
       (tester) async {

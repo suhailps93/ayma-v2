@@ -1839,6 +1839,39 @@ inference untouched, still LiveKit):
   - Not a code defect: the 2521 DEBUG ANR cluster (6 in ~45 min) is the known
     debug-JIT / first-launch artifact family (AOT launched clean) — it is the
     *trigger* that made these one-shot-load gaps visible, not a bug itself.
+- **Why the seeded header painted the NAME at 2s but not the PHOTO, and why the
+  story hero area collapsed (NOTE 269, build 2522).** The 2522 retest found the
+  NOTE 267 Explore seed half-working: on first entry the `_LoadingHeader` seeded
+  the name instantly but the photo stayed flat-dark for ~12s, though the card
+  photo was already on screen at tap; a cached re-entry was clean.
+  - **(a) Seeded header photo decode mismatch — `public_profile_screen.dart`.**
+    The Explore grid (`_Photo`) and `prefetchCardPhotos` decode the card photo at
+    `displayWidth: 260`, but `_LoadingHeader` requested the *same URL* at
+    `displayWidth: 400`. Flutter's `ImageCache` keys on the resize dimension
+    (`memCacheWidth = displayWidth × dpr`), so 260 and 400 are **different cache
+    entries**: the grid's live, already-decoded entry was never reused and the
+    header forced a cold decode (the ~12s flat-dark under first-launch
+    contention); re-entry was clean because the header's own 400-entry was then
+    warm. Fix: `_LoadingHeader` decodes at `displayWidth: 260`, matching the grid,
+    so the seed reuses the warm decode and paints at once — first entry now looks
+    like a cached re-entry. Same pixels the user just tapped; the full-res hero
+    replaces it when the GET lands.
+  - **(b) Story cover hero area collapsed while the GET retried — `story_editor_
+    screen.dart`.** The cover block was omitted entirely whenever `heroPhotoUrl`
+    was null, which covers *both* "still loading" and "no photo". So during the
+    cold-start-retried `_loadMainPhoto` (up to ~12s) the hero area was a
+    photo-less gap that then popped the photo in — and the NOTE 267 thumb could
+    never be observed because its URL arrives with the same GET as the full photo.
+    The thumb URL is only known once that one GET lands, so there is nothing to
+    paint before it. Fix: a `_mainPhotoLoading` flag distinguishes "loading" from
+    "resolved, no photo"; while loading, the cover **reserves** the rounded 4/3
+    frame with a calm surface (`Key('storyCoverLoadingHero')`) instead of
+    collapsing, and the real hero fades into that same frame over its thumb when
+    the GET resolves. A genuine no-photo state still omits the hero, unchanged.
+  - Tests: `public_profile_screen_test.dart` (the seed photo is requested at the
+    grid width 260, not 400), `story_editor_screen_test.dart` (while the gated
+    cover GET is in flight the reserved hero frame is present and the hero photo
+    is not, then the hero fades into it once the GET lands).
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans

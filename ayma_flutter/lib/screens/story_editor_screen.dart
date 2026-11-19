@@ -331,6 +331,15 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   /// shows a flat-dark tile while the 600px hero downloads cold.
   String? _mainThumbUrl;
 
+  /// True while the (cold-start-retried) main-photo GET is still in flight —
+  /// its URL is only known once that one request lands, so until then the cover
+  /// RESERVES the hero's space with a calm loading surface instead of omitting
+  /// the block (which collapsed the hero area to nothing, then popped the photo
+  /// in at ~12s — Scout NOTE 269 Leg 2 nuance). Distinguishes "still loading"
+  /// (reserve) from "resolved, no photo" (omit, unchanged): `_mainPhotoUrl` is
+  /// null in both cases, so the flag is what tells them apart.
+  bool _mainPhotoLoading = false;
+
   /// The signed-in uid the currently-held story data (`_sections`/`_photos`/
   /// web-findings → the cover stats) was fetched for. Guards against this
   /// still-mounted screen painting a PREVIOUS account's cover stats if the
@@ -398,6 +407,13 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   Future<void> _loadMainPhoto() async {
     final loadUid = _uid;
     if (loadUid.isEmpty) return;
+    // Reserve the hero area (calm loading surface) while this one GET retries,
+    // so the cover never collapses to a photo-less gap and then pops (NOTE 269
+    // Leg 2 nuance). Only flip it on when the hero isn't already painted, so a
+    // refresh after the photo is up doesn't blank it back to the surface.
+    if (mounted && _mainPhotoUrl == null) {
+      setState(() => _mainPhotoLoading = true);
+    }
     try {
       // Cold-start-tolerant, like the story fetch in [_load]: the cover hero is
       // a SEPARATE call from the story sections + photo nodes, so without this
@@ -413,10 +429,14 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
               p.detailPhotos.isNotEmpty ? p.detailPhotos.first : null;
           _mainThumbUrl =
               p.thumbPhotos.isNotEmpty ? p.thumbPhotos.first : null;
+          _mainPhotoLoading = false;
         });
       }
     } catch (_) {
-      // Best-effort: no cover photo rather than an error.
+      // Best-effort: no cover photo rather than an error. The GET is resolved
+      // (it exhausted its retries), so drop the reserved surface — a genuine
+      // no-photo state omits the hero, same as before.
+      if (mounted) setState(() => _mainPhotoLoading = false);
     }
   }
 
@@ -582,6 +602,7 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
           subtitle: 'A living portrait, written by Ayma.',
           heroPhotoUrl: _heroPhotoUrl(),
           heroThumbUrl: _heroThumbUrl(),
+          heroLoading: _mainPhotoLoading,
           topicCount: rows.where((s) => s.body.trim().isNotEmpty).length,
           photoCount: photos.length,
           webFindsCount: _webFindingsReport?.facts.length,
@@ -939,6 +960,7 @@ class _StoryCover extends StatelessWidget {
     required this.subtitle,
     required this.heroPhotoUrl,
     this.heroThumbUrl,
+    this.heroLoading = false,
     required this.topicCount,
     required this.photoCount,
     required this.webFindsCount,
@@ -952,6 +974,12 @@ class _StoryCover extends StatelessWidget {
   /// Thumb variant of [heroPhotoUrl], painted under its fade so a cold cover
   /// hero never flashes flat-dark (NOTE 267 Obs b). Null keeps the flat tile.
   final String? heroThumbUrl;
+
+  /// True while the main-photo GET is still in flight. When there's no URL yet
+  /// but we're still loading, the hero's space is RESERVED with a calm surface
+  /// (never a collapsed gap that pops at ~12s — NOTE 269 Leg 2). Once resolved
+  /// with no photo the hero is omitted, as before.
+  final bool heroLoading;
   final int topicCount;
   final int photoCount;
   final int? webFindsCount;
@@ -980,6 +1008,22 @@ class _StoryCover extends StatelessWidget {
                   displayWidth: 600,
                   placeholderUrl: heroThumbUrl,
                   error: Container(color: ac.bgElev),
+                ),
+              ),
+            ),
+          ] else if (heroLoading) ...[
+            // GET still in flight — the hero URL isn't known until it lands, so
+            // reserve the same rounded 4/3 frame with a calm surface rather than
+            // collapsing the area and popping the photo in at ~12s (NOTE 269 Leg
+            // 2). The real hero fades in over its thumb here once resolved.
+            const SizedBox(height: 24),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: AspectRatio(
+                aspectRatio: 4 / 3,
+                child: Container(
+                  key: const Key('storyCoverLoadingHero'),
+                  color: ac.bgElev,
                 ),
               ),
             ),
