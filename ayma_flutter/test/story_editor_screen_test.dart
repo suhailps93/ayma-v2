@@ -38,9 +38,18 @@ class _FakeApi extends ApiClient {
   /// the first as its progressive placeholder (NOTE 267 Obs b).
   List<String> mainThumbs = const [];
 
+  /// Number of leading [publicProfile] calls that throw a cold-start-retryable
+  /// failure before one succeeds — exercises the hero's cold-start retry
+  /// (NOTE 268 Leg 3: without it, one stressed-start miss left the hero absent).
+  int failPublicProfileTimes = 0;
+
   @override
   Future<PublicProfile> publicProfile(String otherUid) async {
     calls.add('public_profile');
+    if (failPublicProfileTimes > 0) {
+      failPublicProfileTimes--;
+      throw TimeoutException('cold start');
+    }
     return PublicProfile.fromMap({
       'uid': otherUid,
       'photos': mainPhotos,
@@ -466,6 +475,29 @@ void main() {
         (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'));
     expect(hero.placeholderUrl, 'https://cdn/main-starred__thumb_400.jpg',
         reason: 'the cover hero paints its thumb under the full-res fade');
+  });
+
+  testWidgets(
+      'NOTE 268 Leg 3: a cold-start failure of the cover-photo fetch RETRIES '
+      'instead of leaving the hero absent (the sailboat-with-no-hero bug)',
+      (tester) async {
+    final api = _FakeApi()
+      ..failPublicProfileTimes = 1 // first fetch throws a retryable timeout
+      ..mainPhotos = const ['https://cdn/main-starred.jpg']
+      ..mainThumbs = const ['https://cdn/main-starred__thumb_400.jpg'];
+    await _pumpWithRouter(tester, api);
+    // Advance past the 1s cold-start backoff so the retry fires, then settle.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    // Pre-fix: the single failed call was swallowed and the hero node never
+    // rendered (absent) while the story photos still showed. Now it self-heals.
+    final hero = tester.widget<AymaPhoto>(find.byWidgetPredicate(
+        (w) => w is AymaPhoto && w.url == 'https://cdn/main-starred.jpg'));
+    expect(hero.placeholderUrl, 'https://cdn/main-starred__thumb_400.jpg');
+    expect(api.calls.where((c) => c == 'public_profile').length,
+        greaterThanOrEqualTo(2),
+        reason: 'the failed first cover-photo fetch must be retried');
   });
 
 

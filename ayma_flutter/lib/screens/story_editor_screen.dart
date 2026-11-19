@@ -396,8 +396,17 @@ class _StoryEditorScreenState extends State<StoryEditorScreen>
   /// via the same `publicProfile` read the public profile itself uses, so both
   /// surfaces resolve the identical starred picture.
   Future<void> _loadMainPhoto() async {
+    final loadUid = _uid;
+    if (loadUid.isEmpty) return;
     try {
-      final p = await _api.publicProfile(_uid);
+      // Cold-start-tolerant, like the story fetch in [_load]: the cover hero is
+      // a SEPARATE call from the story sections + photo nodes, so without this
+      // retry a single cold-start / transient failure of this one request left
+      // the hero permanently ABSENT (no node at all) while the retried story
+      // photos still rendered — the sailboat tile with no hero above it (Scout
+      // NOTE 268 Leg 3). The server returns the primary photo fine; the fix is
+      // to not give up on the first stressed-start miss.
+      final p = await withColdStartRetry(() => _api.publicProfile(loadUid));
       if (mounted) {
         setState(() {
           _mainPhotoUrl =

@@ -37,9 +37,19 @@ class _HangCacheManager implements BaseCacheManager {
 void main() {
   const thumbUrl = 'https://x/profile__thumb_400.jpg';
 
+  // The CachedNetworkImage key AymaPhoto sets: `<url>@<stallAttempt>`. A bump
+  // proves a post-stall self-heal re-attempt mounted a fresh element.
+  String? cniKey(WidgetTester tester) {
+    final k = tester
+        .widget<CachedNetworkImage>(find.byType(CachedNetworkImage))
+        .key;
+    return k is ValueKey<String> ? k.value : null;
+  }
+
   testWidgets(
-      'PC8 stall guard: a placeholder that never gets a frame flips to the '
-      'error (F1) fallback after the stall timeout', (tester) async {
+      'PC8 stall guard: a stalled tile SELF-HEALS (re-attempts) and only flips '
+      'to the error (F1) fallback once the retries are spent (NOTE 268 Leg 2)',
+      (tester) async {
     AymaPhoto.debugCacheManager = _HangCacheManager();
     addTearDown(() => AymaPhoto.debugCacheManager = null);
 
@@ -53,18 +63,29 @@ void main() {
       ),
     ));
     await tester.pump(); // first frame: still on the (blank) placeholder
-
-    // Pre-fix this stuck here forever; the F1 fallback must not show yet.
     expect(find.byKey(const Key('f1')), findsNothing);
+    expect(cniKey(tester), '$thumbUrl@0');
 
-    // Advance past the 10s interactive stall timeout.
-    await tester.pump(const Duration(seconds: 11));
+    // Past the first 10s stall + 3s retry delay: NOT the terminal fallback —
+    // the tile re-attempts (attempt 1), so a grid that stalled under cold-start
+    // contention recovers on its own instead of sticking on initials for 25+
+    // min. The attempt suffix bumped, proving a fresh fetch was issued.
+    await tester.pump(const Duration(seconds: 14));
+    expect(find.byKey(const Key('f1')), findsNothing,
+        reason: 'a transient stall must re-attempt, not give up');
+    expect(cniKey(tester), '$thumbUrl@1');
 
-    // The card now falls back to the F1 initial-avatar instead of sticking on
-    // the darkBgCard placeholder.
+    // Second stall + retry: still self-healing (attempt 2), still no fallback.
+    await tester.pump(const Duration(seconds: 13));
+    expect(find.byKey(const Key('f1')), findsNothing);
+    expect(cniKey(tester), '$thumbUrl@2');
+
+    // Retries now spent: a genuinely-dead URL finally shows the F1 fallback
+    // (bounded — it cannot churn forever).
+    await tester.pump(const Duration(seconds: 12));
     expect(find.byKey(const Key('f1')), findsOneWidget);
 
-    await tester.pumpWidget(const SizedBox.shrink()); // dispose: cancels timer
+    await tester.pumpWidget(const SizedBox.shrink()); // dispose: cancels timers
   });
 
   testWidgets(

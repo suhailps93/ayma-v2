@@ -1795,6 +1795,40 @@ inference untouched, still LiveKit):
     name, not the "Loading this profile…" wall; no seed → the plain loader),
     `story_editor_screen_test.dart` (the cover hero carries its thumb variant as
     `placeholderUrl`).
+- **Why the thumb fix had nothing to fade, and why grid tiles stuck on initials
+  (NOTE 268, build 2521).** The 2521 retest found the cover hero *absent* (no
+  node at all — the NOTE 267 thumb had nothing to fade) and Explore grid photos
+  stuck on initials for 25+ min, while DM avatars loaded. Verified live on
+  ayma-staging: the server returns valid photo URLs for both the self
+  `GET /explore/profile/{uid}` (cover) and the `/explore` cards (demo-test1 +
+  real accounts), identical to the `/profiles/mini` photo DM uses — so **neither
+  was a server or client-parse defect.** Both were one-shot loads that never
+  recover:
+  - **(a) Cover hero absent** — `_loadMainPhoto` fetched the cover photo with a
+    *separate*, **un-retried** `publicProfile` call (silent catch), unlike the
+    story fetch in `_load` which rides `withColdStartRetry`. A single cold-start
+    / stressed-start miss (the 2521 first-launch ANR window) blanked the hero
+    permanently (no node) while the retried story photos still rendered — the
+    sailboat tile with no hero above it. Fix: wrap it in `withColdStartRetry`
+    (guard empty uid), so the hero self-heals like every other on-open load.
+  - **(b) Grid tiles / cold hero stuck — the shared photo path.** `AymaPhoto`'s
+    10s stall guard (PC8) was **terminal**: `if (_stalled) return error` dropped
+    the tile to its fallback and cancelled the in-flight load, only resetting on
+    a widget change (scroll / re-mount). So a grid of full-size originals that
+    stalled under cold-start contention stuck on initials until scrolled away and
+    back — and it's exactly why the NOTE 266/267 hero "settled only after a
+    scroll". Fix: the stall is now **bounded self-healing** — on a stall it waits
+    `_kStallRetryDelay` and re-attempts with a bumped attempt suffix (a fresh
+    `CachedNetworkImage` key → new fetch), up to `_kMaxStallRetries`, then the
+    terminal fallback. A tile recovers on its own once the backend warms; a
+    genuinely-dead URL still gives up (bounded ~36s), never churning forever.
+  - Tests: `ayma_photo_test.dart` (a stalled tile re-attempts — attempt suffix
+    bumps `@0→@1→@2` — and only falls back once retries are spent),
+    `story_editor_screen_test.dart` (a cold-start failure of the cover fetch
+    retries and the hero renders, instead of staying absent).
+  - Not a code defect: the 2521 DEBUG ANR cluster (6 in ~45 min) is the known
+    debug-JIT / first-launch artifact family (AOT launched clean) — it is the
+    *trigger* that made these one-shot-load gaps visible, not a bug itself.
 - **A `<base>_min` + `<base>_max` pair → ONE range row, never two bars.** The
   write-time backfill picks `bar_meter` for each numeric end, which is WRONG for
   a two-ended range. At the SECTION level (`_siblingWidgets`) the renderer scans

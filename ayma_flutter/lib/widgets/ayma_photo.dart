@@ -22,9 +22,24 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 const double _kDiskResizeThreshold = 400;
 
 /// If no frame has painted within this window while the placeholder is showing,
-/// [AymaPhoto] gives up on the (likely stalled) stream and renders its error
-/// fallback, so a card never sticks on the blank placeholder forever (PC8).
+/// [AymaPhoto] treats the stream as stalled. The FIRST stalls are transient —
+/// a cold-start backend or a grid of full-size downloads under network
+/// contention — so rather than giving up permanently it re-attempts (see
+/// [_kStallRetryDelay] / [_kMaxStallRetries]); only once the retries are spent
+/// does it render its error fallback, so a card never sticks on the blank
+/// placeholder forever (PC8) yet also self-heals once the network frees (Scout
+/// NOTE 268 Leg 2 — Explore tiles stuck on initials for 25+ min, and the
+/// NOTE 266/267 hero that "settled only after a scroll" re-mounted it).
 const Duration _kStallTimeout = Duration(seconds: 10);
+
+/// After a stall, wait this long before re-attempting the load (letting a cold
+/// backend warm / the download queue drain) instead of bricking the tile.
+const Duration _kStallRetryDelay = Duration(seconds: 3);
+
+/// How many times a stalled tile re-attempts on its own before it finally falls
+/// back to the error widget. Bounded so a genuinely-broken URL can't churn
+/// forever — worst case ~36s (10s + 3s) × attempts to the terminal fallback.
+const int _kMaxStallRetries = 2;
 
 /// A network photo with disk caching, a decode/store cap, and a gentle fade —
 /// so a photo that's been seen once (Explore card, profile, match report,
@@ -82,6 +97,11 @@ class _AymaPhotoState extends State<AymaPhoto> {
   ImageStream? _stream;
   ImageStreamListener? _listener;
 
+  /// Bumped on each self-heal re-attempt after a stall; also the suffix of the
+  /// [CachedNetworkImage] key so a re-attempt mounts a FRESH element and
+  /// re-fetches, rather than re-attaching to the same hung stream.
+  int _stallAttempt = 0;
+
   bool get _diskResize => widget.displayWidth > _kDiskResizeThreshold;
 
   int _px() {
@@ -104,6 +124,7 @@ class _AymaPhotoState extends State<AymaPhoto> {
       _detachListener();
       _stalled = false;
       _settled = false;
+      _stallAttempt = 0;
       _attach();
     }
   }
@@ -146,6 +167,24 @@ class _AymaPhotoState extends State<AymaPhoto> {
 
   void _onStall() {
     if (!mounted || _settled) return;
+    if (_stallAttempt < _kMaxStallRetries) {
+      // Transient stall (cold-start backend, or the Explore grid pulling many
+      // full-size originals at once under contention). Don't give up: detach
+      // the hung stream, wait a beat, then re-attach with a bumped attempt so
+      // the CachedNetworkImage key changes and a FRESH fetch is issued — the
+      // tile self-heals once the network frees instead of sticking on the
+      // fallback until it's scrolled away and back (Scout NOTE 268 Leg 2; the
+      // NOTE 266/267 hero that only "settled after a scroll" is the same
+      // re-mount, now automatic).
+      _stallAttempt++;
+      _detachListener();
+      _stallTimer?.cancel();
+      _stallTimer = Timer(_kStallRetryDelay, () {
+        if (!mounted || _settled) return;
+        setState(_attach);
+      });
+      return;
+    }
     setState(() => _stalled = true);
   }
 
@@ -170,6 +209,10 @@ class _AymaPhotoState extends State<AymaPhoto> {
     if (_stalled) return widget.error ?? _fallback(context);
     final px = _px();
     return CachedNetworkImage(
+      // The attempt suffix makes a post-stall re-attempt rebuild this as a
+      // fresh element (new ImageStream subscription) rather than re-binding to
+      // the stalled one — so the self-heal in [_onStall] actually re-fetches.
+      key: ValueKey('${widget.url}@$_stallAttempt'),
       imageUrl: widget.url,
       width: widget.width,
       height: widget.height,
