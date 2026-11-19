@@ -112,7 +112,10 @@ async def appearance_report_run(
     if report is None:
         raise HTTPException(
             status_code=400,
-            detail="No photo to analyse — add a profile photo first.",
+            detail=(
+                "No confirmed photo of you to analyse — add a photo, or "
+                "confirm an existing one is you, first."
+            ),
         )
 
     report_id = report.get("id", "")

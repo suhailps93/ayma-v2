@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -231,9 +232,15 @@ Future<void> _runAppearanceInBackground(
         AymaToast.show(context, 'Your Appearance report is ready.');
       }
     } else if (context.mounted) {
+      // A 400 is a PERMANENT refusal with a reason the user must act on (e.g.
+      // "No confirmed photo of you to analyse …") — NOT a transient blip, so
+      // surface the server's honest `detail` rather than a misleading "try
+      // again". Never close silently on this path (NOTE 263 Item 3). Other
+      // non-timeout errors keep the generic retry copy.
+      final detail = e.statusCode == 400 ? _errorDetail(e.body) : null;
       AymaToast.show(
         context,
-        "Couldn't finish the analysis. Please try again.",
+        detail ?? "Couldn't finish the analysis. Please try again.",
         kind: AymaToastKind.error,
       );
     }
@@ -250,6 +257,24 @@ Future<void> _runAppearanceInBackground(
     // loading indication never sticks on.
     ReportEvents.instance.stopped('appearance');
   }
+}
+
+/// The human-readable `detail` string from a FastAPI error body
+/// (`{"detail": "…"}`), or `null` when the body is absent / not that shape —
+/// so the UI can surface the server's own reason (NOTE 263 Item 3) instead of
+/// a generic message. Never throws on a malformed body.
+String? _errorDetail(String? body) {
+  if (body == null || body.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['detail'] is String) {
+      final d = (decoded['detail'] as String).trim();
+      return d.isEmpty ? null : d;
+    }
+  } catch (_) {
+    // Not JSON / unexpected shape — fall back to the generic message.
+  }
+  return null;
 }
 
 /// The caller's current Appearance report id, or `` when there is none yet
@@ -535,6 +560,27 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
     });
   }
 
+  /// No analysable grid photo in EITHER axis and nothing privately added — the
+  /// honest-blocked state. For demo-test1 this is zero `is_user == "yes"`
+  /// photos: the user HAS photos but none are confirmed as them, so the server
+  /// would refuse every one (NOTE 263 Item 3). The banner explains that rather
+  /// than implying the user has no photos.
+  bool get _eligibleEmpty {
+    final e = _elig ?? const AppearanceEligibility();
+    return e.face.isEmpty &&
+        e.body.isEmpty &&
+        _faceAdded.isEmpty &&
+        _bodyAdded.isEmpty;
+  }
+
+  /// Whether a run would actually analyse something — at least one non-skipped
+  /// axis has a ticked photo. Mirrors the `faceRun`/`bodyRun` test in [_run],
+  /// so the Run button is live IFF pressing it dispatches a real run. This is
+  /// what stops the silent dead-end: a tap that would run nothing can't happen
+  /// because the button is disabled (NOTE 263 Item 3).
+  bool get _canRun =>
+      (!_skipFace && _faceSel.isNotEmpty) || (!_skipBody && _bodySel.isNotEmpty);
+
   void _run() {
     final e = _elig ?? const AppearanceEligibility();
     final faceIds = [
@@ -615,6 +661,39 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
                 ),
               )
             else ...[
+              if (_eligibleEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: ac.bgCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: ac.boundary),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, size: 18, color: ac.fgDim),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            (e?.hasUnconfirmedPhotos ?? false)
+                                ? 'None of your photos are confirmed as you '
+                                    'yet, so there’s nothing I can analyse. '
+                                    'Confirm a photo is you, or add one below, '
+                                    'then run.'
+                                : 'No photos to analyse yet. Add a photo below '
+                                    'to run your Appearance report.',
+                            style: AymaType.sans(
+                                size: 12.5, soft: true, color: ac.fgDim),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               _AxisGroup(
                 title: 'Face analysis',
                 icon: Icons.face_retouching_natural_outlined,
@@ -649,10 +728,21 @@ class AppearancePreRunSheetState extends State<AppearancePreRunSheet> {
                 width: double.infinity,
                 height: 48,
                 child: FilledButton(
-                  onPressed: _run,
+                  // Live ONLY when a run would analyse something — never a
+                  // dead-end tap that closes the sheet having run nothing
+                  // (NOTE 263 Item 3).
+                  onPressed: _canRun ? _run : null,
                   child: const Text('Run analysis'),
                 ),
               ),
+              if (!_canRun) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Pick or add at least one photo to run.',
+                  style: AymaType.sans(size: 12, soft: true, color: ac.fgMute),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ],
           ],
         ),

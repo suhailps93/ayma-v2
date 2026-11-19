@@ -765,6 +765,35 @@ ApiClient layoutApi404() => ApiClient(
   auth: kLayoutAuth,
 );
 
+/// Like [layoutApi] but `/appearance/eligibility` returns NO analysable photos
+/// while flagging `has_unconfirmed_photos` — the demo-test1 / NOTE 263 state
+/// (the user has photos but none are confirmed as them). Drives the pre-run
+/// sheet's honest confirm-a-photo blocked banner + disabled Run button for the
+/// layout matrix.
+ApiClient layoutApiAppearanceUnconfirmed() => ApiClient(
+  httpClient: MockClient((request) async {
+    if (request.url.path == '/appearance/eligibility') {
+      return http.Response(
+        jsonEncode({
+          'face': <dynamic>[],
+          'body': <dynamic>[],
+          'has_face_photo': false,
+          'has_body_photo': false,
+          'has_unconfirmed_photos': true,
+        }),
+        200,
+        headers: const {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    return http.Response(
+      jsonEncode(_bodyFor(request.url.path)),
+      200,
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+    );
+  }),
+  auth: kLayoutAuth,
+);
+
 /// A fake "Connect an agent" service: no network, no connected agents.
 McpConnectService layoutMcpConnect() => McpConnectService(
   client: MockClient((request) async => http.Response(

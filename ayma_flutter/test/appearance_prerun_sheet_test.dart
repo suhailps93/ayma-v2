@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:ayma_flutter/screens/report_run_flows.dart';
@@ -54,6 +55,15 @@ class _FakeApi extends ApiClient {
   /// at this instant but will land later.
   void timeOutRun() =>
       _runGate.completeError(ApiException('timed out', statusCode: 408));
+
+  /// Resolve the gated run as a 400 refusal carrying the server's honest
+  /// `detail` (NOTE 263 Item 3), so a test can prove the failure surfaces that
+  /// reason to the user instead of a generic "try again" / a silent close.
+  void failRun400(String detail) => _runGate.completeError(ApiException(
+        'appearance report failed.',
+        statusCode: 400,
+        body: jsonEncode({'detail': detail}),
+      ));
 
   @override
   Future<AppearanceReportResult> runAppearanceReport({
@@ -757,5 +767,113 @@ void main() {
     expect(label, isNotNull, reason: 'Skip button label rendered');
     expect((label!.text as TextSpan).style?.color, AymaTokens.dark.accentText,
         reason: 'Skip/Include label is theme accentText');
+  });
+
+  // --- NOTE 263 Item 3: honest blocked state + honest failure ------------------
+
+  testWidgets(
+      'NOTE 263: with NO confirmed photos of you, the sheet shows the honest '
+      'confirm-a-photo state and the Run button is DISABLED (no silent dead-end)',
+      (tester) async {
+    // demo-test1: the user HAS grid photos but none are confirmed as them
+    // (is_user != "yes"), so eligibility surfaces nothing but flags
+    // hasUnconfirmedPhotos. The sheet must explain that rather than offer a Run
+    // that closes having analysed nothing.
+    final observer = _PushCountObserver();
+    await _pumpSheet(
+      tester,
+      _FakeApi(const AppearanceEligibility(
+        face: [],
+        body: [],
+        hasUnconfirmedPhotos: true,
+      )),
+      observer,
+    );
+
+    // Honest banner — names the is-you reason, not "you have no photos".
+    expect(find.textContaining('confirmed as you'), findsOneWidget);
+    // The helper under the (disabled) button.
+    expect(find.text('Pick or add at least one photo to run.'), findsOneWidget);
+
+    // The Run button exists but is DISABLED — pressing it cannot fire a run.
+    final runBtn = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Run analysis'),
+    );
+    expect(runBtn.onPressed, isNull,
+        reason: 'Run must be disabled when nothing is analysable');
+  });
+
+  testWidgets(
+      'NOTE 263: when NO photos exist at all, the empty banner says to add one '
+      '(not the confirm-a-photo copy)', (tester) async {
+    final observer = _PushCountObserver();
+    await _pumpSheet(
+      tester,
+      // hasUnconfirmedPhotos false => no photos at all, not merely unconfirmed.
+      _FakeApi(const AppearanceEligibility(face: [], body: [])),
+      observer,
+    );
+    expect(find.textContaining('No photos to analyse yet'), findsOneWidget);
+    expect(find.textContaining('confirmed as you'), findsNothing);
+    final runBtn = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Run analysis'),
+    );
+    expect(runBtn.onPressed, isNull);
+  });
+
+  testWidgets(
+      'NOTE 263: open -> pick -> Run, and a 400 from the endpoint surfaces the '
+      "server's honest reason to the user (not a silent close / generic retry)",
+      (tester) async {
+    // Scout's exact entry point: the sheet has an eligible photo (Run enabled),
+    // the user runs, and the server refuses with 400. The honest detail must
+    // reach the user.
+    final api = _FakeApi(_eligWith(face: 1, body: 0), gated: true);
+
+    final router = GoRouter(
+      initialLocation: '/start',
+      routes: [
+        GoRoute(
+          path: '/start',
+          builder: (c, s) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => runAppearanceFromPreRunSheet(
+                  c,
+                  api,
+                  landingPollInterval: const Duration(milliseconds: 10),
+                  landingPollTimeout: const Duration(seconds: 1),
+                ),
+                child: const Text('go'),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump();
+    await tester.tap(find.text('go'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet + eligibility
+    expect(find.text('Run analysis'), findsOneWidget);
+
+    await tester.tap(find.text('Run analysis'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1)); // sheet gone -> run in flight
+    expect(api.runCalls, 1);
+
+    // The server refuses with the honest is-you 400.
+    api.failRun400(
+      'No confirmed photo of you to analyse — add a photo, or confirm an '
+      'existing one is you, first.',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    // The user sees the server's reason, NOT the generic retry copy.
+    expect(find.textContaining('No confirmed photo of you'), findsOneWidget);
+    expect(find.textContaining("Couldn't finish"), findsNothing);
   });
 }

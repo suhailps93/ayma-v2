@@ -372,6 +372,17 @@ Map<String, Future<void> Function(BuildContext)> layoutOverlays() {
       useSafeArea: true,
       builder: (_) => AppearancePreRunSheet(api: api),
     ),
+    // NOTE 263: the honest blocked state — no confirmed photos of the user, so
+    // the confirm-a-photo banner, the empty axis groups and the DISABLED Run
+    // button (with its helper line) must all lay out cleanly at every size.
+    'appearance pre-run sheet (no confirmed photos)': (context) =>
+        showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) =>
+          AppearancePreRunSheet(api: layoutApiAppearanceUnconfirmed()),
+    ),
     // The date-sim result's taste-match card (long strings, sample chip),
     // on a page of its own since the matrix pumps DateSimScreen pre-run.
     'date-sim taste match card': (context) {
