@@ -295,6 +295,24 @@ class _SignInScreenState extends State<SignInScreen>
     AymaToast.show(context, m, kind: kind);
   }
 
+  /// Consent gate for every sign-in affordance. The auth buttons are kept
+  /// *enabled* at all times so they always respond to a tap at their centre
+  /// and edges — a disabled button is a silent no-op, and on a fresh install
+  /// (both clickwrap boxes unticked) that left a new user tapping dead
+  /// buttons with no feedback, unable to sign in (NOTE 274, build 2526).
+  /// Instead, a tap before both boxes are ticked nudges the user to the
+  /// checkboxes above and does nothing else — the affirmative-consent gate is
+  /// unchanged, only its feedback is. Returns true when both consents are in.
+  bool _requireConsents() {
+    if (_consentsGiven) return true;
+    _snack(
+      'Please tick both boxes above — the Terms and the face-recognition '
+      'consent — to continue.',
+      kind: AymaToastKind.warning,
+    );
+    return false;
+  }
+
   Future<void> _hydrateAccent() async {
     try {
       await _accentController.syncRemote(
@@ -636,7 +654,12 @@ class _SignInScreenState extends State<SignInScreen>
                             ),
                           ),
                           child: Padding(
-                            padding: const EdgeInsets.all(32),
+                            // Glow backdrop room for the hero orb. Kept
+                            // generous enough for the soft radial glow, but
+                            // trimmed from 32 so the sign-in buttons sit
+                            // higher and stay on-screen without scrolling at
+                            // the larger device font scales (NOTE 274).
+                            padding: const EdgeInsets.all(20),
                             child: AymaOrb(
                               size: 76,
                               active: _voice.isActive,
@@ -764,7 +787,9 @@ class _SignInScreenState extends State<SignInScreen>
     // equal compact buttons, never stacked full-width like Apple's.
     if (_appleOffered) ...[
       _AppleBtn(
-        onTap: _consentsGiven ? () => _run(_auth.signInWithApple) : null,
+        onTap: () {
+          if (_requireConsents()) _run(_auth.signInWithApple);
+        },
       ),
       const SizedBox(height: 12),
     ],
@@ -774,7 +799,9 @@ class _SignInScreenState extends State<SignInScreen>
           child: _CompactBtn(
             icon: Icons.g_mobiledata,
             label: 'Google',
-            onTap: _consentsGiven ? () => _run(_auth.signInWithGoogle) : null,
+            onTap: () {
+              if (_requireConsents()) _run(_auth.signInWithGoogle);
+            },
           ),
         ),
         const SizedBox(width: 8),
@@ -782,9 +809,9 @@ class _SignInScreenState extends State<SignInScreen>
           child: _CompactBtn(
             icon: Icons.mail_outline,
             label: 'Email',
-            onTap: _consentsGiven
-                ? () => setState(() => _stage = _Stage.email)
-                : null,
+            onTap: () {
+              if (_requireConsents()) setState(() => _stage = _Stage.email);
+            },
           ),
         ),
         const SizedBox(width: 8),
@@ -792,9 +819,9 @@ class _SignInScreenState extends State<SignInScreen>
           child: _CompactBtn(
             icon: Icons.phone_outlined,
             label: 'Phone',
-            onTap: _consentsGiven
-                ? () => setState(() => _stage = _Stage.phone)
-                : null,
+            onTap: () {
+              if (_requireConsents()) setState(() => _stage = _Stage.phone);
+            },
           ),
         ),
       ],
@@ -886,7 +913,9 @@ class _SignInScreenState extends State<SignInScreen>
     ],
     const SizedBox(height: 16),
     FilledButton(
-      onPressed: _consentsGiven ? _submitEmail : null,
+      onPressed: () {
+        if (_requireConsents()) _submitEmail();
+      },
       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
       child: Text(_createMode ? 'Create account' : 'Sign in'),
     ),
@@ -919,7 +948,9 @@ class _SignInScreenState extends State<SignInScreen>
       const SizedBox(height: 16),
       if (!codeStage)
         FilledButton(
-          onPressed: _consentsGiven ? _sendCode : null,
+          onPressed: () {
+            if (_requireConsents()) _sendCode();
+          },
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text('Send code'),
         )
@@ -932,7 +963,9 @@ class _SignInScreenState extends State<SignInScreen>
         ),
         const SizedBox(height: 16),
         FilledButton(
-          onPressed: _consentsGiven ? _confirmCode : null,
+          onPressed: () {
+            if (_requireConsents()) _confirmCode();
+          },
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text('Verify'),
         ),
