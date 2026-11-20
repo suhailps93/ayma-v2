@@ -9,9 +9,14 @@ backoff window, Ayma writes **one** outbound message:
 * otherwise a **personalised check-in** drawn from the user's wiki — never a
   generic "we miss you".
 
-The message is a real Ayma-authored ``raw_turns`` entry (so it's in the user's
-transcript when they return) plus a check-in push (§7.1). After sending, the
-backoff gap doubles (7 → 14 → 28 …); it resets once the user is active again.
+The message is a real Ayma-authored message in the user's **main Ayma chat**
+(``chat_history.append`` → ``chat_messages``, the same canonical path a normal
+``/chat`` reply and a proactive routine message take), so it sits in the thread
+as a first-class bubble the user can read and reply to in context — not only as
+a notification entry under the "Ayma check-ins" category (founder order,
+2026-11-20). A check-in push (§7.1) still fires as the alert that points at it.
+After sending, the backoff gap doubles (7 → 14 → 28 …); it resets once the user
+is active again.
 """
 
 from __future__ import annotations
@@ -21,12 +26,11 @@ from datetime import datetime, timedelta, timezone
 
 from firebase_admin import firestore
 
+import chat_history
 import gemini
 import token_ledger
 from config import CONFIG
 from notifications_triggers import notify_checkin
-from post_turn import persist_raw_turns
-from transcript import ROLE_AYMA, Turn
 from wiki_query import read_wiki_context
 
 logger = logging.getLogger("ayma.reengage")
@@ -191,8 +195,11 @@ async def run(
             continue
         try:
             text, deep_link = await _compose_message(db, uid)
-            session_id = f"reengage-{now.strftime('%Y%m%d')}"
-            persist_raw_turns(db, uid, session_id, [Turn(ROLE_AYMA, text)])
+            # Write the check-in as a real Ayma message in the user's main chat
+            # (canonical chat_messages) so it sits in the thread as a replyable
+            # bubble, then fire the push that points at it (founder order
+            # 2026-11-20). `append` is best-effort / no-raise.
+            chat_history.append(db, uid, "ayma", text)
             await notify_checkin(db, uid, text, deep_link=deep_link)
             backoff = _next_backoff(user, now)
             db.collection("users").document(uid).set(

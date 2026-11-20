@@ -159,16 +159,22 @@ def _no_gemini(monkeypatch):
 
     monkeypatch.setattr(re.gemini, "generate_json", _json)
     monkeypatch.setattr(re, "read_wiki_context", lambda db, uid: "likes trains")
-    monkeypatch.setattr(re, "persist_raw_turns",
-                        lambda db, uid, sid, turns: _persisted.append(
-                            (uid, sid, turns[0].role, turns[0].text)))
+    # The check-in now lands as a REAL Ayma message in the user's main chat
+    # (chat_messages) via chat_history.append (founder order 2026-11-20), not a
+    # raw_turns session entry. Record each appended message to assert on it.
+    monkeypatch.setattr(re.chat_history, "append",
+                        lambda db, uid, role, text, **kw: _appended.append(
+                            (uid, role, text)))
 
 
-_persisted = []
+_appended = []
 
 
-def test_run_sends_a_checkin_and_sets_backoff(monkeypatch, _no_gemini):
-    _persisted.clear()
+def test_run_posts_the_checkin_as_a_main_chat_message_and_sets_backoff(
+        monkeypatch, _no_gemini):
+    # Founder order (2026-11-20): a generated check-in must sit in the user's
+    # main Ayma chat thread as a replyable Ayma bubble, plus the push.
+    _appended.clear()
     pushes = []
 
     async def _notify(db, uid, text, deep_link="chat"):
@@ -181,18 +187,22 @@ def test_run_sends_a_checkin_and_sets_backoff(monkeypatch, _no_gemini):
     result = _run(re.run(db, now=NOW))
 
     assert result == {"users_scanned": 1, "messages_sent": 1}
-    assert _persisted and _persisted[0][0] == "idle-1"
-    assert _persisted[0][2] == "ayma"
+    # a real Ayma main-chat message was written for this user ...
+    assert _appended and _appended[0][0] == "idle-1"
+    assert _appended[0][1] == "ayma"
+    assert _appended[0][2]  # non-empty check-in text
+    # ... and the SAME text went out as the check-in push that points at it.
     assert pushes[0][0] == "idle-1"
+    assert pushes[0][1] == _appended[0][2]
     stored = db.writes[("users", "idle-1")]["reengagement"]
     assert stored["backoff_days"] == CONFIG.reengage_backoff_start_days
 
 
 def test_run_skips_active_users(monkeypatch, _no_gemini):
-    _persisted.clear()
+    _appended.clear()
     monkeypatch.setattr(re, "notify_checkin",
                         lambda *a, **k: asyncio.sleep(0))
     db = _FakeDb({"active": _user(days_idle=0)})
     result = _run(re.run(db, now=NOW))
     assert result == {"users_scanned": 1, "messages_sent": 0}
-    assert _persisted == []
+    assert _appended == []
