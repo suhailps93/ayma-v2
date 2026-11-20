@@ -15,11 +15,17 @@
 #
 # Staging flips GOOGLE_CLOUD_PROJECT to ayma-staging, reads the Firestore SA
 # key from Secret Manager secret LK_AGENT_FIRESTORE_SA_STAGING (a key for
-# lk-agent-firestore@ayma-staging), and sets AGENT_NAME_LIVEKIT /
-# LIVEKIT_ROOM_PREFIX / SENTRY_ENVIRONMENT to their staging values. Secret
-# Manager reads themselves always stay on project ayma-ai (both SA keys and
-# the LiveKit keys live there). With AGENT_TARGET_ENV unset the prod values
-# below are byte-identical to the original hardcoded ones.
+# lk-agent-firestore@ayma-staging), sets AGENT_NAME_LIVEKIT /
+# LIVEKIT_ROOM_PREFIX / SENTRY_ENVIRONMENT to their staging values, and — the
+# part that actually keeps a staging deploy OFF prod — stages
+# functions/bootstrap/livekit.staging.toml (agent id CA_v9j5RgwMwHSD =
+# ayma-lk-stg) instead of livekit.toml (CA_bJMNunTLpVqk = prod ayma-lk). `lk
+# agent` picks the TARGET AGENT from that file's agent.id, NOT from the env
+# vars, so without the staging toml a staging deploy would silently land on
+# PROD. The staged id is asserted against the expected per-env id before any
+# build (fail-closed). Secret Manager reads themselves always stay on project
+# ayma-ai (both SA keys and the LiveKit keys live there). With AGENT_TARGET_ENV
+# unset the prod values below are byte-identical to the original hardcoded ones.
 #
 # Requires: a recent `lk` CLI (>= 2.19 — LiveKit Cloud Agents rejects older
 # CLIs with a "version header is required" error; set LK_BIN to point at it),
@@ -46,12 +52,21 @@ if [[ "$AGENT_TARGET_ENV" == "staging" ]]; then
   TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk-stg}"
   TARGET_ROOM_PREFIX="${TARGET_ROOM_PREFIX:-ayma-staging-}"
   TARGET_SENTRY_ENV="${TARGET_SENTRY_ENV:-staging}"
+  # The staging agent is a SEPARATE LiveKit Cloud resource from prod, so it needs
+  # its own livekit.toml (its own agent id). `lk agent` picks the target agent
+  # from this file, NOT from the env vars above — so without a staging toml a
+  # staging deploy would silently land on the PROD agent. The TOML id is also
+  # asserted against TARGET_AGENT_ID after staging, below.
+  TARGET_LIVEKIT_TOML="${TARGET_LIVEKIT_TOML:-livekit.staging.toml}"
+  TARGET_AGENT_ID="${TARGET_AGENT_ID:-CA_v9j5RgwMwHSD}"   # ayma-lk-stg
 else
   TARGET_FIRESTORE_PROJECT="${TARGET_FIRESTORE_PROJECT:-ayma-ai}"
   TARGET_SA_SECRET="${TARGET_SA_SECRET:-LK_AGENT_FIRESTORE_SA}"
   TARGET_AGENT_NAME="${TARGET_AGENT_NAME:-ayma-lk}"
   TARGET_ROOM_PREFIX="${TARGET_ROOM_PREFIX:-ayma-}"
   TARGET_SENTRY_ENV="${TARGET_SENTRY_ENV:-production}"
+  TARGET_LIVEKIT_TOML="${TARGET_LIVEKIT_TOML:-livekit.toml}"
+  TARGET_AGENT_ID="${TARGET_AGENT_ID:-CA_bJMNunTLpVqk}"   # ayma-lk (prod)
 fi
 LK_URL="wss://aimma-wt34nu3l.livekit.cloud"
 # LiveKit Cloud Agents region (available: us-east me-central eu-central
@@ -144,7 +159,20 @@ rsync -a --delete \
   --exclude 'tests/' --exclude '.env' --exclude '.env.local' \
   "$SRC"/ "$STAGE"/
 cp "$SRC/Dockerfile.livekit" "$STAGE/Dockerfile"
-cp "$SRC/livekit.toml" "$STAGE/livekit.toml"
+# Per-environment agent target. `lk agent` reads the TARGET AGENT from this
+# livekit.toml (its `agent.id`), NOT from the env vars above — so staging uses
+# its own livekit.staging.toml (ayma-lk-stg) and prod uses livekit.toml
+# (ayma-lk). The staged file is always named livekit.toml for `lk`.
+cp "$SRC/$TARGET_LIVEKIT_TOML" "$STAGE/livekit.toml"
+# Belt-and-suspenders: the staged toml MUST carry THIS environment's agent id,
+# so a staging deploy can never silently resolve to the prod agent (and a prod
+# deploy can never grab the staging id). Fail closed before any build.
+staged_id="$(sed -n 's/^[[:space:]]*id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$STAGE/livekit.toml" | head -1)"
+if [[ "$staged_id" != "$TARGET_AGENT_ID" ]]; then
+  echo "!! ABORT: staged livekit.toml agent id ('$staged_id') != expected '$TARGET_AGENT_ID' for AGENT_TARGET_ENV=$AGENT_TARGET_ENV" >&2
+  exit 3
+fi
+echo ">> target agent: $TARGET_AGENT_NAME (id $staged_id, from $TARGET_LIVEKIT_TOML)"
 # `lk agent` validates that the project declares livekit-agents by scanning
 # requirements.txt — in staging that file is the Main API's (no agent runtime).
 # The agent image is self-contained on requirements-agent.txt, so make the

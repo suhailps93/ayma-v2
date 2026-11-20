@@ -122,11 +122,20 @@ A least-privilege service account provides Firestore access:
 
 - `functions/bootstrap/Dockerfile.livekit` — glibc (`python:3.12-slim`), installs
   `requirements-agent.txt`, `ENV AGENT_RUNTIME=livekit`, `ENTRYPOINT python agent.py start`.
-- `functions/bootstrap/livekit.toml` — the LiveKit Cloud Agents config (project
-  subdomain `aimma-wt34nu3l`, agent id). Dispatch name `ayma-lk` is set in code, not here.
+- `functions/bootstrap/livekit.toml` — the LiveKit Cloud Agents config for the
+  **prod** agent `ayma-lk` (`CA_bJMNunTLpVqk`; project subdomain `aimma-wt34nu3l`).
+  Dispatch name `ayma-lk` is set in code, not here.
+- `functions/bootstrap/livekit.staging.toml` — the config for the **staging** agent
+  `ayma-lk-stg` (`CA_v9j5RgwMwHSD`), a SEPARATE LiveKit Cloud resource that writes to
+  the ayma-staging Firestore. `lk agent` picks the target agent from the staged
+  toml's `agent.id` (NOT from env vars), so `AGENT_TARGET_ENV=staging` MUST stage
+  this file — the deploy script does, and asserts the staged id before any build.
 - `scripts/deploy-agent-livekit.sh` — stages a build context (so LiveKit's required
-  `Dockerfile` name doesn't collide with the Main API `Dockerfile`), pulls secrets
-  from Secret Manager into a 600-perm tempfile, and runs `lk agent create|deploy|update-secrets`.
+  `Dockerfile` name doesn't collide with the Main API `Dockerfile`), copies the
+  per-environment livekit.toml (prod `livekit.toml` / staging `livekit.staging.toml`)
+  and **fails closed if the staged `agent.id` isn't the expected one for the target
+  env**, pulls secrets from Secret Manager into a 600-perm tempfile, and runs
+  `lk agent create|deploy|update-secrets`.
 
 ## How to deploy to LiveKit Cloud
 
@@ -148,6 +157,25 @@ LK_BIN=/path/to/lk scripts/deploy-agent-livekit.sh deploy
 # Rotate secrets only (restarts the agent):
 LK_BIN=/path/to/lk scripts/deploy-agent-livekit.sh update-secrets
 ```
+
+### Deploying the STAGING agent (`ayma-lk-stg`)
+
+Prefix any mode with `AGENT_TARGET_ENV=staging`. That flips the Firestore project
+to `ayma-staging`, uses the staging Firestore SA secret
+(`LK_AGENT_FIRESTORE_SA_STAGING`), sets the staging dispatch name / room prefix /
+Sentry env, **and stages `livekit.staging.toml` so `lk` targets `ayma-lk-stg`
+(`CA_v9j5RgwMwHSD`), never prod**. The script asserts the staged `agent.id`
+equals the expected per-env id and aborts (exit 3) on any mismatch, so a staging
+deploy can never silently land on prod `ayma-lk` (and vice-versa). Secret Manager
+reads still come from project `ayma-ai`.
+
+```bash
+# Redeploy the staging agent (code + secrets):
+AGENT_TARGET_ENV=staging LK_BIN=/path/to/lk scripts/deploy-agent-livekit.sh deploy
+```
+
+The first log line prints `>> target agent: ayma-lk-stg (id CA_v9j5RgwMwHSD, from
+livekit.staging.toml)` — verify it before the build proceeds.
 
 Secrets provisioned into LiveKit's secret store (as env vars):
 `GOOGLE_API_KEY`, `META_API_KEY`, `SENTRY_DSN` (from `SENTRY_DSN_AGENT`),
