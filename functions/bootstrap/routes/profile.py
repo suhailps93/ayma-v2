@@ -164,11 +164,13 @@ async def profile_bullets_save(
 ) -> dict[str, object]:
     """Save an edited bullet list for one existing section (composed back into
     the page body). 404 if the section is gone, 422 if the edit would drop a
-    hidden Ayma-only passage."""
+    hidden Ayma-only passage. ``public_edit=True`` mirrors the GET: this is the
+    public-only edit view, whose payload drops/relocates header-fact duplicates,
+    so the write-back protects those hidden nodes from deletion (NOTE 279)."""
     bullets = [b.model_dump() for b in req.bullets]
     try:
         return await asyncio.to_thread(
-            profile_bullets.save_bullets, get_db(), uid, page_id, bullets
+            profile_bullets.save_bullets, get_db(), uid, page_id, bullets, public_edit=True
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Section not found.") from None

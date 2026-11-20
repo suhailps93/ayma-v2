@@ -69,6 +69,7 @@ Future<void> _settle(WidgetTester tester) async {
 
 void main() {
   setUp(SplashFirstPaint.resetForTest);
+  setUp(StartupDeadline.resetForTest);
 
   void seedConfig() {
     final cfg = BootConfig(

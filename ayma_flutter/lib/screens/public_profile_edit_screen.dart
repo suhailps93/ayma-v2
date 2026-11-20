@@ -92,7 +92,12 @@ class _PublicProfileEditScreenState extends State<PublicProfileEditScreen> {
         wrote ? 'Saved to your public profile.' : 'No changes to save.',
         kind: AymaToastKind.success,
       );
-      if (wrote) Navigator.of(context).maybePop(true);
+      // Leave with a direct pop, NOT maybePop: _dirty was just cleared, but the
+      // PopScope in the live tree still carries canPop:false from the last build
+      // (setState only SCHEDULES the rebuild), so maybePop would re-run the
+      // discard path and strand the user on the edit screen after a good save
+      // (NOTE 279 defect 1). A direct pop bypasses PopScope.canPop.
+      if (wrote) Navigator.of(context).pop(_savedAny);
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -319,11 +324,39 @@ class _PublicDraft {
     required this.id,
     required this.imageUrl,
     required this.controller,
-  });
+  }) : _lastText = controller.text;
 
   final String id;
   final String imageUrl;
   final TextEditingController controller;
+
+  String _lastText;
+  VoidCallback? _listener;
+
+  /// Fire [onEdit] whenever this bullet's text changes — including a
+  /// PROGRAMMATIC change (an accessibility `ACTION_SET_TEXT`/`set_text`) that
+  /// never triggers `TextField.onChanged`, so Save arms on every edit, not only
+  /// on an IME keystroke (NOTE 279 defect 1). Selection-only notifications are
+  /// ignored by comparing the text itself.
+  void wire(VoidCallback onEdit) {
+    if (_listener != null) return;
+    void listener() {
+      if (controller.text == _lastText) return;
+      _lastText = controller.text;
+      onEdit();
+    }
+
+    _listener = listener;
+    controller.addListener(listener);
+  }
+
+  void unwire() {
+    final l = _listener;
+    if (l != null) {
+      controller.removeListener(l);
+      _listener = null;
+    }
+  }
 }
 
 class _SectionView extends StatefulWidget {
@@ -337,6 +370,22 @@ class _SectionView extends StatefulWidget {
 }
 
 class _SectionViewState extends State<_SectionView> {
+  @override
+  void initState() {
+    super.initState();
+    for (final d in widget.section.drafts) {
+      d.wire(widget.onChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final d in widget.section.drafts) {
+      d.unwire();
+    }
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
@@ -375,7 +424,9 @@ class _SectionViewState extends State<_SectionView> {
                     controller: draft.controller,
                     minLines: 1,
                     maxLines: null,
-                    onChanged: (_) => widget.onChanged(),
+                    // Dirty-tracking is driven by a controller listener
+                    // (draft.wire), which also catches programmatic set_text —
+                    // TextField.onChanged would miss that (NOTE 279 defect 1).
                     textCapitalization: TextCapitalization.sentences,
                     style: AymaType.sans(size: 15, color: ac.fg),
                     decoration: InputDecoration(
@@ -396,6 +447,7 @@ class _SectionViewState extends State<_SectionView> {
                   tooltip: 'Remove',
                   icon: Icon(Icons.close, size: 18, color: ac.fgMute),
                   onPressed: () {
+                    draft.unwire();
                     setState(() => section.removeDraft(draft));
                     widget.onChanged();
                   },
@@ -409,6 +461,7 @@ class _SectionViewState extends State<_SectionView> {
             key: ValueKey('addNote_${section.pageId}'),
             onPressed: () {
               setState(section.addNote);
+              section.drafts.last.wire(widget.onChanged);
               widget.onChanged();
             },
             icon: const Icon(Icons.add, size: 18),

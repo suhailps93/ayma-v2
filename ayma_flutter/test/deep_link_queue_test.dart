@@ -2,6 +2,10 @@ import 'package:ayma_flutter/core/dag/launch_intent_resolver.dart';
 import 'package:ayma_flutter/screens/sign_in_screen.dart';
 import 'package:ayma_flutter/services/auth_service.dart';
 import 'package:ayma_flutter/services/deep_link_queue.dart';
+// fake_async (a transitive dep) lets the navigation-settled ceiling elapse
+// deterministically instead of waiting 12 real seconds.
+// ignore: depend_on_referenced_packages
+import 'package:fake_async/fake_async.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +18,27 @@ void main() {
     setUp(() {
       queue = DeepLinkQueue.instance;
       queue.resetForTest();
+    });
+
+    test(
+        'NOTE 279 defect 3: awaitNavigationSettled proceeds after the ceiling '
+        'when the splash never signals a settle (no indefinite deadlock)', () {
+      fakeAsync((async) {
+        queue.resetForTest();
+        var done = false;
+        queue.awaitNavigationSettled().then((_) => done = true);
+
+        // Well before the ceiling it is still waiting for the splash.
+        async.elapse(const Duration(seconds: 1));
+        async.flushMicrotasks();
+        expect(done, isFalse);
+
+        // Past the ceiling it falls through rather than hang the deep link
+        // forever behind a splash wedged in the /splash⇄/signin loop.
+        async.elapse(DeepLinkQueue.navigationSettledCeiling);
+        async.flushMicrotasks();
+        expect(done, isTrue);
+      });
     });
 
     test('Hard Auth Invariant — deep link pauses until ensureAuthReady completes',

@@ -94,6 +94,7 @@ void main() {
   // Presentation is immediate unless gated (the engine never reports
   // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
   setUp(SplashFirstPaint.resetForTest);
+  setUp(StartupDeadline.resetForTest);
 
   testWidgets(
       'bootstrap network failure shows Retry and does NOT route to sign-in',
@@ -219,6 +220,39 @@ void main() {
     expect(find.byType(SplashErrorView), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('screen:signin'), findsNothing);
+  });
+
+  testWidgets(
+      'NOTE 279 defect 3: once the absolute deadline passes, a RE-MOUNTED splash '
+      'shows Retry at once (shared ceiling) and does not churn', (tester) async {
+    // First mount hangs and the watchdog trips the shared deadline.
+    await tester.pumpWidget(
+      _appWith(_BootstrapHangs(), MockFirebaseAuth(signedIn: true)),
+    );
+    await tester.pump();
+    await tester.pump(SplashScreen.startupDeadline + const Duration(seconds: 1));
+    expect(find.byType(SplashErrorView), findsOneWidget);
+
+    // Re-mount a brand-new splash, as the /splash⇄/signin bounce does on the
+    // PROFILE deep-link path. Before the fix it got a fresh 45s window and
+    // "Waking up Ayma…" churned forever; now it reads the PROCESS-GLOBAL
+    // deadline (already passed) and surfaces Retry within a single short pump —
+    // nowhere near another 45s — without resolving on to sign-in.
+    await tester.pumpWidget(
+      _appWith(_BootstrapHangs(), MockFirebaseAuth(signedIn: true)),
+    );
+    await tester.pump(); // mount + the zero-delay watchdog defer
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(SplashErrorView), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.byType(SplashLoading), findsNothing); // not still churning
+    expect(find.text('screen:signin'), findsNothing);
+
+    // And a deliberate Retry earns a fresh budget: it goes back to LOADING.
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    expect(find.byType(SplashLoading), findsOneWidget);
   });
 
   testWidgets(

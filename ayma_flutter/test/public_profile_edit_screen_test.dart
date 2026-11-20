@@ -153,4 +153,79 @@ void main() {
     expect(save.onPressed, isNull); // disabled with no edits
     expect(api.saves, isEmpty);
   });
+
+  testWidgets('NOTE 279 defect 1b: a PROGRAMMATIC set_text (not an IME '
+      'keystroke) arms Save', (tester) async {
+    final api = _FakeApi([
+      _section('values', 'Values & beliefs', 'values',
+          [_b('v1', 'Old public value', 'public')], order: 1),
+    ]);
+
+    await _pump(tester, api);
+
+    // Save is disabled to start.
+    expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('publicEditSave')))
+            .onPressed,
+        isNull);
+
+    // Set the field's text DIRECTLY on its controller — the path an
+    // accessibility ACTION_SET_TEXT takes. This notifies controller listeners
+    // but does NOT fire TextField.onChanged, so only the listener wiring arms
+    // Save (the defect: it stayed disabled until an IME keystroke).
+    final tf = tester
+        .widget<TextField>(find.widgetWithText(TextField, 'Old public value'));
+    tf.controller!.text = 'Changed programmatically';
+    await tester.pump();
+
+    expect(
+        tester
+            .widget<TextButton>(find.byKey(const ValueKey('publicEditSave')))
+            .onPressed,
+        isNotNull,
+        reason: 'Save must arm on a programmatic edit, not only on a keystroke');
+  });
+
+  testWidgets('NOTE 279 defect 1a: a successful save LEAVES the screen and does '
+      'NOT show the Discard dialog', (tester) async {
+    final api = _FakeApi([
+      _section('values', 'Values & beliefs', 'values',
+          [_b('v1', 'Old public value', 'public')], order: 1),
+    ]);
+
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: AymaTheme.light,
+      home: Builder(
+        builder: (ctx) => Scaffold(
+          body: Center(
+            child: ElevatedButton(
+              onPressed: () => Navigator.of(ctx).push(MaterialPageRoute(
+                  builder: (_) => PublicProfileEditScreen(api: api))),
+              child: const Text('open editor'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open editor'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Old public value'), 'New public value');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('publicEditSave')));
+    await tester.pumpAndSettle();
+
+    // The save went through…
+    expect(api.saves, hasLength(1));
+    // …the editor popped (we're back on the launcher page)…
+    expect(find.text('Edit public profile'), findsNothing);
+    expect(find.text('open editor'), findsOneWidget);
+    // …and the Discard dialog never appeared.
+    expect(find.text('Discard changes?'), findsNothing);
+  });
 }

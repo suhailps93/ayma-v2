@@ -45,6 +45,7 @@ void main() {
   // Presentation is immediate unless gated (the engine never reports
   // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
   setUp(SplashFirstPaint.resetForTest);
+  setUp(StartupDeadline.resetForTest);
   // The N12 (startup DAG destination routing) hold is covered by the
   // real-path test in cold_start_first_frame_test.dart, which executes the
   // actual node action against a pumped router — this file only pins the

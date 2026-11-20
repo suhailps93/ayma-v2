@@ -1008,7 +1008,7 @@ def _free_editor_id(overlay: dict[str, dict], section: str) -> str:
 
 
 def replace_section_bullets(
-    db, uid: str, section: str, bullets: list[dict]
+    db, uid: str, section: str, bullets: list[dict], *, public_edit: bool = False
 ) -> list[str]:
     """The Your Story editor write-back (design §8.1): make ``bullets`` the
     section's editor-visible content in the graph, **preserving node identity**
@@ -1031,7 +1031,16 @@ def replace_section_bullets(
     An existing editor-owned node that no incoming bullet matches is **deleted**
     (the user removed that bullet) — a delete owes no history entry. Returns the
     section's bullet ids in order. Closes the NOTE 230 write-back gap without the
-    whole-section re-serialization Scout NOTE 232 Leg 3 flagged."""
+    whole-section re-serialization Scout NOTE 232 Leg 3 flagged.
+
+    ``public_edit`` → the save comes from the PUBLIC-only profile edit view, whose
+    GET payload applies the public placement rule (``drop_header_fields``): a
+    header/standard-fact editor DUPLICATE is hidden from About Me or relocated to
+    its canonical section, so the client never holds it and cannot send it back.
+    Such a node is therefore NOT a user removal — it is protected from the delete
+    below (it would otherwise be pruned silently on an unrelated section save,
+    losing a bullet Your Story still shows, with no history: NOTE 279 defect 4).
+    A genuinely removed VISIBLE bullet (placement ``"keep"``) is still deleted."""
     if section not in question_tree.section_meta():
         raise ValueError(f"unknown section {section!r}")
     overlay = load_overlay(db, uid)
@@ -1144,9 +1153,25 @@ def replace_section_bullets(
             consumed.add(nid)
             result_ids.append(nid)
 
-    # Any editor-owned node no incoming bullet matched was removed by the user.
+    # Any editor-owned node no incoming bullet matched was removed by the user —
+    # except, on a public-edit save, a node the public-edit view deliberately HID
+    # or RELOCATED (a header/standard-fact duplicate the client never held). Its
+    # absence from the payload is the view's filter, not a user removal, so it is
+    # preserved (NOTE 279 defect 4). Genuinely removed visible bullets ("keep")
+    # are still deleted.
+    protected: set[str] = set()
+    if public_edit and _graph:
+        for nid in existing:
+            if nid in consumed:
+                continue
+            node = _graph.get(nid)
+            if node is None:
+                continue
+            kind, _moved = _render.public_fact_placement(_graph, node)
+            if kind in ("drop", "move"):
+                protected.add(nid)
     for nid in existing:
-        if nid not in consumed:
+        if nid not in consumed and nid not in protected:
             del overlay[nid]
 
     replace_overlay(db, uid, overlay)

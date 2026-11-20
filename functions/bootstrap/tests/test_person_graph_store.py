@@ -271,3 +271,93 @@ def test_story_bullet_writer_stores_statement_once():
     n = store.effective(db, "u1")[ids[0]]
     assert n.answer == statement
     assert n.prompt == ""
+
+
+# --- NOTE 279 ---------------------------------------------------------------
+
+
+def _editor_identity_node(text: str, vis: str = "public") -> dict:
+    """An ``emergent.editor.identity.*`` overlay node in the shape a header /
+    structured-fact import writes it: a public ``narrative`` bullet in
+    ``identity`` whose answer is the "Label: value" duplicate of a standard
+    fact (mirrors the NOTE 263/275 render fixture)."""
+    return {
+        "prompt": text, "answer": text, "answer_type": "narrative",
+        "section": "identity", "visibility": vis, "state": "answered",
+        "provenance": "stated", "level": 2,
+    }
+
+
+def test_note279_defect2_trailing_bracket_marker_round_trips():
+    # NOTE 279 defect 2: a bullet whose text ends with a bracket marker (Scout's
+    # "[Scout278]") must survive the editor save → edit-view read unchanged — the
+    # API neither strips the trailing bracket nor the mid-text "!"/"?" (the drop
+    # Scout saw is a device text-read artifact, not a server strip). This pins the
+    # round trip so a future text-normalisation never eats the marker.
+    import person_graph_source as source
+
+    db = FakeDb(_profile("u1"))
+    nid = store.replace_section_bullets(
+        db, "u1", "identity",
+        [{"text": "I grew up in Lisbon.", "visibility": "public"}],
+    )[0]
+    marker = "A public fact! Really? [Scout278]"
+    store.replace_section_bullets(
+        db, "u1", "identity", [{"id": nid, "text": marker, "visibility": "public"}],
+    )
+    # the raw graph node keeps the whole string
+    assert store.effective(db, "u1")[nid].answer == marker
+    # and the public-edit view (what the editor re-reads) serves it verbatim
+    out = source.story_bullets(db, "u1", public_edit=True)
+    texts = [b["text"] for s in out["sections"] for b in s["bullets"]]
+    assert marker in texts
+
+
+def test_note279_defect4_public_edit_save_keeps_hidden_header_duplicates():
+    # NOTE 279 defect 4: the public-edit GET (NOTE 275) drops/relocates header-fact
+    # editor DUPLICATES ("Age: 29", "Interested in: Women") from the payload, so the
+    # client cannot send them back. A public-edit SAVE of the section must NOT read
+    # their absence as a user removal and delete them (they are still shown in Your
+    # Story) — the server-side node drop Scout saw (196→193) with net-zero edits.
+    overlay = {
+        "legal_first_name": {"answer": "Daniel Reyes"},
+        "date_of_birth": {"answer": "1997-02-10"},
+        "gender_identity": {"answer": "Man"},
+        "primary_location": {"answer": "Austin, TX, United States"},
+        "target_match_genders": {"answer": ["Women"]},
+        "emergent.editor.identity.0": _editor_identity_node("Age: 29"),
+        "emergent.editor.identity.4": _editor_identity_node("Interested in: Women"),
+        "emergent.editor.identity.9": _editor_identity_node(
+            "A quiet night in beats a loud bar", "private"
+        ),
+    }
+
+    def _seed():
+        db = FakeDb(_profile("u1"))
+        store.replace_overlay(db, "u1", dict(overlay))
+        return db
+
+    # The payload the public-edit editor re-sends for identity: only the visible
+    # (private narrative) bullet — the two header duplicates were never in the GET.
+    payload = [
+        {"id": "emergent.editor.identity.9",
+         "text": "A quiet night in beats a loud bar", "visibility": "private"},
+    ]
+
+    # public-edit save: the hidden duplicates are PROTECTED, not deleted.
+    db = _seed()
+    store.replace_section_bullets(db, "u1", "identity", payload, public_edit=True)
+    kept = {e.get("answer") for n, e in store.load_overlay(db, "u1").items()
+            if n.startswith("emergent.editor")}
+    assert "Age: 29" in kept
+    assert "Interested in: Women" in kept
+    assert "A quiet night in beats a loud bar" in kept
+
+    # a FULL Your-Story save (public_edit=False) still deletes an unmatched visible
+    # bullet — the delete semantics the owner editor relies on are unchanged.
+    db2 = _seed()
+    store.replace_section_bullets(db2, "u1", "identity", payload, public_edit=False)
+    kept2 = {e.get("answer") for n, e in store.load_overlay(db2, "u1").items()
+             if n.startswith("emergent.editor")}
+    assert "Age: 29" not in kept2
+    assert "Interested in: Women" not in kept2

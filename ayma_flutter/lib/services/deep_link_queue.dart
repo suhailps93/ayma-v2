@@ -30,9 +30,23 @@ class DeepLinkQueue {
     }
   }
 
+  /// How long a deep-link resolution will wait for the splash's first
+  /// navigation before proceeding anyway. The gate exists so a deep link lands
+  /// AFTER the splash navigates (never pre-empting it); but the completer is
+  /// signalled only by a SUCCESSFUL splash navigation, so a splash stuck in the
+  /// `/splash`⇄`/signin` re-mount loop would otherwise block the deep link
+  /// forever (NOTE 279 defect 3). This ceiling lets the deep link escape — well
+  /// past the sub-second normal settle, so the happy path is unaffected.
+  static const navigationSettledCeiling = Duration(seconds: 12);
+
   Future<void> awaitNavigationSettled() async {
     if (_isNavigationSettled) return;
-    await _navigationSettledCompleter.future;
+    try {
+      await _navigationSettledCompleter.future.timeout(navigationSettledCeiling);
+    } on TimeoutException {
+      // The splash never signalled a settle in time (likely wedged): proceed
+      // rather than hang the deep link indefinitely.
+    }
   }
 
   /// Drops any intent stashed for post-auth drain, so a link queued by a
