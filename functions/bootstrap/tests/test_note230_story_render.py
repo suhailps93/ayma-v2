@@ -156,7 +156,7 @@ def test_get_bullets_falls_back_to_wiki_when_graph_read_fails(monkeypatch):
     db = FakeDb()
     # Graph read returns None (a failed/empty read) → never a blank story: fall
     # through to the frozen-wiki path rather than raising or returning nothing.
-    monkeypatch.setattr(person_graph_source, "story_bullets", lambda db, uid: None)
+    monkeypatch.setattr(person_graph_source, "story_bullets", lambda db, uid, **k: None)
     monkeypatch.setattr(story, "get_story", lambda db, uid: {"sections": []})
     out = profile_bullets.get_bullets(db, "u1")
     assert {s["page_type"] for s in out["sections"]} >= set(

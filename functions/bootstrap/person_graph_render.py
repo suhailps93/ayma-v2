@@ -425,14 +425,24 @@ def _sections_with_bullets(
     return by_section
 
 
-def story_sections(graph: dict[str, GraphNode]) -> dict:
+def story_sections(graph: dict[str, GraphNode], *, drop_header_fields: bool = False) -> dict:
     """Your Story as a bullet list per canonical section (public + private;
     Ayma-only is never shown). Same shape as ``profile_bullets.get_bullets``:
     ``{"sections": [{page_type, title, subtitle, order, page_id, bullets, empty,
     has_ai_only}], "visibilities": [public, private]}``. Every canonical section
-    appears (empty ones carry an empty bullet list, for the editor's "+")."""
+    appears (empty ones carry an empty bullet list, for the editor's "+").
+
+    ``drop_header_fields`` (default off) applies the public placement rule (the
+    same one :func:`public_sections` uses) to the PUBLIC bullets — header facts
+    shown under the photo header are dropped and a mis-sectioned structured
+    duplicate (e.g. "Interested in: …") relocates to its canonical section.
+    Private bullets are untouched (``_public_fact_placement`` returns "keep" for
+    them), so an owner surface keeps them. Off = Your Story (keeps the header
+    rows, which have no photo header there)."""
     keep = {_VIS_PUBLIC, _VIS_PRIVATE}
-    by_section = _sections_with_bullets(graph, keep, drop_report_nodes=True)
+    by_section = _sections_with_bullets(
+        graph, keep, drop_report_nodes=True, drop_header_fields=drop_header_fields
+    )
     sections = []
     for pt in question_tree.ordered_page_types():
         bullets = by_section.get(pt, [])
@@ -450,6 +460,19 @@ def story_sections(graph: dict[str, GraphNode]) -> dict:
         )
     sections.sort(key=lambda s: (s["order"], s["title"].lower()))
     return {"sections": sections, "visibilities": [_VIS_PUBLIC, _VIS_PRIVATE]}
+
+
+def public_edit_sections(graph: dict[str, GraphNode]) -> dict:
+    """The data model for the PUBLIC-ONLY profile edit view (``My public
+    profile`` → edit). Same shape as :func:`story_sections` — public + private
+    bullets per section, so the editor's save round-trip
+    (``replace_section_bullets``) still sees the private bullets and never drops
+    them — but with the public placement rule applied (``drop_header_fields``),
+    so the edit view matches the RENDERED public profile: header facts under the
+    photo header are NOT reintroduced as About Me bullets, and the "Interested
+    in" node lands under *What I'm Looking For*, not About Me (founder ruling
+    Nov 18; Scout NOTE 275). Your Story (:func:`story_sections`) is unchanged."""
+    return story_sections(graph, drop_header_fields=True)
 
 
 def public_sections(graph: dict[str, GraphNode]) -> list[dict]:
