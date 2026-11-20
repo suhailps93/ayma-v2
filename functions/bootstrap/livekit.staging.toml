@@ -1,0 +1,25 @@
+# LiveKit Cloud Agents config for the Ayma voice agent worker (agent.py) —
+# STAGING target (ayma-lk-stg). The prod target is the sibling livekit.toml
+# (ayma-lk) — kept in its own file so this staging file never names the prod id.
+#
+# Used by `lk agent create` / `lk agent deploy` when
+# AGENT_TARGET_ENV=staging (scripts/deploy-agent-livekit.sh stages THIS file as
+# the build dir's livekit.toml; see docs/LIVEKIT_AGENT_MIGRATION.md). `lk agent`
+# picks the TARGET AGENT from this file's agent.id — NOT from the deploy
+# script's env vars — so a staging deploy MUST stage this file, or it would land
+# on the PROD agent. The script asserts the staged id equals CA_v9j5RgwMwHSD
+# before any build (fail-closed).
+#
+# The dispatch name the worker registers under ("ayma-lk-stg") is set at deploy
+# time via AGENT_NAME_LIVEKIT (CONFIG.agent_name_livekit, agent.py
+# worker_options when AGENT_RUNTIME=livekit) — NOT here.
+
+[project]
+  subdomain = "aimma-wt34nu3l"
+
+[agent]
+  # ayma-lk-stg — the staging LiveKit Cloud agent (region us-east, project
+  # aimma-wt34nu3l), a SEPARATE resource from the prod agent. It writes to the
+  # ayma-staging Firestore. The worker registers its dispatch name "ayma-lk-stg"
+  # on boot.
+  id = "CA_v9j5RgwMwHSD"
