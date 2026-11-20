@@ -201,6 +201,60 @@ void main() {
     expect(await PendingBiometricConsent.read(), isNull);
   });
 
+  testWidgets(
+      'NOTE 274: auth buttons stay enabled and respond before consent — a '
+      'tap nudges and never toggles the face-recognition consent, and never '
+      'signs in or opens a form', (tester) async {
+    final auth = _FakeAuth();
+    await _pump(tester, auth, accept: false);
+
+    final bio = find.byKey(const Key('signin_biometric_checkbox'));
+    final google = find.widgetWithText(OutlinedButton, 'Google');
+    final email = find.widgetWithText(OutlinedButton, 'Email');
+    final phone = find.widgetWithText(OutlinedButton, 'Phone');
+
+    // Every auth button is ENABLED even with both boxes unticked — a disabled
+    // button is a silent no-op (the fresh-install sign-in blocker).
+    expect(tester.widget<OutlinedButton>(google).enabled, isTrue);
+    expect(tester.widget<OutlinedButton>(email).enabled, isTrue);
+    expect(tester.widget<OutlinedButton>(phone).enabled, isTrue);
+
+    // Tapping the Email button CENTRE before consent must not toggle the
+    // face-recognition consent (the founder bug), must not open the form,
+    // and must show the nudge.
+    await tester.tap(email, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(tester.widget<CheckboxListTile>(bio).value, isFalse,
+        reason: 'tapping a button must never toggle the consent');
+    expect(find.widgetWithText(TextField, 'Email'), findsNothing,
+        reason: 'no form until consent');
+    expect(find.textContaining('tick both boxes'), findsOneWidget,
+        reason: 'the button responds with a nudge, not silence');
+
+    // Google before consent: nudge, no sign-in, consent untouched.
+    await tester.tap(google, warnIfMissed: false);
+    await tester.pump();
+    expect(auth.calls, isEmpty);
+    expect(tester.widget<CheckboxListTile>(bio).value, isFalse);
+
+    // After ticking both boxes the same buttons proceed normally.
+    await _acceptConsents(tester);
+    await tester.tap(email);
+    await tester.pump();
+    expect(find.widgetWithText(TextField, 'Email'), findsOneWidget);
+  });
+
+  testWidgets(
+      'NOTE 274: Google proceeds once consent is given (button was enabled '
+      'throughout)', (tester) async {
+    final auth = _FakeAuth()..succeedSignIn = true;
+    await _pump(tester, auth, accept: true);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Google'));
+    await tester.pump();
+    expect(auth.calls, ['google']);
+  });
+
   testWidgets('shows the provider choices and a Terms line', (tester) async {
     final auth = _FakeAuth();
     await _pump(tester, auth);

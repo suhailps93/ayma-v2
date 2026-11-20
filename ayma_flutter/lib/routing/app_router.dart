@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
@@ -139,58 +140,81 @@ void setupAuthDeepLinkDrain([
   });
 }
 
+/// The sign-in / recovery / consent gate (§3.3), extracted from the router so
+/// it is unit-testable and provably cannot throw `[core/no-app]` before
+/// Firebase is initialized. Returns the redirect target for [loc], or null to
+/// stay. Pure: depends only on the three router-facing [ChangeNotifier]s and a
+/// guarded Firebase read.
+String? authGateRedirect(String loc) {
+  // Read the router-facing [AuthSessionState] first (updated synchronously by
+  // the auth listener in main.dart), falling back to FirebaseAuth so the gate
+  // is correct even before the first listener tick. AuthSessionState is a pure
+  // ChangeNotifier, so this stays safe in Firebase-less test suites.
+  //
+  // Guard the FirebaseAuth read: on a cold fresh-install launch Firebase may
+  // not be initialized yet if N7:firebase_core timed out or failed under
+  // ART-compilation pressure (its init warning is swallowed), so touching
+  // `FirebaseAuth.instance` throws `[core/no-app]`. Thrown inside a go_router
+  // redirect that surfaces as a GoException and a dead "Page Not Found"
+  // screen (Scout NOTE 274, PROFILE fresh install). Treat a not-yet-ready
+  // Firebase as "not signed in via Firebase" and lean on AuthSessionState —
+  // the redirect's refreshListenable re-runs this gate the moment the auth
+  // listener ticks, so no signed-in user is stranded.
+  User? user;
+  try {
+    if (Firebase.apps.isNotEmpty) {
+      user = FirebaseAuth.instance.currentUser;
+    }
+  } catch (_) {
+    user = null;
+  }
+  final signedIn = AuthSessionState.instance.signedIn ||
+      (user != null && !user.isAnonymous);
+  const open = {
+    SignInScreen.path,
+    SplashScreen.path,
+    TermsScreen.path,
+    PrivacyScreen.path,
+    BiometricInfoScreen.path,
+    RecoveryScreen.path,
+  };
+  // A shared-report link is public (the snapshot needs no auth), and a
+  // page-share link resolves its own target (teaser + stash signed-out).
+  if (!signedIn &&
+      !open.contains(loc) &&
+      !loc.startsWith('/s/') &&
+      !loc.startsWith('/p/')) {
+    return SignInScreen.path;
+  }
+  if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
+  // Soft-deleted account (B9, §3.6): recovery takes precedence over the
+  // consent gate. A deleted account's consent record was quarantined too, so
+  // its gated calls would otherwise read as "consent required" and strand the
+  // user on the consent screen, where recording consent is itself refused
+  // until recovery. Route to the recovery screen first.
+  if (signedIn &&
+      RecoveryRequiredState.instance.required &&
+      !_recoveryPendingAllowed.contains(loc)) {
+    return RecoveryScreen.path;
+  }
+  // Mandatory face-matching consent: once the server says this account
+  // doesn't have it, only the one-time consent screen (and the legal pages)
+  // stay reachable.
+  if (signedIn &&
+      BiometricConsentState.instance.required &&
+      !_consentPendingAllowed.contains(loc)) {
+    return BiometricConsentScreen.path;
+  }
+  return null;
+}
+
 final appRouter = GoRouter(
   initialLocation: SplashScreen.path,
   // Lets screens re-assert their voice screen-context when a child route pops.
   observers: [screenRouteObserver, screenPopupTracker, heartbeatRouteObserver],
   // Sign-in gate (§3.3): unauthenticated users can only reach the sign-in,
   // splash, terms and recovery screens; everything else bounces to sign-in.
-  redirect: (context, state) {
-    // Read the router-facing [AuthSessionState] first (updated synchronously by
-    // the auth listener in main.dart), falling back to FirebaseAuth so the gate
-    // is correct even before the first listener tick. AuthSessionState is a pure
-    // ChangeNotifier, so this stays safe in Firebase-less test suites.
-    final user = FirebaseAuth.instance.currentUser;
-    final signedIn = AuthSessionState.instance.signedIn ||
-        (user != null && !user.isAnonymous);
-    final loc = state.matchedLocation;
-    const open = {
-      SignInScreen.path,
-      SplashScreen.path,
-      TermsScreen.path,
-      PrivacyScreen.path,
-      BiometricInfoScreen.path,
-      RecoveryScreen.path,
-    };
-    // A shared-report link is public (the snapshot needs no auth), and a
-    // page-share link resolves its own target (teaser + stash signed-out).
-    if (!signedIn &&
-        !open.contains(loc) &&
-        !loc.startsWith('/s/') &&
-        !loc.startsWith('/p/')) {
-      return SignInScreen.path;
-    }
-    if (signedIn && loc == SignInScreen.path) return SplashScreen.path;
-    // Soft-deleted account (B9, §3.6): recovery takes precedence over the
-    // consent gate. A deleted account's consent record was quarantined too, so
-    // its gated calls would otherwise read as "consent required" and strand the
-    // user on the consent screen, where recording consent is itself refused
-    // until recovery. Route to the recovery screen first.
-    if (signedIn &&
-        RecoveryRequiredState.instance.required &&
-        !_recoveryPendingAllowed.contains(loc)) {
-      return RecoveryScreen.path;
-    }
-    // Mandatory face-matching consent: once the server says this account
-    // doesn't have it, only the one-time consent screen (and the legal pages)
-    // stay reachable.
-    if (signedIn &&
-        BiometricConsentState.instance.required &&
-        !_consentPendingAllowed.contains(loc)) {
-      return BiometricConsentScreen.path;
-    }
-    return null;
-  },
+  redirect: (context, state) => authGateRedirect(state.matchedLocation),
   refreshListenable: Listenable.merge([
     BiometricConsentState.instance,
     RecoveryRequiredState.instance,
