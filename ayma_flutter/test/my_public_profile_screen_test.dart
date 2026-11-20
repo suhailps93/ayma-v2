@@ -14,6 +14,8 @@ import 'package:ayma_flutter/screens/public_profile_screen.dart'
     show ProfileBody, ProfilePhotoHeader;
 import 'package:ayma_flutter/screens/story_editor_screen.dart'
     show StoryEditorScreen;
+import 'package:ayma_flutter/screens/public_profile_edit_screen.dart'
+    show PublicProfileEditScreen;
 import 'package:ayma_flutter/services/api_client.dart';
 import 'package:ayma_flutter/theme.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -239,16 +241,17 @@ void main() {
     );
   });
 
-  // Founder-hit Nov 16: the pencil (tooltip "Edit manually") used to open the
-  // legacy markdown editor (ManualProfileEditScreen) — the replaced paragraph
-  // path that should have been deleted when bullets shipped. The settled design
-  // is that manual editing IS the bullet editor (Your Story), so the pencil must
-  // route to StoryEditorScreen.path and no markdown editor may be reachable.
-  testWidgets('the pencil (Edit manually) opens the bullet editor '
-      '(StoryEditorScreen), not a markdown editor', (tester) async {
+  // Founder order Nov 19 2026: the pencil on My public profile opens the
+  // PUBLIC-ONLY editor (public bullets, grouped like the profile, add-note), NOT
+  // the full Your Story editor (which exposes private + Ayma-only content). The
+  // pencil must route to PublicProfileEditScreen.path and never to
+  // StoryEditorScreen.path.
+  testWidgets('the pencil opens the public-only editor, not the full Your Story '
+      'editor', (tester) async {
     final api = ApiClient(
         httpClient: _profileBackend(), auth: MockFirebaseAuth(signedIn: true));
-    var openedWiki = false;
+    var openedPublicEdit = false;
+    var openedStory = false;
 
     final router = GoRouter(
       initialLocation: '/me',
@@ -259,10 +262,17 @@ void main() {
               MyPublicProfileScreen(myUid: 'u1', apiClient: api),
         ),
         GoRoute(
-          path: StoryEditorScreen.path, // '/profile/wiki' — the bullet editor
+          path: PublicProfileEditScreen.path, // '/profile/me/public/edit'
           builder: (_, __) {
-            openedWiki = true;
-            return const Scaffold(body: Text('BULLET EDITOR'));
+            openedPublicEdit = true;
+            return const Scaffold(body: Text('PUBLIC EDITOR'));
+          },
+        ),
+        GoRoute(
+          path: StoryEditorScreen.path, // '/profile/wiki' — must NOT open
+          builder: (_, __) {
+            openedStory = true;
+            return const Scaffold(body: Text('STORY EDITOR'));
           },
         ),
       ],
@@ -271,13 +281,12 @@ void main() {
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Edit manually'));
+    await tester.tap(find.byTooltip('Edit public profile'));
     await tester.pumpAndSettle();
 
-    // The pencil navigated to the bullet editor route — not a pushed markdown
-    // editor (which no longer exists in the codebase at all).
-    expect(openedWiki, isTrue);
-    expect(find.text('BULLET EDITOR'), findsOneWidget);
+    expect(openedPublicEdit, isTrue);
+    expect(openedStory, isFalse);
+    expect(find.text('PUBLIC EDITOR'), findsOneWidget);
   });
 
   // Jobs pass (cluster 8): the pending-updates MaterialBanner shares the

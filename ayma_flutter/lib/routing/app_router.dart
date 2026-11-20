@@ -41,6 +41,7 @@ import '../screens/linkedin_import_screen.dart';
 import '../screens/instagram_screen.dart';
 import '../screens/invite_friends_screen.dart';
 import '../screens/my_public_profile_screen.dart';
+import '../screens/public_profile_edit_screen.dart';
 import '../screens/profile_proposals_screen.dart';
 import '../screens/physical_attributes_report_screen.dart';
 import '../screens/preboarding_flow_screen.dart';
@@ -410,6 +411,11 @@ final appRouter = GoRouter(
               child: MyPublicProfileScreen(
                   openPhotoEditor:
                       state.uri.queryParameters['edit'] == 'photos')),
+    ),
+    GoRoute(
+      path: PublicProfileEditScreen.path,
+      builder: (context, state) =>
+          const NavBarShell(child: PublicProfileEditScreen()),
     ),
     GoRoute(
       path: ProfileProposalsScreen.path,
