@@ -279,7 +279,13 @@ class _PlanScreenState extends State<PlanScreen> {
   }
 
   Future<_PlanData> _load() async {
-    await _rc.ensureReady();
+    // Never let the store layer block the plan load: an ad-hoc profile build
+    // carries no RevenueCat key, so ensureReady() can throw — the backend
+    // plan/usage below still loads (Scout NOTE 273). Store packages rebind on
+    // the next successful init.
+    try {
+      await _rc.ensureReady();
+    } catch (_) {}
     final prior = _lastOk;
     if (mounted) {
       setState(() {

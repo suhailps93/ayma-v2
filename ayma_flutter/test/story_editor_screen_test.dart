@@ -235,9 +235,18 @@ class _FakeApi extends ApiClient {
 
   bool failPhotos = false;
 
+  /// Number of leading photoNodes() calls that throw a RETRYABLE cold-start
+  /// failure (status-less ApiException) before one succeeds — exercises the
+  /// NOTE 273 cold-start-retry wrap on the fresh-install photos load.
+  int photoTransientFails = 0;
+
   @override
   Future<List<AiNotePhoto>> photoNodes() async {
     calls.add('photos');
+    if (photoTransientFails > 0) {
+      photoTransientFails--;
+      throw ApiException('cold start'); // status-less → cold-start retryable
+    }
     if (failPhotos) throw StateError('photos unavailable');
     return photos;
   }
@@ -971,6 +980,42 @@ void main() {
     expect(find.text('FOUND ON THE INTERNET (1)'), findsNothing);
     expect(find.textContaining('AYMA-ONLY'), findsNothing); // never on the Story
     expect(find.textContaining('VIEW ALL PHOTOS'), findsNothing);
+  });
+
+  testWidgets('photos load rides a cold-start failure instead of hard-failing '
+      '(Scout NOTE 273 fresh-install)', (tester) async {
+    // First photoNodes() hits a scale-to-zero cold start (status-less), as a
+    // fresh install does with no cached list; the wrapped load must auto-retry
+    // (1s cold-start backoff) and paint the strip rather than showing
+    // "Couldn't load your photos". Pumped with bounded steps (not pumpAndSettle)
+    // so the in-flight retry's timer is driven deterministically.
+    final api = _FakeApi()
+      ..photos = mixedSourcePhotos()
+      ..photoTransientFails = 1;
+    silenceImageLoadErrors();
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final router = GoRouter(
+      initialLocation: '/story',
+      routes: [
+        GoRoute(
+          path: '/story',
+          builder: (_, __) => StoryEditorScreen(api: api, myUid: 'u1'),
+        ),
+      ],
+    );
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump(); // mount + _load starts (storyGet resolves, photos fail)
+    // Drive the 1s cold-start backoff + the healed retry's render.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    expect(find.text("Couldn't load your photos."), findsNothing);
+    expect(find.byKey(const Key('photo_gallery_strip')), findsOneWidget);
+    // Fetched twice: the cold failure, then the healed retry.
+    expect(api.calls.where((c) => c == 'photos').length, greaterThanOrEqualTo(2));
   });
 
   testWidgets('tapping a strip photo opens a gallery spanning ALL visible '

@@ -740,10 +740,22 @@ class _Card extends StatelessWidget {
       // Seed the profile screen with the card's already-prefetched photo + name
       // so it opens on a real header skeleton, not a flat-dark loader (NOTE 267
       // Obs a).
-      onTap: () => context.push(
-        '/profile/user/${card.uid}',
-        extra: {'photoUrl': card.gridPhotoUrl, 'name': card.name},
-      ),
+      onTap: () {
+        // Deterministically warm the EXACT 260-px decode the seeded header
+        // requests, right at tap. The NOTE 269 width-match only paints at once
+        // when that decode is already in the ImageCache — true for a card
+        // inside the page-1 prefetch window, but a MISS for a card scrolled in
+        // later or tapped mid-load, which then showed flat-dark until the ~12s
+        // GET (Scout NOTE 273 AOT: some members flat-dark at 2s, race-
+        // dependent). Firing the same prefetch for just this card (unawaited,
+        // so it adds no navigation latency) warms that entry during the push
+        // transition, so the seed photo paints on first entry for every member.
+        prefetchCardPhotos(context, [card.gridPhotoUrl], count: 1);
+        context.push(
+          '/profile/user/${card.uid}',
+          extra: {'photoUrl': card.gridPhotoUrl, 'name': card.name},
+        );
+      },
       onLongPress: card.isSelf ? null : () => _sheet(context),
       child: Container(
         clipBehavior: Clip.antiAlias,

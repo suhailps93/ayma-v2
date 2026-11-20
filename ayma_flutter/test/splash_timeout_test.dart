@@ -9,10 +9,33 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+// connectivity_plus's platform interface + MockPlatformInterfaceMixin, used only
+// to mock connectivity events in this test (both are transitive deps).
+// ignore: depend_on_referenced_packages
+import 'package:connectivity_plus_platform_interface/connectivity_plus_platform_interface.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+// ignore: depend_on_referenced_packages
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Drives `connectivity_plus` from the test so we can emit the duplicate
+/// "still online" events a cold boot produces (Scout NOTE 273).
+class _FakeConnectivity extends ConnectivityPlatform
+    with MockPlatformInterfaceMixin {
+  final _ctrl = StreamController<List<ConnectivityResult>>.broadcast();
+
+  @override
+  Future<List<ConnectivityResult>> checkConnectivity() async =>
+      const [ConnectivityResult.wifi];
+
+  @override
+  Stream<List<ConnectivityResult>> get onConnectivityChanged => _ctrl.stream;
+
+  void emit(List<ConnectivityResult> results) => _ctrl.add(results);
+  void dispose() => _ctrl.close();
+}
 
 /// Builds a splash + router wired to [handler] for `/bootstrap`. A signed-in
 /// mock user is used so `_resolve` reaches the bootstrap call (not the
@@ -196,6 +219,41 @@ void main() {
     expect(find.byType(SplashErrorView), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('screen:signin'), findsNothing);
+  });
+
+  testWidgets(
+      'repeated "still online" connectivity events never postpone the startup '
+      'deadline — the Retry still surfaces (Scout NOTE 273 wedge)',
+      (tester) async {
+    final conn = _FakeConnectivity();
+    final original = ConnectivityPlatform.instance;
+    ConnectivityPlatform.instance = conn;
+    addTearDown(() {
+      ConnectivityPlatform.instance = original;
+      conn.dispose();
+    });
+
+    await tester.pumpWidget(
+      // A scale-to-zero backend that keeps cold-failing — only the overall
+      // watchdog (or the exhausted backoff) can surface Retry.
+      _appWith(_BootstrapColdStart(failures: 1000),
+          MockFirebaseAuth(signedIn: true)),
+    );
+    await tester.pump(); // mount + post-frame _resolve → first transient failure
+
+    // Flood the duplicate "still online" wifi events a cold boot emits, spread
+    // well past the overall deadline. Before the fix each one reset _attempt +
+    // _deadlineExceeded and re-armed a fresh 45s watchdog, so the loader churned
+    // forever and Retry never appeared; now they are non-transitions, ignored,
+    // so the absolute deadline still expires.
+    for (var i = 0; i < 25; i++) {
+      conn.emit(const [ConnectivityResult.wifi]);
+      await tester.pump(const Duration(seconds: 3)); // 25*3 = 75s >> 45s deadline
+    }
+    await tester.pump();
+
+    expect(find.byType(SplashErrorView), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets(

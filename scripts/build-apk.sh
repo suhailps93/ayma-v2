@@ -38,6 +38,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# The AOT --profile APK exists only for the staging boot/startup bench, where
+# Scout `install -r`s it over the --staging DEBUG build. Without --staging the
+# profile build is NOT signed with the staging keystore (it falls back to the
+# default debug key), so its SHA-1 differs from the --staging debug APK and the
+# swap fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE — exactly the broken bench
+# in Scout NOTE 273 (profile key 16581138 vs debug 90655f15). Refuse the
+# footgun: a profile build for the bench must pass --staging so both APKs share
+# the stagingDebug key. (Override with AYMA_ALLOW_UNSIGNED_PROFILE=1 for the
+# rare non-bench AOT build.)
+if [[ "$MODE" == "--profile" && "$STAGING" -eq 0 \
+      && "${AYMA_ALLOW_UNSIGNED_PROFILE:-0}" != "1" ]]; then
+  echo "refusing --profile without --staging: the AOT bench APK must be signed" >&2
+  echo "with the staging keystore to match the --staging debug build for" >&2
+  echo "install -r. Re-run: scripts/build-apk.sh --profile --staging" >&2
+  echo "(set AYMA_ALLOW_UNSIGNED_PROFILE=1 to build an unsigned-for-bench profile APK.)" >&2
+  exit 1
+fi
+
 if [[ -z "${REVENUECAT_TEST_KEY:-}" ]]; then
   if ! REVENUECAT_TEST_KEY="$(gcloud secrets versions access latest \
       --secret REVENUECAT_TEST_KEY --project "$PROJECT" 2>/dev/null)"; then
