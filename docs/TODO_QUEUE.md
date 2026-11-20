@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER FLAG — report lumps → per-element notes on the founder graph + render guard (no raw JSON in node detail) — DONE (migration RUN on staging; render fix `fleet/report-render-guard` off origin/staging @309ba1e7, 2026-11-20)
+- **Migration RUN** on the founder uid `iWhWjiWhEpU7iyu9B9vy7GlT0PD2` on ayma-staging via `tools/report_nodes_migrate_run.py`: **3 lumps → 0** (`emergent.skill.web_findings` / `face_analysis` / `body_analysis` gone); wrote **14 web + 11 face + 12 body** per-element, source-tagged notes (212 → 246 nodes). Spot-checked 3: web summary + fact carry their LinkedIn source URL, face finding carries its source photo; none is a raw dict. The `appearance_reports` doc store is untouched (that founder call stands) — graph data only.
+- **Render guard (code → staging):** `render.node_display_text` never returns a raw dict/JSON dump — falls back to the human `gist`, else the label; `_format_value` drops dict values at the source; `report_doc` stays non-rendering. The node detail panel (Flutter renders the backend `text`) can never dump raw JSON for ANY node, migrated or not — fixed server-side, no APK needed.
+- **Tests:** `test_person_graph_render.py` (+6: raw-dump detector; dict-answer → gist; dict-answer no-gist → empty; JSON-string answer suppressed; report_doc stays empty; scalar list still humanises). 114 passed across render/store/tree/migration suites. Docs: PERSON_GRAPH.md.
+
+
 ## FOUNDER ORDER — Ayma check-ins land as real main-chat messages — DONE (fleet/checkin-in-chat off origin/staging @9af96504, 2026-11-20) — DO NOT MERGE (sweep owns merges)
 - **Order (Nov 20 ~14:16 PT, founder phone test):** an Ayma check-in showed only as a notification entry under "Ayma check-ins", never in the conversation. It must be written as a real Ayma message in the user's main chat so it sits in the thread and he can reply in context; the notification stays as the alert that points at it.
 - **Root cause:** the re-engagement check-in (`reengagement.run`, the `ayma_checkin` category) wrote its message to the `raw_turns` **session substrate** (`reengage-YYYYMMDD`) via `persist_raw_turns`, not to the canonical per-message `chat_messages` collection — so it wasn't a first-class, replyable main-chat bubble. (The proactive routine outreach `proactive.py` already used `chat_history.append`; this brought re-engagement onto the same path.)

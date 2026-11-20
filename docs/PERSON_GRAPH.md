@@ -618,6 +618,18 @@ renders from. With `PERSON_GRAPH_READS` on:
   `migrate_appearance_findings` re-splits the face/body lumps from the structured
   `emergent.appearance.report` axes. Both delete the lumps. Run on ayma-staging
   for the founder uid (+ demo-test1) by Astro/Scout (needs staging Firestore).
+  Runner: `tools/report_nodes_migrate_run.py <uid>` (prints before/after lump +
+  node counts; `--dry-run` to preview). **Run on the founder uid
+  `iWhWjiWhEpU7iyu9B9vy7GlT0PD2` 2026-11-20:** 3 lumps → 0; wrote 14 web + 11 face
+  + 12 body per-element notes.
+- **Render guard (founder Nov 20):** `render.node_display_text` NEVER returns a
+  raw dict / JSON dump — if the humanised text is a `{…}`/`[{…}]` structured blob
+  (an un-migrated lump, or any node whose answer is a dict), it falls back to the
+  node's human `gist`, else empty (the client shows the label); `report_doc`
+  nodes stay non-rendering. `_format_value` also drops a dict value (and dict
+  members of a list) at the source instead of repr-dumping it. So a node detail
+  panel can never dump raw JSON, even for an un-migrated node
+  (`render._looks_like_raw_dump`).
 - **Flag OFF (prod) unchanged:** the wiki-page lumps are still written; the
   `appearance_reports` doc store (`_persist_report`/`_read_report_doc`/
   `_report_ref`) is KEPT for prod and is deleted only at the prod cutover — a
