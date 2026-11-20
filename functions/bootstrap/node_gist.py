@@ -38,6 +38,14 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 # dangling dashes/quotes). ``!``/``?`` are kept — they read as a headline.
 _TRAIL = " \t\r\n.,;:—–-\"'"
 
+# A run of terse bracket tags at the very end of the content (e.g. "[Scout279]",
+# a citation "[1]", a status "[draft]"). These are metadata the user appended to
+# the line, not a second sentence — so the first-sentence gist must KEEP them
+# rather than drop them off the tail with the rest of the prose (NOTE 279 Leg 3:
+# a bullet ending "…introverted nature. [Scout279]" rendered without its marker,
+# because the marker sat after the first sentence boundary the gist splits on).
+_TRAILING_TAGS = re.compile(r"(?:\[[^\[\]\r\n]+\])(?:\s*\[[^\[\]\r\n]+\])*\s*$")
+
 
 def _clean(s: str) -> str:
     return _WS.sub(" ", (s or "").strip())
@@ -58,4 +66,13 @@ def derive_gist(text: str | None, stored: str | None = None) -> str:
     if not s:
         return ""
     first = _SENTENCE_END.split(s, 1)[0].strip()
-    return (first or s).rstrip(_TRAIL)
+    gist = (first or s).rstrip(_TRAIL)
+    # Keep a trailing bracket tag the first-sentence truncation would otherwise
+    # drop (the whole tag is already in the gist for a single-line node, so only
+    # append when it isn't there yet).
+    tail = _TRAILING_TAGS.search(s)
+    if tail:
+        marker = tail.group(0).strip()
+        if not gist.endswith(marker):
+            gist = f"{gist} {marker}".strip()
+    return gist

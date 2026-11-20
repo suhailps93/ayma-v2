@@ -1230,21 +1230,39 @@ without hiding anything — the full `text` stays on the node for the tap target
   forward; Part 1 derives a fallback for every existing node.
 - **One shared derivation** — `node_gist.derive_gist(text, stored=None)`
   (`functions/bootstrap/node_gist.py`), applied at tree-build time to every node,
-  NO per-node code: a stored `gist` wins; else the first sentence of `text` when
-  it fits `GIST_MAX` (80 chars); else `text` trimmed to a word boundary ≤ 80,
-  trailing punctuation stripped, an ellipsis appended. Whitespace/newlines are
+  NO per-node code: a stored `gist` wins; else the **first complete sentence** of
+  `text` (split on `.`/`!`/`?` + whitespace) returned **IN FULL** — no length cap,
+  never chopped mid-word, never an ellipsis (founder Leg 41, "no text should cut
+  off partially"); a single run-on line with no sentence boundary is returned
+  whole. Trailing sentence/list punctuation is stripped; whitespace/newlines are
   collapsed; it returns `""` only when there is neither a stored gist nor any
   text (a pure image node — the renderer then falls back to the node's content).
+- **Trailing bracket tag preserved (NOTE 279 Leg 3, Nov 20 2026):** a terse
+  bracket tag run at the very end of the line (e.g. `[Scout279]`, a citation
+  `[1]`, a status `[draft]`) is metadata the user appended, not a second
+  sentence — so `derive_gist` KEEPS it on the headline rather than dropping it
+  off the tail with the rest of the prose. Without this, a bullet ending
+  "…introverted nature. [Scout279]" rendered on the public profile and Your
+  Story (both the `gist`-default surfaces) WITHOUT its marker, while the edit
+  field — which shows the full `text`, not the gist — still showed it. The node
+  `text` always round-trips the marker; this was never a save/read strip, only a
+  gist-truncation drop on the default render.
 - **Surfaced by** `person_graph_tree._build_node` (node + child-bullet dicts) and
   `report_tree._sections_to_tree` (over `_block_to_nodes`, which also passes a
   block's own `gist` through when present). The full `text` is never dropped.
 - **Client** — `StoryNode.gist` + `StoryNode.displayGist` (gist → text → label).
-  `NodeVisualiser` renders `displayGist` capped to two lines + ellipsis by
-  default; the tap target is unchanged (the partial node chat with the full
-  prose and the owner controls). Image nodes stay photo-forward. `displayGist` is
-  the universal fallback text Part 2's `visual` field layers kind-keyed renderers
-  on top of.
-- **Tests:** `tests/test_node_gist.py`, `ayma_flutter/test/node_gist_render_test.dart`.
+  `NodeVisualiser` renders `displayGist` IN FULL (uncapped, no `maxLines`, no
+  ellipsis — it wraps to its full height); the render faithfully paints whatever
+  gist the backend serves and applies no text transform of its own, so a trailing
+  marker that survives `derive_gist` reaches the pixels. The tap target is
+  unchanged (the partial node chat with the full prose and the owner controls).
+  Image nodes stay photo-forward. `displayGist` is the universal fallback text
+  Part 2's `visual` field layers kind-keyed renderers on top of.
+- **Tests:** `tests/test_node_gist.py` (incl. the NOTE 279 Leg 3 trailing-marker
+  cases + the `person_graph_tree` render-path assertion that both surfaces share),
+  `ayma_flutter/test/node_gist_render_test.dart`,
+  `ayma_flutter/test/node_visualiser_test.dart` (a served gist with a trailing
+  marker renders intact).
 ## Gist-first writing — the `gist` field (less-text-heavy program, Part 3, Nov 17 2026)
 
 Every node written **going forward** carries a short one-line **`gist`** headline
