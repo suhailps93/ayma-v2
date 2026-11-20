@@ -361,6 +361,59 @@ def test_note263_interested_in_relocates_even_when_canonical_is_private():
     assert not any("Interested in" in t for t in ident)
 
 
+def test_note275_public_edit_sections_match_render_but_keep_private():
+    # Scout NOTE 275 fixture (the live Daniel profile): the PUBLIC-only edit view
+    # must match the RENDERED public profile — header facts not reintroduced as
+    # About Me bullets, "Interested in" under What I'm Looking For (founder ruling
+    # Nov 18) — while private bullets survive for the editor's save round-trip,
+    # and Your Story (story_sections) stays unchanged.
+    g = _graph(
+        {
+            "legal_first_name": {"answer": "Daniel Reyes"},
+            "date_of_birth": {"answer": "1997-02-10"},
+            "gender_identity": {"answer": "Man"},
+            "primary_location": {"answer": "Austin, TX, United States"},
+            "target_match_genders": {"answer": ["Women"]},
+            "emergent.editor.identity.0": _editor_identity("0", "Age: 29"),
+            "emergent.editor.identity.4": _editor_identity(
+                "4", "Interested in: Women"
+            ),
+            # A genuine PRIVATE About Me narrative bullet — must be preserved so
+            # the editor's save (replace_section_bullets) never drops it.
+            "emergent.editor.identity.9": {
+                "prompt": "A quiet night in beats a loud bar",
+                "answer": "A quiet night in beats a loud bar",
+                "answer_type": "narrative",
+                "section": "identity",
+                "visibility": "private",
+                "state": "answered",
+                "provenance": "stated",
+                "level": 2,
+            },
+        }
+    )
+    edit = render.public_edit_sections(g)["sections"]
+    ident = _texts(edit, "identity")
+    looking = _texts(edit, "looking_for")
+
+    # Defect 2: header facts (age / location / name) are NOT About Me bullets.
+    assert not any(t.startswith("Age:") for t in ident)
+    assert not any("Austin" in t for t in ident)
+    assert "Daniel Reyes" not in ident
+    # Defect 1: "Interested in" sits under What I'm Looking For, not About Me.
+    assert any(t.startswith("Interested in:") for t in looking)
+    assert not any("Interested in" in t for t in ident)
+    # Save round-trip safety: the private About Me bullet is still carried.
+    assert "A quiet night in beats a loud bar" in ident
+
+    # Your Story (the plain owner view) is UNCHANGED — it keeps every row, since
+    # it has no photo header duplicating them.
+    story_ident = _texts(render.story_sections(g)["sections"], "identity")
+    assert any(t.startswith("Age:") for t in story_ident)
+    assert any("Interested in" in t for t in story_ident)
+    assert "A quiet night in beats a loud bar" in story_ident
+
+
 def test_note264_public_restatement_of_private_standard_survives():
     # Surface-awareness (NOTE 264): the same-section duplicate drop fires only when
     # the canonical standard row renders publicly. ``ethnic_cultural_origin``

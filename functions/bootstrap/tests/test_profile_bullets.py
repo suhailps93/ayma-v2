@@ -277,3 +277,31 @@ def test_get_bullets_merges_and_dedupes_identical_bullet_texts():
         "Must like outdoor hiking.",
     ]
 
+
+
+def test_get_bullets_forwards_public_edit_to_graph_source(monkeypatch):
+    """The /profile/bullets route (the public-only edit view) passes
+    public_edit=True; the person-graph net (profile_graph) passes the default.
+    get_bullets must forward the flag to the graph read (Scout NOTE 275)."""
+    import dataclasses
+
+    import config
+    import person_graph_source
+
+    seen = {}
+
+    def _fake(db, uid, *, public_edit=False):
+        seen["public_edit"] = public_edit
+        return {"sections": [], "visibilities": ["public", "private"]}
+
+    # CONFIG is a frozen dataclass; swap in a copy with the graph read on.
+    monkeypatch.setattr(
+        config, "CONFIG", dataclasses.replace(config.CONFIG, person_graph_reads=True)
+    )
+    monkeypatch.setattr(person_graph_source, "story_bullets", _fake)
+
+    profile_bullets.get_bullets(object(), "u1", public_edit=True)
+    assert seen["public_edit"] is True
+
+    profile_bullets.get_bullets(object(), "u1")
+    assert seen["public_edit"] is False

@@ -265,7 +265,7 @@ def persona_pages(
     )
 
 
-def story_bullets(db, uid: str) -> dict | None:
+def story_bullets(db, uid: str, *, public_edit: bool = False) -> dict | None:
     """Your Story as the section→bullets model, rendered from the graph — the
     graph-native replacement for the wiki-backed ``profile_bullets.get_bullets``
     (design §8.1: "the story is a render of the graph"). Returns exactly the
@@ -295,6 +295,15 @@ def story_bullets(db, uid: str) -> dict | None:
         return None
     if not graph:
         return None
+    # ``public_edit`` → the PUBLIC-only profile edit view (``GET /profile/bullets``
+    # with ``public_edit=True``): it must match the RENDERED public profile — no
+    # header facts reintroduced as About Me bullets, "Interested in" under What
+    # I'm Looking For (founder ruling Nov 18; Scout NOTE 275) — so it applies the
+    # public placement rule while keeping private bullets for the save
+    # round-trip. The plain owner read (Your Story bullets, the person-graph net)
+    # keeps every row and grouping as-is.
+    if public_edit:
+        return render.public_edit_sections(graph)
     return render.story_sections(graph)
 
 

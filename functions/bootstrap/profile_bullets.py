@@ -64,12 +64,19 @@ def _section_shell(page_type: str) -> dict:
     }
 
 
-def get_bullets(db, uid: str) -> dict:
+def get_bullets(db, uid: str, *, public_edit: bool = False) -> dict:
     """Every canonical section as a bullet list. Existing pages are split into
     bullets; sections with no page yet come back empty (``page_id`` empty) so
     the editor can show them with a "+". Duplicate pages of the same canonical
     page_type are merged so each canonical type appears exactly once with all
-    bullets preserved."""
+    bullets preserved.
+
+    ``public_edit`` → the PUBLIC-only profile edit view (``GET /profile/bullets``):
+    the payload matches the rendered public profile (header facts not shown as
+    About Me bullets; "Interested in" grouped under What I'm Looking For — Scout
+    NOTE 275, founder ruling Nov 18), while private bullets are still carried so
+    the save round-trip never drops them. Off (the person-graph net via
+    ``profile_graph``) keeps every row and its raw section."""
     # Person-graph authoritative (design §8.1, NOTE 230): Your Story is a render
     # of the GRAPH, not the frozen wiki. With the flag on, wiki ingest is gated
     # (NOTE 227) so new facts land only in the graph — a volunteered fact becomes
@@ -81,7 +88,7 @@ def get_bullets(db, uid: str) -> dict:
     if CONFIG.person_graph_reads:
         import person_graph_source
 
-        graph_story = person_graph_source.story_bullets(db, uid)
+        graph_story = person_graph_source.story_bullets(db, uid, public_edit=public_edit)
         if graph_story is not None:
             return graph_story
         # graph read failed — fall through to the frozen-wiki read, never blank.

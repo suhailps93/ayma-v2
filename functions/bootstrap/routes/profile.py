@@ -145,10 +145,17 @@ class BulletsCreateRequest(BaseModel):
 
 @router.get("/profile/bullets")
 async def profile_bullets_get(uid: str = Depends(require_uid)) -> dict[str, object]:
-    """Your Story as the section → bullets model: every canonical section (even
-    empty ones, so the editor shows a "+" per section), each existing page split
-    into ``{id, text, visibility}`` bullets at read time."""
-    return await asyncio.to_thread(profile_bullets.get_bullets, get_db(), uid)
+    """The PUBLIC-only profile edit view (``My public profile`` → edit) as the
+    section → bullets model: every canonical section (even empty ones, so the
+    editor shows a "+" per section), each existing page split into
+    ``{id, text, visibility}`` bullets at read time. ``public_edit=True`` makes
+    the payload match the RENDERED public profile — header facts under the photo
+    header are not reintroduced as About Me bullets and "Interested in" groups
+    under What I'm Looking For (founder ruling Nov 18; Scout NOTE 275) — while
+    private bullets are still carried so the save round-trip never drops them."""
+    return await asyncio.to_thread(
+        profile_bullets.get_bullets, get_db(), uid, public_edit=True
+    )
 
 
 @router.put("/profile/bullets/{page_id}")
