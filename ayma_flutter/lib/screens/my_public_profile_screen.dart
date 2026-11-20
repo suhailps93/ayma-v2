@@ -13,7 +13,7 @@ import '../widgets/ayma_toast.dart';
 import '../widgets/inline_photo_carousel.dart';
 import '../widgets/overflow_guards.dart';
 import 'profile_proposals_screen.dart';
-import 'story_editor_screen.dart';
+import 'public_profile_edit_screen.dart';
 
 /// The signed-in user's own "My public profile" page (You tab). It is the
 /// reference look for every profile view: the whole content is the shared
@@ -224,12 +224,12 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
   }
 
   Future<void> _editManually() async {
-    // The public profile is bullets from the graph, so "edit manually" IS the
-    // bullet editor (Your Story — per-bullet edit with identity, dated history
-    // and visibility), not a legacy markdown paragraph editor (founder settled
-    // design; the old ManualProfileEditScreen was deleted Nov 16). Refresh on
-    // return so an edit shows immediately.
-    await context.push(StoryEditorScreen.path);
+    // Editing My public profile opens a PUBLIC-ONLY editor (founder order, Nov
+    // 19 2026): exactly the public bullets this page renders, grouped the same
+    // way, each editable in place plus an add-note — never the full Your Story
+    // editor (which exposes private + Ayma-only content). It edits the same
+    // underlying graph nodes. Refresh on return so an edit shows immediately.
+    await context.push(PublicProfileEditScreen.path);
     if (mounted) _refreshProfile();
   }
 
@@ -260,7 +260,7 @@ class _MyPublicProfileScreenState extends State<MyPublicProfileScreen> {
           // share 2026-11-08) — it can't crowd the app bar at large text the
           // way the old "Edit manually" label could.
           IconButton(
-            tooltip: 'Edit manually',
+            tooltip: 'Edit public profile',
             icon: const Icon(Icons.edit_outlined),
             onPressed: _editManually,
           ),
