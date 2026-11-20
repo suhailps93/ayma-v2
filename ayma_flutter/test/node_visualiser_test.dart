@@ -99,6 +99,7 @@ StoryNode _node({
   required String id,
   String label = '',
   String text = '',
+  String gist = '',
   String vis = NodeVis.private,
   String subtree = '',
   bool standard = false,
@@ -116,6 +117,7 @@ StoryNode _node({
       section: 'identity',
       label: label,
       text: text,
+      gist: gist,
       answerType: answerType,
       level: level,
       visibility: vis,
@@ -360,6 +362,23 @@ void main() {
     expect(text.overflow, isNot(TextOverflow.ellipsis));
     // The full sentence is laid out (no "…"): its painted size spans >1 line.
     expect(find.text(longGist), findsOneWidget);
+  });
+
+  // NOTE 279 Leg 3 (render drop, screenshot): the served gist is what the
+  // DEFAULT render paints on BOTH the public profile and Your Story. When the
+  // backend keeps a trailing bracket marker on the gist, the render must paint
+  // it VERBATIM (no Flutter-side strip) — the pixel the tester reads off screen.
+  testWidgets('a served gist with a trailing bracket marker renders intact',
+      (tester) async {
+    const gist =
+        'A quiet night in beats a loud bar, I have an introverted nature [Scout279]';
+    final node = _node(id: 'm1', text: '$gist. and more prose dropped by the gist',
+        gist: gist, vis: NodeVis.public);
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.story),
+    ));
+    expect(find.text(gist), findsOneWidget);
+    expect(find.textContaining('[Scout279]'), findsOneWidget);
   });
 
   testWidgets('REGRESSION: a long gist renders in FULL, no ellipsis '

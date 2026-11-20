@@ -72,6 +72,34 @@ def test_short_text_is_returned_verbatim_minus_trailing_period():
     assert node_gist.derive_gist("Brown.") == "Brown"
 
 
+def test_trailing_bracket_marker_survives_the_first_sentence_gist():
+    # NOTE 279 Leg 3 (render drop): a bullet whose prose ends in a sentence and
+    # then a terse trailing bracket tag — the tag is appended metadata, not a
+    # second sentence, so the first-sentence gist must KEEP it rather than drop
+    # it with the tail. (Earlier NOTE 279 only proved the node `text`
+    # round-trips; the default render shows this `gist`, so the marker vanished
+    # on the profile + Your Story render while the edit field showed it.)
+    assert (
+        node_gist.derive_gist("I have a deeply introverted nature. [Scout279]")
+        == "I have a deeply introverted nature [Scout279]"
+    )
+    # A bracket tag already inside the first sentence (single run-on line) is
+    # kept as-is — never doubled.
+    assert (
+        node_gist.derive_gist("My introverted nature [Scout279]")
+        == "My introverted nature [Scout279]"
+    )
+    # Multiple trailing tags, and a tag after an exclamation/question headline.
+    assert node_gist.derive_gist("Two tags at end. [a][b]") == "Two tags at end [a][b]"
+    assert node_gist.derive_gist("A public fact! Really? [z]") == "A public fact! [z]"
+
+
+def test_mid_sentence_bracket_is_not_treated_as_a_trailing_marker():
+    # A bracket that is NOT at the very end is ordinary prose: the first-sentence
+    # rule governs it, no marker-preservation special case fires.
+    assert node_gist.derive_gist("Ends mid tag [a] and more.") == "Ends mid tag [a] and more"
+
+
 # --- surfaced on the person-graph tree -------------------------------------
 
 
@@ -121,6 +149,29 @@ def test_person_graph_tree_long_about_me_bullet_gist_has_no_ellipsis():
     node = next(n for n in ident["nodes"] if n["id"] == "emergent.story.identity.7")
     assert "…" not in node["gist"]
     assert node["gist"] == long_bullet
+
+
+def test_person_graph_tree_bullet_keeps_its_trailing_marker_on_the_render():
+    # NOTE 279 Leg 3 (render drop, both profile + Your Story): the node tree is
+    # the single payload BOTH the public-profile render and the Your Story render
+    # consume (GraphTreeView → NodeVisualiserSection → `displayGist`). A bullet
+    # saved with a trailing bracket marker must surface that marker on the served
+    # `gist` (the default-rendered line), not only on the full `text`.
+    text = "A quiet night in beats a loud bar, I have an introverted nature. [Scout279]"
+    overlay = {
+        "emergent.story.identity.3": {
+            "prompt": text, "section": "identity", "level": 2,
+            "answer_type": "narrative", "answer": text,
+            "state": "answered", "visibility": "public",
+        },
+    }
+    t = tree.node_tree(_graph(overlay), surface="story")
+    ident = next(s for s in t["sections"] if s["page_type"] == "identity")
+    node = next(n for n in ident["nodes"] if n["id"] == "emergent.story.identity.3")
+    # the rendered line (gist) still ends in the marker ...
+    assert node["gist"].endswith("[Scout279]"), node["gist"]
+    # ... and the full prose is intact for the tap-in detail.
+    assert node["text"] == text
 
 
 # --- surfaced on the report tree -------------------------------------------
