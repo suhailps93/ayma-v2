@@ -1,3 +1,4 @@
+import '../util/cold_start_retry.dart';
 import 'api_client.dart';
 import 'revenuecat_service.dart';
 
@@ -70,10 +71,22 @@ class SubscriptionStatus {
     RevenueCatService rc,
     ApiClient api,
   ) async {
-    final sub = await rc.activeSubscription();
+    // The store layer (RevenueCat) must NEVER block the plan: a build without a
+    // configured RevenueCat key (an ad-hoc profile build is not Codemagic-signed
+    // and carries no prod key) or a transient store error makes
+    // activeSubscription() throw — honouring this class's "Never throws"
+    // contract, that falls through to the backend plan/usage below instead of
+    // failing the whole Plan screen (Scout NOTE 273: Plan "Couldn't load" on a
+    // fresh install while chat/story loaded).
+    ActiveSubscription? sub;
+    try {
+      sub = await rc.activeSubscription();
+    } catch (_) {
+      sub = null;
+    }
     if (sub != null) {
       final plan = RevenueCatService.fallbackPlans
-          .where((p) => p.productId == sub.productId)
+          .where((p) => p.productId == sub!.productId)
           .firstOrNull;
       if (plan != null) {
         return SubscriptionStatus(
@@ -88,7 +101,9 @@ class SubscriptionStatus {
       }
     }
     try {
-      final u = await api.usage();
+      // Ride the scale-to-zero cold start so a fresh install resolves the real
+      // backend plan on the first open instead of silently falling back to Free.
+      final u = await withColdStartRetry(() => api.usage());
       final plan = RevenueCatService.fallbackPlans
           .where((p) => p.name.toLowerCase() == u.plan.toLowerCase())
           .firstOrNull;

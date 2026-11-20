@@ -143,6 +143,15 @@ with a **different SHA-1**, so ayma-staging owns its own Android OAuth client.
   stays on the shared default debug keystore. (`profile` is staging-signed so the
   AOT boot-gate APK below matches the debug APK's signature — Scout can
   `adb install -r` between them without losing the signed-in fixture.)
+- **Guard (Scout NOTE 273):** building the AOT APK with `--profile` but WITHOUT
+  `--staging` silently falls back to the default debug keystore (SHA
+  `16581138…`), so its signature no longer matches the `--staging` debug APK
+  (`90655f15…`) and `install -r` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`
+  — exactly the broken bench swap on 2525 (the profile APK had been built in an
+  isolated worktree without `--staging`). `build-apk.sh` now REFUSES a
+  `--profile` build without `--staging`; always build the bench AOT APK as
+  `scripts/build-apk.sh --profile --staging`. (`AYMA_ALLOW_UNSIGNED_PROFILE=1`
+  overrides, for the rare non-bench AOT build.)
 
 Verify a `--staging` APK is staging-signed:
 

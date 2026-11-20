@@ -100,7 +100,14 @@ mixin _StoryNotesCommon<T extends StatefulWidget> on State<T> {
   Future<void> _loadPhotos() async {
     if (mounted) setState(() => _photosError = false);
     try {
-      final photos = await _notesApi.photoNodes();
+      // Ride the scale-to-zero cold start like the story-sections load above
+      // (and chat) already do — on a fresh install there is no cached photo
+      // list to paint, so a bare first-cold-request failure here surfaces as
+      // "Couldn't load your photos" with a Retry that re-hits the still-cold
+      // backend (Scout NOTE 273: photos failed on a cold fresh install while
+      // the cold-start-wrapped sections/chat loaded). withColdStartRetry heals
+      // the first cold request instead of hard-failing it.
+      final photos = await withColdStartRetry(() => _notesApi.photoNodes());
       if (mounted) {
         setState(() {
           _photos = photos;

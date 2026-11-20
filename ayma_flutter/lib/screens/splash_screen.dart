@@ -177,6 +177,19 @@ class _SplashScreenState extends State<SplashScreen> {
   Timer? _watchdog;
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
+  /// Absolute wall-clock ceiling for the whole startup, set ONCE (not a fresh
+  /// 45s each time the watchdog is re-armed). A cold boot makes Android emit
+  /// repeated connectivity events, and the old watchdog re-armed from zero on
+  /// each one, so the loader could churn indefinitely and never surface the
+  /// manual Retry (Scout NOTE 273: "Waking up Ayma" hung 8+ min). Reset only by
+  /// a deliberate manual Retry, which earns a fresh budget.
+  DateTime? _startupDeadlineAt;
+
+  /// Last known connectivity, so only a genuine offline→online TRANSITION
+  /// triggers an early retry — not the duplicate "still online" events a cold
+  /// boot emits, which used to reset the entire startup budget each time.
+  bool _online = true;
+
   @override
   void initState() {
     super.initState();
@@ -216,14 +229,26 @@ class _SplashScreenState extends State<SplashScreen> {
   /// this only ever fires when the app is genuinely stuck.
   void _startWatchdog() {
     _watchdog?.cancel();
-    _watchdog = Timer(SplashScreen.startupDeadline, () {
-      if (!mounted) return;
-      _deadlineExceeded = true;
-      _retryTimer?.cancel();
-      setState(() {
-        _error = "Couldn't connect. Check your connection and try again.";
-        _retrying = false;
-      });
+    // Absolute ceiling: fixed the first time it is armed and only re-armed for
+    // the time REMAINING to it, so a flapping connection can never push startup
+    // past it (Scout NOTE 273). A manual Retry clears it for a fresh budget.
+    final deadline =
+        _startupDeadlineAt ??= DateTime.now().add(SplashScreen.startupDeadline);
+    final remaining = deadline.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      _onDeadlineExceeded();
+      return;
+    }
+    _watchdog = Timer(remaining, _onDeadlineExceeded);
+  }
+
+  void _onDeadlineExceeded() {
+    if (!mounted) return;
+    _deadlineExceeded = true;
+    _retryTimer?.cancel();
+    setState(() {
+      _error = "Couldn't connect. Check your connection and try again.";
+      _retrying = false;
     });
   }
 
@@ -236,11 +261,20 @@ class _SplashScreenState extends State<SplashScreen> {
     try {
       _connSub = Connectivity().onConnectivityChanged.listen(
         (results) {
-          final online =
-              results.any((r) => r != ConnectivityResult.none);
-          if (online && !_inFlight && (_error != null || _retrying)) {
+          final online = results.any((r) => r != ConnectivityResult.none);
+          final wasOffline = !_online;
+          _online = online;
+          // ONLY a real offline→online transition retries early. The duplicate
+          // "still online" events a cold boot emits must not reset the budget
+          // (Scout NOTE 273), and once the absolute watchdog has surfaced the
+          // manual Retry we leave the next attempt to the user — never silently
+          // resume the invisible loop by clearing _deadlineExceeded.
+          if (online &&
+              wasOffline &&
+              !_deadlineExceeded &&
+              !_inFlight &&
+              (_error != null || _retrying)) {
             _attempt = 0;
-            _deadlineExceeded = false;
             _retryTimer?.cancel();
             _startWatchdog();
             _resolve();
@@ -570,6 +604,9 @@ class _SplashScreenState extends State<SplashScreen> {
     _retryTimer?.cancel();
     _attempt = 0;
     _deadlineExceeded = false;
+    // A deliberate tap earns a fresh absolute window (the connectivity path
+    // never clears this; only the user does).
+    _startupDeadlineAt = null;
     _startWatchdog();
     setState(() {
       _error = null;
