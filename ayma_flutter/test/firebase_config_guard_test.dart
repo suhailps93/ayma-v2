@@ -69,6 +69,7 @@ void main() {
   group('splash surfaces the config mismatch as an honest, blocking error', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
     setUp(SplashFirstPaint.resetForTest);
+    setUp(StartupDeadline.resetForTest);
     setUp(FirebaseConfigGuard.instance.resetForTest);
     tearDown(FirebaseConfigGuard.instance.resetForTest);
 

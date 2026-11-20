@@ -163,7 +163,9 @@ def _page_id_to_section(page_id: str) -> str:
     raise ValueError(f"unknown story section for page_id {page_id!r}")
 
 
-def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
+def save_bullets(
+    db, uid: str, page_id: str, bullets: list[dict], *, public_edit: bool = False
+) -> dict:
     """Compose an edited bullet list back into an existing section's body and
     save it through the per-section save path (keeps moderation and version
     history). Raises ``KeyError`` if the page is gone.
@@ -173,7 +175,11 @@ def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
     page's existing Ayma-only spans are re-attached before the write, so Ayma's
     own tools/context keep them while the owner never sees them (founder order,
     Nov 15 2026). The per-section save guard then confirms nothing hidden was
-    dropped."""
+    dropped.
+
+    ``public_edit`` → the save comes from the PUBLIC-only profile edit view,
+    whose GET dropped/relocated header-fact duplicates; the graph write-back
+    then protects those hidden nodes from deletion (NOTE 279 defect 4)."""
     visible = [b for b in (bullets or []) if b.get("visibility") != VIS_AI_ONLY]
     # Person-graph authoritative: write the edited bullets back to the graph
     # (closing the NOTE 230 Phase-6b gap), not the frozen wiki section page.
@@ -183,7 +189,7 @@ def save_bullets(db, uid: str, page_id: str, bullets: list[dict]) -> dict:
         import person_graph_store as pg_store
 
         section = _page_id_to_section(page_id)
-        pg_store.replace_section_bullets(db, uid, section, visible)
+        pg_store.replace_section_bullets(db, uid, section, visible, public_edit=public_edit)
         vis = story_bullets.compose_body(visible)["visibility"]
         return {"page_id": page_id, "visibility": vis}
     composed = story_bullets.compose_body(visible)

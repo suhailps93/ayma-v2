@@ -48,6 +48,7 @@ void main() {
   // Presentation is immediate unless gated (the engine never reports
   // rasterization under flutter_test) — see SplashFirstPaint.resetForTest.
   setUp(SplashFirstPaint.resetForTest);
+  setUp(StartupDeadline.resetForTest);
   testWidgets(
       'shows the cached shell immediately without waiting on the bootstrap '
       'future', (tester) async {

@@ -157,6 +157,46 @@ abstract final class SplashFirstPaint {
   }
 }
 
+/// The absolute wall-clock ceiling for the WHOLE startup, held at process
+/// scope so it survives the splash being torn down and rebuilt.
+///
+/// NOTE 273 made the deadline survive the watchdog being *re-armed* within one
+/// splash State (flapping connectivity). NOTE 279 defect 3: on the PROFILE
+/// deep-link / fresh-install path the splash can be re-MOUNTED instead — the
+/// router gate bounces `/signin`→`/splash` while the session is still restoring,
+/// building a fresh `_SplashScreenState` each time — and a per-State deadline
+/// reset to a new 45s on every mount, so the ceiling never fired and "Waking up
+/// Ayma…" hung indefinitely. A process-global deadline is shared across those
+/// re-mounts: once it passes, every freshly-built splash surfaces the manual
+/// Retry at once instead of churning. A deliberate Retry clears it for a fresh
+/// budget (that is the only reset).
+abstract final class StartupDeadline {
+  static DateTime? _at;
+  static bool _tripped = false;
+
+  /// The ceiling, fixed the first time it is read in a boot.
+  static DateTime ensure() =>
+      _at ??= DateTime.now().add(SplashScreen.startupDeadline);
+
+  /// Time left to the ceiling (negative once passed).
+  static Duration get remaining => ensure().difference(DateTime.now());
+
+  /// True once the ceiling has passed or been tripped — a re-mounted splash
+  /// reads this to show Retry immediately rather than resolve again.
+  static bool get exceeded => _tripped || remaining <= Duration.zero;
+
+  static void markTripped() => _tripped = true;
+
+  /// A deliberate manual Retry earns a fresh absolute window.
+  static void reset() {
+    _at = null;
+    _tripped = false;
+  }
+
+  @visibleForTesting
+  static void resetForTest() => reset();
+}
+
 class _SplashScreenState extends State<SplashScreen> {
   /// Exponential gaps between auto-retries (index = retry number − 1): 1s, 2s,
   /// 4s, 8s (capped). Quick enough that a transient blip recovers fast, backed
@@ -176,14 +216,6 @@ class _SplashScreenState extends State<SplashScreen> {
   Timer? _retryTimer;
   Timer? _watchdog;
   StreamSubscription<List<ConnectivityResult>>? _connSub;
-
-  /// Absolute wall-clock ceiling for the whole startup, set ONCE (not a fresh
-  /// 45s each time the watchdog is re-armed). A cold boot makes Android emit
-  /// repeated connectivity events, and the old watchdog re-armed from zero on
-  /// each one, so the loader could churn indefinitely and never surface the
-  /// manual Retry (Scout NOTE 273: "Waking up Ayma" hung 8+ min). Reset only by
-  /// a deliberate manual Retry, which earns a fresh budget.
-  DateTime? _startupDeadlineAt;
 
   /// Last known connectivity, so only a genuine offline→online TRANSITION
   /// triggers an early retry — not the duplicate "still online" events a cold
@@ -231,18 +263,22 @@ class _SplashScreenState extends State<SplashScreen> {
     _watchdog?.cancel();
     // Absolute ceiling: fixed the first time it is armed and only re-armed for
     // the time REMAINING to it, so a flapping connection can never push startup
-    // past it (Scout NOTE 273). A manual Retry clears it for a fresh budget.
-    final deadline =
-        _startupDeadlineAt ??= DateTime.now().add(SplashScreen.startupDeadline);
-    final remaining = deadline.difference(DateTime.now());
-    if (remaining <= Duration.zero) {
-      _onDeadlineExceeded();
-      return;
-    }
-    _watchdog = Timer(remaining, _onDeadlineExceeded);
+    // past it (NOTE 273) — and held at PROCESS scope so a splash re-mount can't
+    // reset it either (NOTE 279 defect 3). A manual Retry clears it for a fresh
+    // budget.
+    final remaining = StartupDeadline.remaining;
+    // Clamp to zero rather than firing synchronously: _startWatchdog runs inside
+    // initState on a re-mount whose shared deadline has already passed, and
+    // _onDeadlineExceeded calls setState — a zero-delay Timer defers it past the
+    // first build so it is legal (NOTE 279 defect 3).
+    _watchdog = Timer(
+      remaining > Duration.zero ? remaining : Duration.zero,
+      _onDeadlineExceeded,
+    );
   }
 
   void _onDeadlineExceeded() {
+    StartupDeadline.markTripped();
     if (!mounted) return;
     _deadlineExceeded = true;
     _retryTimer?.cancel();
@@ -308,6 +344,14 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _resolve() async {
     if (_inFlight) return;
+    // The absolute startup ceiling has already passed (in THIS boot, possibly on
+    // an earlier splash mount): don't resolve-and-navigate again — that is the
+    // very churn that keeps re-mounting the splash. Surface the manual Retry and
+    // stop, breaking the /splash⇄/signin loop (NOTE 279 defect 3).
+    if (StartupDeadline.exceeded) {
+      _onDeadlineExceeded();
+      return;
+    }
     _inFlight = true;
     BootTrace.mark('splash _resolve() enter');
 
@@ -661,8 +705,9 @@ class _SplashScreenState extends State<SplashScreen> {
     _attempt = 0;
     _deadlineExceeded = false;
     // A deliberate tap earns a fresh absolute window (the connectivity path
-    // never clears this; only the user does).
-    _startupDeadlineAt = null;
+    // never clears this; only the user does). Process-global so the reset holds
+    // across any subsequent splash re-mount (NOTE 279 defect 3).
+    StartupDeadline.reset();
     _startWatchdog();
     setState(() {
       _error = null;

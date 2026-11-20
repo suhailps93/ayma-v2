@@ -312,6 +312,18 @@ def _public_fact_placement(
     return "keep", None
 
 
+def public_fact_placement(
+    graph: dict[str, GraphNode], node: GraphNode
+) -> tuple[str, str | None]:
+    """Public accessor for :func:`_public_fact_placement` — where ``node`` lands
+    on a PUBLIC surface: ``("keep", None)``, ``("drop", None)`` or
+    ``("move", section)``. The public-edit SAVE path uses it to tell a node the
+    public-edit view HID or RELOCATED (``"drop"`` / ``"move"``) from one the user
+    actually removed, so a filtered save never prunes a hidden duplicate (NOTE
+    279 defect 4)."""
+    return _public_fact_placement(graph, node)
+
+
 def _is_renderable(node: GraphNode) -> bool:
     """A node renders as a bullet once it carries content — an answer or at
     least one child. Unanswered seed scaffolding does not render."""

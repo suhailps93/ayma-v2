@@ -49,6 +49,7 @@ void main() {
   // inherits another file's pumped splash (no other file executes N12, so
   // this reset cannot starve anyone else's gate).
   setUp(SplashFirstPaint.resetForTest);
+  setUp(StartupDeadline.resetForTest);
 
   testWidgets(
       'cold start through the real N12: first rasterized frame is the wake '
