@@ -143,6 +143,40 @@ class ReportCache {
     }
   }
 
+  /// The freshest non-stale cached [BootConfig] on this device, regardless of
+  /// uid, or null when none is cached. Used by the splash to recover a
+  /// returning signed-in user when the KeyStore/Keychain session restore is
+  /// slower than the auth-wait budget and `currentUser` is momentarily null
+  /// (startup audit §3.3) — rather than bouncing them to sign-in. A clean
+  /// sign-out wipes these keys (`clearForSignOut`), so normally at most one
+  /// exists; if several remain (e.g. an account switch), the most recently
+  /// cached wins.
+  Future<BootConfig?> readAnyBootConfig() async {
+    try {
+      final prefs = await _getPrefs();
+      BootConfig? best;
+      for (final key in prefs.getKeys()) {
+        if (!key.startsWith(_bootConfigPrefix)) continue;
+        final raw = prefs.getString(key);
+        if (raw == null) continue;
+        try {
+          final config =
+              BootConfig.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+          if (config.isStale || config.entryRoute.isEmpty) continue;
+          if (best == null || config.cachedAtEpochMs > best.cachedAtEpochMs) {
+            best = config;
+          }
+        } catch (_) {
+          // Skip a corrupt entry rather than fail the whole scan.
+        }
+      }
+      return best;
+    } catch (e) {
+      debugPrint('readAnyBootConfig failed: $e');
+      return null;
+    }
+  }
+
   /// Writes [BootConfig] to storage. Also mirrors [BootConfig.entryRoute] to
   /// the legacy `boot_route:$uid` key during transition.
   Future<void> writeBootConfig(String uid, BootConfig config) async {

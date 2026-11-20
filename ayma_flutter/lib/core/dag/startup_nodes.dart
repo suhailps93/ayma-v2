@@ -363,6 +363,13 @@ class StartupNodes {
             sessionMode: result.sessionMode,
             entryRoute: entryRouteFor(result.sessionMode),
             cachedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+            // Carry the advisory gate hints, exactly as the splash's
+            // `_cacheEntryRoute` does — otherwise an N14 refresh overwrote the
+            // cached config WITHOUT them, erasing the hints a later optimistic
+            // launch reads (startup audit §1 directive 4 / §2.3).
+            biometricConsentRequiredHint: result.biometricConsentRequired,
+            ageBlockedHint: result.ageBlocked,
+            recoveryRequiredHint: result.recoveryRequired,
           );
           await ReportCache.instance.writeBootConfig(user.uid, config);
         } catch (e) {

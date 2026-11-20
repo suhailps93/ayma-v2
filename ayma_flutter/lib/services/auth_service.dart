@@ -27,20 +27,45 @@ class AuthService {
 
   Completer<User?> _authReadyCompleter = Completer<User?>();
 
+  /// The uid the readiness completer currently reflects, and whether it has
+  /// been notified at least once — so a repeat for the same identity is a
+  /// no-op while a genuine change re-arms (see [notifyAuthSessionRestored]).
+  String? _readyUid;
+  bool _everNotified = false;
+
   /// Hard Invariant: Awaits confirmed KeyStore/Keychain token restoration.
   /// Resolves to non-null User, or null if signed out. NO timeout fallback.
   Future<User?> ensureAuthReady() => _authReadyCompleter.future;
 
-  /// Explicit notification when auth state change settles (called by StartupDAG/main listener).
+  /// Explicit notification when auth state change settles (called by the
+  /// StartupDAG / main listener).
+  ///
+  /// Re-arms the readiness completer whenever the signed-in identity actually
+  /// changes (sign-out, or a switch to a different account), so a later
+  /// [ensureAuthReady] reflects the CURRENT user. Before this the completer
+  /// was single-use: after the first completion it returned the first user
+  /// forever, even after sign-out / sign-in as a different account in the same
+  /// process (startup audit risk §5). An idempotent repeat for the same uid is
+  /// a no-op (it never discards an already-delivered result for the same user).
   void notifyAuthSessionRestored(User? user) {
+    final uid = user?.uid;
     if (!_authReadyCompleter.isCompleted) {
+      _readyUid = uid;
+      _everNotified = true;
       _authReadyCompleter.complete(user);
+      return;
     }
+    if (_everNotified && uid == _readyUid) return; // same identity: no-op
+    _readyUid = uid;
+    _everNotified = true;
+    _authReadyCompleter = Completer<User?>()..complete(user);
   }
 
   @visibleForTesting
   void resetForTest() {
     _authReadyCompleter = Completer<User?>();
+    _readyUid = null;
+    _everNotified = false;
   }
 
   /// Email / password — sign in to an *existing* account. Throws

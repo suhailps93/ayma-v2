@@ -242,6 +242,49 @@ void main() {
   });
 
   test(
+      'bootstrap() coalesces concurrent identical calls into one POST '
+      '(startup audit §2.2.3 double-bootstrap race)', () async {
+    final auth = MockFirebaseAuth(signedIn: true);
+    var posts = 0;
+    final mockHttp = MockClient((request) async {
+      posts++;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      return http.Response(
+        jsonEncode({
+          'session_mode': 'active',
+          'uid': 'u1',
+          'livekit': {'token': 't', 'url': 'wss://x', 'room': 'ayma-u1'},
+        }),
+        200,
+      );
+    });
+    final client = ApiClient(httpClient: mockHttp, auth: auth);
+
+    // The optimistic-launch race: the splash's cached-route branch and the
+    // DAG's N14 refresher both fire the identical empty-arg bootstrap at once.
+    final results = await Future.wait([
+      client.bootstrap(sessionId: ''),
+      client.bootstrap(sessionId: ''),
+    ]);
+    expect(posts, 1, reason: 'identical concurrent bootstraps share one POST');
+    expect(results[0].room, 'ayma-u1');
+    expect(results[1].room, 'ayma-u1');
+
+    // In-flight coalescing only — never a cache: a wave after the first
+    // settled fires a fresh POST.
+    await client.bootstrap(sessionId: '');
+    expect(posts, 2);
+
+    // Distinct payloads are never merged: a practice-return bootstrap keys
+    // differently from the plain one and gets its own POST.
+    await Future.wait([
+      client.bootstrap(sessionId: ''),
+      client.bootstrap(sessionId: '', practiceReturnSessionId: 'p1'),
+    ]);
+    expect(posts, 4, reason: 'distinct payloads each get their own POST');
+  });
+
+  test(
       'bootstrap() gives a practice return the long budget, not the '
       'interactive one (note 134)', () async {
     final auth = MockFirebaseAuth(signedIn: true);

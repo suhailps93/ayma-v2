@@ -211,8 +211,21 @@ class LaunchIntentResolver {
         debugPrint(
             '[StartupDAG] Promoting N11:revenuecat_init to critical path for paywall.');
         dag.addEdge('N11:revenuecat_init', 'N12:destination_routing');
-        if (dag.nodes.containsKey('N11:revenuecat_init')) {
-          // ensure node is marked critical
+        // Mark N11 critical so a failed/timed-out RevenueCat init fails N12
+        // rather than routing to a degraded paywall (startup audit §4.2).
+        // StartupNode.critical is final, so the node is REBUILT as critical
+        // (same id, deps, action, timeout, fallback) and re-registered — this
+        // must run before dag.run(), which configureDAGForIntent does.
+        final n11 = dag.nodes['N11:revenuecat_init'];
+        if (n11 != null && !n11.critical) {
+          dag.addNode(StartupNode<dynamic>(
+            id: n11.id,
+            dependencies: n11.dependencies,
+            action: n11.action,
+            timeout: n11.timeout,
+            fallback: n11.fallback,
+            critical: true,
+          ));
         }
         break;
       case DmDeepLinkIntent():
