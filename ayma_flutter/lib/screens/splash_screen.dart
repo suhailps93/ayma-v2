@@ -347,6 +347,31 @@ class _SplashScreenState extends State<SplashScreen> {
     BootTrace.mark('splash _resolve: currentUser=${user?.uid ?? 'null'} '
         'anon=$anonymousLanding');
     if (anonymousLanding) {
+      // A returning signed-in user whose KeyStore/Keychain session is still
+      // being restored can leave `currentUser` null past the 2s auth wait
+      // above. Bouncing them to /signin forces a needless re-login — the exact
+      // failure the deep-link hard invariant was written to prevent, on the one
+      // path it does not cover (startup audit §3.3). If this device holds a
+      // cached BootConfig from a prior signed-in session, paint that last-known
+      // route optimistically instead; the recovery helper then waits a little
+      // longer for auth to finish and runs the background bootstrap (which
+      // corrects the route, or routes to /signin honestly if the session is
+      // genuinely gone / the token is rejected). A clean sign-out wipes the
+      // cache, so a deliberately signed-out user has no config here and still
+      // lands on sign-in.
+      final recovered = await ReportCache.instance.readAnyBootConfig();
+      if (recovered != null && mounted) {
+        await Future<void>.delayed(SplashScreen.minSplashDwell);
+        if (!mounted) return;
+        _inFlight = false;
+        final router = GoRouter.of(context);
+        DeepLinkQueue.instance.notifyNavigationSettled();
+        BootTrace.mark('splash NAVIGATE to recovered cached '
+            '${recovered.entryRoute} (auth still restoring)');
+        router.go(recovered.entryRoute);
+        unawaited(_recoverAuthThenBootstrap(recovered, auth, router));
+        return;
+      }
       _inFlight = false;
       if (mounted) context.go(SignInScreen.path);
       return;
@@ -526,6 +551,37 @@ class _SplashScreenState extends State<SplashScreen> {
   /// network blip NEVER signs the user out — it retries with the same backoff
   /// and leaves the cached UI up; only a genuine auth rejection (401/403) or an
   /// unusable restored session routes to sign-in.
+  /// Companion to the §3.3 optimistic recovery above: we painted a returning
+  /// user's cached route despite a null `currentUser` (slow session restore),
+  /// so give auth a longer window to finish before the authed background
+  /// bootstrap — otherwise it would 401 immediately and bounce the user to
+  /// sign-in, defeating the recovery. If auth never restores, correct to
+  /// sign-in honestly.
+  Future<void> _recoverAuthThenBootstrap(
+      BootConfig recovered, FirebaseAuth auth, GoRouter router) async {
+    var user = auth.currentUser;
+    if (user == null) {
+      try {
+        user = await (widget.authService ?? AuthService.instance)
+            .ensureAuthReady()
+            .timeout(const Duration(seconds: 8), onTimeout: () => auth.currentUser);
+      } catch (_) {
+        user = auth.currentUser;
+      }
+    }
+    if (user == null || user.isAnonymous) {
+      BootTrace.mark('splash recovery: auth never restored, correcting to signin');
+      // Use the captured router (not `context`): the splash has already
+      // navigated to the cached route, so its State is disposed and `mounted`
+      // is false — but the router outlives it, exactly as _backgroundBootstrap
+      // relies on. Guarding this on `mounted` would strand a tokenless user on
+      // the optimistic shell.
+      router.go(SignInScreen.path);
+      return;
+    }
+    await _backgroundBootstrap(user.uid, auth, recovered.entryRoute, router);
+  }
+
   Future<void> _backgroundBootstrap(
       String uid, FirebaseAuth auth, String shownRoute, GoRouter router) async {
     for (var attempt = 0; attempt < SplashScreen.maxStartupAttempts; attempt++) {

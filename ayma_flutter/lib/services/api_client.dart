@@ -652,6 +652,15 @@ class ApiClient {
   final http.Client _http;
   final FirebaseAuth _auth;
 
+  /// In-flight `POST /bootstrap` calls, keyed by their full request identity,
+  /// so concurrent identical bootstraps share one network round-trip. On an
+  /// optimistic cached cold open both the splash's cached-route branch and the
+  /// DAG's N14 refresher fire `bootstrap(sessionId: '')` with identical args,
+  /// which without this sent two `POST /bootstrap` every launch (startup audit
+  /// §2.2.3). The entry is cleared the moment the call settles, so this
+  /// coalesces concurrent duplicates only — it never caches a result.
+  final Map<String, Future<BootstrapResult>> _inFlightBootstraps = {};
+
   Future<http.Response> _get(
     Uri uri, {
     Map<String, String>? headers,
@@ -743,6 +752,32 @@ class ApiClient {
   /// and the LiveKit join credentials for this user's voice room (§1.7 step 3,
   /// §1.1).
   Future<BootstrapResult> bootstrap({
+    required String sessionId,
+    List<Map<String, String>> recentTurns = const [],
+    String practiceReturnSessionId = '',
+    CallStateSnapshot callState = const CallStateSnapshot.none(),
+  }) {
+    // Coalesce concurrent identical bootstraps into one in-flight POST. The
+    // key spans everything that shapes the request body, so two calls share a
+    // future ONLY when their payloads are byte-identical — a practice-return
+    // or a turns/call-state-carrying bootstrap keys differently and is never
+    // merged with the plain startup one.
+    final key = '$sessionId|$practiceReturnSessionId|${callState.wireJson}|'
+        '${recentTurns.isEmpty ? '' : jsonEncode(recentTurns)}';
+    final existing = _inFlightBootstraps[key];
+    if (existing != null) return existing;
+    final future = _bootstrap(
+      sessionId: sessionId,
+      recentTurns: recentTurns,
+      practiceReturnSessionId: practiceReturnSessionId,
+      callState: callState,
+    );
+    _inFlightBootstraps[key] = future;
+    future.whenComplete(() => _inFlightBootstraps.remove(key)).ignore();
+    return future;
+  }
+
+  Future<BootstrapResult> _bootstrap({
     required String sessionId,
     List<Map<String, String>> recentTurns = const [],
     String practiceReturnSessionId = '',

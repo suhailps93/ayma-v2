@@ -91,6 +91,55 @@ void main() {
         dag.nodes['N12:destination_routing']!.dependencies,
         contains('N11:revenuecat_init'),
       );
+      // The promotion also marks N11 critical (startup audit §4.2).
+      expect(dag.nodes['N11:revenuecat_init']!.critical, isTrue);
+    });
+
+    test(
+        'paywall promotion makes a failed RevenueCat init (N11) BLOCK N12 — '
+        'the dag run errors and N12 never routes (startup audit §4.2)',
+        () async {
+      var n12Ran = false;
+      final dag = StartupDAG()
+        ..addNode(StartupNode<void>(
+          id: 'N11:revenuecat_init',
+          action: (_) async => throw StateError('rc init failed'),
+        ))
+        ..addNode(StartupNode<void>(
+          id: 'N12:destination_routing',
+          action: (_) async => n12Ran = true,
+        ));
+
+      LaunchIntentResolver.configureDAGForIntent(
+          dag, const PaywallDeepLinkIntent(targetPath: '/profile/plan'));
+      expect(dag.nodes['N11:revenuecat_init']!.critical, isTrue);
+
+      await expectLater(
+        dag.run(targetNodes: {'N12:destination_routing'}),
+        throwsA(isA<StateError>()),
+      );
+      expect(n12Ran, isFalse,
+          reason: 'N12 must not route while a critical N11 has failed');
+    });
+
+    test(
+        'WITHOUT the paywall promotion, a non-critical N11 failure does NOT '
+        'block N12 (isolates the critical flag as the gate)', () async {
+      var n12Ran = false;
+      final dag = StartupDAG()
+        ..addNode(StartupNode<void>(
+          id: 'N11:revenuecat_init',
+          action: (_) async => throw StateError('rc init failed'),
+        ))
+        ..addNode(StartupNode<void>(
+          id: 'N12:destination_routing',
+          dependencies: {'N11:revenuecat_init'},
+          action: (_) async => n12Ran = true,
+        ));
+
+      expect(dag.nodes['N11:revenuecat_init']!.critical, isFalse);
+      await dag.run(targetNodes: {'N12:destination_routing'});
+      expect(n12Ran, isTrue);
     });
 
     group('resolveForStartup (restore-splash-slow)', () {
