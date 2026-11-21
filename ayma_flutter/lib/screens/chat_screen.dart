@@ -1339,8 +1339,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             kind: AymaToastKind.error,
             action: AymaToastAction(
               label: 'Retry',
-              onPressed: () =>
-                  _send(retry: rec.message, clientMsgId: rec.msgId),
+              onPressed: () => _send(
+                retry: rec.message,
+                clientMsgId: rec.msgId,
+                discussSection: rec.discussSection,
+              ),
             ),
           );
         }
@@ -2870,6 +2873,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           resend: resend,
           imagePath: imagePath,
           queueable: !skipUserTurn,
+          discussSection: discussSection,
         ));
         return;
       }
@@ -2880,7 +2884,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         kind: AymaToastKind.error,
         action: AymaToastAction(
           label: 'Retry',
-          onPressed: () => _send(retry: message, clientMsgId: msgId),
+          onPressed: () => _send(
+            retry: message,
+            clientMsgId: msgId,
+            discussSection: discussSection,
+          ),
         ),
       );
     } catch (e) {
@@ -2893,6 +2901,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           resend: resend,
           imagePath: imagePath,
           queueable: !skipUserTurn,
+          discussSection: discussSection,
         ));
         return;
       }
@@ -2903,7 +2912,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         kind: AymaToastKind.error,
         action: AymaToastAction(
           label: 'Retry',
-          onPressed: () => _send(retry: message, clientMsgId: msgId),
+          onPressed: () => _send(
+            retry: message,
+            clientMsgId: msgId,
+            discussSection: discussSection,
+          ),
         ),
       );
     } finally {
@@ -4659,6 +4672,7 @@ class _PendingSendReconcile {
     required this.resend,
     this.imagePath = '',
     this.queueable = true,
+    this.discussSection = '',
   });
 
   final String msgId;
@@ -4670,6 +4684,11 @@ class _PendingSendReconcile {
   /// outcome may queue it (not for a shared-card send).
   final String imagePath;
   final bool queueable;
+
+  /// The section kickoff's `discuss_section` (empty for any other send), so
+  /// a user-tapped Retry re-sends it and Ayma still opens on that section's
+  /// pending questions.
+  final String discussSection;
 
   /// Whether the fallback resend has already been attempted in this reconcile cycle.
   bool resendAttempted = false;

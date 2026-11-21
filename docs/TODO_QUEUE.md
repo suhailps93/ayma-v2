@@ -2,6 +2,11 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOLLOW-UP — Retry of a failed section kickoff keeps discuss_section — DONE (fleet/talk-retry-section off origin/staging @3134e80f, 2026-11-21)
+- **Gap:** a failed "Let's talk about …" kickoff retried via the toast lost `discuss_section`, so Ayma fell back to a generic opener.
+- **Fix (Flutter, `chat_screen.dart`):** both Retry toasts in `_send` and the reconcile-failure Retry (`_PendingSendReconcile.discussSection`) re-send the original `discuss_section`. The automatic reconcile re-ask already reused the original request.
+- **Tests:** new `chat_discuss_section_retry_test.dart` (kickoff 500 → Retry → retried turn carries `discuss_section: identity`, reply renders). Flutter 3.47.9 (Dart 3.13.7, matches the project): `flutter analyze` clean; full suite 8 failures, all pre-existing on staging, none new.
+
 ## FOUNDER FEEDBACK — "Talk to Ayma about this" asks the section's pending questions — DONE (fleet/talk-pending-questions off origin/staging @c488eb04, 2026-11-21)
 - **Bug (build 2536):** About Me (6/9; Marital status + Height unfilled, Weight partial) → "Talk to Ayma about this" sent "Let's talk about About Me." and Ayma answered with a generic "what's on your mind" opener, ignoring the pending fields.
 - **Client:** the section button now passes its `page_type` (`ChatKickoff.discussTopic(section:)`), sent once as `discuss_section` on the seeded /chat or /chat/stream turn (`buildChatRequestBody`, omitted when empty). Other turns unchanged.
