@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER FEEDBACK — Complete-your-profile section card: measured spacing cleanup — DONE (fleet/completeness-jobs-ui off origin/staging @77cb759c, 2026-11-21)
+- **Measured (widget-test rects, 412pt phone, About Me 6/9 expanded) → fixed** in `complete_profile_screen.dart` `_SectionTile`: plain rows 27pt pitch vs chat-icon rows 56pt → every line ≥48pt (`kMinInteractiveDimension`), centred, uniform 48pt pitch; trailing chat icons 14.5pt below the label centre (`crossAxisAlignment.start`) → centred in a 48×48 tap target; last row → footer 74.5pt → 48pt (dropped the 8pt spacer + 12pt body padding → 4pt); dot column 10pt+12pt gap → 16pt column + 8pt gap (labels, footer text and lock/empty lines share one text axis); chevron was centred on title+bar (6.5pt below the title) and flush against the counter → on the title line in the same 48pt column as the chat icons; progress bar 5pt/r3 → 4pt/r2; footer icon 15 → 16pt; lock line padding 6 → 48pt line, icon 13 → 16.
+- **Not changed (outside the component):** screen ListView padding 20pt, card radius 14, type sizes. The app has no spacing-token file; values are literal grid values plus Flutter's `kMinInteractiveDimension`.
+- **Tests:** `complete_profile_screen_test.dart` +1 geometry regression (48pt pitch, icons centred, 48×48 targets, chevron axis, footer pitch). Flutter 3.47.9: analyze clean; layout matrix green; full suite 8 failures, all pre-existing on staging.
+- **Owed:** before/after device screenshots at the next build — this review is measured in widget tests, not screenshot-verified.
+
 ## FOLLOW-UP — Retry of a failed section kickoff keeps discuss_section — DONE (fleet/talk-retry-section off origin/staging @3134e80f, 2026-11-21)
 - **Gap:** a failed "Let's talk about …" kickoff retried via the toast lost `discuss_section`, so Ayma fell back to a generic opener.
 - **Fix (Flutter, `chat_screen.dart`):** both Retry toasts in `_send` and the reconcile-failure Retry (`_PendingSendReconcile.discussSection`) re-send the original `discuss_section`. The automatic reconcile re-ask already reused the original request.

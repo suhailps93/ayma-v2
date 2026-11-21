@@ -369,38 +369,52 @@ class _SectionTileState extends State<_SectionTile> {
     return (s.pct / 100.0).clamp(0.0, 1.0);
   }
 
-  Widget _nodeRow(BuildContext context, QuestionNode n) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+  /// One line of the expanded section: a 16pt leading column, an 8pt gap,
+  /// the content, and an optional 48pt trailing tap target — every line at
+  /// least 48pt tall with everything centred on it, so the pitch is the same
+  /// whether or not the line carries a trailing action.
+  Widget _line({
+    required Widget leading,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: kMinInteractiveDimension),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: _StatusDot(status: n.status),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              n.label,
-              style: AymaType.sans(
-                size: 13,
-                color: n.isCovered ? ac.fgMute : ac.fg,
-              ),
-            ),
-          ),
-          if (!n.isCovered)
-            InkWell(
-              onTap: () => widget.onDiscussNode(n),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child:
-                    Icon(Icons.forum_outlined, size: 20, color: ac.accent),
-              ),
-            ),
+          SizedBox(width: 16, child: Center(child: leading)),
+          const SizedBox(width: 8),
+          Expanded(child: child),
+          ?trailing,
         ],
       ),
+    );
+  }
+
+  Widget _nodeRow(BuildContext context, QuestionNode n) {
+    final ac = context.ac;
+    return _line(
+      leading: _StatusDot(status: n.status),
+      child: Text(
+        n.label,
+        style: AymaType.sans(
+          size: 13,
+          color: n.isCovered ? ac.fgMute : ac.fg,
+        ),
+      ),
+      trailing: n.isCovered
+          ? null
+          : InkWell(
+              onTap: () => widget.onDiscussNode(n),
+              customBorder: const CircleBorder(),
+              child: SizedBox.square(
+                dimension: kMinInteractiveDimension,
+                child: Center(
+                  child:
+                      Icon(Icons.forum_outlined, size: 20, color: ac.accent),
+                ),
+              ),
+            ),
     );
   }
 
@@ -426,38 +440,37 @@ class _SectionTileState extends State<_SectionTile> {
             onTap: () => setState(() => _expanded = !_expanded),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                s.label,
-                                style: AymaType.sans(size: 14, color: ac.fg),
-                              ),
-                            ),
-                            Text(
-                              s.total > 0
-                                  ? '${s.answered}/${s.total}'
-                                  : '${s.pct}%',
-                              style: AymaType.mono(size: 10, color: ac.fgMute),
-                            ),
-                          ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          s.label,
+                          style: AymaType.sans(size: 14, color: ac.fg),
                         ),
-                        const SizedBox(height: 8),
-                        _Bar(fraction: _fraction),
-                      ],
-                    ),
+                      ),
+                      Text(
+                        s.total > 0
+                            ? '${s.answered}/${s.total}'
+                            : '${s.pct}%',
+                        style: AymaType.mono(size: 10, color: ac.fgMute),
+                      ),
+                      // Same 48pt column as the rows' trailing chat icons,
+                      // so the chevron and those icons share one axis.
+                      SizedBox(
+                        width: kMinInteractiveDimension,
+                        child: Icon(
+                          _expanded ? Icons.expand_less : Icons.expand_more,
+                          size: 20,
+                          color: ac.fgMute,
+                        ),
+                      ),
+                    ],
                   ),
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 20,
-                    color: ac.fgMute,
-                  ),
+                  const SizedBox(height: 8),
+                  _Bar(fraction: _fraction),
                 ],
               ),
             ),
@@ -465,7 +478,7 @@ class _SectionTileState extends State<_SectionTile> {
           if (_expanded) ...[
             Divider(height: 0.5, color: ac.lineSoft),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -473,37 +486,31 @@ class _SectionTileState extends State<_SectionTile> {
                   if (deep.isNotEmpty && showDeep)
                     for (final n in deep) _nodeRow(context, n),
                   if (deep.isNotEmpty && !showDeep)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          Icon(Icons.lock_outline,
-                              size: 13, color: ac.fgMute),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'More detail unlocks after the basics.',
-                              style: AymaType.sans(
-                                  size: 12, soft: true, color: ac.fgMute),
-                            ),
-                          ),
-                        ],
+                    _line(
+                      leading:
+                          Icon(Icons.lock_outline, size: 16, color: ac.fgMute),
+                      child: Text(
+                        'More detail unlocks after the basics.',
+                        style: AymaType.sans(
+                            size: 12, soft: true, color: ac.fgMute),
                       ),
                     ),
                   if (widget.nodes.isEmpty)
-                    Text(
-                      'Nothing else here right now.',
-                      style: AymaType.sans(
-                          size: 12, soft: true, color: ac.fgMute),
+                    _line(
+                      leading: const SizedBox.shrink(),
+                      child: Text(
+                        'Nothing else here right now.',
+                        style: AymaType.sans(
+                            size: 12, soft: true, color: ac.fgMute),
+                      ),
                     ),
-                  const SizedBox(height: 8),
                   TextButton.icon(
                     onPressed: widget.onDiscussSection,
-                    icon: const Icon(Icons.forum_outlined, size: 15),
+                    icon: const Icon(Icons.forum_outlined, size: 16),
                     label: const Text('Talk to Ayma about this'),
                     style: TextButton.styleFrom(
                       padding: EdgeInsets.zero,
-                      minimumSize: const Size(0, 48),
+                      minimumSize: const Size(0, kMinInteractiveDimension),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
@@ -526,10 +533,10 @@ class _Bar extends StatelessWidget {
   Widget build(BuildContext context) {
     final ac = context.ac;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
+      borderRadius: BorderRadius.circular(2),
       child: Stack(
         children: [
-          Container(height: 5, color: ac.track),
+          Container(height: 4, color: ac.track),
           Positioned.fill(
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,

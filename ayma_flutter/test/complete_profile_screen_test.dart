@@ -355,4 +355,77 @@ void main() {
         findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
   });
+
+  testWidgets(
+      'expanded section geometry: uniform 48pt pitch, trailing icons and '
+      'chevron on the row axis, footer one pitch below the last row',
+      (tester) async {
+    // Founder screenshot, build 2536 (About Me expanded): rows with a chat
+    // icon were ~2x the plain-row pitch, the icons sat ~11pt below the row
+    // centre, and the footer sat ~2.5 rows below the last row.
+    tester.view.physicalSize = const Size(412 * 3, 915 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    const labels = {
+      'name': 'Name',
+      'job': 'Job',
+      'marital_status': 'Marital status',
+      'height': 'Height',
+      'weight': 'Weight',
+    };
+    final nodes = [
+      for (final e in labels.entries)
+        _node(e.key, 'identity', e.value,
+            status: e.key == 'name' || e.key == 'job'
+                ? 'covered'
+                : e.key == 'weight'
+                    ? 'partial'
+                    : 'missing'),
+    ];
+    await tester.pumpWidget(_host(_api(
+      completeness: {
+        ..._completeness(intentSet: true),
+        'sections': [
+          _section('identity', 'About Me',
+              answered: 2, total: 5, coreTotal: 5, coreAnswered: 2),
+        ],
+      },
+      questionnaire: {..._questionnaire(intentSet: true), 'nodes': nodes},
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('About Me'));
+    await tester.pumpAndSettle();
+
+    double cy(Finder f) => tester.getRect(f).center.dy;
+    Finder rowOf(String label) =>
+        find.ancestor(of: find.text(label), matching: find.byType(Row)).first;
+    Finder iconIn(Finder row) =>
+        find.descendant(of: row, matching: find.byIcon(Icons.forum_outlined));
+
+    final centres = [for (final l in labels.values) cy(find.text(l))];
+    for (var i = 1; i < centres.length; i++) {
+      expect(centres[i] - centres[i - 1], 48.0, reason: 'pitch before row $i');
+    }
+    final footer = find.text('Talk to Ayma about this');
+    expect(cy(footer) - centres.last, 48.0);
+    expect(
+        tester
+            .getSize(find.ancestor(of: footer, matching: find.byType(TextButton)))
+            .height,
+        greaterThanOrEqualTo(48));
+
+    for (final l in ['Marital status', 'Height', 'Weight']) {
+      final icon = iconIn(rowOf(l));
+      expect(cy(icon), cy(find.text(l)), reason: '$l icon centred');
+      expect(
+          tester.getSize(
+              find.ancestor(of: icon, matching: find.byType(InkWell)).first),
+          const Size(48, 48));
+    }
+
+    final chevron = tester.getRect(find.byIcon(Icons.expand_less));
+    final rowIcon = tester.getRect(iconIn(rowOf('Height')));
+    expect(chevron.center.dx, rowIcon.center.dx);
+    expect(chevron.center.dy, cy(find.text('About Me')));
+  });
 }
