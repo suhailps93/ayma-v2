@@ -302,6 +302,52 @@ void main() {
         findsNothing);
   });
 
+  // NOTE (founder Nov 20): the Appearance report Attributes section showed bare,
+  // unlabeled values (beard, medium, yes, short, no, …). An attr:<field> row now
+  // renders an ICON + "label: value", never a bare value.
+  testWidgets('an Attributes row renders icon + "label: value", not a bare value',
+      (tester) async {
+    final node = _node(
+      id: 'attr:hair_color',
+      standard: true,
+      standardLabel: 'Hair color',
+      text: 'black',
+      vis: NodeVis.public,
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.report),
+    ));
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is RichText && w.text.toPlainText() == 'Hair color: black'),
+      findsOneWidget,
+    );
+    // an attribute icon leads the row (the generic attribute glyph)
+    expect(find.byKey(const Key('node_field_icon_attr:hair_color')),
+        findsOneWidget);
+    // the bare value alone is NOT rendered as its own text node
+    expect(find.text('black'), findsNothing);
+  });
+
+  testWidgets('a yes/no Attributes value always carries its label',
+      (tester) async {
+    final node = _node(
+      id: 'attr:glasses',
+      standard: true,
+      standardLabel: 'Glasses',
+      text: 'no',
+      vis: NodeVis.public,
+    );
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.report),
+    ));
+    expect(
+      find.byWidgetPredicate(
+          (w) => w is RichText && w.text.toPlainText() == 'Glasses: no'),
+      findsOneWidget,
+    );
+  });
+
   // Deep nesting (past the indent cap) must never push a row off a narrow phone
   // at the largest text scale — the indent caps and the content text wraps,
   // in both text directions (RTL indents from the right).

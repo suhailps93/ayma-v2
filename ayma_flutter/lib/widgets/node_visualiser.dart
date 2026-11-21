@@ -156,9 +156,21 @@ class NodeVisualiser extends StatelessWidget {
 
   /// This node's standard-field icon, or null when it is not a standard field
   /// (prose/conversational nodes keep their coloured bullet) or no icon reads
-  /// clearly for it.
-  IconData? get _standardIcon =>
-      node.standard ? _standardFieldIcons[node.id] : null;
+  /// clearly for it. An Attributes row (`attr:<field>`) has no entry in the
+  /// standard-field map, so it takes the generic attribute glyph — so it reads
+  /// as an icon + "label: value" row like every other standard field rather
+  /// than a bare value (founder Nov 20).
+  IconData? get _standardIcon => node.standard
+      ? (_standardFieldIcons[node.id] ??
+          (_isAttribute ? Icons.label_outline : null))
+      : null;
+
+  /// An Appearance-report Attributes row — a per-element `attr:<field>` node
+  /// (e.g. "Hair color: Black", "Glasses: Yes"). Its value is ambiguous on its
+  /// own, so it always renders its field LABEL in front of the value (a yes/no
+  /// never shows with no question attached), like the What-I'm-Looking-For
+  /// standard rows (founder Nov 20).
+  bool get _isAttribute => node.id.startsWith('attr:');
 
   bool get _publicOnly => surface == NodeVisualiserSurface.publicProfile;
 
@@ -331,7 +343,8 @@ class NodeVisualiser extends StatelessWidget {
     // "`<label>: <value>`" in front of the icon (founder build 2507). A
     // conversational/prose node has no standard label and renders the value line
     // under its coloured bullet.
-    if (node.standard && _labeledStandardFields.contains(node.id)) {
+    if (node.standard &&
+        (_labeledStandardFields.contains(node.id) || _isAttribute)) {
       final label = (node.standardLabel ?? node.label).trim();
       if (label.isNotEmpty) {
         return RichText(
