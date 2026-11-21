@@ -80,6 +80,21 @@ def test_attribute_becomes_a_standard_labelled_field():
     assert n["text"] == "Brown"
 
 
+def test_tattoo_description_reaches_the_rendered_gist_intact():
+    # The Attributes row renders "<label>: <gist>"; the description must reach
+    # the gist whole, not cut or reduced to a bare yes (founder 2026-11-21).
+    block = rb.attribute_block(
+        "attr:visible_tattoos", "Visible tattoos",
+        "tattoos on right shoulder and left forearm",
+    )
+    tree = report_tree._sections_to_tree(
+        [{"heading": "Attributes", "blocks": [block]}]
+    )
+    (node,) = tree[0]["nodes"]
+    assert node["standard_label"] == "Visible tattoos"
+    assert node["gist"] == "tattoos on right shoulder and left forearm"
+
+
 def test_photo_grid_expands_to_one_image_node_per_photo():
     block = rb.photo_grid_block(
         "grid:0",

@@ -1062,3 +1062,18 @@ def test_explore_route_ethnicity_search_excludes_nonmatch(monkeypatch):
         main.app.dependency_overrides.pop(main.require_adult_uid, None)
         main.get_db = main_get_db
 
+
+
+def test_described_tattoo_mirror_still_satisfies_a_yes_no_filter():
+    # physical_attrs stores "no" or a description ("tattoo on right
+    # shoulder"); Explore's fallback still answers a yes/no filter.
+    p = {"physical_attrs": {"visible_tattoos": "tattoo on right shoulder",
+                            "visible_piercings": "no"}}
+    assert ex._passes_filters(p, {"visible_tattoos": "yes"})
+    assert not ex._passes_filters(p, {"visible_tattoos": "no"})
+    assert ex._passes_filters(p, {"visible_piercings": "no"})
+    assert not ex._passes_filters(p, {"visible_piercings": "yes"})
+    # the per-upload photo_attrs read (yes/no) still wins when present
+    q = {"photo_attrs": {"visible_tattoos": "no"},
+         "physical_attrs": {"visible_tattoos": "tattoo on left wrist"}}
+    assert ex._passes_filters(q, {"visible_tattoos": "no"})

@@ -26,8 +26,14 @@ photo, or when the value is "unknown".
 - build: slim | average | athletic | curvy | heavy | unknown
 - facial_hair: none | stubble | moustache | beard | unknown
 - glasses: yes | no | unknown
-- visible_tattoos: yes | no | unknown
-- visible_piercings: yes | no | unknown
+- visible_tattoos: "no" if the photos show none. If any are visible, a short
+  description of what and where — e.g. "tattoo on right shoulder", or for
+  more than one "tattoos on right shoulder and left forearm". Never a bare
+  "yes". "unknown" if you genuinely can't tell (e.g. the skin isn't shown).
+- visible_piercings: "no" if the photos show none. If any are visible, a short
+  description of what and where — e.g. "piercing on right ear", or for more
+  than one "piercings on both ears and left nostril". Never a bare "yes".
+  "unknown" if you genuinely can't tell.
 - distinguishing_features: a short comma-separated list of notable visible marks
   or accessories (e.g. "nose ring, freckles, scar on left cheek"), or "" if
   none stand out.

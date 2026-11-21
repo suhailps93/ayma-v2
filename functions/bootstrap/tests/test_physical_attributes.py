@@ -809,3 +809,82 @@ def test_public_fields_never_wiped_by_a_refresh(_patch_vision):
     assert pa.public_fields(db, "u1") == {"eye_color"}
     _run(pa.refresh(db, "u1"))
     assert pa.public_fields(db, "u1") == {"eye_color"}
+
+
+# --- visible tattoos / piercings: "no" or a what-and-where description -------
+# Founder ruling (2026-11-21): never a bare "yes".
+
+
+@pytest.mark.parametrize("field", ["visible_tattoos", "visible_piercings"])
+def test_described_field_contract(field):
+    assert pa._coerce(field, "no") == "no"
+    assert pa._coerce(field, "None") == "no"
+    assert pa._coerce(field, "unknown") == "unknown"
+    assert pa._coerce(field, "") == "unknown"
+    # a bare yes carries no what/where — it is not stored as a value
+    assert pa._coerce(field, "yes") == "unknown"
+    assert pa._coerce(field, " Yes ") == "unknown"
+
+
+def test_described_field_keeps_single_and_multiple_descriptions():
+    assert pa._coerce("visible_tattoos", "tattoo on right shoulder") == (
+        "tattoo on right shoulder"
+    )
+    assert pa._coerce(
+        "visible_tattoos", "tattoos on right shoulder and left forearm"
+    ) == "tattoos on right shoulder and left forearm"
+    assert pa._coerce("visible_piercings", "piercing on right ear") == (
+        "piercing on right ear"
+    )
+
+
+def test_described_fields_are_free_text_in_the_vision_schema():
+    props = pa._response_schema()["properties"]
+    for f in ("visible_tattoos", "visible_piercings"):
+        assert "enum" not in props[f]["properties"]["value"]
+    # every other yes/no field is still an enum
+    assert props["glasses"]["properties"]["value"]["enum"] == [
+        "yes", "no", "unknown"
+    ]
+    schema = {f["field"]: f for f in pa.field_schema()}
+    assert schema["visible_tattoos"]["type"] == "string"
+    assert schema["visible_piercings"]["type"] == "string"
+
+
+def test_vision_prompt_asks_for_what_and_where_never_bare_yes():
+    text = (pa.Path(pa.__file__).parent / "prompts" / "physical_attributes.md").read_text()
+    assert "visible_tattoos: yes | no | unknown" not in text
+    assert "visible_piercings: yes | no | unknown" not in text
+    assert "tattoo on right shoulder" in text
+    assert "piercing on right ear" in text
+    assert 'Never a bare\n  "yes"' in text or 'Never a bare "yes"' in text
+
+
+def test_merge_stores_the_description_as_the_value():
+    rec = pa.merge(
+        {
+            "visible_tattoos": {"value": "tattoo on right shoulder",
+                                "confidence": "medium"},
+            "visible_piercings": {"value": "no", "confidence": "high"},
+        },
+        {},
+    )
+    assert rec["visible_tattoos"]["value"] == "tattoo on right shoulder"
+    assert rec["visible_tattoos"]["source"] == "photo"
+    assert rec["visible_piercings"]["value"] == "no"
+    mirror = pa.flat_mirror(rec)
+    assert mirror["visible_tattoos"] == "tattoo on right shoulder"
+    assert mirror["visible_piercings"] == "no"
+
+
+def test_merge_drops_a_bare_yes_read():
+    rec = pa.merge({"visible_tattoos": {"value": "yes", "confidence": "high"}}, {})
+    assert rec["visible_tattoos"]["source"] == "none"
+    assert "visible_tattoos" not in pa.flat_mirror(rec)
+
+
+def test_presence_maps_descriptions_back_to_yes_no():
+    assert pa.presence("tattoo on right shoulder") == "yes"
+    assert pa.presence("no") == "no"
+    assert pa.presence("unknown") == ""
+    assert pa.presence(None) == ""
