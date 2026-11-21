@@ -26,10 +26,12 @@ import '../services/api_client.dart';
 import 'ask_ayma_overlay.dart';
 
 /// Whether [node] exposes the owner edit bubbles on [surface] for the current
-/// viewer. The edit bubbles need an editable node, an owner viewer, and an
-/// editing surface — the owner's own public profile and non-editable report
-/// nodes stay read-only (founder: never present an edit affordance that can't
-/// or shouldn't act).
+/// viewer. The edit bubbles need an editable node and an owner viewer. On the
+/// owner's OWN public profile the bubbles now appear too (founder Nov 20:
+/// "when I click on public items it should have the bubble to make private or
+/// delete") — tapping a public item offers Make private + Delete right there,
+/// and the change leaves the public render immediately. Someone else's public
+/// profile (`isOwner` false) and non-editable report nodes stay read-only.
 bool nodeHasOwnerActions(
   StoryNode node,
   NodeVisualiserSurface surface,
@@ -39,7 +41,8 @@ bool nodeHasOwnerActions(
     node.editable &&
     (surface == NodeVisualiserSurface.story ||
         surface == NodeVisualiserSurface.report ||
-        surface == NodeVisualiserSurface.graphDetail);
+        surface == NodeVisualiserSurface.graphDetail ||
+        surface == NodeVisualiserSurface.publicProfile);
 
 /// The label [node]'s rendered row prefixes before its value — the single text
 /// that [stripNodeOwnLabel] must recognise — or `''` when the node renders no

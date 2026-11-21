@@ -704,9 +704,15 @@ void main() {
         isTrue);
     expect(nodeHasOwnerActions(editable, NodeVisualiserSurface.graphDetail, true),
         isTrue);
-    // Public profile, non-owner, or non-editable → none.
+    // The owner's OWN public profile now carries the bubbles too (founder Nov
+    // 20: tap a public item → Make private / Delete right there).
     expect(
         nodeHasOwnerActions(editable, NodeVisualiserSurface.publicProfile, true),
+        isTrue);
+    // Non-owner (someone else's public profile) or a non-editable node → none.
+    expect(
+        nodeHasOwnerActions(
+            editable, NodeVisualiserSurface.publicProfile, false),
         isFalse);
     expect(
         nodeHasOwnerActions(editable, NodeVisualiserSurface.story, false), isFalse);
