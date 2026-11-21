@@ -854,7 +854,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               'to cover?'
         : "Let's talk about $label.";
     _store.addTurn(TurnRole.user, seed, TurnSource.text);
-    await _send(retry: seed, skipUserTurn: true);
+    await _send(
+      retry: seed,
+      skipUserTurn: true,
+      discussSection: k.discussSection,
+    );
   }
 
   /// Rebuild the structured physical-attributes record (Skills tab). Runs the
@@ -2333,6 +2337,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String? retry,
     bool skipUserTurn = false,
     String? clientMsgId,
+    String discussSection = '',
   }) async {
     // A draft attachment (an "Ask Ayma" report chip or shared-card stage) is
     // posted as a shared card when the user hits send. If they typed their own
@@ -2745,6 +2750,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               : '',
           clientMsgId: msgId,
           callState: callState,
+          discussSection: discussSection,
         );
 
     try {
@@ -2791,6 +2797,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               : '',
           clientMsgId: msgId,
           callState: callState,
+          discussSection: discussSection,
         )) {
           if (!mounted) return;
           if (ev is ChatStatus) {

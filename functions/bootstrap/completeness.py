@@ -1119,6 +1119,22 @@ async def questionnaire_view(db, uid: str) -> dict:
     }
 
 
+async def section_pending(db, uid: str, page_type: str) -> list[dict]:
+    """The still-open nodes of one "Complete your profile" section — those the
+    user's checklist shows unfilled right now (open to the user, not
+    ``covered``), core before deep as the checklist lists them. Backs the
+    section's "Talk to Ayma about this" kickoff so Ayma opens on exactly these.
+    Each entry is a :func:`questionnaire_view` node."""
+    view = await questionnaire_view(db, uid)
+    pending = [
+        n for n in view["nodes"]
+        if n.get("page_type") == page_type
+        and n.get("unlocked")
+        and n.get("status") != "covered"
+    ]
+    return sorted(pending, key=lambda n: question_tree.tier(n["id"]) != "core")
+
+
 async def backfill(db, user_limit: int = 200) -> dict:
     """Force-recompute completeness for up to ``user_limit`` users that have a
     ``profile/main`` doc. Never raises."""

@@ -309,6 +309,7 @@ abstract final class ChatContextCaps {
   // has no app-registry reference to describe server-side.
   static const screenDetail = 2000;
   static const screenVisible = 2000;
+  static const discussSection = 64;
 }
 
 /// Clamp one context string to [cap] characters (no-op when already within).
@@ -431,6 +432,7 @@ Map<String, dynamic> buildChatRequestBody({
   bool tourContinuation = false,
   bool includeTourContinuation = true,
   CallStateSnapshot callState = const CallStateSnapshot.none(),
+  String discussSection = '',
 }) =>
     {
       'message': message,
@@ -438,6 +440,11 @@ Map<String, dynamic> buildChatRequestBody({
       'client_msg_id':
           clampChatContext(clientMsgId, ChatContextCaps.clientMsgId),
       if (includeTourContinuation) 'tour_continuation': tourContinuation,
+      // A section's "Talk to Ayma about this" kickoff turn only: the
+      // section's page_type, so the server opens on its pending questions.
+      if (discussSection.isNotEmpty)
+        'discuss_section':
+            clampChatContext(discussSection, ChatContextCaps.discussSection),
       'viewing_profile_uid': clampChatContext(
           viewingProfileUid, ChatContextCaps.viewingProfileUid),
       'recent_turns': clampRecentTurns(recentTurns),
@@ -3029,6 +3036,7 @@ class ApiClient {
     String clientMsgId = '',
     bool tourContinuation = false,
     CallStateSnapshot callState = const CallStateSnapshot.none(),
+    String discussSection = '',
   }) async {
     final http.Response response;
     try {
@@ -3041,6 +3049,7 @@ class ApiClient {
           clientMsgId: clientMsgId,
           tourContinuation: tourContinuation,
           callState: callState,
+          discussSection: discussSection,
           viewingProfileUid: viewingProfileUid,
           recentTurns: recentTurns,
           imagePath: imagePath,
@@ -3134,6 +3143,7 @@ class ApiClient {
     String screenPreviousLabel = '',
     String clientMsgId = '',
     CallStateSnapshot callState = const CallStateSnapshot.none(),
+    String discussSection = '',
   }) async* {
     final req = http.Request('POST', _uri('/chat/stream'))
       ..headers.addAll(await _headers())
@@ -3142,6 +3152,7 @@ class ApiClient {
         sessionId: sessionId,
         clientMsgId: clientMsgId,
         callState: callState,
+        discussSection: discussSection,
         viewingProfileUid: viewingProfileUid,
         recentTurns: recentTurns,
         imagePath: imagePath,

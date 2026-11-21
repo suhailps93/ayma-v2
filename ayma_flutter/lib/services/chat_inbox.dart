@@ -29,6 +29,7 @@ class ChatKickoff {
     this.faceMediaIds,
     this.bodyMediaIds,
     this.topicPrompt = '',
+    this.discussSection = '',
     this.screenContext,
     this.draftBody = '',
   });
@@ -152,13 +153,20 @@ class ChatKickoff {
   /// draw out. The chat seeds a short user turn ("Let's talk about {label}.")
   /// and sends it — Ayma's questionnaire skill and the prompt context take over.
   /// An empty [label] means "no specific topic, work the highest-value gap".
+  /// [section] is set by a section's "Talk to Ayma about this": the section's
+  /// `page_type`, sent with the seeded turn so the server opens Ayma on that
+  /// section's live pending questions.
   factory ChatKickoff.discussTopic({
     required String nodeId,
     required String label,
     String prompt = '',
+    String section = '',
   }) =>
       ChatKickoff._('discuss_topic',
-          refId: nodeId, label: label, topicPrompt: prompt);
+          refId: nodeId,
+          label: label,
+          topicPrompt: prompt,
+          discussSection: section);
 
   /// The screen the user was just on, when Ayma was opened from the app-wide
   /// launcher or the Ayma tab itself (not a report's own "Ask Ayma" button —
@@ -227,6 +235,10 @@ class ChatKickoff {
   /// [discussTopic]: the node's `ayma_prompt` — a one-line hint of what Ayma
   /// should draw out. Carried for context; the seeded turn stays short.
   final String topicPrompt;
+
+  /// [discussTopic] from a section's "Talk to Ayma about this": that
+  /// section's `page_type`; empty otherwise.
+  final String discussSection;
 }
 
 class ChatInbox {

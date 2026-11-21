@@ -93,4 +93,30 @@ void main() {
     expect((sent['recent_turns'] as List).single['text'].length, 4000);
     expect((sent['story_passage'] as String).length, 8000);
   });
+
+  test('discuss_section rides only the section kickoff turn', () {
+    final plain = buildChatRequestBody(message: 'hi');
+    expect(plain.containsKey('discuss_section'), isFalse);
+    final kickoff = buildChatRequestBody(
+      message: "Let's talk about About Me.",
+      discussSection: 'identity',
+    );
+    expect(kickoff['discuss_section'], 'identity');
+  });
+
+  test('chatStream() sends discuss_section on the wire', () async {
+    late http.BaseRequest captured;
+    final sse = 'data: {"type":"reply","text":"hi","tools_used":[]}\n\n';
+    final client = ApiClient(
+      httpClient: MockClient((req) async {
+        captured = req;
+        return http.Response.bytes(utf8.encode(sse), 200);
+      }),
+      auth: MockFirebaseAuth(signedIn: true),
+    );
+    await client.chatStream('hey', discussSection: 'identity').toList();
+    final sent =
+        jsonDecode((captured as http.Request).body) as Map<String, dynamic>;
+    expect(sent['discuss_section'], 'identity');
+  });
 }
