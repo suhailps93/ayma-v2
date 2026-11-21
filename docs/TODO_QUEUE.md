@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER FLAG (addendum to report-to-nodes) — Appearance Attributes render icon + label + value, not bare values — DONE (fleet/appearance-attr-render off origin/staging @309ba1e7, 2026-11-20)
+- **Already nodes:** the Appearance report Attributes section is ALREADY 11 per-element nodes (`attr:<field>` — Skin tone, Facial hair, Build, Visible piercings, Hair length, Race ethnicity, Hair type, Glasses, Hair color, Visible tattoos, Eye color), each built with a label + value + source (`report_adapters._attribute_blocks` → `report_tree` node id `attr:<field>`, `standard=True`, `standard_label`). So this was render-only — no migration; count unchanged (11).
+- **Render fix (Flutter → staging APK):** `node_visualiser.dart` now renders an `attr:<field>` row as ICON + "label: value" (the generic `Icons.label_outline` attribute glyph via `_standardIcon`, and the labeled path via `_isAttribute` added to the `_labeledStandardFields` condition) — never a bare value; a yes/no value always carries its label ("Glasses: no"). Matches the settled standard-field icon vocabulary.
+- **Tests:** node_visualiser_test.dart +2 (attr row = icon + "Hair color: black"; yes/no carries its label "Glasses: no"). 46 node_visualiser tests pass; `flutter analyze` 0; layout matrix 29 green. Backend unchanged.
+
+
 ## FOUNDER ORDER — Ayma check-ins land as real main-chat messages — DONE (fleet/checkin-in-chat off origin/staging @9af96504, 2026-11-20) — DO NOT MERGE (sweep owns merges)
 - **Order (Nov 20 ~14:16 PT, founder phone test):** an Ayma check-in showed only as a notification entry under "Ayma check-ins", never in the conversation. It must be written as a real Ayma message in the user's main chat so it sits in the thread and he can reply in context; the notification stays as the alert that points at it.
 - **Root cause:** the re-engagement check-in (`reengagement.run`, the `ayma_checkin` category) wrote its message to the `raw_turns` **session substrate** (`reengage-YYYYMMDD`) via `persist_raw_turns`, not to the canonical per-message `chat_messages` collection — so it wasn't a first-class, replyable main-chat bubble. (The proactive routine outreach `proactive.py` already used `chat_history.append`; this brought re-engagement onto the same path.)
