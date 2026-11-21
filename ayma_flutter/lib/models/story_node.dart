@@ -122,6 +122,7 @@ class StoryNode {
     this.statValue,
     this.statText = '',
     this.statBasis = '',
+    this.statDisplay = '',
     this.linkUrl = '',
     this.linkPlatform = '',
     this.candidateId = '',
@@ -206,6 +207,10 @@ class StoryNode {
   /// `stat` node — the basis line under the bar ("22% weight · measured").
   final String statBasis;
 
+  /// `stat` node — `text` renders the score as text ("Face 5.1/10") beside
+  /// its [statBasis], with no bar (Appearance Face/Body); empty keeps the bar.
+  final String statDisplay;
+
   /// `link` node — the destination URL.
   final String linkUrl;
 
@@ -285,6 +290,7 @@ class StoryNode {
       statValue: (m['stat_value'] as num?)?.toDouble(),
       statText: m['stat_text'] as String? ?? '',
       statBasis: m['stat_basis'] as String? ?? '',
+      statDisplay: m['stat_display'] as String? ?? '',
       linkUrl: m['link_url'] as String? ?? '',
       linkPlatform: m['link_platform'] as String? ?? '',
       candidateId: m['candidate_id'] as String? ?? '',

@@ -103,6 +103,13 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
 
     if btype in (rb.TEXT, rb.FACT, rb.SECTION_HEAD):
         base["text"] = str(block.get("text") or "")
+        label = str(block.get("label") or "")
+        if label:
+            # A labelled finding ("Strength: Strong jawline") renders as a
+            # field row, the same treatment as an attribute.
+            base["standard"] = True
+            base["standard_label"] = label
+            base["label"] = label
         return [base]
 
     if btype == rb.ATTRIBUTE:
@@ -134,7 +141,10 @@ def _block_to_nodes(block: dict, section_slug: str, index: int) -> list[dict]:
         # Part 2); a non-numeric CONFIDENCE word keeps the default gist_row and
         # falls back to its band pill. The 0..10 vs 0..100 band matches the client.
         sv = base.get("stat_value")
-        if sv is not None:
+        if block.get("display") == "text":
+            # Score as text ("Face 5.1/10"), no bar — the client reads this.
+            base["stat_display"] = "text"
+        elif sv is not None:
             mx = 100.0 if sv > 10 else 10.0
             base["visual"] = node_visual.bar_meter(sv, 0.0, mx, base["label"])
         return [base]

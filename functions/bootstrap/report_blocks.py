@@ -62,13 +62,23 @@ def _block(block_id: str, type_: str, *, editable: bool, **fields: Any) -> dict:
 
 
 def text_block(
-    block_id: str, text: str, *, editable: bool = True, tone: str | None = None
+    block_id: str,
+    text: str,
+    *,
+    editable: bool = True,
+    tone: str | None = None,
+    label: str = "",
 ) -> dict:
     """``tone`` is an optional styling hint, currently only ever
     ``"private"``/``"ai_only"`` (Story's inline ``{{private}}``/``{{ai_only}}``
     spans, see ``story.sentence_spans``) — omitted entirely for ordinary
-    public text, same as every other absent optional field on a block."""
-    return _block(block_id, TEXT, editable=editable, text=str(text or ""), tone=tone)
+    public text, same as every other absent optional field on a block.
+    ``label`` (optional) names what the text is ("Summary"); ``report_tree``
+    renders a labelled block as a "label: text" field row."""
+    return _block(
+        block_id, TEXT, editable=editable, text=str(text or ""), tone=tone,
+        label=label or None,
+    )
 
 
 def fact_block(
@@ -79,6 +89,7 @@ def fact_block(
     confidence: str = "",
     role: str = "",
     editable: bool = True,
+    label: str = "",
 ) -> dict:
     """``role`` is an optional structural marker the assembler reads to group a
     block regardless of which section it was authored into — currently only
@@ -88,13 +99,15 @@ def fact_block(
     findings once as observations and again as the fixes beside them (founder,
     build 2495: "the report should not show the same node twice"). Omitted
     (``""``) for an ordinary finding, same as every other absent optional
-    field."""
+    field. ``label`` (optional) names what the finding is ("Strength");
+    ``report_tree`` renders a labelled block as a "label: text" field row."""
     return _block(
         block_id, FACT, editable=editable,
         text=str(text or ""), tag=str(tag or ""), confidence=str(confidence or ""),
         # Omitted from the wire shape unless set (only recommendations set it),
         # like every other absent optional field.
         role=(str(role) if role else None),
+        label=label or None,
     )
 
 
@@ -177,11 +190,37 @@ def stat_block(
     *,
     basis: str = "",
     editable: bool = True,
+    display: str = "",
 ) -> dict:
+    """``display="text"`` renders the score as text ("Face 5.1/10") with no
+    bar; omitted (the default) keeps the bar."""
     return _block(
         block_id, STAT, editable=editable,
         label=str(label or ""), value=value, basis=str(basis or ""),
+        display=display or None,
     )
+
+
+# Human labels for a scored visual read's ``quick_facts`` keys (Face and Body,
+# ``face_report.SPEC`` / ``body_report.SPEC``). Applied when the blocks are
+# built, which happens on every read of a stored report, so stored and new
+# reports both render labelled. An unlisted key falls back to its own name.
+QUICK_FACT_LABELS = {
+    "face_shape": "Face shape",
+    "age_estimate": "Estimated age",
+    "facial_hair_density": "Facial hair density",
+    "hair_thickness": "Hair thickness",
+    "skin_undertone": "Skin undertone",
+    "best_feature": "Best feature",
+    "worst_feature": "Weakest feature",
+    "body_type": "Body type",
+    "est_height_impression": "Height impression",
+    "build": "Build",
+    "estimated_body_fat_range": "Estimated body fat",
+    "dominant_strength": "Strongest area",
+    "weakest_area": "Weakest area",
+    "frame_size": "Frame size",
+}
 
 
 def section_head_block(block_id: str, text: str) -> dict:
@@ -358,10 +397,13 @@ def scored_result_blocks(
         # recommendations, quick facts) stays at `stat_block`/`fact_block`/
         # `attribute_block`'s own default `editable=True` — only the score
         # itself is not a correction target.
+        # Shown as text, "Face 5.1/10" with the verdict beside it — no bar
+        # (founder, 2026-11-21). The label names the axis; the verdict stays
+        # in ``basis`` (the share card reads it from there).
         blocks.append(
             stat_block(
-                id_prefix, verdict or "Score", score, basis=verdict,
-                editable=False,
+                id_prefix, id_prefix.capitalize(), score, basis=verdict,
+                editable=False, display="text",
             )
         )
     note = str(result.get("verdict_note") or "").strip()
@@ -379,17 +421,22 @@ def scored_result_blocks(
         # sentence-level correction needs one block per sentence, same as
         # `deep_dive_blocks`'s summary and Story's page bodies already do).
         blocks.extend(
-            text_block(f"{id_prefix}:note:sent:{i}", sent)
+            text_block(f"{id_prefix}:note:sent:{i}", sent, label="Summary")
             for i, sent in enumerate(split_sentences(note))
         )
     for i, s in enumerate(result.get("strengths") or []):
         s = str(s).strip()
         if s:
-            blocks.append(fact_block(f"{id_prefix}:strength:{i}", s, tag="strength"))
+            blocks.append(fact_block(
+                f"{id_prefix}:strength:{i}", s, tag="strength", label="Strength",
+            ))
     for i, s in enumerate(result.get("improvements") or []):
         s = str(s).strip()
         if s:
-            blocks.append(fact_block(f"{id_prefix}:improvement:{i}", s, tag="improvement"))
+            blocks.append(fact_block(
+                f"{id_prefix}:improvement:{i}", s, tag="improvement",
+                label="Weakness",
+            ))
     for i, r in enumerate(result.get("recommendations") or []):
         if not isinstance(r, dict):
             continue
@@ -413,7 +460,9 @@ def scored_result_blocks(
         if val:
             blocks.append(
                 attribute_block(
-                    f"{id_prefix}:quick:{key}", key.replace("_", " ").capitalize(), val
+                    f"{id_prefix}:quick:{key}",
+                    QUICK_FACT_LABELS.get(key) or key.replace("_", " ").capitalize(),
+                    val,
                 )
             )
     return blocks

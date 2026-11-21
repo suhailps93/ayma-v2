@@ -447,3 +447,18 @@ def test_chat_turn_without_a_card_persists_none(monkeypatch):
     assert docs, "the turn should still persist"
     for d in docs:
         assert "shared_card_kind" not in d
+
+
+def test_shared_text_carries_score_verdict_and_finding_labels():
+    from skills import open_shared
+    import report_blocks as rb
+
+    blocks = rb.scored_result_blocks(
+        {"usable": True, "overall_score": 5.1, "verdict": "Average",
+         "strengths": ["Clear skin"], "quick_facts": {"face_shape": "Round"}},
+        id_prefix="face", not_usable_text="x",
+    )
+    lines = [open_shared._block_text(b) for b in blocks]
+    assert "Face: 5.1/10 (Average)" in lines
+    assert "Strength: Clear skin" in lines
+    assert "Face shape: Round" in lines
