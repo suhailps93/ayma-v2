@@ -18,11 +18,35 @@ module owns the render logic and its structure/visibility/ordering guarantees.
 
 from __future__ import annotations
 
+import ast
+import json
 from typing import Iterable
 
 import person_graph as pg
 import question_tree
 from person_graph import GraphNode, NodeState, Visibility
+
+
+def _looks_like_raw_dump(text: str) -> bool:
+    """True when ``text`` is a raw dict / JSON blob rather than human prose — a
+    whole-value ``{...}`` dict dump (or a ``[{...}, …]`` list of dicts), the kind
+    of structured scaffolding (``created_at``/``digest``/``web_image_stats`` …)
+    that must NEVER surface as a node's rendered text (founder Nov 20: a report
+    node's detail panel dumped the raw digest dict). A plain list of scalars or
+    ordinary prose that merely contains a bracket is NOT flagged."""
+    s = (text or "").strip()
+    if len(s) < 2 or s[0] not in "{[" or s[-1] not in "}]":
+        return False
+    for parse in (ast.literal_eval, json.loads):
+        try:
+            v = parse(s)
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            continue
+        if isinstance(v, dict):
+            return True
+        if isinstance(v, list) and any(isinstance(x, dict) for x in v):
+            return True
+    return False
 
 # story-model visibility strings (story_common.VIS_*). The graph's ayma_only is
 # the story model's ai_only.
@@ -68,8 +92,19 @@ def _format_value(node: GraphNode, raw) -> str:
         return str(age) if age is not None else ""
     if node.id in _DATE_NODE_IDS or _looks_like_timestamp(raw):
         return _date_only(raw)
+    if isinstance(raw, dict):
+        # A dict value is structured scaffolding, never a human fact — never dump
+        # its repr (founder Nov 20). The node_display_text guard also catches a
+        # dict that reaches here as a string; this stops it at the source.
+        return ""
     if isinstance(raw, (list, tuple)):
-        return ", ".join(str(x) for x in raw if str(x).strip())
+        # Join only the scalar elements — a list that holds dicts is structured,
+        # so its dict members are dropped rather than repr-dumped.
+        return ", ".join(
+            str(x).strip()
+            for x in raw
+            if not isinstance(x, (dict, list, tuple)) and str(x).strip()
+        )
     return str(raw).strip()
 
 
@@ -141,7 +176,30 @@ def node_display_text(node: GraphNode) -> str:
     one node has one rendering everywhere (the whole point of the visualiser
     chunk). For a standard field the label is carried separately
     (``standard_field_label``) so the client formats "Label: value"; this returns
-    the bare value in that case."""
+    the bare value in that case.
+
+    RENDER GUARD (founder Nov 20): the result is NEVER a raw dict / JSON dump —
+    if the humanised text still looks like structured scaffolding (an un-migrated
+    report lump, a node whose answer is a dict), it falls back to the node's
+    human ``gist``, else nothing (the client then shows the node's label). So a
+    node detail panel can never dump raw JSON, even for an un-migrated node."""
+    text = _node_display_text_raw(node)
+    # Fall back to the human gist when the humanised text is still a raw dump, or
+    # when it came out empty only because the answer was a dict (a report lump
+    # whose answer is structured). ``report_doc`` nodes stay deliberately empty
+    # (non-rendering scaffolding) — never resurface their gist.
+    structured_empty = (
+        not text
+        and node.answer_type != "report_doc"
+        and isinstance(getattr(node, "answer", None), dict)
+    )
+    if _looks_like_raw_dump(text) or structured_empty:
+        gist = str(getattr(node, "gist", "") or "").strip()
+        return gist if (gist and not _looks_like_raw_dump(gist)) else ""
+    return text
+
+
+def _node_display_text_raw(node: GraphNode) -> str:
     if node.standard:
         a = node.answer
         if a is None:

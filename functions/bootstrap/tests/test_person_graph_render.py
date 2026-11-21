@@ -504,3 +504,104 @@ def test_section_order_preserved_in_renders():
     pub = render.public_sections(g)
     orders = [question_tree.section_order(s["page_type"]) for s in pub]
     assert orders == sorted(orders)  # identity (0) before finances (13)
+
+
+# --- render guard: a node detail never dumps raw JSON (founder Nov 20) --------
+
+
+def test_looks_like_raw_dump_flags_dicts_and_lists_of_dicts_only():
+    assert render._looks_like_raw_dump("{'created_at': 1, 'digest': {'x': 2}}")
+    assert render._looks_like_raw_dump('{"created_at": 1, "digest": {}}')
+    assert render._looks_like_raw_dump("[{'claim': 'x'}, {'claim': 'y'}]")
+    # prose, a trailing bracket marker, a bare value, a scalar list, and
+    # brace-y-but-not-structured text are NOT flagged.
+    assert not render._looks_like_raw_dump("Earned an MS in Robotics from Northwestern")
+    assert not render._looks_like_raw_dump("[Scout279]")
+    assert not render._looks_like_raw_dump("Women")
+    assert not render._looks_like_raw_dump("{not really json}")
+    assert not render._looks_like_raw_dump("")
+
+
+def _node(graph, nid):
+    return graph[nid]
+
+
+def test_node_detail_dict_answer_falls_back_to_gist_not_a_raw_dump():
+    # The web-findings lump's answer is the structured digest dict; its detail
+    # must render the human gist, never the raw {created_at, digest, …} dump.
+    g = _graph(
+        {
+            "emergent.skill.web_findings": {
+                "answer": {
+                    "created_at": 1,
+                    "digest": {"summary": "x"},
+                    "web_image_stats": {},
+                    "social_handles": [],
+                },
+                "gist": "Robotics and software engineer, Northwestern MS alum",
+                "visibility": "private",
+                "section": "identity",
+            }
+        }
+    )
+    text = render.node_display_text(_node(g, "emergent.skill.web_findings"))
+    assert not render._looks_like_raw_dump(text)
+    assert text == "Robotics and software engineer, Northwestern MS alum"
+
+
+def test_node_detail_dict_answer_without_a_gist_renders_nothing():
+    g = _graph(
+        {
+            "emergent.skill.blob": {
+                "answer": {"a": 1, "b": {"c": 2}},
+                "visibility": "private",
+                "section": "identity",
+            }
+        }
+    )
+    assert render.node_display_text(_node(g, "emergent.skill.blob")) == ""
+
+
+def test_node_detail_json_string_answer_is_suppressed():
+    # An answer stored as a raw JSON STRING (not a dict) must also never render.
+    g = _graph(
+        {
+            "emergent.skill.jsonblob": {
+                "answer": '{"created_at": 1, "digest": {"summary": "x"}}',
+                "gist": "A readable headline",
+                "visibility": "private",
+                "section": "identity",
+            }
+        }
+    )
+    text = render.node_display_text(_node(g, "emergent.skill.jsonblob"))
+    assert not render._looks_like_raw_dump(text)
+    assert text == "A readable headline"
+
+
+def test_report_doc_node_stays_non_rendering_even_with_a_gist():
+    # A report_doc digest node is deliberate scaffolding — it renders nothing,
+    # and the guard must NOT resurface its gist.
+    g = _graph(
+        {
+            "emergent.webfind.report.name_x": {
+                "answer": {"digest": {"summary": "x"}},
+                "answer_type": "report_doc",
+                "gist": "should not show",
+                "visibility": "private",
+                "section": "identity",
+            }
+        }
+    )
+    assert render.node_display_text(_node(g, "emergent.webfind.report.name_x")) == ""
+
+
+def test_structured_value_render_still_humanises_a_scalar_list():
+    # The dict-hardening of _format_value must not break an ordinary scalar list.
+    g = _graph(
+        {
+            "target_match_genders": {"answer": ["Women"], "visibility": "public"},
+        }
+    )
+    node = _node(g, "target_match_genders")
+    assert render.node_display_text(node) == "Women"
