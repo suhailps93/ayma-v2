@@ -20,9 +20,11 @@ import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:share_plus/share_plus.dart';
@@ -480,10 +482,13 @@ void main() {
       expect(find.text('BODY'), findsOneWidget);
       expect(_photoImages, findsNWidgets(4));
       expect(find.text('Full eyebrows'), findsOneWidget);
-      expect(find.textContaining('Face: above average'), findsOneWidget);
-      expect(find.textContaining('Get your report on'), findsOneWidget);
       expect(
-        find.text('AI estimates from photos. An opinion, not a fact.'),
+        find.text('Face — Above average · Body — Below average'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Get your own report on'), findsOneWidget);
+      expect(
+        find.text('AI estimates from photos — an opinion, not a fact.'),
         findsOneWidget,
       );
       for (final f in _forbidden) {
@@ -548,6 +553,62 @@ void main() {
         tester.getSize(find.byType(AppearanceReportCard)),
         AppearanceReportCard.size,
       );
+    });
+
+    testWidgets('verdict bands are sentence-cased after an em dash', (
+      tester,
+    ) async {
+      final d = _data();
+      await tester.pumpWidget(
+        _card(
+          AppearanceCardData(
+            pool: d.pool,
+            hidden: d.hidden,
+            faceScore: d.faceScore,
+            faceVerdict: 'average',
+            bodyScore: d.bodyScore,
+            bodyVerdict: 'SLIGHTLY BELOW AVERAGE',
+            standOuts: d.standOuts,
+            findingTexts: d.findingTexts,
+          ),
+        ),
+      );
+      expect(
+        find.text('Face — Average · Body — Slightly below average'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the footer CTA and small print fit on one line in the real '
+        'card fonts', (tester) async {
+      await tester.pumpWidget(_card(_data(), photos: 4));
+      // Load the bundled Instrument Serif / Geist the card really uses, so
+      // the line widths below are real, not the test font's.
+      await tester.runAsync(() async {
+        await GoogleFonts.pendingFonts();
+        final geist = FontLoader('Geist')
+          ..addFont(rootBundle.load('assets/fonts/Geist-Regular.ttf'));
+        await geist.load();
+      });
+      await tester.pumpAndSettle();
+      RenderParagraph para(String startsWith) => tester
+          .renderObjectList<RenderParagraph>(find.byType(RichText))
+          .firstWhere((p) => p.text.toPlainText().startsWith(startsWith));
+      for (final line in [
+        'Get your own report on Ayma',
+        'AI estimates from photos — an opinion, not a fact.',
+      ]) {
+        final p = para(line);
+        expect(p.text.toPlainText(), line);
+        expect(p.didExceedMaxLines, isFalse, reason: line);
+        final painter = TextPainter(
+          text: p.text,
+          textDirection: TextDirection.ltr,
+          textScaler: TextScaler.noScaling,
+        )..layout();
+        expect(painter.width, lessThanOrEqualTo(p.size.width), reason: line);
+      }
+      expect(tester.takeException(), isNull);
     });
 
     test('accent text keeps AA contrast on the paper for any accent', () {

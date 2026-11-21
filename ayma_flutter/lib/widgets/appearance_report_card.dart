@@ -102,10 +102,8 @@ class AppearanceReportCard extends StatelessWidget {
     final serif = AymaType.serif(color: _ink);
     final standOuts = data.standOutsToShow(dedupe: dedupeStandOuts);
     final verdicts = [
-      if (data.faceVerdict.isNotEmpty)
-        'Face: ${data.faceVerdict.toLowerCase()}',
-      if (data.bodyVerdict.isNotEmpty)
-        'Body: ${data.bodyVerdict.toLowerCase()}',
+      if (data.faceVerdict.isNotEmpty) 'Face — ${_band(data.faceVerdict)}',
+      if (data.bodyVerdict.isNotEmpty) 'Body — ${_band(data.bodyVerdict)}',
     ].join(' · ');
 
     return MediaQuery.withNoTextScaling(
@@ -256,7 +254,7 @@ class AppearanceReportCard extends StatelessWidget {
                                   TextSpan(
                                     children: [
                                       const TextSpan(
-                                        text: 'Get your report on ',
+                                        text: 'Get your own report on ',
                                       ),
                                       TextSpan(
                                         text: 'Ayma',
@@ -272,7 +270,7 @@ class AppearanceReportCard extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 3),
                                 Text(
-                                  'AI estimates from photos. An opinion, not a fact.',
+                                  'AI estimates from photos — an opinion, not a fact.',
                                   maxLines: 1,
                                   style: AymaType.sans(size: 9, color: _mute),
                                 ),
@@ -291,6 +289,13 @@ class AppearanceReportCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// A verdict band in sentence case: "slightly below average" →
+  /// "Slightly below average".
+  static String _band(String verdict) {
+    final v = verdict.trim().toLowerCase();
+    return v.isEmpty ? v : v[0].toUpperCase() + v.substring(1);
   }
 
   Widget _glow({
