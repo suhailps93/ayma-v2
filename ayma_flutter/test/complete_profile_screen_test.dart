@@ -338,6 +338,8 @@ void main() {
     // 'legal_name' is covered; 'hometown' is the first open (and unlocked) node
     expect(k.nodeId, 'hometown');
     expect(k.label, 'Identity & basics');
+    // the section's page_type rides along so Ayma opens on its pending items
+    expect(k.discussSection, 'identity');
     expect(find.text('SHELL'), findsOneWidget);
   });
 

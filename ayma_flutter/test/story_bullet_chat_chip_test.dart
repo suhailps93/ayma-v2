@@ -55,6 +55,7 @@ class _RecordingApi extends ApiClient {
     String screenPreviousLabel = '',
     String clientMsgId = '',
     CallStateSnapshot callState = const CallStateSnapshot.none(),
+    String discussSection = '',
   }) async* {
     streamCalls.add({
       'message': message,

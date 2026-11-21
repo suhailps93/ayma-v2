@@ -1196,3 +1196,93 @@ def test_graph_check_does_not_skip_on_a_broader_ancestor_answer(monkeypatch):
     db.docs[_graph_key()]["nodes"][target] = {"parent": "emergent.looking_for.broad"}
     res = _run(completeness.compute(db, "u1"))
     assert target in {n["id"] for n in res["next"]}
+
+
+# --- "Talk to Ayma about this" section kickoff --------------------------------
+
+
+def test_section_pending_is_the_sections_open_unfilled_nodes(monkeypatch):
+    _stub_narrative(monkeypatch, {})
+    db = FakeDb({
+        _profile_key(): {
+            "name": "Sam", "birthdate": "1990-01-01", "gender": "Woman",
+            "interested_in": ["Men"], "location": "Lisbon, Portugal",
+        }
+    })
+    view = _run(completeness.questionnaire_view(db, "u1"))
+    page_type = next(
+        n["page_type"] for n in view["nodes"] if n["id"] == "legal_first_name"
+    )
+    pending = _run(completeness.section_pending(db, "u1", page_type))
+    ids = [n["id"] for n in pending]
+    assert ids, "the section still has open nodes"
+    assert "legal_first_name" not in ids  # covered by the profile field
+    assert all(
+        n["page_type"] == page_type and n["unlocked"]
+        and n["status"] != "covered"
+        for n in pending
+    )
+    expected = [
+        n["id"] for n in view["nodes"]
+        if n["page_type"] == page_type and n["unlocked"]
+        and n["status"] != "covered"
+    ]
+    assert sorted(ids) == sorted(expected)
+    tiers = [question_tree.tier(i) for i in ids]
+    assert tiers == sorted(tiers, key=lambda t: t != "core")  # core first
+
+
+def _view_with(nodes):
+    async def view(db, uid):
+        return {"nodes": nodes}
+    return view
+
+
+def test_discuss_section_note_opens_on_first_pending_item(monkeypatch):
+    monkeypatch.setattr(completeness, "questionnaire_view", _view_with([
+        {"id": "legal_first_name", "page_type": "identity", "label": "Name",
+         "status": "covered", "value": "Sam", "unlocked": True,
+         "ayma_prompt": "their name"},
+        {"id": "marital_status", "page_type": "identity",
+         "label": "Marital status", "status": "missing", "value": "",
+         "unlocked": True, "ayma_prompt": "whether they've been married"},
+        {"id": "height", "page_type": "identity", "label": "Height",
+         "status": "missing", "value": "", "unlocked": True,
+         "ayma_prompt": "how tall they are"},
+        {"id": "weight", "page_type": "identity", "label": "Weight",
+         "status": "partial", "value": "around 70", "unlocked": True,
+         "ayma_prompt": "their weight"},
+        {"id": "dealbreakers", "page_type": "looking_for",
+         "label": "Dealbreakers", "status": "missing", "value": "",
+         "unlocked": True, "ayma_prompt": "their dealbreakers"},
+    ]))
+    monkeypatch.setattr(main, "get_db", lambda: FakeDb({}))
+    note = _run(main._discuss_section_note("u1", "identity"))
+    assert "SECTION KICKOFF" in note
+    assert question_tree.section_title("identity") in note
+    assert note.index("Marital status") < note.index("Height")
+    assert "Weight (partly known: around 70)" in note
+    assert "- Name" not in note  # covered items are never re-asked
+    assert "Dealbreakers" not in note  # other sections stay out
+    assert "FIRST item" in note
+
+
+def test_discuss_section_note_empty_when_nothing_pending_or_no_section(
+    monkeypatch,
+):
+    monkeypatch.setattr(completeness, "questionnaire_view", _view_with([
+        {"id": "height", "page_type": "identity", "label": "Height",
+         "status": "covered", "value": "180cm", "unlocked": True,
+         "ayma_prompt": "how tall"},
+    ]))
+    monkeypatch.setattr(main, "get_db", lambda: FakeDb({}))
+    assert _run(main._discuss_section_note("u1", "identity")) == ""
+    assert _run(main._discuss_section_note("u1", "")) == ""
+
+
+def test_discuss_section_note_read_failure_omits_note(monkeypatch):
+    async def boom(db, uid):
+        raise RuntimeError("firestore down")
+    monkeypatch.setattr(completeness, "questionnaire_view", boom)
+    monkeypatch.setattr(main, "get_db", lambda: FakeDb({}))
+    assert _run(main._discuss_section_note("u1", "identity")) == ""

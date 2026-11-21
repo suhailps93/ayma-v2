@@ -62,11 +62,17 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   }
 
   /// Hand a topic to the Ayma chat and jump to the shell's Ayma tab.
-  void _discuss({required String nodeId, required String label, String prompt = ''}) {
+  void _discuss({
+    required String nodeId,
+    required String label,
+    String prompt = '',
+    String section = '',
+  }) {
     ChatInbox.instance.push(ChatKickoff.discussTopic(
       nodeId: nodeId,
       label: label,
       prompt: prompt,
+      section: section,
     ));
     context.go(MainShellScreen.path);
   }
@@ -112,7 +118,12 @@ class _Body extends StatelessWidget {
 
   final _CompleteData data;
   final Future<void> Function() onRefresh;
-  final void Function({required String nodeId, required String label, String prompt}) onDiscuss;
+  final void Function({
+    required String nodeId,
+    required String label,
+    String prompt,
+    String section,
+  }) onDiscuss;
 
   static const _intentLabels = {
     'casual': 'Casual',
@@ -193,6 +204,7 @@ class _Body extends StatelessWidget {
                     nodeId: target.id,
                     label: s.label,
                     prompt: target.aymaPrompt,
+                    section: s.pageType,
                   );
                 },
                 onDiscussNode: (n) => onDiscuss(

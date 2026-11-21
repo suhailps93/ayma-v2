@@ -129,6 +129,7 @@ import physical_attributes  # noqa: E402
 import appearance  # noqa: E402
 import backfill_ops  # noqa: E402
 import completeness  # noqa: E402
+import question_tree  # noqa: E402
 import skill_runs  # noqa: E402
 import chat_history  # noqa: E402
 import feedback_ops  # noqa: E402
@@ -1476,6 +1477,7 @@ class ChatRequest(_TruncatingModel):
         "screen_route": 200,
         "screen_previous_route": 200,
         "screen_previous_label": 200,
+        "discuss_section": 64,
     }
     message: str = Field(min_length=1, max_length=4000)
     session_id: str = _SESSION_ID
@@ -1614,6 +1616,11 @@ class ChatRequest(_TruncatingModel):
     # correctly and per build, without a hand-edited prompt. Both optional.
     app_version: str = Field(default="", max_length=40)
     whats_new: str = Field(default="", max_length=2000)
+    # "Talk to Ayma about this" on a Complete-your-profile section: that
+    # section's ``page_type``, sent on the seeded kickoff turn only. The
+    # server reads the section's real pending nodes and has Ayma open on the
+    # first one (:func:`_discuss_section_note`). Empty on every other turn.
+    discuss_section: str = Field(default="", max_length=64)
 
 
 _USAGE_CAPPED_REPLY = token_ledger.out_of_credits_message(token_ledger.CONTEXT_CHAT)
@@ -1806,6 +1813,39 @@ def _feedback_bubble_for_turn(req, ctx, tools_used):
     except Exception:  # noqa: BLE001 - the bubble must never break a turn
         logger.exception("feedback bubble decision failed")
         return None
+
+
+async def _discuss_section_note(uid: str, page_type: str) -> str:
+    """The one-turn kickoff note for "Talk to Ayma about this" on a profile
+    section: the section's pending items, read live from completeness, with
+    the instruction to open on the first. Empty when ``page_type`` is empty or
+    nothing in the section is pending (Ayma keeps her normal opener). A read
+    failure is logged and omits the note — the turn itself still answers."""
+    if not page_type:
+        return ""
+    try:
+        pending = await completeness.section_pending(get_db(), uid, page_type)
+    except Exception:  # noqa: BLE001
+        logger.exception("section pending read failed for %s/%s", uid, page_type)
+        return ""
+    if not pending:
+        return ""
+    lines = []
+    for n in pending:
+        known = str(n.get("value") or "").strip()
+        partly = (
+            f" (partly known: {known})"
+            if n.get("status") == "partial" and known else ""
+        )
+        lines.append(f"- {n.get('label')}{partly}: {n.get('ayma_prompt') or ''}")
+    template = (
+        (Path(__file__).parent / "prompts" / "discuss_section.md")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    return template.format(
+        section=question_tree.section_title(page_type), pending="\n".join(lines)
+    )
 
 
 async def _prepare_chat(
@@ -2137,7 +2177,12 @@ async def _prepare_chat(
         session_mode=mode,
         profile_progress=_interview_progress(uid, mode),
         preferences_context=_preferences_context(uid, mode),
-        questionnaire_note=_questionnaire_note(uid, mode),
+        questionnaire_note="\n\n".join(
+            n for n in (
+                _questionnaire_note(uid, mode),
+                await _discuss_section_note(uid, req.discuss_section),
+            ) if n
+        ),
         model_stack_context=set_model_stack.model_stack_context(get_db(), uid),
         app_accent_context=app_control_mod.accent_color_context(get_db(), uid),
         viewing_profile_context=public_profile_mod._viewing_profile_context(

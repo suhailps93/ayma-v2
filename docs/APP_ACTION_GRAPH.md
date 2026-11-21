@@ -288,7 +288,7 @@ and also `UI`:
 | Control | Does | Ayma |
 |---|---|---|
 | Section rows (unlocked) | Open/talk through that section | `UI`; content changes go through `set_profile_field` / `record_answer` / questionnaire tools |
-| "Talk it through with Ayma" / "Talk to Ayma about this" | Open the scoped chat | `UI` — her own chat |
+| "Talk it through with Ayma" / "Talk to Ayma about this" | Open the scoped chat; a section's button also sends `discuss_section` so Ayma opens on that section's pending items (PROFILE_COVERAGE.md) | `UI` — her own chat |
 | Locked sections | Not tappable yet | — |
 
 ## 13. My public profile (`/profile/me/public`) — `my_public_profile_screen.dart`
