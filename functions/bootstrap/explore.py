@@ -455,6 +455,10 @@ def _passes_filters(
         have = attrs.get(field)
         if have is None:
             have = phys.get(field)
+            if field in physical_attributes.DESCRIBED_FIELDS:
+                # The mirror stores a description ("tattoo on right
+                # shoulder") or "no"; the filter asks yes/no.
+                have = physical_attributes.presence(have)
         if str(have or "").lower() != str(want).lower():
             return False
 

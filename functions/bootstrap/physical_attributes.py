@@ -75,6 +75,10 @@ _MAX_PHOTOS = 6
 
 _NUMERIC_FIELDS = ("height_estimate_cm", "weight_estimate_kg")
 _FREE_TEXT_FIELDS = ("race_ethnicity", "distinguishing_features")
+# Presence fields stored as "no" or a short what-and-where description
+# ("tattoo on right shoulder") — never a bare "yes" (founder ruling,
+# 2026-11-21). :func:`presence` maps them back to yes/no for Explore.
+DESCRIBED_FIELDS = ("visible_tattoos", "visible_piercings")
 
 _PHOTO_NOTE = "extracted from pictures"
 _STATED_NOTE = "from your answers"
@@ -226,6 +230,14 @@ def _coerce(field: str, value):
     if field in _NUMERIC_FIELDS:
         return _as_int(value)
     text = str(value or "").strip()
+    if field in DESCRIBED_FIELDS:
+        low = text.lower()
+        if low in ("no", "none"):
+            return "no"
+        # A bare "yes" says nothing about what or where — treat it as no read.
+        if not text or low in ("unknown", "yes"):
+            return "unknown"
+        return text
     if field in _enum_values():
         low = text.lower()
         return low if low in _enum_values()[field] else "unknown"
@@ -244,6 +256,15 @@ def _as_int(value):
         return int(value) if value else None
     m = re.search(r"-?\d+", str(value or ""))
     return int(m.group()) if m else None
+
+
+def presence(value) -> str:
+    """``"yes"`` / ``"no"`` / ``""`` (unknown) for a :data:`DESCRIBED_FIELDS`
+    value: ``"no"`` stays no, a description means present."""
+    low = str(value or "").strip().lower()
+    if not low or low == "unknown":
+        return ""
+    return "no" if low in ("no", "none") else "yes"
 
 
 def _is_known(field: str, value) -> bool:

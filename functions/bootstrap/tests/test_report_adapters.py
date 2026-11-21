@@ -74,6 +74,22 @@ def test_appearance_adapter_carries_every_known_attribute(monkeypatch):
     assert "attr:hair_color" not in blocks
 
 
+def test_appearance_adapter_attribute_carries_tattoo_piercing_description(monkeypatch):
+    doc = dict(_APPEARANCE_DOC)
+    doc["attributes"] = {"record": {
+        "visible_tattoos": {"value": "tattoo on right shoulder",
+                            "source": "photo", "confidence": "medium"},
+        "visible_piercings": {"value": "no", "source": "photo",
+                              "confidence": "high"},
+    }}
+    monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: doc)
+    report, *_ = ra.appearance_blocks(object(), "u1")
+    blocks = _blocks(report)
+    assert blocks["attr:visible_tattoos"]["label"] == "Visible tattoos"
+    assert blocks["attr:visible_tattoos"]["value"] == "tattoo on right shoulder"
+    assert blocks["attr:visible_piercings"]["value"] == "no"
+
+
 def test_appearance_adapter_carries_face_axis_fields(monkeypatch):
     monkeypatch.setattr(appearance, "get_report", lambda db, uid, rid: dict(_APPEARANCE_DOC))
     report, *_ = ra.appearance_blocks(object(), "u1")
