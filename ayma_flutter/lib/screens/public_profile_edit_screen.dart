@@ -258,6 +258,21 @@ class _EditSection {
     d.controller.dispose();
   }
 
+  /// Ids of public bullets the user X'd — made PRIVATE on save (the node is
+  /// retained with its content and re-sent `visibility: private`, never
+  /// deleted). It leaves the public profile render and stays in Your Story.
+  /// Deletion is only the explicit Delete action in the item bubble (founder
+  /// Nov 20).
+  final Set<String> _madePrivateIds = {};
+
+  /// X on a public item → make it private. An EXISTING bullet is marked private
+  /// (kept, re-sent private on save); a brand-new unsaved note is just discarded
+  /// (nothing was ever public to retain).
+  void makePrivate(_PublicDraft d) {
+    if (d.id.isNotEmpty) _madePrivateIds.add(d.id);
+    removeDraft(d);
+  }
+
   /// The save payload: original order preserved, each public bullet's text taken
   /// from its (non-empty) draft, private bullets re-sent as-is, new notes
   /// appended. Empty public text drops that bullet (an in-place delete).
@@ -269,9 +284,19 @@ class _EditSection {
     };
     for (final b in original) {
       if (b.visibility == 'public') {
+        if (_madePrivateIds.contains(b.id)) {
+          // X'd → make private: keep the node, re-send it PRIVATE (leaves the
+          // public render, stays in Your Story). Never a delete.
+          out.add(StoryBullet(
+              id: b.id,
+              text: b.text,
+              visibility: 'private',
+              imageUrl: b.imageUrl));
+          continue;
+        }
         final d = byId[b.id];
         final text = d?.controller.text.trim() ?? '';
-        if (d == null || text.isEmpty) continue; // removed or cleared
+        if (d == null || text.isEmpty) continue; // cleared → in-place delete
         out.add(StoryBullet(
             id: b.id, text: text, visibility: 'public', imageUrl: b.imageUrl));
       } else {
@@ -444,11 +469,14 @@ class _SectionViewState extends State<_SectionView> {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Remove',
+                  tooltip: 'Make private',
                   icon: Icon(Icons.close, size: 18, color: ac.fgMute),
                   onPressed: () {
                     draft.unwire();
-                    setState(() => section.removeDraft(draft));
+                    // X makes the item PRIVATE (retained in Your Story), not a
+                    // delete — deletion is the item bubble's Delete action
+                    // (founder Nov 20).
+                    setState(() => section.makePrivate(draft));
                     widget.onChanged();
                   },
                 ),

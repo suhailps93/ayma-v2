@@ -118,11 +118,14 @@ void main() {
     expect(bullets.map((b) => b.id).toList(), ['v1', 'v2', '']);
   });
 
-  testWidgets('a removed public bullet is dropped on save; the private bullet '
-      'still survives', (tester) async {
+  testWidgets('the X makes a public item PRIVATE on save (retained, not '
+      'deleted); the private bullet still survives', (tester) async {
+    // Founder Nov 20: the X in the editor must make the item private (kept in
+    // Your Story, re-sent visibility:private), never delete it. Deletion is only
+    // the item bubble's Delete action.
     final api = _FakeApi([
       _section('values', 'Values & beliefs', 'values', [
-        _b('v1', 'Remove me', 'public'),
+        _b('v1', 'Make me private', 'public'),
         _b('v2', 'Kept private', 'private'),
       ], order: 1),
     ]);
@@ -135,9 +138,14 @@ void main() {
     await tester.pumpAndSettle();
 
     final (_, bullets) = api.saves.single;
-    expect(bullets.map((b) => b.text).toList(), ['Kept private']);
-    expect(bullets.single.visibility, 'private');
+    // Both bullets are retained (nothing dropped); the X'd one keeps its id and
+    // is re-sent PRIVATE.
+    expect(bullets.map((b) => b.text).toList(),
+        ['Make me private', 'Kept private']);
+    expect(bullets.map((b) => b.id).toList(), ['v1', 'v2']);
+    expect(bullets.map((b) => b.visibility).toList(), ['private', 'private']);
   });
+
 
   testWidgets('Save stays disabled until an edit, and an unchanged save writes '
       'nothing', (tester) async {
