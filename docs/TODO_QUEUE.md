@@ -2,6 +2,11 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER ORDER — Shareable report card text (approved wording) — DONE (fleet/report-card-text off origin/staging @f8b8a759, 2026-11-21)
+- `appearance_report_card.dart`: verdict line "Face — Average · Body — Slightly below average" (em dash, band sentence-cased, still from the scores' verdicts); CTA "Get your own report on Ayma"; small print "AI estimates from photos — an opinion, not a fact." Nothing else on the card changed; the share-sheet caption text (`report_card_share.dart`) is unchanged.
+- **Fit:** the card is a fixed 360×640 canvas scaled to the screen, so phone width doesn't change its layout. Measured with the real bundled fonts (Instrument Serif, Geist): CTA 237pt and small print 204pt of 290pt available, one line each. No golden covers this card.
+- **Tests:** appearance_report_card_test updated + 2 new (sentence-cased em-dash verdicts; CTA and small print fit in real fonts). Flutter 3.47.9: analyze clean; full suite 8 failures, all pre-existing.
+
 ## FOUNDER FEEDBACK — Appearance Face/Body: labelled elements, score as text — DONE (fleet/appearance-face-body-template off origin/staging @b9cb10de, 2026-11-21)
 - **Server:** `report_blocks.scored_result_blocks` labels every Face/Body element (Summary / Strength / Weakness / `QUICK_FACT_LABELS`); score block label = axis + `display:"text"` (value/basis unchanged for the share card). `report_tree` → labelled text/fact = standard field node; text-score stat gets `stat_display:"text"` and no bar visual. `skills/open_shared._block_text` prints "Strength: …" and "Face: 5.1/10 (Average)". Applied at read time, so stored reports render labelled.
 - **Client:** `StoryNode.statDisplay`; `NodeVisualiser` labels every standard node on the report surface (`_isReportField`), renders the text score ("Face 5.1/10  Average", no ScoreBar, no bullet). Jobs pass: report rows ≥48pt (vertical 4→12 + minHeight 48), horizontal 2→0, leading slot 18→20, gap 10→8 (report surface only), report card padding 18→16.
