@@ -347,6 +347,11 @@ reroute to work around an empty response.
   no `bar_meter`; the client renders "Face 5.1/10  Average" with no bar (`_statTextContent`). Match and other stats keep
   their bar. Report-surface rows are ≥48pt tap targets (12pt vertical padding, 20pt leading slot + 8pt gap) and the
   report card padding is 16pt; Story/profile rows keep their denser metrics.
+  The chat-inline Face/Body views (`face_report_view.dart` / `body_report_view.dart`, one shared `ScoredReadView`) render
+  the same way: `GET /skills/report/{kind}/{id}` returns `sections` from `report_tree.scored_read_sections` (the same
+  `scored_result_blocks` + assembler, plus `report_blocks.feature_blocks` — the per-feature breakdown as text scores),
+  drawn with `NodeVisualiserSection` on the report surface; display-only (`IgnorePointer`), the chat card tap opens
+  the full report.
 
   **No point shown twice + findings-first ordering (founder build 2495)**: a report must never render the same point
   twice — the founder's Appearance report listed each finding as a bullet, then restated it as a recommendation bullet

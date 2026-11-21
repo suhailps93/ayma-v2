@@ -1195,6 +1195,10 @@ class ApiClient {
       report: report is Map ? report.cast<String, dynamic>() : const {},
       createdAt: m['created_at'] as String?,
       imagePath: m['image_path'] as String? ?? '',
+      sections: (m['sections'] as List? ?? const [])
+          .whereType<Map>()
+          .map((e) => GraphTreeSection.fromMap(e.cast<String, dynamic>()))
+          .toList(),
     );
   }
 
@@ -5375,12 +5379,17 @@ class SkillReport {
     required this.report,
     required this.createdAt,
     this.imagePath = '',
+    this.sections = const [],
   });
   final Map<String, dynamic> report;
   final String? createdAt;
 
   /// Storage path of the analysed photo, embedded in the report card.
   final String imagePath;
+
+  /// The report as display sections — the same labelled, text-score node
+  /// tree the Appearance screen renders for its Face/Body sections.
+  final List<GraphTreeSection> sections;
 }
 
 /// Result of `GET /physical-attributes` and `POST /physical-attributes/refresh`.

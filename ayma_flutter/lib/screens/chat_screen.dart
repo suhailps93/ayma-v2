@@ -5290,15 +5290,15 @@ class _InlineReportCardState extends State<_InlineReportCard> {
         Widget? view;
         if (!snap.hasError && snap.data != null) {
           final data = snap.data;
-          if (data is StoredFaceReport && data.report != null) {
+          if (data is StoredFaceReport && data.sections.isNotEmpty) {
             view = FaceReportView(
-              report: data.report!,
+              sections: data.sections,
               imageUrl: data.imageUrl,
               api: widget.api,
             );
-          } else if (data is StoredBodyReport && data.report != null) {
+          } else if (data is StoredBodyReport && data.sections.isNotEmpty) {
             view = BodyReportView(
-              report: data.report!,
+              sections: data.sections,
               imageUrl: data.imageUrl,
               api: widget.api,
             );

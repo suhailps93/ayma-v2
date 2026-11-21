@@ -4454,8 +4454,17 @@ async def skills_report(
             return None
         data = snap.to_dict() or {}
         created = data.get("created_at")
+        import report_tree
+
+        report = data.get("report") or {}
+        spec = (face_report if kind == "face" else body_report).SPEC
         return {
-            "report": data.get("report") or {},
+            "report": report,
+            # The same labelled, text-score node tree the Appearance screen
+            # renders for its Face/Body sections (report_tree).
+            "sections": report_tree.scored_read_sections(
+                kind, report, spec.not_usable
+            ),
             "image_path": str(data.get("image_path") or ""),
             "created_at": (
                 created.isoformat()
