@@ -461,6 +461,7 @@ def test_note_interaction_ignores_blank_text_and_never_raises():
 from fastapi.testclient import TestClient  # noqa: E402
 from firebase_admin import auth as firebase_auth  # noqa: E402
 
+import face_report  # noqa: E402
 import main  # noqa: E402
 
 _client = TestClient(main.app)
@@ -523,6 +524,46 @@ def test_skills_report_endpoint_returns_a_stored_report(monkeypatch):
     body = r.json()
     assert body["report"]["overall_score"] == 6.9
     assert body["created_at"] == "2026-01-02T03:04:05"
+
+
+def test_skills_report_endpoint_returns_the_labelled_text_score_tree(monkeypatch):
+    # The chat-inline Face/Body views render this tree — the same labelled,
+    # text-score nodes as the Appearance screen (founder 2026-11-21).
+    db = FakeDb()
+    db.docs[("users", "me", "body_reports", "b1")] = {"report": dict(_BODY)}
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.get("/skills/report/body/b1", headers=_auth(monkeypatch))
+    assert r.status_code == 200
+    sections = r.json()["sections"]
+    assert sections[0]["title"] == "Body"
+    nodes = {n["id"]: n for n in sections[0]["nodes"]}
+    score = nodes["body"]
+    assert score["stat_display"] == "text" and score["stat_value"] == 6.4
+    assert score["stat_basis"] == "Solid base"
+    assert score["visual"]["type"] != "bar_meter"
+    assert nodes["body:strength:0"]["standard_label"] == "Strength"
+    assert nodes["body:improvement:0"]["standard_label"] == "Weakness"
+    assert nodes["body:quick:body_type"]["standard_label"] == "Body type"
+    feature = nodes["body:feature:posture"]
+    assert feature["label"] == "Posture"
+    assert feature["stat_display"] == "text"
+    assert feature["stat_basis"] == "Slight forward head."
+    # recommendations come last, in "What to do next"
+    assert sections[-1]["title"] == "What to do next"
+    assert sections[-1]["nodes"][0]["text"] == "Add calf volume."
+
+
+def test_skills_report_tree_for_an_unusable_read_is_the_retake_note(monkeypatch):
+    db = FakeDb()
+    db.docs[("users", "me", "face_reports", "f0")] = {
+        "report": {"usable": False, "features": [{"name": "eyes", "score": 5}]},
+    }
+    monkeypatch.setattr(main, "get_db", lambda: db)
+    r = _client.get("/skills/report/face/f0", headers=_auth(monkeypatch))
+    (section,) = r.json()["sections"]
+    (node,) = section["nodes"]
+    assert node["id"] == "face:status"
+    assert node["text"] == face_report.SPEC.not_usable
 
 
 def test_skills_report_endpoint_404_for_an_unknown_id(monkeypatch):

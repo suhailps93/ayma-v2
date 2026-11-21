@@ -468,6 +468,35 @@ def scored_result_blocks(
     return blocks
 
 
+def feature_blocks(result: dict | None, *, id_prefix: str) -> list[dict]:
+    """A scored read's per-feature breakdown (``features: [{name, score,
+    note}]``) as text scores — "Symmetry 7/10" with its note beside it, no
+    bar — in the same shape as the overall score. Used by the stored
+    Face/Body report view (``report_tree.scored_read_sections``); empty for an
+    unusable read."""
+    if not isinstance(result, dict) or not result.get("usable", True):
+        return []
+    out: list[dict] = []
+    for f in result.get("features") or []:
+        if not isinstance(f, dict):
+            continue
+        name = str(f.get("name") or "").strip()
+        score = f.get("score")
+        if not name or score is None:
+            continue
+        out.append(
+            stat_block(
+                f"{id_prefix}:feature:{name}",
+                name.replace("_", " ").capitalize(),
+                score,
+                basis=str(f.get("note") or "").strip(),
+                editable=False,
+                display="text",
+            )
+        )
+    return out
+
+
 def digest_is_empty(digest: dict | None) -> bool:
     """Whether a deep-dive-shaped digest (``{summary, confidence, facts}``)
     has nothing pin-downable yet. The ONE "is this a thin/not-found result"

@@ -1,12 +1,13 @@
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
+import '../models/story_node.dart';
 import '../services/api_client.dart';
 import '../services/auto_retry.dart';
 import '../theme.dart';
 import 'ayma_toast.dart';
 import 'ayma_wing_loader.dart';
-import 'score_bar.dart';
+import 'node_visualiser.dart';
 
 /// Resolve a Storage path to a download URL, or null if it can't be read.
 /// Shared by every report surface (face / body / appearance) so a photo
@@ -26,11 +27,12 @@ Future<List<String>> resolvePhotoUrls(Iterable<String> paths) async {
   return [for (final u in urls) if (u != null) u];
 }
 
-/// A stored face report ([FaceReport]) plus a resolved URL for the photo it
-/// was run on. Used by both the chat inline card and the Skills-screen history.
+/// A stored face report as its display sections plus a resolved URL for the
+/// photo it was run on. Used by both the chat inline card and the
+/// Skills-screen history.
 class StoredFaceReport {
-  const StoredFaceReport({this.report, this.imageUrl});
-  final FaceReport? report;
+  const StoredFaceReport({this.sections = const [], this.imageUrl});
+  final List<GraphTreeSection> sections;
   final String? imageUrl;
 }
 
@@ -41,7 +43,7 @@ Future<StoredFaceReport> fetchStoredFaceReport(
 }) async {
   final r = await (api ?? ApiClient()).skillReport('face', reportId);
   return StoredFaceReport(
-    report: r.report.isEmpty ? null : FaceReport.fromMap(r.report),
+    sections: r.sections,
     imageUrl: await resolvePhotoUrl(r.imagePath),
   );
 }
@@ -104,8 +106,8 @@ class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
                 ),
               );
             }
-            final report = snap.data?.report;
-            if (snap.hasError || report == null) {
+            final sections = snap.data?.sections ?? const [];
+            if (snap.hasError || sections.isEmpty) {
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 32),
                 child: Text(
@@ -118,7 +120,10 @@ class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
             return ListView(
               controller: controller,
               children: [
-                FaceReportView(report: report, imageUrl: snap.data?.imageUrl),
+                FaceReportView(
+                  sections: sections,
+                  imageUrl: snap.data?.imageUrl,
+                ),
               ],
             );
           },
@@ -128,28 +133,19 @@ class _StoredFaceReportSheetState extends State<_StoredFaceReportSheet> {
   }
 }
 
-String _humanise(String raw) {
-  final parts = raw.split(RegExp(r'[_\s]+')).where((p) => p.isNotEmpty).toList();
-  if (parts.isEmpty) return raw;
-  return parts
-      .map((p) => p[0].toUpperCase() + p.substring(1).toLowerCase())
-      .join(' ');
-}
-
-/// A clean "FACE ≈ FORM"-style card for a [FaceReport] — black-on-light, thin
-/// hairline dividers, restrained. Renders the overall score, the per-feature
-/// breakdown with score bars, quick facts, strengths / improvements, and
-/// recommendations.
+/// A stored Face report — the score as text ("Face 6.9/10" with its band),
+/// every element labelled, "What to do next" last — rendered from the
+/// server's node tree with the SAME [NodeVisualiserSection] the Appearance
+/// screen uses for its Face/Body sections.
 class FaceReportView extends StatelessWidget {
   const FaceReportView({
     super.key,
-    required this.report,
+    required this.sections,
     this.imageUrl,
     this.api,
-    this.onCorrect,
   });
 
-  final FaceReport report;
+  final List<GraphTreeSection> sections;
 
   /// The analysed photo, embedded at the top of the card (§ report cards).
   final String? imageUrl;
@@ -157,84 +153,66 @@ class FaceReportView extends StatelessWidget {
   /// Injectable for tests; the "Add this to my story" action uses it.
   final ApiClient? api;
 
-  /// When given, the score/verdict header becomes tappable — opens the
-  /// tap-a-claim conversational correction flow for this section (the unified
-  /// Appearance report screen wires this; other callers of this widget, e.g.
-  /// the chat inline card, leave it null and get the plain, inert header
-  /// exactly as before).
-  final VoidCallback? onCorrect;
+  @override
+  Widget build(BuildContext context) => ScoredReadView(
+        title: 'FACIAL BEAUTY REPORT',
+        sections: sections,
+        imageUrl: imageUrl,
+        storyPageType: 'face_analysis',
+        api: api,
+      );
+}
+
+/// The shared Face/Body read card: a small title, the analysed photo, the
+/// report's sections through [NodeVisualiserSection] on the report surface,
+/// and the "Add this to my story" action. Display-only — the rows are not
+/// tap targets here (a tap on the chat card opens the full report).
+class ScoredReadView extends StatelessWidget {
+  const ScoredReadView({
+    super.key,
+    required this.title,
+    required this.sections,
+    required this.storyPageType,
+    this.imageUrl,
+    this.api,
+  });
+
+  final String title;
+  final List<GraphTreeSection> sections;
+  final String storyPageType;
+  final String? imageUrl;
+  final ApiClient? api;
 
   @override
   Widget build(BuildContext context) {
     final ac = context.ac;
-    final scoreHeader = _ScoreHeader(
-      score: report.overallScore,
-      verdict: report.verdict,
-      verdictNote: report.verdictNote,
-    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('FACIAL BEAUTY REPORT',
-            style: AymaType.mono(size: 10, color: ac.fgMute)),
+        Text(title, style: AymaType.mono(size: 10, color: ac.fgMute)),
         const SizedBox(height: 12),
         if (imageUrl != null) ...[
           _ReportPhoto(url: imageUrl!),
           const SizedBox(height: 16),
         ],
-        onCorrect == null
-            ? scoreHeader
-            : InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: onCorrect,
-                child: scoreHeader,
-              ),
-        if (onCorrect != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text('Tap to correct',
-                style: AymaType.mono(size: 9.5, color: ac.fgMute)
-                    .copyWith(letterSpacing: 0.8)),
+        IgnorePointer(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, section) in sections.indexed)
+                NodeVisualiserSection(
+                  key: Key('scored_read_section_$i'),
+                  section: section,
+                  surface: NodeVisualiserSurface.report,
+                  api: api,
+                ),
+            ],
           ),
-        if (report.features.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _SectionLabel('FEATURE ANALYSIS'),
-          const SizedBox(height: 4),
-          for (final f in report.features)
-            _FeatureRow(
-                name: _humanise(f.name), score: f.score, note: f.note),
-        ],
-        if (report.quickFacts.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _SectionLabel('QUICK FACTS'),
-          const SizedBox(height: 8),
-          _QuickFacts(facts: report.quickFacts),
-        ],
-        if (report.strengths.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _SectionLabel('STRENGTHS'),
-          const SizedBox(height: 8),
-          for (final s in report.strengths)
-            _Bullet(text: s, icon: Icons.check, color: ac.success),
-        ],
-        if (report.improvements.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _SectionLabel('AREAS FOR IMPROVEMENT'),
-          const SizedBox(height: 8),
-          for (final s in report.improvements)
-            _Bullet(text: s, icon: Icons.circle, color: ac.fgMute, dot: true),
-        ],
-        if (report.recommendations.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _SectionLabel('RECOMMENDATIONS'),
-          const SizedBox(height: 8),
-          for (final r in report.recommendations)
-            _RecoRow(category: _humanise(r.category), text: r.text),
-        ],
+        ),
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
-          child: AddToStoryButton(pageType: 'face_analysis', api: api),
+          child: AddToStoryButton(pageType: storyPageType, api: api),
         ),
         const SizedBox(height: 12),
       ],
@@ -325,214 +303,6 @@ class _ReportPhoto extends StatelessWidget {
             child: Icon(Icons.broken_image_outlined, color: ac.fgMute),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ScoreHeader extends StatelessWidget {
-  const _ScoreHeader({
-    required this.score,
-    required this.verdict,
-    required this.verdictNote,
-  });
-
-  final double score;
-  final String verdict;
-  final String verdictNote;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ac.bgCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ac.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(score.toStringAsFixed(1),
-                  style: AymaType.serif(size: 44, color: ac.fg)),
-              const SizedBox(width: 4),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text('/10',
-                    style: AymaType.sans(size: 15, color: ac.fgDim)),
-              ),
-              const Spacer(),
-              if (verdict.isNotEmpty)
-                Flexible(
-                  child: Text(
-                    verdict,
-                    textAlign: TextAlign.right,
-                    style: AymaType.sans(
-                        size: 14, weight: FontWeight.w600, color: ac.fg),
-                  ),
-                ),
-            ],
-          ),
-          if (verdictNote.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(verdictNote,
-                style: AymaType.sans(size: 13, color: ac.fgDim, height: 1.4)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(text, style: AymaType.mono(size: 10, color: ac.fgMute)),
-    );
-  }
-}
-
-class _FeatureRow extends StatelessWidget {
-  const _FeatureRow(
-      {required this.name, required this.score, required this.note});
-
-  final String name;
-  final double score;
-  final String note;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(name,
-                    style: AymaType.sans(
-                        size: 14, weight: FontWeight.w600, color: ac.fg)),
-              ),
-              Text('${score.toStringAsFixed(1)}/10',
-                  style: AymaType.mono(size: 11, color: ac.fgDim)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ScoreBar(value: score, max: 10),
-          if (note.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(note,
-                style: AymaType.sans(size: 12, color: ac.fgDim, height: 1.4)),
-          ],
-          const SizedBox(height: 8),
-          Divider(height: 1, thickness: 1, color: ac.lineSoft),
-        ],
-      ),
-    );
-  }
-}
-
-class _QuickFacts extends StatelessWidget {
-  const _QuickFacts({required this.facts});
-  final Map<String, String> facts;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    final entries = facts.entries.toList();
-    return Column(
-      children: [
-        for (final e in entries)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 150,
-                  child: Text(_humanise(e.key),
-                      style: AymaType.sans(size: 12, color: ac.fgMute)),
-                ),
-                Expanded(
-                  child: Text(e.value,
-                      style: AymaType.sans(
-                          size: 12, weight: FontWeight.w600, color: ac.fg)),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _Bullet extends StatelessWidget {
-  const _Bullet({
-    required this.text,
-    required this.icon,
-    required this.color,
-    this.dot = false,
-  });
-
-  final String text;
-  final IconData icon;
-  final Color color;
-  final bool dot;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: EdgeInsets.only(top: dot ? 6 : 2, right: 8),
-            child: Icon(icon, size: dot ? 6 : 14, color: color),
-          ),
-          Expanded(
-            child: Text(text,
-                style: AymaType.sans(size: 13, color: ac.fg, height: 1.4)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RecoRow extends StatelessWidget {
-  const _RecoRow({required this.category, required this.text});
-  final String category;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final ac = context.ac;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(category.toUpperCase(),
-              style: AymaType.mono(size: 9, color: ac.fgMute)),
-          const SizedBox(height: 4),
-          Text(text,
-              style: AymaType.sans(size: 13, color: ac.fg, height: 1.4)),
-        ],
       ),
     );
   }

@@ -263,6 +263,63 @@ List<Map<String, dynamic>> _factsSections() => [
 /// attribute nodes + a photo grid, and Face / Body sections each with a numeric
 /// score stat, narrative text, and their source photos. Long strings and a
 /// multi-photo carousel so the TEMPLATED layout is held to the overflow matrix.
+List<Map<String, dynamic>> _scoredReadSections() {
+  Map<String, dynamic> node(String id, String label, String text,
+          {Map<String, dynamic> extra = const {}}) =>
+      {
+        'id': id,
+        'section': 'face',
+        'label': label,
+        'text': text,
+        'gist': text,
+        'answer_type': 'text',
+        'standard': label.isNotEmpty,
+        'standard_label': label,
+        'visibility': 'public',
+        'subtree_visibility': 'public',
+        'editable': true,
+        'level': 1,
+        ...extra,
+      };
+  return [
+    {
+      'page_type': 'face',
+      'title': 'Face',
+      'order': 0,
+      'nodes': [
+        node('face', 'Face', 'Face', extra: {
+          'answer_type': 'stat',
+          'standard': false,
+          'stat_value': 5.1,
+          'stat_text': '5.1',
+          'stat_basis': 'Slightly below average with a long verdict',
+          'stat_display': 'text',
+          'editable': false,
+        }),
+        node('face:note:sent:0', 'Summary', kLongText),
+        node('face:strength:0', 'Strength', kLongText),
+        node('face:improvement:0', 'Weakness', kLongText),
+        node('face:quick:face_shape', 'Face shape', kLongText),
+        node('face:feature:symmetry', 'Symmetry', 'Symmetry', extra: {
+          'answer_type': 'stat',
+          'standard': false,
+          'stat_value': 7.0,
+          'stat_text': '7.0',
+          'stat_basis': kLongText,
+          'stat_display': 'text',
+          'editable': false,
+        }),
+      ],
+    },
+    {
+      'page_type': 'what_to_do_next',
+      'title': 'What to do next',
+      'order': 1,
+      'nodes': [node('face:reco:0', '', kLongText)],
+    },
+  ];
+}
+
 Map<String, dynamic> _appearanceTree() {
   Map<String, dynamic> attr(String id, String label, String value) => {
     'id': id,
@@ -630,9 +687,18 @@ Object? _bodyFor(String path) {
     return {'surface': 'report', 'sections': _factsSections()};
 
   }
+  // A stored Face/Body read (`/skills/report/{kind}/{id}`): the labelled,
+  // text-score node tree the inline report views render — long values so the
+  // matrix wraps every row.
+  if (path.startsWith('/skills/report/')) {
+    return {
+      'report': <String, dynamic>{},
+      'image_path': '',
+      'sections': _scoredReadSections(),
+    };
+  }
   if (path.startsWith('/report/') ||
       path.startsWith('/deep-dive-report/') ||
-      path.startsWith('/skills/report/') ||
       path.startsWith('/s/') ||
       path == '/appearance/report' ||
       path == '/body-report' ||

@@ -293,6 +293,21 @@ def _finalize_sections(sections: list[dict]) -> list[dict]:
     return deduped_sections
 
 
+def scored_read_sections(
+    kind: str, report: dict | None, not_usable_text: str
+) -> list[dict]:
+    """A stored Face/Body read (``face_report``/``body_report`` result) as
+    Node-Visualiser sections — the SAME blocks the Appearance report builds for
+    its Face/Body axes (:func:`report_blocks.scored_result_blocks`: labelled
+    elements, text score) plus the per-feature breakdown as text scores, run
+    through the same assembler (recommendations lifted into "What to do
+    next"). Backs the chat-inline Face/Body report views."""
+    blocks = rb.scored_result_blocks(
+        report, id_prefix=kind, not_usable_text=not_usable_text
+    ) + rb.feature_blocks(report, id_prefix=kind)
+    return _sections_to_tree([{"heading": kind.capitalize(), "blocks": blocks}])
+
+
 def report_node_tree(
     db, report_type: str, report_id: str, viewer_uid: str
 ) -> dict:

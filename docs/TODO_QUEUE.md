@@ -2,6 +2,11 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER ORDER — Chat-inline Face/Body views match the Appearance screen — DONE (fleet/inline-face-body-text-score off origin/staging @9c5b1886, 2026-11-21)
+- **Server:** `GET /skills/report/{kind}/{id}` also returns `sections` = `report_tree.scored_read_sections` — the Appearance Face/Body builder (`scored_result_blocks`: labels, text score) + `report_blocks.feature_blocks` (per-feature "Symmetry 7/10 · note" text scores, no bar) through the same assembler ("What to do next" last).
+- **Client:** `FaceReportView` / `BodyReportView` are thin wrappers over one `ScoredReadView` that draws those sections with `NodeVisualiserSection` (report surface) — the bespoke score header, feature bars, quick facts, bullets and reco rows (and the unused `onCorrect`) are deleted from both files. `SkillReport.sections`; `StoredFaceReport`/`StoredBodyReport` carry sections. Display-only (`IgnorePointer`).
+- **Tests:** backend +2 (endpoint tree: labels, text scores, features, reco last; unusable read → retake note); Flutter face/body view tests rewritten on server-generated fixtures (text score + band, no ScoreBar, labelled rows, feature text score, reco last, photo, 48pt Add-to-story). Layout-matrix fake now serves the scored-read tree for both sheets. Flutter 3.47.9 analyze clean; full suites: Flutter 8 / backend 7 failures, all pre-existing.
+
 ## FOUNDER ORDER — Shareable report card text (approved wording) — DONE (fleet/report-card-text off origin/staging @f8b8a759, 2026-11-21)
 - `appearance_report_card.dart`: verdict line "Face — Average · Body — Slightly below average" (em dash, band sentence-cased, still from the scores' verdicts); CTA "Get your own report on Ayma"; small print "AI estimates from photos — an opinion, not a fact." Nothing else on the card changed; the share-sheet caption text (`report_card_share.dart`) is unchanged.
 - **Fit:** the card is a fixed 360×640 canvas scaled to the screen, so phone width doesn't change its layout. Measured with the real bundled fonts (Instrument Serif, Geist): CTA 237pt and small print 204pt of 290pt available, one line each. No golden covers this card.
