@@ -337,6 +337,17 @@ reroute to work around an empty response.
   write-time dedupe + default (`private`) visibility; migrations (`migrate_web_findings`/`migrate_appearance_findings`)
   re-split a user's existing lumps from the live structured source. See `docs/PERSON_GRAPH.md` §"Reports as PER-ELEMENT
   nodes". (Flag OFF / prod keeps the wiki-page lumps + `appearance_reports` doc store until the prod cutover.)
+  **Face/Body: every element labelled, score as text (founder 2026-11-21)**: `scored_result_blocks` labels each
+  element at block-build time — the summary sentences "Summary", strengths "Strength", improvements "Weakness", and
+  each quick fact via `report_blocks.QUICK_FACT_LABELS` ("Face shape", "Estimated age", "Skin undertone", …). Blocks
+  are rebuilt from the stored axis on every read, so stored reports render labelled too. `report_tree` turns a labelled
+  text/fact block into a standard field node (`standard_label`), and the client prints "label: value" for every
+  standard node on the report surface (`NodeVisualiser._isReportField`). The score stays a `stat` block (the share card
+  reads `value`/`basis` from it) with `label` = the axis ("Face") and `display: "text"` → node `stat_display: "text"`,
+  no `bar_meter`; the client renders "Face 5.1/10  Average" with no bar (`_statTextContent`). Match and other stats keep
+  their bar. Report-surface rows are ≥48pt tap targets (12pt vertical padding, 20pt leading slot + 8pt gap) and the
+  report card padding is 16pt; Story/profile rows keep their denser metrics.
+
   **No point shown twice + findings-first ordering (founder build 2495)**: a report must never render the same point
   twice — the founder's Appearance report listed each finding as a bullet, then restated it as a recommendation bullet
   right below ("Overgrown mustache…" → "Trim the mustache…"). The assembler (`report_tree._finalize_sections`, applied

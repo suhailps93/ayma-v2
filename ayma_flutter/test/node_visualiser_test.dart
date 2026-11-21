@@ -9,6 +9,7 @@ import 'package:ayma_flutter/widgets/ayma_photo.dart';
 import 'package:ayma_flutter/widgets/node_chat_window.dart';
 import 'package:ayma_flutter/widgets/node_visibility.dart';
 import 'package:ayma_flutter/widgets/node_visualiser.dart';
+import 'package:ayma_flutter/widgets/score_bar.dart';
 import 'package:file/file.dart' as fs;
 import 'package:file/local.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -1607,5 +1608,104 @@ void main() {
     expect(find.descendant(
         of: find.byKey(const Key('node_row_conv_lf')),
         matching: find.byType(NodeVisibilityBullet)), findsOneWidget);
+  });
+
+  // NOTE (founder Nov 21): the Appearance Face/Body sections showed bare,
+  // unlabeled values ("Round", "25-29", "Warm olive") and a verdict + number +
+  // bar for the score. Every element now renders "label: value" and the score
+  // renders as text ("Face 5.1/10") with no bar. Fixtures are the node JSON the
+  // server builds from a stored read (report_tree over scored_result_blocks).
+  Map<String, dynamic> reportNode(String id, String label, String text,
+          {String answerType = 'text'}) =>
+      {
+        'id': id,
+        'section': id.split(':').first,
+        'label': label,
+        'text': text,
+        'gist': text,
+        'answer_type': answerType,
+        'standard': true,
+        'standard_label': label,
+        'visual': {'type': 'gist_row', 'params': <String, dynamic>{}, 'v': 1},
+        'visibility': 'public',
+        'subtree_visibility': 'public',
+        'editable': true,
+        'level': 1,
+      };
+
+  for (final axis in ['face', 'body']) {
+    testWidgets('a stored $axis read renders every element labelled',
+        (tester) async {
+      final rows = {
+        '$axis:note:sent:0': ('Summary', 'Balanced features'),
+        '$axis:strength:0': ('Strength', 'Clear skin'),
+        '$axis:improvement:0': ('Weakness', 'Under-eye shadowing'),
+        '$axis:quick:shape': ('Face shape', 'Round'),
+        '$axis:quick:age_estimate': ('Estimated age', '25-29'),
+        '$axis:quick:skin_undertone': ('Skin undertone', 'Warm olive'),
+      };
+      for (final e in rows.entries) {
+        await tester.pumpWidget(_host(NodeVisualiser(
+          node: StoryNode.fromMap(reportNode(e.key, e.value.$1, e.value.$2)),
+          surface: NodeVisualiserSurface.report,
+        )));
+        final want = '${e.value.$1}: ${e.value.$2}';
+        expect(
+            find.byWidgetPredicate(
+                (w) => w is RichText && w.text.toPlainText() == want),
+            findsOneWidget,
+            reason: want);
+        expect(find.text(e.value.$2), findsNothing, reason: 'bare ${e.value.$2}');
+      }
+    });
+
+    testWidgets('the $axis score renders as text with no bar', (tester) async {
+      final name = axis == 'face' ? 'Face' : 'Body';
+      final node = StoryNode.fromMap({
+        'id': axis,
+        'section': axis,
+        'label': name,
+        'text': name,
+        'gist': name,
+        'answer_type': 'stat',
+        'stat_value': 5.1,
+        'stat_text': '5.1',
+        'stat_basis': 'Average',
+        'stat_display': 'text',
+        'visual': {'type': 'gist_row', 'params': <String, dynamic>{}, 'v': 1},
+        'visibility': 'public',
+        'subtree_visibility': 'public',
+        'editable': false,
+        'level': 1,
+      });
+      await tester.pumpWidget(_host(
+        NodeVisualiser(node: node, surface: NodeVisualiserSurface.report),
+      ));
+      expect(
+          find.byWidgetPredicate((w) =>
+              w is RichText &&
+              w.text.toPlainText() == '$name 5.1/10  Average'),
+          findsOneWidget);
+      expect(find.byType(ScoreBar), findsNothing);
+    });
+  }
+
+  testWidgets('a stat without text display keeps its bar (Match etc.)',
+      (tester) async {
+    final node = StoryNode.fromMap({
+      'id': 'match',
+      'section': 'match',
+      'label': 'Compatibility',
+      'text': 'Compatibility',
+      'answer_type': 'stat',
+      'stat_value': 7.2,
+      'visibility': 'public',
+      'subtree_visibility': 'public',
+      'level': 1,
+    });
+    await tester.pumpWidget(_host(
+      NodeVisualiser(node: node, surface: NodeVisualiserSurface.report),
+    ));
+    expect(find.byType(ScoreBar), findsOneWidget);
   });
 }

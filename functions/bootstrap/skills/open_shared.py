@@ -118,7 +118,18 @@ def _block_text(block: dict) -> str:
     text worth handing the model — bare photos and photo grids)."""
     btype = block.get("type")
     if btype in ("text", "fact", "section_head"):
-        return str(block.get("text") or "").strip()
+        text = str(block.get("text") or "").strip()
+        label = str(block.get("label") or "").strip()
+        return f"{label}: {text}" if label and text else text
+    if btype == "stat" and block.get("display") == "text":
+        # A scored read shown as text (Face/Body): "Face: 5.1/10 (Average)".
+        label = str(block.get("label") or "").strip()
+        value = block.get("value")
+        if value is None or value == "":
+            return ""
+        basis = str(block.get("basis") or "").strip()
+        line = f"{label}: {value}/10" if label else f"{value}/10"
+        return f"{line} ({basis})" if basis else line
     if btype in ("attribute", "stat"):
         label = str(block.get("label") or "").strip()
         value = block.get("value")

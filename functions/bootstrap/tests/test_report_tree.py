@@ -296,3 +296,36 @@ def test_snapshot_node_tree_tolerates_empty_or_malformed_snapshot():
     assert report_tree.snapshot_node_tree({"sections": [None, "bad"]})[
         "sections"
     ] == []
+
+
+def test_stored_face_read_renders_labelled_with_text_score():
+    # A stored Face axis (raw values, no labels stored) builds labelled nodes
+    # and a text score with no bar visual (founder 2026-11-21).
+    face = {
+        "usable": True, "overall_score": 5.1, "verdict": "Average",
+        "verdict_note": "Balanced features.", "strengths": ["Clear skin"],
+        "improvements": ["Under-eye shadowing"],
+        "recommendations": [{"text": "Use an eye cream", "category": "under_eye"}],
+        "quick_facts": {"face_shape": "Round", "age_estimate": "25-29"},
+    }
+    blocks = rb.scored_result_blocks(face, id_prefix="face", not_usable_text="x")
+    tree = report_tree._sections_to_tree([{"heading": "Face", "blocks": blocks}])
+    face_nodes = {n["id"]: n for n in tree[0]["nodes"]}
+    score = face_nodes["face"]
+    assert score["answer_type"] == "stat"
+    assert score["stat_display"] == "text"
+    assert score["stat_value"] == 5.1 and score["stat_basis"] == "Average"
+    assert score["visual"]["type"] != "bar_meter"
+    for nid, label in [
+        ("face:note:sent:0", "Summary"),
+        ("face:strength:0", "Strength"),
+        ("face:improvement:0", "Weakness"),
+        ("face:quick:face_shape", "Face shape"),
+        ("face:quick:age_estimate", "Estimated age"),
+    ]:
+        assert face_nodes[nid]["standard"] is True
+        assert face_nodes[nid]["standard_label"] == label
+    assert face_nodes["face:quick:face_shape"]["text"] == "Round"
+    # what to do next comes last, in its own section
+    assert tree[-1]["page_type"] == report_tree.RECO_SECTION_SLUG
+    assert "face:reco:0" not in face_nodes

@@ -293,3 +293,63 @@ def test_digest_is_empty_false_with_real_content():
 
 def test_digest_is_empty_true_for_non_dict():
     assert rb.digest_is_empty(None) is True
+
+
+# --- Face/Body: every element labelled, score as text (founder 2026-11-21) ---
+
+_STORED_FACE = {
+    "usable": True,
+    "overall_score": 5.1,
+    "verdict": "Average",
+    "verdict_note": "Balanced features with soft definition.",
+    "strengths": ["Clear skin"],
+    "improvements": ["Under-eye shadowing"],
+    "recommendations": [{"text": "Use an eye cream nightly", "category": "under_eye"}],
+    "quick_facts": {
+        "face_shape": "Round",
+        "age_estimate": "25-29",
+        "hair_thickness": "Thick",
+        "worst_feature": "Hair thickness",
+        "facial_hair_density": "Medium-dense",
+        "skin_undertone": "Warm olive",
+    },
+}
+
+
+def test_scored_read_labels_every_element_and_scores_as_text():
+    blocks = rb.scored_result_blocks(
+        _STORED_FACE, id_prefix="face", not_usable_text="x"
+    )
+    by_id = {b["block_id"]: b for b in blocks}
+    score = by_id["face"]
+    assert score["type"] == rb.STAT
+    assert score["label"] == "Face"
+    assert score["value"] == 5.1
+    assert score["basis"] == "Average"  # the share card reads the verdict here
+    assert score["display"] == "text"
+    assert by_id["face:note:sent:0"]["label"] == "Summary"
+    assert by_id["face:strength:0"]["label"] == "Strength"
+    assert by_id["face:strength:0"]["tag"] == "strength"  # card still finds it
+    assert by_id["face:improvement:0"]["label"] == "Weakness"
+    assert by_id["face:quick:face_shape"]["label"] == "Face shape"
+    assert by_id["face:quick:age_estimate"]["label"] == "Estimated age"
+    assert by_id["face:quick:skin_undertone"]["label"] == "Skin undertone"
+    assert by_id["face:quick:worst_feature"]["label"] == "Weakest feature"
+    assert by_id["face:quick:worst_feature"]["value"] == "Hair thickness"
+    # findings first, then the labelled stats (recommendations are lifted last
+    # by report_tree)
+    ids = [b["block_id"] for b in blocks if b.get("role") != "recommendation"]
+    first_quick = min(i for i, b in enumerate(ids) if ":quick:" in b)
+    assert all(":quick:" in b for b in ids[first_quick:])
+
+
+def test_every_body_quick_fact_key_has_a_human_label():
+    import body_report
+    import face_report
+
+    for key in face_report.SPEC.quick_fact_keys + body_report.SPEC.quick_fact_keys:
+        assert key in rb.QUICK_FACT_LABELS, key
+
+
+def test_match_style_stat_keeps_its_bar():
+    assert "display" not in rb.stat_block("match", "Compatibility", 72)

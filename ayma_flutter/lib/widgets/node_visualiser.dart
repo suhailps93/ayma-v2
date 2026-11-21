@@ -162,15 +162,17 @@ class NodeVisualiser extends StatelessWidget {
   /// than a bare value (founder Nov 20).
   IconData? get _standardIcon => node.standard
       ? (_standardFieldIcons[node.id] ??
-          (_isAttribute ? Icons.label_outline : null))
+          (_isReportField ? Icons.label_outline : null))
       : null;
 
-  /// An Appearance-report Attributes row — a per-element `attr:<field>` node
-  /// (e.g. "Hair color: Black", "Glasses: Yes"). Its value is ambiguous on its
-  /// own, so it always renders its field LABEL in front of the value (a yes/no
-  /// never shows with no question attached), like the What-I'm-Looking-For
-  /// standard rows (founder Nov 20).
-  bool get _isAttribute => node.id.startsWith('attr:');
+  /// A labelled report field: an Appearance Attributes row (`attr:<field>`,
+  /// e.g. "Hair color: Black") or any labelled element on the report surface —
+  /// the Face/Body stats and findings ("Face shape: Round", "Strength: Clear
+  /// skin"). Its value is ambiguous on its own, so it always renders its LABEL
+  /// in front of the value, never a bare value (founder Nov 20 / Nov 21).
+  bool get _isReportField =>
+      node.id.startsWith('attr:') ||
+      (surface == NodeVisualiserSurface.report && node.standard);
 
   bool get _publicOnly => surface == NodeVisualiserSurface.publicProfile;
 
@@ -238,12 +240,22 @@ class NodeVisualiser extends StatelessWidget {
     // visibility bullet.
     final icon =
         node.subtreeVisibility != NodeVis.mixed ? _standardIcon : null;
-    final Widget leading = icon != null
-        ? Icon(icon,
-            key: Key('node_field_icon_${node.id}'),
-            size: 18,
-            color: nodeVisibilityColor(node.subtreeVisibility))
-        : NodeVisibilityBullet(visibility: node.subtreeVisibility);
+    // A report row is a tap target (it opens the node's correction chat), so
+    // on the report surface it is at least 48pt tall — 12pt above and below
+    // a single text line — with an 8pt-grid text column (20pt leading slot +
+    // 8pt gap). Other surfaces keep their denser list metrics.
+    final report = surface == NodeVisualiserSurface.report;
+    // The text score ("Face 5.1/10") is the section's headline, not a list
+    // item — no bullet; its text still starts on the shared text column.
+    final textScore = node.isStat && node.statDisplay == 'text';
+    final Widget leading = textScore
+        ? const SizedBox.shrink()
+        : icon != null
+            ? Icon(icon,
+                key: Key('node_field_icon_${node.id}'),
+                size: 18,
+                color: nodeVisibilityColor(node.subtreeVisibility))
+            : NodeVisibilityBullet(visibility: node.subtreeVisibility);
     // EdgeInsetsDirectional so the indent follows text direction — it grows
     // from the left in LTR and from the right in RTL.
     return Padding(
@@ -252,29 +264,35 @@ class NodeVisualiser extends StatelessWidget {
         key: Key('node_row_${node.id}'),
         borderRadius: BorderRadius.circular(8),
         onTap: () => _openChat(context),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Fixed-width leading slot so an icon field (18) and a bullet
-              // field (10) start the TEXT column at the SAME x — one text
-              // column, not two (founder build 2509 screenshot). The glyph
-              // top-aligns with the first text line (icons sit a touch higher
-              // than the round bullet).
-              SizedBox(
-                width: 18,
-                child: Padding(
-                  padding: EdgeInsets.only(top: icon != null ? 2 : 6),
-                  child: Align(
-                    alignment: AlignmentDirectional.topStart,
-                    child: leading,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              minHeight: report ? kMinInteractiveDimension : 0),
+          child: Padding(
+            padding: report
+                ? const EdgeInsets.symmetric(vertical: 12)
+                : const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Fixed-width leading slot so an icon field (18) and a bullet
+                // field (10) start the TEXT column at the SAME x — one text
+                // column, not two (founder build 2509 screenshot). The glyph
+                // top-aligns with the first text line (icons sit a touch higher
+                // than the round bullet).
+                SizedBox(
+                  width: report ? 20 : 18,
+                  child: Padding(
+                    padding: EdgeInsets.only(top: icon != null ? 2 : 6),
+                    child: Align(
+                      alignment: AlignmentDirectional.topStart,
+                      child: leading,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: _content(context)),
-            ],
+                SizedBox(width: report ? 8 : 10),
+                Expanded(child: _content(context)),
+              ],
+            ),
           ),
         ),
       ),
@@ -344,7 +362,7 @@ class NodeVisualiser extends StatelessWidget {
     // conversational/prose node has no standard label and renders the value line
     // under its coloured bullet.
     if (node.standard &&
-        (_labeledStandardFields.contains(node.id) || _isAttribute)) {
+        (_labeledStandardFields.contains(node.id) || _isReportField)) {
       final label = (node.standardLabel ?? node.label).trim();
       if (label.isNotEmpty) {
         return RichText(
@@ -558,6 +576,7 @@ class NodeVisualiser extends StatelessWidget {
     final theme = Theme.of(context);
     final ac = context.ac;
     final numeric = node.statValue != null;
+    if (numeric && node.statDisplay == 'text') return _statTextContent(context);
     final max = numeric && node.statValue! > 10 ? 100.0 : 10.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,6 +625,32 @@ class NodeVisualiser extends StatelessWidget {
                 style: AymaType.sans(size: 12, soft: true, color: ac.fgMute)),
           ),
       ],
+    );
+  }
+
+  /// A score shown as text — "Face 5.1/10" with its verdict ("Average")
+  /// beside it, no bar (founder, Nov 21).
+  Widget _statTextContent(BuildContext context) {
+    final theme = Theme.of(context);
+    final ac = context.ac;
+    final name = node.label.isNotEmpty ? node.label : node.text;
+    final score = '${_trimNum(node.statValue!)}/10';
+    return Text.rich(
+      key: Key('node_stat_text_${node.id}'),
+      TextSpan(
+        children: [
+          TextSpan(
+            text: name.isEmpty ? score : '$name $score',
+            style: theme.textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          if (node.statBasis.isNotEmpty)
+            TextSpan(
+              text: '  ${node.statBasis}',
+              style: AymaType.sans(size: 14, soft: true, color: ac.fgMute),
+            ),
+        ],
+      ),
     );
   }
 
@@ -800,7 +845,7 @@ class NodeVisualiserSection extends StatelessWidget {
       return Container(
         width: double.infinity,
         margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: ac.bgElev,
           borderRadius: BorderRadius.circular(20),

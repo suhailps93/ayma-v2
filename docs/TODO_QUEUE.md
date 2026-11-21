@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-20. Update this file whenever an item changes; commit and push to main.
 
+## FOUNDER FEEDBACK — Appearance Face/Body: labelled elements, score as text — DONE (fleet/appearance-face-body-template off origin/staging @b9cb10de, 2026-11-21)
+- **Server:** `report_blocks.scored_result_blocks` labels every Face/Body element (Summary / Strength / Weakness / `QUICK_FACT_LABELS`); score block label = axis + `display:"text"` (value/basis unchanged for the share card). `report_tree` → labelled text/fact = standard field node; text-score stat gets `stat_display:"text"` and no bar visual. `skills/open_shared._block_text` prints "Strength: …" and "Face: 5.1/10 (Average)". Applied at read time, so stored reports render labelled.
+- **Client:** `StoryNode.statDisplay`; `NodeVisualiser` labels every standard node on the report surface (`_isReportField`), renders the text score ("Face 5.1/10  Average", no ScoreBar, no bullet). Jobs pass: report rows ≥48pt (vertical 4→12 + minHeight 48), horizontal 2→0, leading slot 18→20, gap 10→8 (report surface only), report card padding 18→16.
+- **Tests:** backend +5 (blocks labels/order/score, every quick-fact key labelled, Match stat keeps bar, tree nodes, shared text) — 413 passed in touched areas; full suite 7 failures all pre-existing. Flutter +5 node_visualiser tests (face/body labelled rows from stored-shape JSON, text score with no ScoreBar, Match keeps bar); Flutter 3.47.9 analyze clean; full suite 8 failures all pre-existing.
+- **Owed:** before/after device screenshots at the next build.
+
 ## FOUNDER FEEDBACK — Visible tattoos / piercings describe what and where, never "yes" — DONE (fleet/appearance-tattoo-piercing-detail off origin/staging @86a27832, 2026-11-21)
 - **Extraction:** `prompts/physical_attributes.md` + `explore_filter_schema.json` (physical_attributes section): the two fields are free text — "no" when none, else a short what-and-where ("tattoo on right shoulder", "tattoos on right shoulder and left forearm"). `physical_attributes._coerce`: no/none → "no"; bare "yes"/empty/unknown → "unknown"; a description is kept as-is. Every other attribute unchanged.
 - **Storage / rendering:** the record and `physical_attrs` mirror carry the description; `report_adapters._attribute_blocks` → `report_tree` gist (first sentence, uncut) → Flutter `NodeVisualiser` "Visible tattoos: <value>" row — pass-through, no client change. Explore's fallback to the mirror maps a description back to yes/no (`physical_attributes.presence`); `photo_attrs` (per-upload, Explore-only) stays yes/no.
