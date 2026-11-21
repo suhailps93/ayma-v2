@@ -1101,9 +1101,9 @@ subsystem stays deleted; no new schema.
   import path** that creates dated role/company/period nodes: the only LinkedIn
   mechanism is the user-given `PF_LINKEDIN_URL` (`career_timeline`) surfaced as
   the link node + handed to `deep_dive`'s Gemini `url_context` as a research
-  **source** (which writes prose, not dated nodes). **RESOLVED (founder order Nov
-  18) — now built:** the LinkedIn→dated-node import below populates the timeline
-  via the user's own data export (never scraping).
+  **source** (which writes prose, not dated nodes). (A Nov 18 CSV-export importer
+  briefly populated dated nodes; it was REMOVED Nov 20 — see "LinkedIn CSV import
+  — REMOVED" below. Dated Career nodes already created remain and still render.)
 - Tests: `tests/test_person_graph_tree.py::
   test_career_dated_entries_render_as_an_editable_timeline_date_ordered` and
   `::test_career_without_dates_renders_bullets_not_a_fabricated_timeline`
@@ -1114,46 +1114,24 @@ subsystem stays deleted; no new schema.
   as an editable timeline…" + "Career: with NO dated children renders the
   LinkedIn source link + prose bullets…".
 
-## LinkedIn work-history import — populates the Career timeline (founder order, Nov 18 2026)
+## LinkedIn CSV import — REMOVED (founder order, Nov 20 2026)
 
-The dated career nodes the timeline needs come from the user's own **LinkedIn
-data export**, parsed deterministically — the only route that actually delivers
-dated positions.
-
-- **Route verified = data export, NOT OAuth.** Official "Sign in with LinkedIn
-  (OpenID Connect)" grants only `openid`/`profile`/`email`; its published
-  `claims_supported` carries name/email/picture and **no positions** — work
-  history is restricted to partner programs Ayma is not in (verified against the
-  LinkedIn OIDC reference, Nov 2026). Ayma holds no LinkedIn OAuth app or secret.
-  So the user downloads their archive (LinkedIn → Settings → "Get a copy of your
-  data") and uploads its **`Positions.csv`** (Company Name, Title, Description,
-  Location, Started On, Finished On). No credentials, no multipart, **no
-  scraping.**
-- **Parse → dated nodes.** `linkedin_import.py` (`parse_positions_csv` →
-  `import_positions`): tolerant header + date parsing ("MMM YYYY", ISO,
-  year-only; blank Finished On → current → "… – Present"). Each role becomes one
-  emergent `career`-section node written via `person_graph_store.add_loose_node`
-  with a node-level **`dated`** (the start date — the timeline sort key), a
-  `timeline_entry` visual, gist "Title · Company", and the `linkedin_import`
-  SOURCE (`source_kind`/`source_ref`, per the node-sources rule).
-- **Node-level `dated`.** A new optional `dated` field on `OverlayNode` /
-  `GraphNode` (founder's "set the node's `dated` field" order — additive, no
-  migration); `person_graph_tree._node_dated` prefers it over `Link.dated`. This
-  is what the build-2502 note meant by "no schema change" being superseded: a
-  single additive field, nothing migrated.
-- **Dedupe vs prose career notes (fold or link, never two).** Before minting, a
-  role whose company tokens **and** title tokens are both contained in an
-  existing career node folds into it (`fold_into_node` + `set_node_dated`): the
-  prose note gains the dates and moves onto the timeline — one node, not two.
-  Stable per-role id (`linkedin.<company>__<title>`) makes a re-import idempotent.
-- **Entry + endpoint.** `POST /profile/career/linkedin-import` (`{csv}` body).
-  App: **Import from LinkedIn** — the work-history icon in Your Story's app bar
-  and a Settings tile → `LinkedInImportScreen` (`/settings/linkedin-import`).
-  Registered (`app_registry.json` → `linkedin_import`) and toured
-  (`linkedin_import`, anchor `story_linkedin_import`).
-- Tests: `tests/test_linkedin_import.py` (parse, dated nodes + source, timeline
-  order, prose-note fold, idempotent re-import); `ayma_flutter/test/
-  linkedin_import_test.dart` (screen flow + tour anchor).
+The LinkedIn **CSV data-export import** was removed. The founder dislikes the
+CSV-upload flow and wants an API connect-only path — but the API cannot deliver
+work history (official "Sign in with LinkedIn (OpenID Connect)" grants only
+`openid`/`profile`/`email`; positions are restricted to partner programs Ayma is
+not in), which is the very reason the CSV route existed. With no viable API
+route, the founder's call was to remove it entirely rather than keep the CSV
+flow. Deleted: `linkedin_import.py`, `POST /profile/career/linkedin-import`,
+`LinkedInImportScreen` + its route, the Settings tile and the Your-Story app-bar
+import icon, the `linkedin_import` registry destination and feature-tour entry,
+`ApiClient.linkedinImport`, and both tests. **Kept:** the node-level `dated`
+field and the Career timeline render (dated nodes still order newest-first when
+present), every existing Career node (including any previously imported, dates
+intact — data was not touched), the Career section itself, and the public
+`PF_LINKEDIN_URL` link button (`career_timeline.linkedin_link_node` /
+`_inject_linkedin_button`). So the Career timeline keeps working for data already
+present; there is simply no longer a LinkedIn-export importer.
 
 ## Live graph layout + highlight fix (person-graph-sections, Nov 17 2026)
 

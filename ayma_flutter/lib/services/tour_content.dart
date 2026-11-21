@@ -153,16 +153,6 @@ const List<TourFeature> tourFeatures = <TourFeature>[
     tab: 3,
   ),
   TourFeature(
-    featureId: 'linkedin_import',
-    headline: 'Import your work history',
-    subtitle: 'Open My story and tap the work icon to import your LinkedIn '
-        'roles from your data export — Ayma builds a dated Career timeline, '
-        'no password, nothing scraped.',
-    icon: Icons.work_history_outlined,
-    anchorId: TourAnchors.storyLinkedinImport,
-    tab: 3,
-  ),
-  TourFeature(
     featureId: 'person_graph',
     headline: 'See yourself as a graph',
     subtitle: 'Open My person graph — everything Ayma knows, wired like a '
